@@ -1,0 +1,16 @@
+[package]
+name = "quantum-e2e"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish = false
+
+[dependencies]
+quantum-domain.workspace = true
+quantum-infrastructure = { path = "../../crates/infrastructure" }
+tokio = { workspace = true, features = ["process", "net", "signal", "rt"] }
+serde_json.workspace = true
+tempfile = "3"
+assert_cmd = "2"
+predicates = "3"
