@@ -8,10 +8,11 @@ license.workspace = true
 [dependencies]
 quantum-application = { path = "../application" }
 quantum-domain = { path = "../domain" }
-tokio.workspace = true
+tokio = { workspace = true, features = ["sync"] }
 serde = { workspace = true, features = ["derive"] }
 serde_json.workspace = true
 thiserror.workspace = true
+async-trait.workspace = true
 gtk4 = { version = "0.9", features = ["v4_14"] }
 webkit6 = "0.4"
 gtk4-layer-shell = "0.4"

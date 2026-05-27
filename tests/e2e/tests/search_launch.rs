@@ -1,5 +1,4 @@
 use std::fs;
-use std::path::PathBuf;
 use std::time::Duration;
 use tempfile::TempDir;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
@@ -47,14 +46,6 @@ async fn search_and_launch_desktop_app() -> Result<(), Box<dyn std::error::Error
     // Setup socket path
     let socket_path = tmppath.join("quantum.sock");
 
-    // Set environment variables for the daemon
-    let env_vars = [
-        ("XDG_RUNTIME_DIR", tmppath.to_str().unwrap()),
-        ("XDG_DATA_HOME", tmppath.to_str().unwrap()),
-        ("XDG_CONFIG_HOME", tmppath.to_str().unwrap()),
-        ("QUANTUM_SHELL_LOG", shell_log_path.to_str().unwrap()),
-    ];
-
     // Spawn quantumd with --headless flag
     let mut daemon = tokio::process::Command::new("cargo")
         .args(&[
@@ -71,7 +62,10 @@ async fn search_and_launch_desktop_app() -> Result<(), Box<dyn std::error::Error
             matches!(k.as_str(), "PATH" | "HOME" | "RUST_LOG" | "RUST_BACKTRACE")
         }))
         // Set our test environment variables
-        .envs(&env_vars)
+        .env("XDG_RUNTIME_DIR", tmppath.to_str().unwrap())
+        .env("XDG_DATA_HOME", tmppath.to_str().unwrap())
+        .env("XDG_CONFIG_HOME", tmppath.to_str().unwrap())
+        .env("QUANTUM_SHELL_LOG", shell_log_path.to_str().unwrap())
         .spawn()?;
 
     // Wait for socket to appear (with timeout)

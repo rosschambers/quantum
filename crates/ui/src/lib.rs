@@ -12,7 +12,7 @@ pub use error::{UiError, Result};
 pub use bridge::register_bridge;
 pub use scheme::{register_quantum_scheme, ThemePort};
 pub use windows::LauncherWindow;
-pub use window_host::{GtkWindowHost, DummyWindowHost, WindowMode};
+pub use window_host::{GtkWindowHost, DummyWindowHost};
 
 pub fn version() -> &'static str {
     env!("CARGO_PKG_VERSION")

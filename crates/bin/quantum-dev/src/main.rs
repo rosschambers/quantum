@@ -1,7 +1,7 @@
 use clap::{Parser, Subcommand};
-use notify::{Watcher, RecursiveMode, watcher};
+use notify::{Watcher, RecursiveMode, Result as NotifyResult, Event};
+use notify_debouncer_mini::new_debouncer;
 use std::path::PathBuf;
-use std::sync::mpsc;
 use std::time::Duration;
 use serde_json::json;
 use tokio::io::AsyncWriteExt;
@@ -115,12 +115,14 @@ async fn watch_themes() -> Result<(), Box<dyn std::error::Error>> {
         std::process::exit(1);
     }
 
-    // Create a channel for watch events
-    let (tx, rx) = mpsc::channel();
+    // Create a synchronous channel for watch events
+    let (tx, rx) = std::sync::mpsc::channel();
 
-    // Create a watcher
-    let mut watcher = watcher(tx, Duration::from_millis(500))?;
-    watcher.watch(&themes_dir, RecursiveMode::Recursive)?;
+    // Create a debounced watcher with the channel
+    let mut debouncer = new_debouncer(Duration::from_millis(500), tx)?;
+
+    // Get the watcher and watch the directory
+    debouncer.watcher().watch(&themes_dir, RecursiveMode::Recursive)?;
 
     info!("Watching {} for changes", themes_dir.display());
     info!("Press Ctrl+C to stop");
@@ -132,27 +134,25 @@ async fn watch_themes() -> Result<(), Box<dyn std::error::Error>> {
         PathBuf::from(runtime_dir).join("quantum.sock")
     };
 
-    // Watch for file changes
-    loop {
-        match rx.recv() {
-            Ok(notify::DebouncedFileSystemEvent::Write(_)) |
-            Ok(notify::DebouncedFileSystemEvent::Create(_)) |
-            Ok(notify::DebouncedFileSystemEvent::Remove(_)) => {
-                info!("Theme file changed, reloading...");
-                
-                // Try to connect to daemon and send reload command
-                match send_reload(&socket_path).await {
-                    Ok(_) => {
-                        info!("Theme reload sent to daemon");
-                    }
-                    Err(e) => {
-                        eprintln!("WARNING: Failed to send reload to daemon: {}", e);
-                        eprintln!("Make sure quantumd is running");
+    // Watch for file changes (blocking on sync channel)
+    for res in rx {
+        match res {
+            Ok(events) => {
+                // Check if any events are writes/creates/removes
+                if events.iter().any(|e| matches!(e.kind, notify::EventKind::Modify(_) | notify::EventKind::Create(_) | notify::EventKind::Remove(_))) {
+                    info!("Theme file changed, reloading...");
+                    
+                    // Try to connect to daemon and send reload command
+                    match send_reload(&socket_path).await {
+                        Ok(_) => {
+                            info!("Theme reload sent to daemon");
+                        }
+                        Err(e) => {
+                            eprintln!("WARNING: Failed to send reload to daemon: {}", e);
+                            eprintln!("Make sure quantumd is running");
+                        }
                     }
                 }
-            }
-            Ok(_) => {
-                // Ignore other events
             }
             Err(e) => {
                 eprintln!("Watch error: {}", e);

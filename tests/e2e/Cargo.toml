@@ -7,10 +7,12 @@ license.workspace = true
 publish = false
 
 [dependencies]
-quantum-domain.workspace = true
+quantum-domain = { path = "../../crates/domain" }
 quantum-infrastructure = { path = "../../crates/infrastructure" }
-tokio = { workspace = true, features = ["process", "net", "signal", "rt"] }
+tokio = { workspace = true, features = ["process", "net", "signal", "rt", "io-util"] }
 serde_json.workspace = true
 tempfile = "3"
 assert_cmd = "2"
 predicates = "3"
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true, features = ["env-filter"] }
