@@ -3,6 +3,7 @@
 pub mod config;
 pub mod error;
 pub mod hyprland;
+pub mod ipc;
 pub mod providers;
 pub mod registry;
 pub mod shell;
@@ -11,6 +12,7 @@ pub mod theme;
 pub use config::ConfigStore;
 pub use error::InfrastructureError;
 pub use hyprland::HyprlandSocketClient;
+pub use ipc::UnixSocketServer;
 pub use providers::{
     DeclarativeShellProvider, DesktopAppsProvider, HyprlandWindowsProvider, ShellCommandProvider,
 };
