@@ -1,19 +1,37 @@
+# All targets run inside the dev container via scripts/devsh.sh.
+# This keeps the build environment hermetic and identical across machines.
+# For an interactive shell, use `just shell`.
+
+devsh := "./scripts/devsh.sh"
+
 default: build
 
 build:
-    cargo build --workspace
+    {{devsh}} cargo build --workspace
 
 test:
-    cargo test --workspace
+    {{devsh}} cargo test --workspace
 
 fmt:
-    cargo fmt --all
+    {{devsh}} cargo fmt --all
 
 lint:
-    cargo clippy --workspace --all-targets -- -D warnings
+    {{devsh}} cargo clippy --workspace --all-targets -- -D warnings
 
 dev:
-    cargo run --bin quantumd
+    {{devsh}} cargo run --bin quantumd
 
 ts-bindgen:
-    cargo run --bin quantum-dev -- generate-ts
+    {{devsh}} cargo run --bin quantum-dev -- generate-ts
+
+frontend-install:
+    {{devsh}} pnpm -C frontend install
+
+frontend-build:
+    {{devsh}} pnpm -C frontend -r build
+
+frontend-test:
+    {{devsh}} pnpm -C frontend -r test
+
+shell:
+    {{devsh}}

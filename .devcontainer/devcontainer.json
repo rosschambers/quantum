@@ -1,0 +1,28 @@
+{
+    "name": "quantum",
+    "build": {
+        "dockerfile": "Dockerfile",
+        "context": ".."
+    },
+    "workspaceFolder": "/workspaces/quantum",
+    "workspaceMount": "source=${localWorkspaceFolder},target=/workspaces/quantum,type=bind,consistency=cached",
+    "remoteUser": "vscode",
+    "containerEnv": {
+        "CARGO_TERM_COLOR": "always",
+        "RUST_BACKTRACE": "1"
+    },
+    "customizations": {
+        "vscode": {
+            "extensions": [
+                "rust-lang.rust-analyzer",
+                "tamasfe.even-better-toml",
+                "svelte.svelte-vscode"
+            ]
+        }
+    },
+    "mounts": [
+        "source=quantum-cargo-cache,target=/usr/local/cargo/registry,type=volume",
+        "source=quantum-pnpm-store,target=/home/vscode/.local/share/pnpm/store,type=volume"
+    ],
+    "postCreateCommand": "git config --global --add safe.directory /workspaces/quantum"
+}
