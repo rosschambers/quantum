@@ -2,8 +2,8 @@ use async_trait::async_trait;
 use std::sync::Arc;
 
 use quantum_domain::{
-    Action, ActionOutcome, DomainError, Match, MatchScore, ProviderCapabilities, ProviderSource,
-    ProviderId, Query, ShellExecutor,
+    Action, ActionOutcome, DomainError, Match, MatchScore, ProviderCapabilities, ProviderId,
+    ProviderSource, Query, ShellExecutor,
 };
 
 /// Provider for shell commands (queries starting with ">").
@@ -63,13 +63,18 @@ impl ProviderSource for ShellCommandProvider {
 
     async fn invoke(&self, action: &Action) -> Result<ActionOutcome, DomainError> {
         match action {
-            Action::Shell { command, terminal: _ } => {
+            Action::Shell {
+                command,
+                terminal: _,
+            } => {
                 self.executor.spawn_detached(command).await?;
                 Ok(ActionOutcome {
                     message: Some("Command executed".to_string()),
                 })
             }
-            _ => Err(DomainError::Unsupported("only Shell action supported".to_string())),
+            _ => Err(DomainError::Unsupported(
+                "only Shell action supported".to_string(),
+            )),
         }
     }
 }

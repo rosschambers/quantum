@@ -66,9 +66,8 @@ impl ConfigStore {
             let content = std::fs::read_to_string(&path)
                 .map_err(|e| InfrastructureError::Io(e.to_string()))?;
 
-            toml::from_str(&content).map_err(|e| {
-                InfrastructureError::ConfigParse(format!("TOML parse error: {}", e))
-            })?
+            toml::from_str(&content)
+                .map_err(|e| InfrastructureError::ConfigParse(format!("TOML parse error: {}", e)))?
         } else {
             Config {
                 general: GeneralConfig::default(),
@@ -148,10 +147,7 @@ invalid syntax
         };
 
         let config = store.get_config().await;
-        assert_eq!(
-            config.general.active_theme,
-            Some("default".to_string())
-        );
+        assert_eq!(config.general.active_theme, Some("default".to_string()));
     }
 
     #[tokio::test]

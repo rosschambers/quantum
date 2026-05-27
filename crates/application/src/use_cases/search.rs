@@ -45,10 +45,7 @@ impl SearchUseCase {
                             ),
                         }
                     }
-                    None => (
-                        None,
-                        Some(format!("Provider {} not found", pid)),
-                    ),
+                    None => (None, Some(format!("Provider {} not found", pid))),
                 }
             });
         }
@@ -89,7 +86,9 @@ impl SearchUseCase {
 mod tests {
     use super::*;
     use async_trait::async_trait;
-    use quantum_domain::{Action, DomainError, MatchScore, ProviderId, ProviderCapabilities, ProviderSource};
+    use quantum_domain::{
+        Action, DomainError, MatchScore, ProviderCapabilities, ProviderId, ProviderSource,
+    };
     use std::collections::HashMap;
     use std::time::Duration as StdDuration;
     use tokio::time::sleep;
@@ -145,23 +144,17 @@ mod tests {
                 matches,
                 delay: None,
             };
-            self.providers
-                .insert(id, Arc::new(provider));
+            self.providers.insert(id, Arc::new(provider));
             self
         }
 
-        fn with_slow_provider(
-            mut self,
-            id: ProviderId,
-            delay: StdDuration,
-        ) -> Self {
+        fn with_slow_provider(mut self, id: ProviderId, delay: StdDuration) -> Self {
             let provider = FakeProvider {
                 id: id.clone(),
                 matches: vec![],
                 delay: Some(delay),
             };
-            self.providers
-                .insert(id, Arc::new(provider));
+            self.providers.insert(id, Arc::new(provider));
             self
         }
     }
@@ -208,8 +201,7 @@ mod tests {
 
     #[tokio::test]
     async fn timeouts_become_warnings() {
-        let reg = FakeRegistry::new()
-            .with_slow_provider("apps".into(), StdDuration::from_secs(3));
+        let reg = FakeRegistry::new().with_slow_provider("apps".into(), StdDuration::from_secs(3));
 
         let uc = SearchUseCase::new(Arc::new(reg));
         let res = uc.execute(Query::new("x")).await.unwrap();
@@ -228,8 +220,8 @@ mod tests {
             limit: None,
         };
 
-        let reg = FakeRegistry::new()
-            .with_provider("apps".into(), vec![test_match("a", "Firefox", 0.9)]);
+        let reg =
+            FakeRegistry::new().with_provider("apps".into(), vec![test_match("a", "Firefox", 0.9)]);
 
         let uc = SearchUseCase::new(Arc::new(reg));
         let res = uc.execute(query).await.unwrap();
@@ -241,15 +233,14 @@ mod tests {
 
     #[tokio::test]
     async fn results_sorted_by_score_descending() {
-        let reg = FakeRegistry::new()
-            .with_provider(
-                "app".into(),
-                vec![
-                    test_match("a", "Low", 0.3),
-                    test_match("b", "High", 0.9),
-                    test_match("c", "Mid", 0.5),
-                ],
-            );
+        let reg = FakeRegistry::new().with_provider(
+            "app".into(),
+            vec![
+                test_match("a", "Low", 0.3),
+                test_match("b", "High", 0.9),
+                test_match("c", "Mid", 0.5),
+            ],
+        );
 
         let uc = SearchUseCase::new(Arc::new(reg));
         let res = uc.execute(Query::new("x")).await.unwrap();
@@ -262,15 +253,14 @@ mod tests {
 
     #[tokio::test]
     async fn limit_honoured() {
-        let reg = FakeRegistry::new()
-            .with_provider(
-                "app".into(),
-                vec![
-                    test_match("a", "Match 1", 0.9),
-                    test_match("b", "Match 2", 0.8),
-                    test_match("c", "Match 3", 0.7),
-                ],
-            );
+        let reg = FakeRegistry::new().with_provider(
+            "app".into(),
+            vec![
+                test_match("a", "Match 1", 0.9),
+                test_match("b", "Match 2", 0.8),
+                test_match("c", "Match 3", 0.7),
+            ],
+        );
 
         let query = Query {
             text: "x".to_string(),

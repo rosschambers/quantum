@@ -1,6 +1,6 @@
+use crate::{Action, DomainError, Match, ProviderId, Query};
 use async_trait::async_trait;
 use std::sync::Arc;
-use crate::{Action, DomainError, Match, Query, ProviderId};
 
 /// Capabilities of a provider.
 #[derive(Debug, Clone)]

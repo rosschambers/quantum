@@ -1,13 +1,13 @@
 //! Launcher window with gtk4-layer-shell anchoring.
 
-use std::sync::Arc;
-use std::cell::RefCell;
+use crate::scheme::ThemePort;
 use gtk4::prelude::*;
 use gtk4::{ApplicationWindow, Orientation};
-use gtk4_layer_shell::{LayerShell, Layer, KeyboardMode};
-use webkit6::WebView;
+use gtk4_layer_shell::{KeyboardMode, Layer, LayerShell};
 use quantum_application::dispatcher::Dispatcher;
-use crate::scheme::ThemePort;
+use std::cell::RefCell;
+use std::sync::Arc;
+use webkit6::WebView;
 
 /// The launcher window - a top-layer panel window anchored on-demand.
 pub struct LauncherWindow {

@@ -3,13 +3,17 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "kind", content = "data", rename_all = "snake_case")]
 pub enum Action {
-    Launch { desktop_id: String },
+    Launch {
+        desktop_id: String,
+    },
     Shell {
         command: Vec<String>,
         #[serde(default)]
         terminal: bool,
     },
-    Focus { window_address: String },
+    Focus {
+        window_address: String,
+    },
     Custom {
         kind: String,
         payload: serde_json::Value,

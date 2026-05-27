@@ -1,7 +1,7 @@
 //! Custom quantum:// URI scheme handler for theme bundles.
 
-use std::sync::Arc;
 use quantum_application::ApplicationError;
+use std::sync::Arc;
 
 /// Register the quantum:// URI scheme.
 /// Routes:

@@ -4,7 +4,10 @@ use std::path::Path;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 
-use quantum_domain::{Action, ActionOutcome, DomainError, Match, MatchScore, ProviderCapabilities, ProviderSource, ProviderId, Query, ShellExecutor};
+use quantum_domain::{
+    Action, ActionOutcome, DomainError, Match, MatchScore, ProviderCapabilities, ProviderId,
+    ProviderSource, Query, ShellExecutor,
+};
 
 /// Information about a desktop application.
 #[derive(Debug, Clone)]
@@ -42,8 +45,9 @@ impl DesktopAppsProvider {
         let mut apps = Vec::new();
 
         // Scan in common locations
-        let data_home = std::env::var("XDG_DATA_HOME")
-            .unwrap_or_else(|_| format!("{}/.local/share", std::env::var("HOME").unwrap_or_default()));
+        let data_home = std::env::var("XDG_DATA_HOME").unwrap_or_else(|_| {
+            format!("{}/.local/share", std::env::var("HOME").unwrap_or_default())
+        });
         let data_dirs = std::env::var("XDG_DATA_DIRS")
             .unwrap_or_else(|_| "/usr/local/share:/usr/share".to_string());
 
@@ -73,7 +77,10 @@ impl DesktopAppsProvider {
                     if path.extension().and_then(|s| s.to_str()) == Some("desktop") {
                         if let Ok(content) = std::fs::read_to_string(&path) {
                             if let Ok(de) = DesktopEntry::decode(&path, &content) {
-                                let app_name = de.name(None).map(|s| s.to_string()).unwrap_or_else(|| "Unknown".to_string());
+                                let app_name = de
+                                    .name(None)
+                                    .map(|s| s.to_string())
+                                    .unwrap_or_else(|| "Unknown".to_string());
                                 let generic_name = de.generic_name(None).map(|s| s.to_string());
                                 let keywords: Vec<String> = de
                                     .keywords()
@@ -183,7 +190,9 @@ impl ProviderSource for DesktopAppsProvider {
         matches.sort_by(|a, b| {
             let a_val = a.score.value();
             let b_val = b.score.value();
-            b_val.partial_cmp(&a_val).unwrap_or(std::cmp::Ordering::Equal)
+            b_val
+                .partial_cmp(&a_val)
+                .unwrap_or(std::cmp::Ordering::Equal)
         });
 
         // Limit results
@@ -200,7 +209,10 @@ impl ProviderSource for DesktopAppsProvider {
                 let apps = self.apps.read().await;
                 if let Some(app) = apps.iter().find(|a| &a.id == desktop_id) {
                     let clean_exec = Self::clean_exec(&app.exec);
-                    let command: Vec<String> = clean_exec.split_whitespace().map(|s| s.to_string()).collect();
+                    let command: Vec<String> = clean_exec
+                        .split_whitespace()
+                        .map(|s| s.to_string())
+                        .collect();
 
                     if !command.is_empty() {
                         self.executor.spawn_detached(&command).await?;
@@ -209,9 +221,14 @@ impl ProviderSource for DesktopAppsProvider {
                         });
                     }
                 }
-                Err(DomainError::Unsupported(format!("app not found: {}", desktop_id)))
+                Err(DomainError::Unsupported(format!(
+                    "app not found: {}",
+                    desktop_id
+                )))
             }
-            _ => Err(DomainError::Unsupported("only Launch action supported".to_string())),
+            _ => Err(DomainError::Unsupported(
+                "only Launch action supported".to_string(),
+            )),
         }
     }
 }
@@ -285,7 +302,10 @@ Type=Application"#;
             executor,
         };
 
-        provider.scan_directory(&apps_dir, &mut Vec::new()).await.unwrap();
+        provider
+            .scan_directory(&apps_dir, &mut Vec::new())
+            .await
+            .unwrap();
     }
 
     #[tokio::test]

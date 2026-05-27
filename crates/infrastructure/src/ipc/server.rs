@@ -6,8 +6,8 @@ use std::sync::Arc;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::{UnixListener, UnixStream};
 
-use crate::InfrastructureError;
 use super::protocol::{JsonRpcError, JsonRpcRequest, JsonRpcResponse};
+use crate::InfrastructureError;
 
 /// Result type for dispatch operations.
 pub type DispatchResult = Result<Value, DispatchError>;
@@ -54,7 +54,10 @@ impl UnixSocketServer {
     }
 
     /// Start the server and accept connections.
-    pub async fn serve<D: Dispatcher + 'static>(&self, dispatcher: Arc<D>) -> Result<(), InfrastructureError> {
+    pub async fn serve<D: Dispatcher + 'static>(
+        &self,
+        dispatcher: Arc<D>,
+    ) -> Result<(), InfrastructureError> {
         // Remove stale socket
         if self.socket_path.exists() {
             std::fs::remove_file(&self.socket_path)
@@ -65,7 +68,9 @@ impl UnixSocketServer {
             .map_err(|e| InfrastructureError::Io(e.to_string()))?;
 
         loop {
-            let (stream, _) = listener.accept().await
+            let (stream, _) = listener
+                .accept()
+                .await
                 .map_err(|e| InfrastructureError::Io(e.to_string()))?;
 
             let dispatcher = dispatcher.clone();
@@ -122,7 +127,10 @@ async fn handle_request<D: Dispatcher>(
     request: &JsonRpcRequest,
     dispatcher: Arc<D>,
 ) -> JsonRpcResponse {
-    let params = request.params.clone().unwrap_or(Value::Object(Default::default()));
+    let params = request
+        .params
+        .clone()
+        .unwrap_or(Value::Object(Default::default()));
 
     match dispatcher.dispatch(&request.method, params).await {
         Ok(result) => JsonRpcResponse::success(request.id.clone(), result),

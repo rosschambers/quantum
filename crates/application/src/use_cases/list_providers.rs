@@ -20,7 +20,7 @@ mod tests {
     use super::*;
     use async_trait::async_trait;
     use quantum_domain::{
-        ActionOutcome, ProviderCapabilities, ProviderSource, Query, DomainError, Match,
+        ActionOutcome, DomainError, Match, ProviderCapabilities, ProviderSource, Query,
     };
     use std::collections::HashMap;
 

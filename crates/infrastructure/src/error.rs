@@ -54,9 +54,7 @@ impl InfrastructureError {
             InfrastructureError::HyprlandUnreachable => {
                 DomainError::Unsupported("Hyprland unreachable".to_string())
             }
-            InfrastructureError::Spawn(msg) => {
-                DomainError::Unsupported(format!("spawn: {}", msg))
-            }
+            InfrastructureError::Spawn(msg) => DomainError::Unsupported(format!("spawn: {}", msg)),
         }
     }
 }

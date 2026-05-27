@@ -5,7 +5,7 @@ use tokio::sync::RwLock;
 
 use quantum_domain::{
     Action, ActionOutcome, DomainError, HyprlandClient, Match, MatchScore, ProviderCapabilities,
-    ProviderSource, ProviderId, Query,
+    ProviderId, ProviderSource, Query,
 };
 
 /// Information about a Hyprland window.
@@ -129,7 +129,9 @@ impl ProviderSource for HyprlandWindowsProvider {
         matches.sort_by(|a, b| {
             let a_val = a.score.value();
             let b_val = b.score.value();
-            b_val.partial_cmp(&a_val).unwrap_or(std::cmp::Ordering::Equal)
+            b_val
+                .partial_cmp(&a_val)
+                .unwrap_or(std::cmp::Ordering::Equal)
         });
 
         // Limit results

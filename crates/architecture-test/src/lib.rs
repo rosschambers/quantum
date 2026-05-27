@@ -6,29 +6,48 @@ mod tests {
     fn allowed_deps() -> HashMap<&'static str, HashSet<&'static str>> {
         let mut m: HashMap<&str, HashSet<&str>> = HashMap::new();
         m.insert("quantum-domain", HashSet::new());
-        m.insert("quantum-application", ["quantum-domain"].into_iter().collect());
-        m.insert("quantum-infrastructure", ["quantum-domain"].into_iter().collect());
         m.insert(
-            "quantum-ui",
-            ["quantum-application", "quantum-domain"].into_iter().collect(),
+            "quantum-application",
+            ["quantum-domain"].into_iter().collect(),
         );
         m.insert(
-            "quantumd",
-            ["quantum-ui", "quantum-application", "quantum-infrastructure", "quantum-domain"]
+            "quantum-infrastructure",
+            ["quantum-domain"].into_iter().collect(),
+        );
+        m.insert(
+            "quantum-ui",
+            ["quantum-application", "quantum-domain"]
                 .into_iter()
                 .collect(),
         );
         m.insert(
+            "quantumd",
+            [
+                "quantum-ui",
+                "quantum-application",
+                "quantum-infrastructure",
+                "quantum-domain",
+            ]
+            .into_iter()
+            .collect(),
+        );
+        m.insert(
             "quantumctl",
-            ["quantum-domain", "quantum-infrastructure"].into_iter().collect(),
+            ["quantum-domain", "quantum-infrastructure"]
+                .into_iter()
+                .collect(),
         );
         m.insert(
             "quantum-dev",
-            ["quantum-domain", "quantum-infrastructure"].into_iter().collect(),
+            ["quantum-domain", "quantum-infrastructure"]
+                .into_iter()
+                .collect(),
         );
         m.insert(
             "quantum-e2e",
-            ["quantum-domain", "quantum-infrastructure"].into_iter().collect(),
+            ["quantum-domain", "quantum-infrastructure"]
+                .into_iter()
+                .collect(),
         );
         m
     }
@@ -45,7 +64,11 @@ mod tests {
             };
             for dep in &package.dependencies {
                 // Only constrain intra-workspace deps
-                if metadata.workspace_packages().iter().any(|p| p.name == dep.name) {
+                if metadata
+                    .workspace_packages()
+                    .iter()
+                    .any(|p| p.name == dep.name)
+                {
                     assert!(
                         allow.contains(dep.name.as_str()),
                         "FORBIDDEN DEP: {} -> {} (allowed: {:?})",

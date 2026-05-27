@@ -1,9 +1,9 @@
 //! GTK4 application shell.
 
-use std::sync::Arc;
 use gtk4::prelude::*;
 use gtk4::Application;
 use quantum_application::dispatcher::Dispatcher;
+use std::sync::Arc;
 
 pub struct QuantumApp {
     app: Application,

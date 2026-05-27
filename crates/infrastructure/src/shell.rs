@@ -24,7 +24,9 @@ impl Default for TokioShellExecutor {
 #[async_trait]
 impl ShellExecutor for TokioShellExecutor {
     async fn execute(&self, _command: &[String]) -> Result<String, DomainError> {
-        Err(DomainError::Unsupported("use run_with_timeout instead".to_string()))
+        Err(DomainError::Unsupported(
+            "use run_with_timeout instead".to_string(),
+        ))
     }
 
     async fn run_with_timeout(
@@ -153,9 +155,7 @@ mod tests {
     #[tokio::test]
     async fn spawn_detached_succeeds() {
         let executor = TokioShellExecutor::new();
-        let result = executor
-            .spawn_detached(&["true".to_string()])
-            .await;
+        let result = executor.spawn_detached(&["true".to_string()]).await;
         assert!(result.is_ok());
     }
 

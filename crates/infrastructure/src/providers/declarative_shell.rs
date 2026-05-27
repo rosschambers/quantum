@@ -3,8 +3,8 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 
 use quantum_domain::{
-    Action, ActionOutcome, DomainError, Match, MatchScore, ProviderCapabilities, ProviderSource,
-    ProviderId, Query, ShellExecutor,
+    Action, ActionOutcome, DomainError, Match, MatchScore, ProviderCapabilities, ProviderId,
+    ProviderSource, Query, ShellExecutor,
 };
 
 use crate::config::ProviderConfig;
@@ -122,7 +122,10 @@ impl ProviderSource for DeclarativeShellProvider {
 
     async fn invoke(&self, action: &Action) -> Result<ActionOutcome, DomainError> {
         match action {
-            Action::Shell { command, terminal: _ } => {
+            Action::Shell {
+                command,
+                terminal: _,
+            } => {
                 self.executor.spawn_detached(command).await?;
                 Ok(ActionOutcome {
                     message: Some("Executed".to_string()),
@@ -183,9 +186,7 @@ mod tests {
             action: None,
         };
 
-        let executor = Arc::new(FakeExecutor::new(
-            "foo\nbar\nbaz\nfoo-extra".to_string(),
-        ));
+        let executor = Arc::new(FakeExecutor::new("foo\nbar\nbaz\nfoo-extra".to_string()));
         let provider = DeclarativeShellProvider::new(config, executor).unwrap();
 
         let query = Query::new("foo");

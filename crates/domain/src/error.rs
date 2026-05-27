@@ -1,6 +1,6 @@
+use crate::ProviderId;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
-use crate::ProviderId;
 
 #[derive(Debug, Error, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(tag = "kind", content = "data", rename_all = "snake_case")]

@@ -12,22 +12,19 @@ impl LaunchActionUseCase {
     }
 
     pub async fn execute(&self, provider_id: ProviderId, action: Action) -> Result<()> {
-        let provider = self
-            .registry
-            .get(&provider_id)
-            .await
-            .ok_or_else(|| {
-                ApplicationError::Domain(quantum_domain::DomainError::ProviderNotFound(
-                    provider_id.clone(),
-                ))
-            })?;
+        let provider = self.registry.get(&provider_id).await.ok_or_else(|| {
+            ApplicationError::Domain(quantum_domain::DomainError::ProviderNotFound(
+                provider_id.clone(),
+            ))
+        })?;
 
-        provider.invoke(&action).await.map_err(|source| {
-            ApplicationError::Dispatch {
+        provider
+            .invoke(&action)
+            .await
+            .map_err(|source| ApplicationError::Dispatch {
                 method: "action.invoke".to_string(),
                 source,
-            }
-        })?;
+            })?;
 
         Ok(())
     }
@@ -38,7 +35,7 @@ mod tests {
     use super::*;
     use async_trait::async_trait;
     use quantum_domain::{
-        ActionOutcome, ProviderCapabilities, ProviderSource, Query, DomainError, Match,
+        ActionOutcome, DomainError, Match, ProviderCapabilities, ProviderSource, Query,
     };
     use std::collections::HashMap;
 
@@ -87,7 +84,10 @@ mod tests {
         }
 
         fn with_provider(mut self, id: ProviderId, should_fail: bool) -> Self {
-            let provider = FakeProvider { id: id.clone(), should_fail };
+            let provider = FakeProvider {
+                id: id.clone(),
+                should_fail,
+            };
             self.providers.insert(id, Arc::new(provider));
             self
         }
@@ -127,7 +127,12 @@ mod tests {
         };
 
         let result = uc.execute("apps".into(), action).await;
-        assert!(matches!(result, Err(ApplicationError::Domain(quantum_domain::DomainError::ProviderNotFound(_)))));
+        assert!(matches!(
+            result,
+            Err(ApplicationError::Domain(
+                quantum_domain::DomainError::ProviderNotFound(_)
+            ))
+        ));
     }
 
     #[tokio::test]

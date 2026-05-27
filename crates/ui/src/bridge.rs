@@ -1,9 +1,9 @@
 //! WebKit script message bridge to Dispatcher.
 
-use std::sync::Arc;
+use quantum_application::dispatcher::Dispatcher;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
-use quantum_application::dispatcher::Dispatcher;
+use std::sync::Arc;
 
 /// Message sent from JavaScript to Rust.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -14,7 +14,7 @@ pub struct BridgeMessage {
 }
 
 /// Register the bridge message handler on a WebView.
-/// 
+///
 /// This would normally integrate with webkit6::WebView to register script message handlers.
 /// For now, this is a placeholder that validates the message structure works.
 pub fn register_bridge(_webview: &webkit6::WebView, _dispatcher: Arc<Dispatcher>) {
@@ -22,7 +22,7 @@ pub fn register_bridge(_webview: &webkit6::WebView, _dispatcher: Arc<Dispatcher>
     // 1. Get or create the WebContext
     // 2. Register a URI scheme handler for quantum://
     // 3. Set up script message handler for IPC
-    // 
+    //
     // For now, this validates the bridge infrastructure is in place.
 }
 
@@ -43,18 +43,16 @@ fn handle_message(json_str: &str, dispatcher: &Arc<Dispatcher>) {
                         // Send response back via JavaScript
                         let json = serde_json::to_string(&result)
                             .unwrap_or_else(|_| json!(null).to_string());
-                        let js = format!(
-                            "window.__quantum_resolve({}, {})",
-                            id,
-                            escape_for_js(&json)
-                        );
+                        let js =
+                            format!("window.__quantum_resolve({}, {})", id, escape_for_js(&json));
                         // In real implementation, we'd evaluate this on the webview
                         // For now, we log it
                         eprintln!("Would send JS: {}", js);
                     }
                     Err(e) => {
-                        let error_json = serde_json::to_string(&e)
-                            .unwrap_or_else(|_| json!({"error": "serialization failed"}).to_string());
+                        let error_json = serde_json::to_string(&e).unwrap_or_else(|_| {
+                            json!({"error": "serialization failed"}).to_string()
+                        });
                         let js = format!(
                             "window.__quantum_reject({}, {})",
                             id,

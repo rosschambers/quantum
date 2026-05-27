@@ -48,9 +48,7 @@ impl ProviderRegistry for InMemoryProviderRegistry {
 mod tests {
     use super::*;
     use async_trait::async_trait;
-    use quantum_domain::{
-        Action, ActionOutcome, DomainError, Match, ProviderCapabilities, Query,
-    };
+    use quantum_domain::{Action, ActionOutcome, DomainError, Match, ProviderCapabilities, Query};
 
     struct TestProvider {
         id: ProviderId,
