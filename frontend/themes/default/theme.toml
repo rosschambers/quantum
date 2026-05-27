@@ -1,0 +1,14 @@
+# Quantum Default Theme Manifest
+
+name = "default"
+description = "Quantum default launcher theme"
+
+# No extends — this is the base theme
+
+[tokens]
+source = "file"
+path = "tokens.toml"
+
+[[views]]
+name = "launcher"
+path = "views/launcher/dist/index.html"
