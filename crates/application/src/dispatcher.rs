@@ -1,4 +1,7 @@
-use crate::{ApplicationError, LaunchActionUseCase, ListProvidersUseCase, OpenViewUseCase, ReloadThemeUseCase, SearchUseCase, Result};
+use crate::{
+    ApplicationError, LaunchActionUseCase, ListProvidersUseCase, OpenViewUseCase,
+    ReloadThemeUseCase, Result, SearchUseCase,
+};
 use quantum_domain::{DomainError, WindowMode};
 use serde_json::{json, Value};
 use std::sync::Arc;
@@ -49,8 +52,8 @@ impl Dispatcher {
             .map_err(|e| ApplicationError::Unknown(format!("invalid query params: {}", e)))?;
 
         let response = self.search.execute(query).await?;
-        Ok(serde_json::to_value(response)
-            .map_err(|e| ApplicationError::Unknown(format!("serialization error: {}", e)))?)
+        serde_json::to_value(response)
+            .map_err(|e| ApplicationError::Unknown(format!("serialization error: {}", e)))
     }
 
     async fn handle_action_invoke(&self, params: Value) -> Result<Value> {
@@ -60,8 +63,9 @@ impl Dispatcher {
             action: quantum_domain::Action,
         }
 
-        let params: ActionInvokeParams = serde_json::from_value(params)
-            .map_err(|e| ApplicationError::Unknown(format!("invalid action invoke params: {}", e)))?;
+        let params: ActionInvokeParams = serde_json::from_value(params).map_err(|e| {
+            ApplicationError::Unknown(format!("invalid action invoke params: {}", e))
+        })?;
 
         self.launch_action
             .execute(params.provider_id.into(), params.action)
@@ -146,7 +150,7 @@ mod tests {
     use async_trait::async_trait;
     use quantum_domain::{
         Action, ActionOutcome, DomainError, EventBus, Match, MatchScore, ProviderCapabilities,
-        ProviderRegistry, ProviderSource, Query, ThemeStore, WindowHost, ProviderId,
+        ProviderId, ProviderRegistry, ProviderSource, Query, ThemeStore, WindowHost,
     };
     use std::collections::HashMap;
 
@@ -218,7 +222,11 @@ mod tests {
 
     #[async_trait]
     impl EventBus for FakeEventBus {
-        async fn publish(&self, _event: &str, _payload: &str) -> std::result::Result<(), DomainError> {
+        async fn publish(
+            &self,
+            _event: &str,
+            _payload: &str,
+        ) -> std::result::Result<(), DomainError> {
             Ok(())
         }
 
@@ -249,9 +257,7 @@ mod tests {
         let mut providers = HashMap::new();
         providers.insert(
             "apps".into(),
-            Arc::new(FakeProvider {
-                id: "apps".into(),
-            }) as Arc<dyn ProviderSource>,
+            Arc::new(FakeProvider { id: "apps".into() }) as Arc<dyn ProviderSource>,
         );
 
         let registry = Arc::new(FakeRegistry { providers });
@@ -264,17 +270,20 @@ mod tests {
         ));
         let open_view = Arc::new(OpenViewUseCase::new(Arc::new(FakeWindowHost)));
 
-        Dispatcher::new(search, launch_action, list_providers, reload_theme, open_view)
+        Dispatcher::new(
+            search,
+            launch_action,
+            list_providers,
+            reload_theme,
+            open_view,
+        )
     }
 
     #[tokio::test]
     async fn dispatches_search() {
         let dispatcher = build_dispatcher();
         let resp = dispatcher
-            .dispatch(
-                "search",
-                json!({ "text": "test", "providers": ["apps"] }),
-            )
+            .dispatch("search", json!({ "text": "test", "providers": ["apps"] }))
             .await
             .unwrap();
 
@@ -348,9 +357,7 @@ mod tests {
     #[tokio::test]
     async fn dispatches_theme_reload() {
         let dispatcher = build_dispatcher();
-        let resp = dispatcher
-            .dispatch("theme.reload", json!({}))
-            .await;
+        let resp = dispatcher.dispatch("theme.reload", json!({})).await;
 
         assert!(resp.is_ok());
     }
@@ -372,9 +379,7 @@ mod tests {
     #[tokio::test]
     async fn returns_unsupported_for_unknown_method() {
         let dispatcher = build_dispatcher();
-        let resp = dispatcher
-            .dispatch("unknown.method", json!({}))
-            .await;
+        let resp = dispatcher.dispatch("unknown.method", json!({})).await;
 
         assert!(matches!(
             resp,

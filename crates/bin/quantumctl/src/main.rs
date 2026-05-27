@@ -149,9 +149,13 @@ async fn call_daemon(
     params: Value,
 ) -> Result<Value, Box<dyn std::error::Error>> {
     // Connect to daemon
-    let mut stream = UnixStream::connect(socket_path)
-        .await
-        .map_err(|e| format!("Failed to connect to daemon at {}: {}", socket_path.display(), e))?;
+    let mut stream = UnixStream::connect(socket_path).await.map_err(|e| {
+        format!(
+            "Failed to connect to daemon at {}: {}",
+            socket_path.display(),
+            e
+        )
+    })?;
 
     // Build JSON-RPC request
     let request = json!({
@@ -179,7 +183,10 @@ async fn call_daemon(
         if !error.is_null() {
             eprintln!(
                 "RPC error: {}",
-                error.get("message").map(|m| m.as_str()).flatten().unwrap_or("unknown")
+                error
+                    .get("message")
+                    .and_then(|m| m.as_str())
+                    .unwrap_or("unknown")
             );
             std::process::exit(1);
         }
@@ -198,7 +205,10 @@ fn print_response(value: &Value, json_mode: bool) {
         } else if value.is_object() {
             print_object(value, 0);
         } else if value.is_array() {
-            println!("{}", serde_json::to_string_pretty(value).unwrap_or_default());
+            println!(
+                "{}",
+                serde_json::to_string_pretty(value).unwrap_or_default()
+            );
         } else {
             println!("{}", value);
         }
