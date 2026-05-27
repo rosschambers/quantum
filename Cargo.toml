@@ -8,6 +8,7 @@ members = [
     "crates/bin/quantumd",
     "crates/bin/quantumctl",
     "crates/bin/quantum-dev",
+    "crates/architecture-test",
 ]
 
 [workspace.package]
@@ -25,3 +26,4 @@ async-trait = "0.1"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 anyhow = "1"
+cargo_metadata = "0.18"
