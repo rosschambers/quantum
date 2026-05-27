@@ -26,6 +26,10 @@ mod tests {
             "quantum-dev",
             ["quantum-domain", "quantum-infrastructure"].into_iter().collect(),
         );
+        m.insert(
+            "quantum-e2e",
+            ["quantum-domain", "quantum-infrastructure"].into_iter().collect(),
+        );
         m
     }
 

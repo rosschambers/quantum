@@ -65,6 +65,29 @@ impl ShellExecutor for TokioShellExecutor {
             return Err(DomainError::InvalidQuery("empty command".to_string()));
         }
 
+        // If QUANTUM_SHELL_LOG is set, log the command to that file instead of executing
+        if let Ok(log_path) = std::env::var("QUANTUM_SHELL_LOG") {
+            let command_str = serde_json::json!({
+                "command": command,
+                "timestamp": std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map(|d| d.as_secs_f64())
+                    .unwrap_or(0.0)
+            });
+            let line = serde_json::to_string(&command_str)
+                .map_err(|e| DomainError::Unsupported(format!("json serialization failed: {e}")))?;
+            std::fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(&log_path)
+                .and_then(|mut f| {
+                    use std::io::Write;
+                    writeln!(f, "{}", line)
+                })
+                .map_err(|e| DomainError::Unsupported(format!("failed to write shell log: {e}")))?;
+            return Ok(());
+        }
+
         let mut cmd = Command::new(&command[0]);
 
         for arg in &command[1..] {

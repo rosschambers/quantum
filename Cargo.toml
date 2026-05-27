@@ -9,6 +9,7 @@ members = [
     "crates/bin/quantumctl",
     "crates/bin/quantum-dev",
     "crates/architecture-test",
+    "tests/e2e",
 ]
 
 [workspace.package]
