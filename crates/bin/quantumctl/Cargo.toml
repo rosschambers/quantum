@@ -9,3 +9,13 @@ license.workspace = true
 quantum-domain = { path = "../../domain" }
 quantum-infrastructure = { path = "../../infrastructure" }
 tokio.workspace = true
+clap = { version = "4", features = ["derive"] }
+serde_json.workspace = true
+dirs = "5"
+tracing.workspace = true
+tracing-subscriber.workspace = true
+
+[dev-dependencies]
+assert_cmd = "2"
+predicates = "3"
+tempfile = "3"

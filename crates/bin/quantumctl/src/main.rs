@@ -1,3 +1,231 @@
-fn main() {
-    println!("quantumctl v{}", env!("CARGO_PKG_VERSION"));
+use clap::{Parser, Subcommand};
+use serde_json::{json, Value};
+use std::path::PathBuf;
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::net::UnixStream;
+
+#[derive(Parser)]
+#[command(name = "quantumctl")]
+#[command(about = "Control the quantum daemon", long_about = None)]
+struct Cli {
+    #[command(subcommand)]
+    command: Commands,
+
+    /// Output raw JSON response
+    #[arg(global = true, long)]
+    json: bool,
+
+    /// Socket path for daemon communication
+    #[arg(global = true, long)]
+    socket: Option<PathBuf>,
+}
+
+#[derive(Subcommand)]
+enum Commands {
+    /// Toggle a view (show if hidden, hide if shown)
+    Toggle {
+        /// View name
+        view: String,
+    },
+    /// Show a view
+    Show {
+        /// View name
+        view: String,
+    },
+    /// Hide a view
+    Hide {
+        /// View name
+        view: String,
+    },
+    /// Search for items
+    Search {
+        /// Query text
+        query: String,
+    },
+    /// List registered providers
+    Provider {
+        #[command(subcommand)]
+        command: ProviderCommand,
+    },
+    /// Get system status
+    System {
+        #[command(subcommand)]
+        command: SystemCommand,
+    },
+    /// Reload theme
+    Theme {
+        #[command(subcommand)]
+        command: ThemeCommand,
+    },
+    /// Raw JSON-RPC call
+    Call {
+        /// Method name
+        method: String,
+        /// JSON parameters
+        params: Option<String>,
+    },
+}
+
+#[derive(Subcommand)]
+enum ProviderCommand {
+    /// List all providers
+    List,
+}
+
+#[derive(Subcommand)]
+enum SystemCommand {
+    /// Get system status
+    Status,
+}
+
+#[derive(Subcommand)]
+enum ThemeCommand {
+    /// Reload the theme
+    Reload,
+}
+
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let cli = Cli::parse();
+
+    let socket_path = cli.socket.unwrap_or_else(|| {
+        let runtime_dir = std::env::var("XDG_RUNTIME_DIR")
+            .unwrap_or_else(|_| format!("{}/.run", std::env::var("HOME").unwrap_or_default()));
+        PathBuf::from(runtime_dir).join("quantum.sock")
+    });
+
+    match cli.command {
+        Commands::Toggle { view } => {
+            let result = call_daemon(&socket_path, "view.toggle", json!({ "view": view })).await?;
+            print_response(&result, cli.json);
+        }
+        Commands::Show { view } => {
+            let result = call_daemon(&socket_path, "view.show", json!({ "view": view })).await?;
+            print_response(&result, cli.json);
+        }
+        Commands::Hide { view } => {
+            let result = call_daemon(&socket_path, "view.hide", json!({ "view": view })).await?;
+            print_response(&result, cli.json);
+        }
+        Commands::Search { query } => {
+            let result = call_daemon(&socket_path, "search", json!({ "text": query })).await?;
+            print_response(&result, cli.json);
+        }
+        Commands::Provider { command } => match command {
+            ProviderCommand::List => {
+                let result = call_daemon(&socket_path, "provider.list", json!({})).await?;
+                print_response(&result, cli.json);
+            }
+        },
+        Commands::System { command } => match command {
+            SystemCommand::Status => {
+                let result = call_daemon(&socket_path, "system.status", json!({})).await?;
+                print_response(&result, cli.json);
+            }
+        },
+        Commands::Theme { command } => match command {
+            ThemeCommand::Reload => {
+                let result = call_daemon(&socket_path, "theme.reload", json!({})).await?;
+                print_response(&result, cli.json);
+            }
+        },
+        Commands::Call { method, params } => {
+            let params_value = if let Some(p) = params {
+                serde_json::from_str(&p)?
+            } else {
+                json!({})
+            };
+            let result = call_daemon(&socket_path, &method, params_value).await?;
+            print_response(&result, cli.json);
+        }
+    }
+
+    Ok(())
+}
+
+async fn call_daemon(
+    socket_path: &std::path::Path,
+    method: &str,
+    params: Value,
+) -> Result<Value, Box<dyn std::error::Error>> {
+    // Connect to daemon
+    let mut stream = UnixStream::connect(socket_path)
+        .await
+        .map_err(|e| format!("Failed to connect to daemon at {}: {}", socket_path.display(), e))?;
+
+    // Build JSON-RPC request
+    let request = json!({
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": method,
+        "params": params
+    });
+
+    // Send request
+    let request_str = request.to_string() + "\n";
+    stream.write_all(request_str.as_bytes()).await?;
+    stream.flush().await?;
+
+    // Read response
+    let mut buffer = vec![0u8; 4096];
+    let n = stream.read(&mut buffer).await?;
+    let response_str = String::from_utf8(buffer[..n].to_vec())?;
+
+    // Parse response
+    let response: Value = serde_json::from_str(&response_str)?;
+
+    // Check for JSON-RPC error
+    if let Some(error) = response.get("error") {
+        if !error.is_null() {
+            eprintln!(
+                "RPC error: {}",
+                error.get("message").map(|m| m.as_str()).flatten().unwrap_or("unknown")
+            );
+            std::process::exit(1);
+        }
+    }
+
+    Ok(response.get("result").cloned().unwrap_or(Value::Null))
+}
+
+fn print_response(value: &Value, json_mode: bool) {
+    if json_mode {
+        println!("{}", value);
+    } else {
+        // Human-readable output
+        if value.is_null() {
+            println!("(no response)");
+        } else if value.is_object() {
+            print_object(value, 0);
+        } else if value.is_array() {
+            println!("{}", serde_json::to_string_pretty(value).unwrap_or_default());
+        } else {
+            println!("{}", value);
+        }
+    }
+}
+
+fn print_object(value: &Value, indent: usize) {
+    if let Some(obj) = value.as_object() {
+        for (key, val) in obj {
+            let prefix = " ".repeat(indent);
+            if val.is_object() {
+                println!("{}{}:", prefix, key);
+                print_object(val, indent + 2);
+            } else if val.is_array() {
+                println!("{}{}:", prefix, key);
+                if let Some(arr) = val.as_array() {
+                    for item in arr {
+                        if item.is_object() {
+                            print_object(item, indent + 2);
+                        } else {
+                            println!("{}{}", " ".repeat(indent + 2), item);
+                        }
+                    }
+                }
+            } else {
+                println!("{}{}: {}", prefix, key, val);
+            }
+        }
+    }
 }
