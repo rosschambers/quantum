@@ -1,131 +1,175 @@
 use std::path::PathBuf;
 use std::sync::Arc;
+
+use async_trait::async_trait;
+use serde_json::Value;
 use tracing::info;
 use tracing_subscriber::EnvFilter;
 
 use quantum_application::{
-    Dispatcher, LaunchActionUseCase, ListProvidersUseCase, OpenViewUseCase, ReloadThemeUseCase,
-    SearchUseCase,
+    Dispatcher as AppDispatcher, LaunchActionUseCase, ListProvidersUseCase, OpenViewUseCase,
+    ReloadThemeUseCase, SearchUseCase,
+};
+use quantum_domain::{ProviderId, ProviderSource};
+use quantum_infrastructure::ipc::server::{
+    DispatchError, DispatchResult, Dispatcher as IpcDispatcher,
 };
 use quantum_infrastructure::{
     config::ConfigStore, providers::DesktopAppsProvider, registry::InMemoryProviderRegistry,
-    shell::TokioShellExecutor, theme::ThemeStore, HyprlandSocketClient, IpcServer,
-    ShellCommandProvider,
+    shell::TokioShellExecutor, theme::ThemeStore, HyprlandSocketClient, InMemoryEventBus,
+    ShellCommandProvider, UnixSocketServer,
 };
 use quantum_ui::DummyWindowHost;
 
+/// Adapter that lets the infrastructure IPC server route requests into the
+/// application-layer dispatcher. The adapter converts `ApplicationError` into
+/// the wire-level `DispatchError` so Rust types never leak across IPC.
+struct AppDispatcherAdapter {
+    inner: Arc<AppDispatcher>,
+}
+
+impl AppDispatcherAdapter {
+    fn new(inner: Arc<AppDispatcher>) -> Self {
+        Self { inner }
+    }
+}
+
+#[async_trait]
+impl IpcDispatcher for AppDispatcherAdapter {
+    async fn dispatch(&self, method: &str, params: Value) -> DispatchResult {
+        match self.inner.dispatch(method, params).await {
+            Ok(value) => Ok(value),
+            Err(err) => Err(DispatchError::new(-32603, err.to_string())),
+        }
+    }
+}
+
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    // Initialize tracing
     tracing_subscriber::fmt()
         .with_env_filter(EnvFilter::from_default_env())
         .init();
 
     info!("Starting quantumd v{}", env!("CARGO_PKG_VERSION"));
 
-    // Determine if headless mode
-    let headless = std::env::args().any(|arg| arg == "--headless");
-    let socket_override = std::env::args()
-        .find_map(|arg| {
-            if arg.starts_with("--socket=") {
-                Some(arg.strip_prefix("--socket=").unwrap().to_string())
-            } else {
-                None
-            }
-        })
-        .or_else(|| {
-            std::env::args()
-                .zip(std::env::args().skip(1))
-                .find_map(|(a, b)| {
-                    if a == "--socket" {
-                        Some(b)
-                    } else {
-                        None
-                    }
-                })
-        });
+    let args: Vec<String> = std::env::args().collect();
+    let headless = args.iter().any(|a| a == "--headless");
+    let socket_override = parse_socket_override(&args);
 
-    // Load configuration
-    let config = ConfigStore::load().unwrap_or_else(|err| {
-        tracing::warn!("Failed to load config: {}. Using defaults.", err);
-        ConfigStore::default()
-    });
+    // Load configuration. A missing config file is not fatal: ConfigStore::load
+    // already falls back to defaults.
+    let config_store = match ConfigStore::load().await {
+        Ok(store) => store,
+        Err(err) => {
+            return Err(format!("failed to load configuration: {err}").into());
+        }
+    };
+    let config = config_store.get_config().await;
 
-    let active_theme = config.general.as_ref().and_then(|g| g.active_theme.clone());
+    let active_theme = config.general.active_theme.clone();
 
-    // Create infrastructure components
     let theme_store = Arc::new(ThemeStore::new(active_theme));
     let shell_executor = Arc::new(TokioShellExecutor::new());
     let registry = Arc::new(InMemoryProviderRegistry::new());
+    let event_bus: Arc<dyn quantum_domain::EventBus> = Arc::new(InMemoryEventBus::new());
 
-    // Register built-in providers
     // Desktop apps provider
-    if let Ok(provider) = DesktopAppsProvider::new(shell_executor.clone()).await {
-        info!("Registered DesktopAppsProvider");
-        registry
-            .register(Arc::new(provider) as Arc<dyn quantum_domain::ports::ProviderSource>)
-            .await;
-    } else {
-        tracing::warn!("Failed to create DesktopAppsProvider");
+    match DesktopAppsProvider::new(shell_executor.clone()).await {
+        Ok(provider) => {
+            let id = provider.id().clone();
+            registry
+                .register(
+                    id,
+                    Arc::new(provider) as Arc<dyn quantum_domain::ProviderSource>,
+                )
+                .await;
+            info!("Registered DesktopAppsProvider");
+        }
+        Err(err) => {
+            tracing::warn!("Failed to create DesktopAppsProvider: {err}");
+        }
     }
 
     // Shell command provider
     let shell_cmd = Arc::new(ShellCommandProvider::new(shell_executor.clone()));
-    registry.register(shell_cmd).await;
+    let shell_cmd_id = shell_cmd.id().clone();
+    registry
+        .register(
+            shell_cmd_id,
+            shell_cmd as Arc<dyn quantum_domain::ProviderSource>,
+        )
+        .await;
     info!("Registered ShellCommandProvider");
 
     // Hyprland provider (optional)
-    if let Ok(client) = HyprlandSocketClient::new() {
-        if let Ok(provider) =
-            quantum_infrastructure::HyprlandWindowsProvider::new(Arc::new(client)).await
-        {
-            registry.register(Arc::new(provider)).await;
-            info!("Registered HyprlandWindowsProvider");
+    match HyprlandSocketClient::new() {
+        Ok(client) => {
+            match quantum_infrastructure::HyprlandWindowsProvider::new(Arc::new(client)).await {
+                Ok(provider) => {
+                    let id = provider.id().clone();
+                    registry
+                        .register(
+                            id,
+                            Arc::new(provider) as Arc<dyn quantum_domain::ProviderSource>,
+                        )
+                        .await;
+                    info!("Registered HyprlandWindowsProvider");
+                }
+                Err(err) => {
+                    tracing::warn!("Failed to create HyprlandWindowsProvider: {err}");
+                }
+            }
         }
-    } else {
-        tracing::warn!("Hyprland not available. Continuing without Hyprland support.");
+        Err(_) => {
+            tracing::warn!("Hyprland not available. Continuing without Hyprland support.");
+        }
     }
 
     // Register declarative shell providers from config
-    if let Some(providers) = &config.providers {
-        for provider_config in providers {
-            match quantum_infrastructure::DeclarativeShellProvider::new(
-                provider_config.clone(),
-                shell_executor.clone(),
-            )
-            .await
-            {
-                Ok(provider) => {
-                    info!("Registered DeclarativeShellProvider: {}", provider_config.id);
-                    registry.register(Arc::new(provider)).await;
-                }
-                Err(err) => {
-                    tracing::warn!("Failed to register {}: {}", provider_config.id, err);
-                }
+    for provider_config in &config.provider {
+        match quantum_infrastructure::DeclarativeShellProvider::new(
+            provider_config.clone(),
+            shell_executor.clone(),
+        ) {
+            Ok(provider) => {
+                let id = ProviderId::from(provider_config.id.clone());
+                info!(
+                    "Registered DeclarativeShellProvider: {}",
+                    provider_config.id
+                );
+                registry
+                    .register(
+                        id,
+                        Arc::new(provider) as Arc<dyn quantum_domain::ProviderSource>,
+                    )
+                    .await;
+            }
+            Err(err) => {
+                tracing::warn!("Failed to register {}: {}", provider_config.id, err);
             }
         }
     }
 
-    // Create application layer components
+    // Use cases
     let search_use_case = Arc::new(SearchUseCase::new(registry.clone()));
     let launch_action_use_case = Arc::new(LaunchActionUseCase::new(registry.clone()));
     let list_providers_use_case = Arc::new(ListProvidersUseCase::new(registry.clone()));
-    let reload_theme_use_case = Arc::new(ReloadThemeUseCase::new(theme_store.clone()));
+    let reload_theme_use_case = Arc::new(ReloadThemeUseCase::new(
+        theme_store.clone() as Arc<dyn quantum_domain::ThemeStore>,
+        event_bus.clone(),
+    ));
 
-    // Use dummy window host (real one would require GTK initialization)
-    let window_host: Arc<dyn quantum_domain::ports::WindowHost> =
-        Arc::new(DummyWindowHost::new());
-
+    let window_host: Arc<dyn quantum_domain::ports::WindowHost> = Arc::new(DummyWindowHost::new());
     let open_view_use_case = Arc::new(OpenViewUseCase::new(window_host.clone()));
 
-    // Create dispatcher
-    let dispatcher = Arc::new(Dispatcher::new(
+    let dispatcher = Arc::new(AppDispatcher::new(
         search_use_case,
         launch_action_use_case,
         list_providers_use_case,
         reload_theme_use_case,
         open_view_use_case,
     ));
+    let ipc_dispatcher = Arc::new(AppDispatcherAdapter::new(dispatcher));
 
     // Determine socket path
     let socket_path = if let Some(path) = socket_override {
@@ -138,11 +182,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Clean up stale socket if needed
     if socket_path.exists() {
-        // Try to connect to see if daemon is running
         if tokio::net::UnixStream::connect(&socket_path).await.is_err() {
-            // Daemon not running, remove stale socket
             if let Err(err) = std::fs::remove_file(&socket_path) {
-                tracing::warn!("Failed to remove stale socket: {}", err);
+                tracing::warn!("Failed to remove stale socket: {err}");
             }
         } else {
             eprintln!("quantum is already running");
@@ -151,50 +193,60 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     // Start IPC server
-    let ipc_server = Arc::new(IpcServer::new(socket_path.clone(), dispatcher.clone()));
-    let server_handle = {
-        let server = ipc_server.clone();
+    let server = Arc::new(UnixSocketServer::new(&socket_path));
+    {
+        let server = server.clone();
+        let dispatcher = ipc_dispatcher.clone();
         tokio::spawn(async move {
-            if let Err(err) = server.serve().await {
-                tracing::error!("IPC server error: {}", err);
+            if let Err(err) = server.serve(dispatcher).await {
+                tracing::error!("IPC server error: {err}");
             }
-        })
-    };
+        });
+    }
 
     info!("IPC server listening on {}", socket_path.display());
 
     // Signal handling for graceful shutdown
     let socket_path_clone = socket_path.clone();
-    let signal_task = tokio::spawn(async move {
-        let mut sigterm =
-            tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
-                .expect("signal setup");
-        let mut sigint = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::interrupt())
-            .expect("signal setup");
+    let mut sigterm = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
+        .expect("signal setup");
+    let mut sigint = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::interrupt())
+        .expect("signal setup");
 
-        tokio::select! {
-            _ = sigterm.recv() => {
-                info!("Received SIGTERM");
-            }
-            _ = sigint.recv() => {
-                info!("Received SIGINT");
-            }
-            _ = tokio::signal::ctrl_c() => {
-                info!("Received Ctrl+C");
-            }
-        }
+    info!(
+        "Running daemon ({} mode)",
+        if headless { "headless" } else { "interactive" }
+    );
 
-        // Clean up socket file
-        if let Err(err) = std::fs::remove_file(&socket_path_clone) {
-            tracing::warn!("Failed to remove socket file: {}", err);
-        }
+    tokio::select! {
+        _ = sigterm.recv() => info!("Received SIGTERM"),
+        _ = sigint.recv() => info!("Received SIGINT"),
+        _ = tokio::signal::ctrl_c() => info!("Received Ctrl+C"),
+    }
 
-        std::process::exit(0);
-    });
-
-    // For now, just run in headless mode
-    info!("Running daemon (headless mode)");
-    let _ = signal_task.await;
+    // Clean up socket file on shutdown
+    if let Err(err) = std::fs::remove_file(&socket_path_clone) {
+        tracing::warn!("Failed to remove socket file: {err}");
+    }
 
     Ok(())
+}
+
+fn parse_socket_override(args: &[String]) -> Option<String> {
+    if let Some(value) = args
+        .iter()
+        .find_map(|arg| arg.strip_prefix("--socket=").map(|s| s.to_string()))
+    {
+        return Some(value);
+    }
+
+    let mut iter = args.iter();
+    while let Some(arg) = iter.next() {
+        if arg == "--socket" {
+            if let Some(next) = iter.next() {
+                return Some(next.clone());
+            }
+        }
+    }
+    None
 }
