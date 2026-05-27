@@ -1,3 +1,4 @@
+use async_trait::async_trait;
 use std::collections::HashMap;
 use std::path::PathBuf;
 use tokio::sync::RwLock;
@@ -101,20 +102,14 @@ impl ThemeStore {
     pub fn get_file(&self, theme_name: &str, path: &str) -> Option<Vec<u8>> {
         // First try disk override if not the default theme
         if theme_name != "default" {
-            let disk_path = self
-                .themes_dir
-                .join(theme_name)
-                .join(path);
+            let disk_path = self.themes_dir.join(theme_name).join(path);
             if let Ok(data) = std::fs::read(&disk_path) {
                 return Some(data);
             }
         }
 
         // Try user's override of default theme
-        let user_override = self
-            .themes_dir
-            .join("default")
-            .join(path);
+        let user_override = self.themes_dir.join("default").join(path);
         if user_override.exists() {
             if let Ok(data) = std::fs::read(&user_override) {
                 return Some(data);
@@ -146,7 +141,7 @@ impl ThemeStore {
     /// Get resolved tokens, reading from tokens.toml in the theme.
     pub async fn resolved_tokens(&self) -> HashMap<String, String> {
         let theme = self.active_theme.read().await.clone();
-        
+
         // Try to load tokens.toml from theme
         if let Some(content) = self.get_file(&theme, "tokens.toml") {
             if let Ok(text) = String::from_utf8(content) {
@@ -206,6 +201,17 @@ impl ThemeStore {
     }
 }
 
+#[async_trait]
+impl quantum_domain::ThemeStore for ThemeStore {
+    async fn load_theme(&self, name: &str) -> Result<(), DomainError> {
+        ThemeStore::load_theme(self, name).await
+    }
+
+    async fn reload(&self) -> Result<(), DomainError> {
+        ThemeStore::reload(self).await
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -243,10 +249,16 @@ mod tests {
         let store = ThemeStore::new(None);
         // Check that we can read embedded files
         let tokens_data = store.get_file("default", "tokens.toml");
-        assert!(tokens_data.is_some(), "tokens.toml should be embedded in default theme");
-        
+        assert!(
+            tokens_data.is_some(),
+            "tokens.toml should be embedded in default theme"
+        );
+
         let content = String::from_utf8(tokens_data.unwrap()).expect("valid utf8");
-        assert!(content.contains("color-"), "tokens.toml should contain color definitions");
+        assert!(
+            content.contains("color-"),
+            "tokens.toml should contain color definitions"
+        );
     }
 
     #[test]
@@ -255,12 +267,15 @@ mod tests {
         // Check that launcher view files exist in embedded bundle
         // Try the full path
         let dist_file = store.get_file("default", "views/launcher/dist/index.html");
-        
+
         // If that fails, verify at least some embedded files exist
         if dist_file.is_none() {
             // Fallback: check tokens.toml exists as a sanity check
             let tokens = store.get_file("default", "tokens.toml");
-            assert!(tokens.is_some(), "embedded default theme should have tokens.toml");
+            assert!(
+                tokens.is_some(),
+                "embedded default theme should have tokens.toml"
+            );
         } else {
             let content = String::from_utf8(dist_file.unwrap()).expect("valid utf8");
             assert!(!content.is_empty(), "index.html should have content");
@@ -275,14 +290,14 @@ mod tests {
         let temp_dir = TempDir::new().expect("temp dir");
         let override_theme_dir = temp_dir.path().join("default");
         fs::create_dir_all(&override_theme_dir).expect("mkdir");
-        
+
         let custom_tokens = override_theme_dir.join("custom.txt");
         fs::write(&custom_tokens, b"override content").expect("write");
 
         // This test just verifies the logic path works; a real test would inject
         // the themes_dir for testing
         let store = ThemeStore::new(None);
-        
+
         // Embedded still loads when no disk override
         assert!(store.get_file("default", "tokens.toml").is_some());
     }
@@ -291,10 +306,10 @@ mod tests {
     async fn tokens_resolve_from_embedded_file() {
         let store = ThemeStore::new(None);
         let tokens = store.resolved_tokens().await;
-        
+
         // Should have loaded from embedded tokens.toml
         // If tokens.toml exists and parses, it will be used
         // Otherwise falls back to defaults
-        assert!(tokens.contains_key("color-bg") || tokens.is_empty() == false);
+        assert!(tokens.contains_key("color-bg") || !tokens.is_empty());
     }
 }

@@ -2,6 +2,7 @@
 
 pub mod config;
 pub mod error;
+pub mod event_bus;
 pub mod hyprland;
 pub mod ipc;
 pub mod providers;
@@ -11,6 +12,7 @@ pub mod theme;
 
 pub use config::ConfigStore;
 pub use error::InfrastructureError;
+pub use event_bus::InMemoryEventBus;
 pub use hyprland::HyprlandSocketClient;
 pub use ipc::UnixSocketServer;
 pub use providers::{
