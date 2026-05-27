@@ -7,6 +7,7 @@ pub mod match_result;
 pub mod ports;
 pub mod query;
 pub mod score;
+pub mod window_mode;
 
 pub use action::Action;
 pub use error::DomainError;
@@ -18,6 +19,7 @@ pub use ports::{
 };
 pub use query::Query;
 pub use score::MatchScore;
+pub use window_mode::WindowMode;
 
 pub fn version() -> &'static str {
     env!("CARGO_PKG_VERSION")
