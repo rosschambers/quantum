@@ -8,3 +8,16 @@ license.workspace = true
 [dependencies]
 quantum-application = { path = "../application" }
 tokio.workspace = true
+serde = { workspace = true, features = ["derive"] }
+serde_json.workspace = true
+thiserror.workspace = true
+gtk4 = { version = "0.9", features = ["v4_14"] }
+webkit6 = "0.4"
+gtk4-layer-shell = "0.4"
+glib = "0.19"
+
+[dev-dependencies]
+tokio = { version = "1", features = ["macros", "rt"] }
+
+[features]
+gtk-test = []
