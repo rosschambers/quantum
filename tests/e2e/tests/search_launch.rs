@@ -1,8 +1,32 @@
 use std::fs;
+use std::path::PathBuf;
 use std::time::Duration;
 use tempfile::TempDir;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::UnixStream;
+
+/// Locate the pre-built `quantumd` binary in the workspace target directory.
+/// Walks up from `CARGO_MANIFEST_DIR` looking for `target/debug/quantumd`.
+fn locate_quantumd() -> Result<PathBuf, Box<dyn std::error::Error>> {
+    if let Ok(explicit) = std::env::var("QUANTUMD_BIN") {
+        return Ok(PathBuf::from(explicit));
+    }
+
+    let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let mut search = manifest_dir.as_path();
+    loop {
+        let candidate = search.join("target").join("debug").join("quantumd");
+        if candidate.exists() {
+            return Ok(candidate);
+        }
+        match search.parent() {
+            Some(parent) => search = parent,
+            None => break,
+        }
+    }
+
+    Err("quantumd binary not found; run `cargo build -p quantumd` first".into())
+}
 
 /// Create a temporary desktop environment with required XDG directories
 fn setup_temp_xdg() -> Result<TempDir, Box<dyn std::error::Error>> {
@@ -46,27 +70,27 @@ async fn search_and_launch_desktop_app() -> Result<(), Box<dyn std::error::Error
     // Setup socket path
     let socket_path = tmppath.join("quantum.sock");
 
+    // Locate the pre-built quantumd binary. We rely on `cargo test` (or the
+    // build step preceding it) to have produced `target/debug/quantumd`.
+    // Spawning the binary directly avoids a nested `cargo` invocation that
+    // would deadlock on the workspace lock.
+    let quantumd_path = locate_quantumd()?;
+
     // Spawn quantumd with --headless flag
-    let mut daemon = tokio::process::Command::new("cargo")
-        .args(&[
-            "run",
-            "--bin",
-            "quantumd",
-            "--",
-            "--headless",
-            &format!("--socket={}", socket_path.display()),
-        ])
-        .env_clear()
-        // Preserve PATH and other essentials
-        .envs(std::env::vars().filter(|(k, _)| {
-            matches!(k.as_str(), "PATH" | "HOME" | "RUST_LOG" | "RUST_BACKTRACE")
-        }))
-        // Set our test environment variables
-        .env("XDG_RUNTIME_DIR", tmppath.to_str().unwrap())
-        .env("XDG_DATA_HOME", tmppath.to_str().unwrap())
-        .env("XDG_CONFIG_HOME", tmppath.to_str().unwrap())
-        .env("QUANTUM_SHELL_LOG", shell_log_path.to_str().unwrap())
-        .spawn()?;
+    let mut daemon =
+        tokio::process::Command::new(&quantumd_path)
+            .args(["--headless", &format!("--socket={}", socket_path.display())])
+            .env_clear()
+            // Preserve PATH and other essentials
+            .envs(std::env::vars().filter(|(k, _)| {
+                matches!(k.as_str(), "PATH" | "HOME" | "RUST_LOG" | "RUST_BACKTRACE")
+            }))
+            // Set our test environment variables
+            .env("XDG_RUNTIME_DIR", tmppath.to_str().unwrap())
+            .env("XDG_DATA_HOME", tmppath.to_str().unwrap())
+            .env("XDG_CONFIG_HOME", tmppath.to_str().unwrap())
+            .env("QUANTUM_SHELL_LOG", shell_log_path.to_str().unwrap())
+            .spawn()?;
 
     // Wait for socket to appear (with timeout)
     let start = std::time::Instant::now();
@@ -183,12 +207,18 @@ async fn search_and_launch_desktop_app() -> Result<(), Box<dyn std::error::Error
         );
     }
 
-    // Terminate the daemon
-    daemon.kill().await?;
-    daemon.wait().await?;
+    // Terminate the daemon with SIGTERM so its signal handler can run the
+    // socket cleanup. `daemon.kill()` would send SIGKILL, which bypasses
+    // cleanup and produces a false-positive failure on the assertion below.
+    let pid = daemon.id().ok_or("daemon has no pid (already exited?)")?;
+    // SAFETY: `kill(2)` with SIGTERM and a valid pid is well-defined.
+    unsafe {
+        libc::kill(pid as libc::pid_t, libc::SIGTERM);
+    }
+    let _ = daemon.wait().await?;
 
     // Verify socket is cleaned up (after a short delay)
-    tokio::time::sleep(Duration::from_millis(100)).await;
+    tokio::time::sleep(Duration::from_millis(200)).await;
     assert!(
         !socket_path.exists(),
         "Socket should be cleaned up after daemon exits"
