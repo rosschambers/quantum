@@ -15,10 +15,11 @@
     "svelte": "^5"
   },
   "devDependencies": {
-    "@sveltejs/vite-plugin-svelte": "^3",
+    "@sveltejs/vite-plugin-svelte": "^4.0.0-next.6",
     "@testing-library/svelte": "^4",
     "@testing-library/user-event": "^14",
     "@vitest/ui": "^2",
+    "happy-dom": "^15",
     "vitest": "^2",
     "vite": "^5"
   }

@@ -5,7 +5,7 @@ export default defineConfig({
   plugins: [svelte()],
   test: {
     globals: true,
-    environment: 'jsdom',
-    setupFiles: [],
+    environment: 'happy-dom',
+    setupFiles: ['./vitest.setup.ts'],
   },
 });
