@@ -1,0 +1,11 @@
+[Unit]
+Description=Quantum Launcher Daemon
+After=display-manager.service
+
+[Service]
+Type=simple
+ExecStart=%h/.cargo/bin/quantumd
+Restart=on-failure
+
+[Install]
+WantedBy=default.target

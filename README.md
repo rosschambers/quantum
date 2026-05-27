@@ -17,6 +17,29 @@ For architecture details, see [Design Doc](docs/plans/2026-05-26-quantum-launche
 
 See [AGENTS.md](AGENTS.md) for conventions, layer rules, and commit style.
 
+## Installation
+
+### System Dependencies
+
+On Ubuntu 24.04 or similar:
+
+```bash
+sudo apt-get install libgtk-4-dev libwebkit2gtk-6.0-dev libgtk4-layer-shell-dev
+```
+
+### Building from Source
+
+```bash
+just build
+```
+
+Then install:
+
+```bash
+cargo install --path crates/bin/quantumd
+cargo install --path crates/bin/quantumctl
+```
+
 ## Quick Start
 
 ### Commands
@@ -30,17 +53,36 @@ See [AGENTS.md](AGENTS.md) for conventions, layer rules, and commit style.
 | `just dev` | Run daemon in dev mode |
 | `just ts-bindgen` | Regenerate TypeScript types |
 
-### Building
+### Running
+
+Start the daemon:
 
 ```bash
-just build
+just dev
 ```
 
-### Testing
+Or run in the background:
 
 ```bash
-just test
+quantumd &
 ```
+
+### Keybind Setup
+
+Add the launcher to your Hyprland config. See [packaging/hyprland/example.conf](packaging/hyprland/example.conf) for the example keybind.
+
+### Systemd Setup
+
+To run the daemon as a user service, copy the unit file and enable it:
+
+```bash
+mkdir -p ~/.config/systemd/user
+cp packaging/systemd/quantum.service ~/.config/systemd/user/
+systemctl --user daemon-reload
+systemctl --user enable --now quantum
+```
+
+See [packaging/systemd/quantum.service](packaging/systemd/quantum.service) for details.
 
 ## Architecture
 
@@ -52,3 +94,10 @@ Quantum follows a strict onion architecture enforced at the Cargo crate level:
 - **UI** — GTK4 + WebKitGTK windows and Svelte frontends
 
 See [AGENTS.md](AGENTS.md) for dependency rules.
+
+## Documentation
+
+- [Design Document](docs/plans/2026-05-26-quantum-launcher-design.md) — Full technical vision and design decisions
+- [Architecture](docs/architecture.md) — Onion layer structure and module organization
+- [Protocol Reference](docs/protocol.md) — IPC methods and message formats
+- [Theming Guide](docs/theming.md) — How to write and customize themes
