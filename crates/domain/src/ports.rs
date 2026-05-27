@@ -1,0 +1,132 @@
+use async_trait::async_trait;
+use std::sync::Arc;
+use crate::{Action, DomainError, Match, Query, ProviderId};
+
+/// Capabilities of a provider.
+#[derive(Debug, Clone)]
+pub struct ProviderCapabilities {
+    pub searchable: bool,
+    pub streamable: bool,
+}
+
+/// Outcome of invoking an action.
+#[derive(Debug, Clone)]
+pub struct ActionOutcome {
+    pub message: Option<String>,
+}
+
+/// A provider source that can search and invoke actions.
+#[async_trait]
+pub trait ProviderSource: Send + Sync {
+    fn id(&self) -> &ProviderId;
+    fn capabilities(&self) -> ProviderCapabilities;
+    async fn search(&self, q: &Query) -> Result<Vec<Match>, DomainError>;
+    async fn invoke(&self, action: &Action) -> Result<ActionOutcome, DomainError>;
+}
+
+/// Registry for looking up providers.
+#[async_trait]
+pub trait ProviderRegistry: Send + Sync {
+    async fn list(&self) -> Vec<ProviderId>;
+    async fn get(&self, id: &ProviderId) -> Option<Arc<dyn ProviderSource>>;
+}
+
+/// Configuration storage.
+#[async_trait]
+pub trait ConfigStore: Send + Sync {
+    async fn load(&self) -> Result<(), DomainError>;
+    async fn get(&self, key: &str) -> Option<String>;
+}
+
+/// Theme storage and resolution.
+#[async_trait]
+pub trait ThemeStore: Send + Sync {
+    async fn load_theme(&self, name: &str) -> Result<(), DomainError>;
+    async fn reload(&self) -> Result<(), DomainError>;
+}
+
+/// Event bus for domain events.
+#[async_trait]
+pub trait EventBus: Send + Sync {
+    async fn publish(&self, event: &str, payload: &str) -> Result<(), DomainError>;
+    async fn subscribe(&self, event: &str) -> Result<(), DomainError>;
+}
+
+/// Shell execution.
+#[async_trait]
+pub trait ShellExecutor: Send + Sync {
+    async fn execute(&self, command: &[String]) -> Result<String, DomainError>;
+}
+
+/// Hyprland IPC client.
+#[async_trait]
+pub trait HyprlandClient: Send + Sync {
+    async fn command(&self, cmd: &str) -> Result<String, DomainError>;
+}
+
+/// Window host for managing windows.
+#[async_trait]
+pub trait WindowHost: Send + Sync {
+    async fn open(&self, view: &str) -> Result<(), DomainError>;
+    async fn hide(&self, view: &str) -> Result<(), DomainError>;
+    async fn toggle(&self, view: &str) -> Result<(), DomainError>;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    struct FakeProvider {
+        id: ProviderId,
+    }
+
+    #[async_trait]
+    impl ProviderSource for FakeProvider {
+        fn id(&self) -> &ProviderId {
+            &self.id
+        }
+
+        fn capabilities(&self) -> ProviderCapabilities {
+            ProviderCapabilities {
+                searchable: true,
+                streamable: false,
+            }
+        }
+
+        async fn search(&self, _q: &Query) -> Result<Vec<Match>, DomainError> {
+            Ok(vec![])
+        }
+
+        async fn invoke(&self, _a: &Action) -> Result<ActionOutcome, DomainError> {
+            Ok(ActionOutcome { message: None })
+        }
+    }
+
+    #[tokio::test]
+    async fn fake_provider_returns_empty_search() {
+        let p = FakeProvider {
+            id: ProviderId::from("apps"),
+        };
+        let q = Query::new("x");
+        let r = p.search(&q).await.unwrap();
+        assert!(r.is_empty());
+    }
+
+    #[tokio::test]
+    async fn fake_provider_has_correct_id() {
+        let p = FakeProvider {
+            id: ProviderId::from("test-provider"),
+        };
+        assert_eq!(p.id(), &ProviderId::from("test-provider"));
+    }
+
+    #[tokio::test]
+    async fn fake_provider_capabilities() {
+        let p = FakeProvider {
+            id: ProviderId::from("apps"),
+        };
+        let caps = p.capabilities();
+        assert!(caps.searchable);
+        assert!(!caps.streamable);
+    }
+}
