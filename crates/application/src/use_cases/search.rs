@@ -4,7 +4,9 @@ use quantum_domain::{Match, ProviderRegistry, Query};
 use std::sync::Arc;
 use tokio::time::{timeout, Duration};
 
-#[derive(Debug, Clone)]
+use serde::{Deserialize, Serialize};
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SearchResponse {
     pub matches: Vec<Match>,
     pub warnings: Vec<String>,
