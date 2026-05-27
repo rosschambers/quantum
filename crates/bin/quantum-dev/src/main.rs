@@ -1,9 +1,9 @@
 use clap::{Parser, Subcommand};
-use notify::{Watcher, RecursiveMode, Result as NotifyResult, Event};
-use notify_debouncer_mini::new_debouncer;
+use notify_debouncer_mini::notify::RecursiveMode;
+use notify_debouncer_mini::{new_debouncer, DebouncedEventKind};
+use serde_json::json;
 use std::path::PathBuf;
 use std::time::Duration;
-use serde_json::json;
 use tokio::io::AsyncWriteExt;
 use tokio::net::UnixStream;
 use tracing::info;
@@ -27,7 +27,6 @@ enum Commands {
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    // Initialize tracing
     tracing_subscriber::fmt()
         .with_env_filter(EnvFilter::from_default_env())
         .init();
@@ -47,7 +46,7 @@ async fn generate_ts() -> Result<(), Box<dyn std::error::Error>> {
 
     // For now, this is a placeholder. The real implementation would use specta
     // to walk the Dispatcher methods and generate TypeScript types.
-    // 
+    //
     // TODO: Integrate specta properly:
     // 1. Add specta as a dev-dependency in application
     // 2. Use specta macros on Dispatcher methods
@@ -122,7 +121,9 @@ async fn watch_themes() -> Result<(), Box<dyn std::error::Error>> {
     let mut debouncer = new_debouncer(Duration::from_millis(500), tx)?;
 
     // Get the watcher and watch the directory
-    debouncer.watcher().watch(&themes_dir, RecursiveMode::Recursive)?;
+    debouncer
+        .watcher()
+        .watch(&themes_dir, RecursiveMode::Recursive)?;
 
     info!("Watching {} for changes", themes_dir.display());
     info!("Press Ctrl+C to stop");
@@ -138,24 +139,26 @@ async fn watch_themes() -> Result<(), Box<dyn std::error::Error>> {
     for res in rx {
         match res {
             Ok(events) => {
-                // Check if any events are writes/creates/removes
-                if events.iter().any(|e| matches!(e.kind, notify::EventKind::Modify(_) | notify::EventKind::Create(_) | notify::EventKind::Remove(_))) {
+                // The debouncer collapses events to either `Any` (a debounced
+                // change settled) or `AnyContinuous` (changes still in flight).
+                // We reload on any settled change.
+                if events
+                    .iter()
+                    .any(|e| matches!(e.kind, DebouncedEventKind::Any))
+                {
                     info!("Theme file changed, reloading...");
-                    
-                    // Try to connect to daemon and send reload command
+
                     match send_reload(&socket_path).await {
-                        Ok(_) => {
-                            info!("Theme reload sent to daemon");
-                        }
+                        Ok(_) => info!("Theme reload sent to daemon"),
                         Err(e) => {
-                            eprintln!("WARNING: Failed to send reload to daemon: {}", e);
+                            eprintln!("WARNING: Failed to send reload to daemon: {e}");
                             eprintln!("Make sure quantumd is running");
                         }
                     }
                 }
             }
             Err(e) => {
-                eprintln!("Watch error: {}", e);
+                eprintln!("Watch error: {e}");
                 break;
             }
         }
@@ -165,10 +168,8 @@ async fn watch_themes() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 async fn send_reload(socket_path: &std::path::Path) -> Result<(), Box<dyn std::error::Error>> {
-    // Connect to daemon socket
     let mut stream = UnixStream::connect(socket_path).await?;
 
-    // Send theme.reload RPC call
     let request = json!({
         "jsonrpc": "2.0",
         "id": 1,
