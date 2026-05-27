@@ -81,6 +81,30 @@ impl GtkWindowHost {
     }
 }
 
+#[async_trait::async_trait]
+impl quantum_domain::ports::WindowHost for GtkWindowHost {
+    async fn open(&self, view: &str, mode: WindowMode) -> Result<(), String> {
+        GtkWindowHost::open(self, view, mode).await
+    }
+}
+
+/// Dummy window host for headless mode.
+/// Does nothing but satisfies the WindowHost trait.
+pub struct DummyWindowHost;
+
+impl DummyWindowHost {
+    pub fn new() -> Self {
+        Self
+    }
+}
+
+#[async_trait::async_trait]
+impl quantum_domain::ports::WindowHost for DummyWindowHost {
+    async fn open(&self, _view: &str, _mode: WindowMode) -> Result<(), String> {
+        Ok(())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -90,5 +114,10 @@ mod tests {
         let _show = WindowMode::Show;
         let _hide = WindowMode::Hide;
         let _toggle = WindowMode::Toggle;
+    }
+
+    #[test]
+    fn dummy_window_host_creates() {
+        let _host = DummyWindowHost::new();
     }
 }
