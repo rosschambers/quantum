@@ -1,0 +1,5 @@
+[Desktop Entry]
+Name=GNU Image Manipulation Program
+GenericName=Image Editor
+Exec=gimp %u
+Type=Application
