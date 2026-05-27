@@ -39,7 +39,6 @@ pub trait ThemePort: Send + Sync {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
 
     #[test]
     fn scheme_registers_without_error() {

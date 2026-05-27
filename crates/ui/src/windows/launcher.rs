@@ -13,7 +13,9 @@ use crate::scheme::ThemePort;
 pub struct LauncherWindow {
     window: ApplicationWindow,
     webview: RefCell<Option<WebView>>,
+    #[allow(dead_code)]
     dispatcher: Arc<Dispatcher>,
+    #[allow(dead_code)]
     theme_store: Arc<dyn ThemePort>,
 }
 
@@ -56,7 +58,7 @@ impl LauncherWindow {
 
     /// Hide the launcher window.
     pub fn hide(&self) {
-        self.window.hide();
+        self.window.set_visible(false);
     }
 
     /// Toggle the launcher window visibility.

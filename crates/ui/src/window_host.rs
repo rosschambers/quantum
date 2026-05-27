@@ -3,7 +3,6 @@
 use std::sync::Arc;
 use std::collections::HashMap;
 use std::cell::RefCell;
-use quantum_domain::ports::WindowHost as WindowHostPort;
 use crate::windows::LauncherWindow;
 use crate::scheme::ThemePort;
 use quantum_application::dispatcher::Dispatcher;

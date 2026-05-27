@@ -2,7 +2,7 @@
 
 use std::sync::Arc;
 use gtk4::prelude::*;
-use gtk4::{glib, Application};
+use gtk4::Application;
 use quantum_application::dispatcher::Dispatcher;
 
 pub struct QuantumApp {
@@ -25,14 +25,12 @@ impl QuantumApp {
     }
 
     pub fn run(self) -> i32 {
-        self.app.run()
+        self.app.run().into()
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-
     #[test]
     #[cfg(feature = "gtk-test")]
     fn app_initializes() {
