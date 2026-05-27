@@ -1,11 +1,13 @@
 //! quantum-infrastructure
 
+pub mod config;
 pub mod error;
 pub mod hyprland;
 pub mod providers;
 pub mod registry;
 pub mod shell;
 
+pub use config::ConfigStore;
 pub use error::InfrastructureError;
 pub use hyprland::HyprlandSocketClient;
 pub use providers::{DesktopAppsProvider, HyprlandWindowsProvider, ShellCommandProvider};
