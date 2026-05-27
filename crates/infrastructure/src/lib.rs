@@ -10,7 +10,9 @@ pub mod shell;
 pub use config::ConfigStore;
 pub use error::InfrastructureError;
 pub use hyprland::HyprlandSocketClient;
-pub use providers::{DesktopAppsProvider, HyprlandWindowsProvider, ShellCommandProvider};
+pub use providers::{
+    DeclarativeShellProvider, DesktopAppsProvider, HyprlandWindowsProvider, ShellCommandProvider,
+};
 pub use registry::InMemoryProviderRegistry;
 pub use shell::TokioShellExecutor;
 
