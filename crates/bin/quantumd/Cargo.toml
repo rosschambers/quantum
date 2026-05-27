@@ -1,0 +1,12 @@
+[package]
+name = "quantumd"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+quantum-ui = { path = "../../ui" }
+quantum-application = { path = "../../application" }
+quantum-infrastructure = { path = "../../infrastructure" }
+tokio.workspace = true

@@ -1,0 +1,16 @@
+[package]
+name = "quantum-application"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+quantum-domain = { path = "../domain" }
+async-trait.workspace = true
+tokio.workspace = true
+thiserror.workspace = true
+serde.workspace = true
+
+[dev-dependencies]
+serde_json = "1"

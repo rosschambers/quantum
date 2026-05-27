@@ -1,0 +1,10 @@
+[package]
+name = "quantum-ui"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+quantum-application = { path = "../application" }
+tokio.workspace = true
