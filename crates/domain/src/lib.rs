@@ -15,7 +15,7 @@ pub use ids::{ProviderId, WindowId};
 pub use match_result::{IconRef, Match};
 pub use ports::{
     ActionOutcome, ConfigStore, EventBus, HyprlandClient, ProviderCapabilities, ProviderRegistry,
-    ProviderSource, ShellExecutor, ThemeStore, WindowHost,
+    ProviderSource, ShellExecutor, ShellOutput, ThemeStore, WindowHost,
 };
 pub use query::Query;
 pub use score::MatchScore;

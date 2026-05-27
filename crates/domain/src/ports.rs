@@ -52,10 +52,24 @@ pub trait EventBus: Send + Sync {
     async fn subscribe(&self, event: &str) -> Result<(), DomainError>;
 }
 
+/// Shell output from command execution.
+#[derive(Debug, Clone)]
+pub struct ShellOutput {
+    pub stdout: String,
+    pub stderr: String,
+    pub status: i32,
+}
+
 /// Shell execution.
 #[async_trait]
 pub trait ShellExecutor: Send + Sync {
     async fn execute(&self, command: &[String]) -> Result<String, DomainError>;
+    async fn run_with_timeout(
+        &self,
+        command: &[String],
+        timeout_ms: u64,
+    ) -> Result<ShellOutput, DomainError>;
+    async fn spawn_detached(&self, command: &[String]) -> Result<(), DomainError>;
 }
 
 /// Hyprland IPC client.
