@@ -1,12 +1,14 @@
 //! quantum-infrastructure
 
 pub mod error;
+pub mod hyprland;
 pub mod providers;
 pub mod registry;
 pub mod shell;
 
 pub use error::InfrastructureError;
-pub use providers::{DesktopAppsProvider, ShellCommandProvider};
+pub use hyprland::HyprlandSocketClient;
+pub use providers::{DesktopAppsProvider, HyprlandWindowsProvider, ShellCommandProvider};
 pub use registry::InMemoryProviderRegistry;
 pub use shell::TokioShellExecutor;
 
