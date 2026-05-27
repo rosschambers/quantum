@@ -15,7 +15,7 @@ Crates and their allowed dependencies:
 
 | Crate                          | May depend on                              |
 | ------------------------------ | ------------------------------------------ |
-| `crates/domain`                | nothing (only `thiserror`, `serde`)        |
+| `crates/domain`                | nothing (only `thiserror`, `serde`, `serde_json`)        |
 | `crates/application`           | `domain`                                   |
 | `crates/infrastructure`        | `domain`                                   |
 | `crates/ui`                    | `application` (and through it, `domain`)   |
