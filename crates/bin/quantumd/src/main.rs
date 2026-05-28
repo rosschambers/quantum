@@ -42,7 +42,7 @@ impl IpcDispatcher for AppDispatcherAdapter {
     async fn dispatch(&self, method: &str, params: Value) -> DispatchResult {
         match self.inner.dispatch(method, params).await {
             Ok(value) => Ok(value),
-            Err(err) => Err(DispatchError::new(-32603, err.to_string())),
+            Err(err) => Err(DispatchError::new(err.rpc_code(), err.to_string())),
         }
     }
 }
@@ -57,7 +57,7 @@ impl UiIpcDispatcher for AppDispatcherAdapter {
         match self.inner.dispatch(method, params).await {
             Ok(value) => Ok(value),
             Err(err) => Err(quantum_ui::dispatcher::DispatchError {
-                code: -32603,
+                code: err.rpc_code(),
                 message: err.to_string(),
             }),
         }

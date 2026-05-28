@@ -57,6 +57,25 @@ impl InfrastructureError {
             InfrastructureError::Spawn(msg) => DomainError::Unsupported(format!("spawn: {}", msg)),
         }
     }
+
+    /// Stable JSON-RPC error code per the design doc.
+    ///
+    /// Infrastructure-specific errors occupy the range `-32100..-32199`.
+    /// `Domain` delegates to `DomainError::rpc_code` so domain semantics
+    /// are preserved when domain errors travel wrapped in infrastructure
+    /// errors. These codes are part of the public IPC contract — they are
+    /// stable and MUST NOT be renumbered once shipped. New variants must
+    /// allocate the next free code in the range.
+    pub fn rpc_code(&self) -> i32 {
+        match self {
+            Self::Domain(e) => e.rpc_code(),
+            Self::Io(_) => -32100,
+            Self::Serde(_) => -32101,
+            Self::ConfigParse(_) => -32102,
+            Self::HyprlandUnreachable => -32103,
+            Self::Spawn(_) => -32104,
+        }
+    }
 }
 
 #[cfg(test)]
@@ -107,5 +126,45 @@ mod tests {
         let ie = InfrastructureError::HyprlandUnreachable;
         let de = ie.to_domain();
         assert!(matches!(de, DomainError::Unsupported(_)));
+    }
+
+    #[test]
+    fn io_has_stable_rpc_code() {
+        let e = InfrastructureError::Io("disk full".to_string());
+        assert_eq!(e.rpc_code(), -32100);
+    }
+
+    #[test]
+    fn hyprland_unreachable_has_stable_rpc_code() {
+        let e = InfrastructureError::HyprlandUnreachable;
+        assert_eq!(e.rpc_code(), -32103);
+    }
+
+    #[test]
+    fn domain_variant_delegates_rpc_code_to_inner() {
+        let inner = DomainError::ProviderNotFound("apps".into());
+        let e = InfrastructureError::Domain(inner.clone());
+        assert_eq!(e.rpc_code(), inner.rpc_code());
+        assert_eq!(e.rpc_code(), -32001);
+    }
+
+    #[test]
+    fn all_infra_specific_codes_are_in_documented_range() {
+        // Domain variant is delegated and excluded here; only infra-specific
+        // variants should land in the -32100.. range.
+        let codes = [
+            InfrastructureError::Io("x".to_string()).rpc_code(),
+            InfrastructureError::Serde("x".to_string()).rpc_code(),
+            InfrastructureError::ConfigParse("x".to_string()).rpc_code(),
+            InfrastructureError::HyprlandUnreachable.rpc_code(),
+            InfrastructureError::Spawn("x".to_string()).rpc_code(),
+        ];
+        for code in codes {
+            assert!(
+                (-32199..=-32100).contains(&code),
+                "code {} outside infra range",
+                code
+            );
+        }
     }
 }

@@ -334,18 +334,50 @@ Get daemon status and metadata.
 
 ## Error Codes
 
-Standard JSON-RPC error codes apply, plus domain-specific codes:
+Standard JSON-RPC error codes apply, plus Quantum-specific codes carved
+into two stable ranges:
 
-| Code | Error | Meaning |
-|------|-------|---------|
-| -32600 | Invalid Request | Malformed JSON or missing required fields |
-| -32601 | Method not found | Unknown method name |
-| -32602 | Invalid params | Parameters don't match method signature |
-| -32603 | Internal error | Serialization or other internal failure |
-| -32001 | ProviderNotFound | Provider ID doesn't exist |
-| -32002 | InvalidQuery | Query validation failed |
-| -32003 | ActionFailed | Action execution failed |
-| -32004 | Unsupported | Operation not supported |
+- `-32000..-32099` — domain errors (semantic failures the frontend should
+  reason about, like an unknown provider or a failed action).
+- `-32100..-32199` — infrastructure errors (I/O, serialization, external
+  process failures). Frontends typically surface these as transient.
+
+These codes are part of the public IPC contract: **stable; do not
+renumber**. New variants allocate the next free code in their range.
+
+### Standard JSON-RPC codes
+
+| Code   | Error            | Meaning                                          |
+|--------|------------------|--------------------------------------------------|
+| -32600 | Invalid Request  | Malformed JSON or missing required fields        |
+| -32601 | Method not found | Unknown method name                              |
+| -32602 | Invalid params   | Parameters don't match method signature          |
+| -32603 | Internal error   | Untyped internal failure (`ApplicationError::Unknown`) |
+
+### Domain errors (`-32000..-32099`)
+
+Source: `quantum_domain::DomainError`.
+
+| Code   | Variant            | Meaning                                  |
+|--------|--------------------|------------------------------------------|
+| -32001 | `ProviderNotFound` | Provider ID doesn't exist                |
+| -32002 | `InvalidQuery`     | Query validation failed                  |
+| -32003 | `ActionFailed`     | Action execution failed                  |
+| -32004 | `Unsupported`      | Operation not supported on this platform |
+
+### Infrastructure errors (`-32100..-32199`)
+
+Source: `quantum_infrastructure::InfrastructureError`. The `Domain`
+wrapper variant delegates to the domain code above rather than allocating
+its own code.
+
+| Code   | Variant               | Meaning                                |
+|--------|-----------------------|----------------------------------------|
+| -32100 | `Io`                  | File or socket I/O failure             |
+| -32101 | `Serde`               | JSON (de)serialization failure         |
+| -32102 | `ConfigParse`         | Config file could not be parsed        |
+| -32103 | `HyprlandUnreachable` | Hyprland IPC socket unavailable        |
+| -32104 | `Spawn`               | Failed to spawn a child process        |
 
 ---
 

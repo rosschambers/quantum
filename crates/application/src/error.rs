@@ -13,6 +13,24 @@ pub enum ApplicationError {
     Unknown(String),
 }
 
+impl ApplicationError {
+    /// Stable JSON-RPC error code per the design doc.
+    ///
+    /// `Domain` and `Dispatch` delegate to `DomainError::rpc_code` so the
+    /// frontend can distinguish e.g. `ProviderNotFound` from `ActionFailed`
+    /// regardless of which application-layer wrapper an error travelled in.
+    /// `Unknown` is the only variant that legitimately maps to the generic
+    /// JSON-RPC internal-error code (`-32603`) because by construction we
+    /// do not know its domain semantics.
+    pub fn rpc_code(&self) -> i32 {
+        match self {
+            Self::Domain(e) => e.rpc_code(),
+            Self::Dispatch { source, .. } => source.rpc_code(),
+            Self::Unknown(_) => -32603,
+        }
+    }
+}
+
 pub type Result<T> = std::result::Result<T, ApplicationError>;
 
 #[cfg(test)]
@@ -46,5 +64,42 @@ mod tests {
         let json = serde_json::to_string(&err).unwrap();
         let back: ApplicationError = serde_json::from_str(&json).unwrap();
         assert!(matches!(back, ApplicationError::Dispatch { .. }));
+    }
+
+    #[test]
+    fn domain_variant_delegates_rpc_code() {
+        let err = ApplicationError::Domain(DomainError::ProviderNotFound("apps".into()));
+        assert_eq!(err.rpc_code(), -32001);
+    }
+
+    #[test]
+    fn dispatch_variant_delegates_rpc_code_to_source() {
+        let err = ApplicationError::Dispatch {
+            method: "search".to_string(),
+            source: DomainError::InvalidQuery("oops".to_string()),
+        };
+        assert_eq!(err.rpc_code(), -32002);
+    }
+
+    #[test]
+    fn unknown_variant_is_generic_internal_error() {
+        let err = ApplicationError::Unknown("something exploded".to_string());
+        assert_eq!(err.rpc_code(), -32603);
+    }
+
+    #[test]
+    fn delegated_codes_stay_in_domain_range() {
+        let err = ApplicationError::Dispatch {
+            method: "search".to_string(),
+            source: DomainError::ActionFailed {
+                reason: "x".to_string(),
+            },
+        };
+        let code = err.rpc_code();
+        assert!(
+            (-32099..=-32000).contains(&code),
+            "code {} outside domain range",
+            code
+        );
     }
 }
