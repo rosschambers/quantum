@@ -17,6 +17,7 @@ pub struct LauncherWindow {
     dispatcher: Arc<dyn IpcDispatcher>,
     #[allow(dead_code)]
     theme_store: Arc<dyn ThemeStore>,
+    visible: bool,
 }
 
 impl LauncherWindow {
@@ -30,8 +31,7 @@ impl LauncherWindow {
         let window = gtk4::ApplicationWindow::builder()
             .application(app)
             .decorated(false)
-            .default_width(640)
-            .default_height(480)
+            .default_width(600)
             .resizable(false)
             .build();
 
@@ -55,6 +55,7 @@ impl LauncherWindow {
             webview,
             dispatcher,
             theme_store,
+            visible: false,
         }
     }
 }
@@ -62,17 +63,25 @@ impl LauncherWindow {
 impl crate::registry::WindowOps for LauncherWindow {
     /// Show the launcher window.
     fn show(&mut self) {
+        // Use exclusive keyboard mode when shown so Hyprland routes all keystrokes to the launcher.
+        self.window.set_keyboard_mode(KeyboardMode::Exclusive);
         self.window.set_visible(true);
+        // Focus the WebView so typing immediately reaches the search input.
+        self.webview.grab_focus();
+        self.visible = true;
     }
 
     /// Hide the launcher window.
     fn hide(&mut self) {
+        // Revert to on-demand keyboard mode before hiding so the next compositor focus isn't redirected.
+        self.window.set_keyboard_mode(KeyboardMode::OnDemand);
         self.window.set_visible(false);
+        self.visible = false;
     }
 
     /// Toggle the launcher window visibility.
     fn toggle(&mut self) {
-        if self.window.is_visible() {
+        if self.visible {
             self.hide();
         } else {
             self.show();
