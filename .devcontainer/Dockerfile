@@ -48,16 +48,21 @@ RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
         --component rustfmt --component clippy \
     && chmod -R a+rwX /usr/local/rustup /usr/local/cargo
 
-# Node 20 LTS via NodeSource, pnpm via corepack.
+# Node 20 LTS via NodeSource. Install pnpm globally via npm so it doesn't go
+# through corepack — corepack tries to re-fetch on every invocation when
+# $HOME is non-default, which can break offline use and pulls non-pinned
+# versions through the network.
 RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
     && apt-get install -y --no-install-recommends nodejs \
-    && corepack enable \
-    && corepack prepare pnpm@9.15.0 --activate \
+    && npm install -g pnpm@9.15.0 \
     && rm -rf /var/lib/apt/lists/*
 
 # Cargo target dir lives inside the container's persisted volume so rebuilds are fast.
+# COREPACK_ENABLE_AUTO_PIN=0 stops corepack from trying to redirect pnpm calls.
 ENV CARGO_TARGET_DIR=/workspaces/quantum/target \
     PKG_CONFIG_PATH=/usr/local/lib/x86_64-linux-gnu/pkgconfig:/usr/local/lib/pkgconfig \
-    LD_LIBRARY_PATH=/usr/local/lib/x86_64-linux-gnu:/usr/local/lib
+    LD_LIBRARY_PATH=/usr/local/lib/x86_64-linux-gnu:/usr/local/lib \
+    COREPACK_ENABLE_AUTO_PIN=0 \
+    COREPACK_ENABLE_DOWNLOAD_PROMPT=0
 
 WORKDIR /workspaces/quantum
