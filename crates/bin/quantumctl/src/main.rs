@@ -96,15 +96,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     match cli.command {
         Commands::Toggle { view } => {
-            let result = call_daemon(&socket_path, "view.toggle", json!({ "view": view })).await?;
+            let result = call_daemon(&socket_path, "view.toggle", json!({ "name": view })).await?;
             print_response(&result, cli.json);
         }
         Commands::Show { view } => {
-            let result = call_daemon(&socket_path, "view.show", json!({ "view": view })).await?;
+            let result = call_daemon(&socket_path, "view.show", json!({ "name": view })).await?;
             print_response(&result, cli.json);
         }
         Commands::Hide { view } => {
-            let result = call_daemon(&socket_path, "view.hide", json!({ "view": view })).await?;
+            let result = call_daemon(&socket_path, "view.hide", json!({ "name": view })).await?;
             print_response(&result, cli.json);
         }
         Commands::Search { query } => {

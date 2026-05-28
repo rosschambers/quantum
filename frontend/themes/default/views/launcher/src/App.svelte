@@ -74,7 +74,7 @@
       }
     } else if (event.key === 'Escape') {
       event.preventDefault();
-      client.call('view.hide', { view: 'launcher' }).catch(console.error);
+      client.call('view.hide', { name: 'launcher' }).catch(console.error);
     }
   }
 
@@ -84,7 +84,7 @@
         provider: match.provider,
         action: match.action,
       });
-      await client.call('view.hide', { view: 'launcher' });
+      await client.call('view.hide', { name: 'launcher' });
     } catch (error) {
       console.error('Action invocation failed:', error);
     }
