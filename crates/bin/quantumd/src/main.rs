@@ -148,6 +148,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             setup.ipc_dispatcher,
             setup.theme_store,
             worker.handle.clone(),
+            setup.event_tx.clone(),
         );
         // After GTK exits, clean up socket.
         let _ = std::fs::remove_file(&setup.socket_path);
@@ -164,7 +165,6 @@ struct DaemonSetup {
     theme_store: Arc<dyn quantum_domain::ports::ThemeStore>,
     theme_store_concrete: Arc<ThemeStore>,
     event_bus: Arc<dyn quantum_domain::EventBus>,
-    #[allow(dead_code)]
     event_tx: tokio::sync::broadcast::Sender<EventEnvelope>,
 }
 

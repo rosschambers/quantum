@@ -3,8 +3,9 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::runtime::Handle;
+use tokio::sync::broadcast;
 
-use quantum_domain::{ports::ThemeStore, WindowMode};
+use quantum_domain::{ports::ThemeStore, EventEnvelope, WindowMode};
 
 use crate::dispatcher::IpcDispatcher;
 use crate::messages::WindowRequest;
@@ -39,6 +40,7 @@ pub struct ManagedWindowConstructor {
     dispatcher: Arc<dyn IpcDispatcher>,
     theme_store: Arc<dyn ThemeStore>,
     runtime: Handle,
+    event_tx: broadcast::Sender<EventEnvelope>,
 }
 
 impl ManagedWindowConstructor {
@@ -48,12 +50,14 @@ impl ManagedWindowConstructor {
         dispatcher: Arc<dyn IpcDispatcher>,
         theme_store: Arc<dyn ThemeStore>,
         runtime: Handle,
+        event_tx: broadcast::Sender<EventEnvelope>,
     ) -> Self {
         Self {
             app,
             dispatcher,
             theme_store,
             runtime,
+            event_tx,
         }
     }
 }
@@ -68,6 +72,7 @@ impl WindowConstructor for ManagedWindowConstructor {
                 self.dispatcher.clone(),
                 self.theme_store.clone(),
                 self.runtime.clone(),
+                self.event_tx.clone(),
             ))),
             other if other.starts_with("widgets/") => Some(ManagedWindow::Widget(
                 WidgetWindow::new(&self.app, other.to_string(), self.theme_store.clone()),

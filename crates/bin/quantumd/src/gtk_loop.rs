@@ -33,8 +33,10 @@ use std::sync::Arc;
 use gtk4::gio;
 use gtk4::prelude::*;
 use quantum_domain::ports::ThemeStore;
+use quantum_domain::EventEnvelope;
 use quantum_ui::{IpcDispatcher, ManagedWindowConstructor, WindowRegistry, WindowRequest};
 use tokio::runtime::Handle;
+use tokio::sync::broadcast;
 use tokio::sync::mpsc::UnboundedReceiver;
 
 /// Run the GTK main loop with window registry.
@@ -44,6 +46,7 @@ pub fn run(
     dispatcher: Arc<dyn IpcDispatcher>,
     theme_store: Arc<dyn ThemeStore>,
     runtime: Handle,
+    event_tx: broadcast::Sender<EventEnvelope>,
 ) -> i32 {
     let rx = Rc::new(RefCell::new(Some(rx)));
 
@@ -51,6 +54,7 @@ pub fn run(
     let theme_store_for_activate = theme_store.clone();
     let theme_store_for_scheme = theme_store.clone();
     let rx_for_activate = rx.clone();
+    let event_tx_for_activate = event_tx.clone();
 
     // Hold a strong reference to keep the application alive even when there
     // are no open windows. `ApplicationHoldGuard` is RAII — dropping it
@@ -72,6 +76,7 @@ pub fn run(
             dispatcher_for_activate.clone(),
             theme_store_for_activate.clone(),
             runtime.clone(),
+            event_tx_for_activate.clone(),
         );
         let registry = Rc::new(RefCell::new(WindowRegistry::new(ctor)));
 

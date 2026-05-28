@@ -15,7 +15,7 @@ use crate::IpcDispatcher;
 /// string values, but JavaScript string literals do not — they terminate the
 /// line. Replace them with their `\uXXXX` escapes. Everything else in valid
 /// JSON is already a valid JS expression.
-fn json_to_js_expression(json: &str) -> String {
+pub fn json_to_js_expression(json: &str) -> String {
     json.replace('\u{2028}', "\\u2028")
         .replace('\u{2029}', "\\u2029")
 }
