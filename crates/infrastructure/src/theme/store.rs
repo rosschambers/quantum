@@ -163,6 +163,36 @@ impl ThemeStore {
         self.default_tokens()
     }
 
+    /// Get resolved tokens synchronously (blocks on RwLock).
+    /// Used by URI scheme handlers on GTK thread where async is unavailable.
+    pub fn resolved_tokens_sync(&self) -> HashMap<String, String> {
+        // Use try_read to avoid panicking if RwLock is poisoned
+        let theme = match self.active_theme.try_read() {
+            Ok(guard) => guard.clone(),
+            Err(_) => "default".to_string(),
+        };
+
+        // Try to load tokens.toml from theme
+        if let Some(content) = self.get_file(&theme, "tokens.toml") {
+            if let Ok(text) = String::from_utf8(content) {
+                if let Ok(parsed) = toml::from_str::<toml::Table>(&text) {
+                    let mut tokens = HashMap::new();
+                    for (key, value) in parsed {
+                        if let Some(s) = value.as_str() {
+                            tokens.insert(key, s.to_string());
+                        }
+                    }
+                    if !tokens.is_empty() {
+                        return tokens;
+                    }
+                }
+            }
+        }
+
+        // Fall back to defaults
+        self.default_tokens()
+    }
+
     /// Default token set (fallback).
     fn default_tokens(&self) -> HashMap<String, String> {
         let mut tokens = HashMap::new();
@@ -219,6 +249,10 @@ impl quantum_domain::ThemeStore for ThemeStore {
         // Asset path resolution: assets are in the active theme's root or fallback to embedded.
         // Since we can't use async here, we assume default theme for now.
         ThemeStore::get_file(self, "default", &format!("assets/{}", path))
+    }
+
+    fn resolved_tokens(&self) -> std::collections::HashMap<String, String> {
+        ThemeStore::resolved_tokens_sync(self)
     }
 }
 

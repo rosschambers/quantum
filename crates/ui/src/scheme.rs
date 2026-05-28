@@ -1,19 +1,16 @@
 //! Custom quantum:// URI scheme handler for theme bundles.
 
-use std::sync::Arc;
 use gio::MemoryInputStream;
 use glib::Bytes;
-use webkit6::{URISchemeRequest, WebContext};
 use quantum_domain::ports::ThemeStore;
+use std::sync::Arc;
+use webkit6::{URISchemeRequest, WebContext};
 
 /// Register the quantum:// URI scheme.
 /// Routes:
 /// - quantum://theme/<name>/views/<view>/... -> bytes from ThemeStore
 /// - quantum://assets/... -> asset bytes
-pub fn register_quantum_scheme(
-    context: &WebContext,
-    theme_store: Arc<dyn ThemeStore>,
-) {
+pub fn register_quantum_scheme(context: &WebContext, theme_store: Arc<dyn ThemeStore>) {
     context.register_uri_scheme("quantum", move |request: &URISchemeRequest| {
         let Some(uri) = request.uri() else {
             return;
@@ -35,18 +32,26 @@ pub fn register_quantum_scheme(
             QuantumPath::Assets { path } => theme_store.get_asset(&path),
         };
 
-        let Some(bytes) = bytes else {
-            let mut error = glib::Error::new(
-                glib::FileError::Noent,
-                &format!("not found: {uri_str}"),
-            );
+        let Some(bytes_data) = bytes else {
+            let mut error =
+                glib::Error::new(glib::FileError::Noent, &format!("not found: {uri_str}"));
             request.finish_error(&mut error);
             return;
         };
 
+        // For HTML files, inject resolved tokens
+        let final_bytes = if path_for_mime.ends_with(".html") {
+            let html = String::from_utf8_lossy(&bytes_data).into_owned();
+            let tokens = theme_store.resolved_tokens();
+            let injected = inject_tokens(&html, &tokens);
+            injected.into_bytes()
+        } else {
+            bytes_data
+        };
+
         let mime = content_type_for(&path_for_mime);
-        let bytes_len = bytes.len() as i64;
-        let stream = MemoryInputStream::from_bytes(&Bytes::from_owned(bytes));
+        let bytes_len = final_bytes.len() as i64;
+        let stream = MemoryInputStream::from_bytes(&Bytes::from_owned(final_bytes));
         request.finish(&stream, bytes_len, Some(mime));
     });
 }
@@ -85,11 +90,9 @@ fn parse_quantum_uri(uri: &str) -> Option<QuantumPath> {
                 path: rest.join("/"),
             })
         }
-        ["assets", rest @ ..] if !rest.is_empty() => {
-            Some(QuantumPath::Assets {
-                path: rest.join("/"),
-            })
-        }
+        ["assets", rest @ ..] if !rest.is_empty() => Some(QuantumPath::Assets {
+            path: rest.join("/"),
+        }),
         _ => None,
     }
 }
@@ -110,6 +113,35 @@ fn content_type_for(path: &str) -> &'static str {
         Some("webp") => "image/webp",
         Some("json") => "application/json",
         _ => "application/octet-stream",
+    }
+}
+
+/// Inject resolved tokens into HTML by replacing the placeholder with CSS.
+pub fn inject_tokens(html: &str, tokens: &std::collections::HashMap<String, String>) -> String {
+    let css = crate::tokens::tokens_to_css(tokens);
+    html.replace("/* QUANTUM_TOKENS */", &css)
+}
+
+#[cfg(test)]
+mod inject_tests {
+    use super::*;
+    use std::collections::HashMap;
+
+    #[test]
+    fn replaces_placeholder_with_css() {
+        let html = r#"<style id="quantum-tokens">/* QUANTUM_TOKENS */</style>"#;
+        let mut t = HashMap::new();
+        t.insert("color-bg".into(), "#fff".into());
+        let out = inject_tokens(html, &t);
+        assert!(out.contains("--color-bg: #fff;"));
+        assert!(!out.contains("/* QUANTUM_TOKENS */"));
+    }
+
+    #[test]
+    fn html_without_placeholder_unchanged() {
+        let html = "<html><body>no placeholder</body></html>";
+        let out = inject_tokens(html, &HashMap::new());
+        assert_eq!(out, html);
     }
 }
 

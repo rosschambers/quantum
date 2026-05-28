@@ -49,6 +49,9 @@ pub trait ThemeStore: Send + Sync {
     /// Get an asset file from the active theme. Returns None if not found.
     /// This is a synchronous method since URI handlers run on the GTK thread.
     fn get_asset(&self, path: &str) -> Option<Vec<u8>>;
+    /// Get resolved tokens for CSS variable injection.
+    /// This is a synchronous method for use in URI handlers on the GTK thread.
+    fn resolved_tokens(&self) -> std::collections::HashMap<String, String>;
 }
 
 /// Event bus for domain events.

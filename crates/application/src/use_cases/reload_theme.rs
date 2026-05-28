@@ -65,6 +65,10 @@ mod tests {
         fn get_asset(&self, _path: &str) -> Option<Vec<u8>> {
             None
         }
+
+        fn resolved_tokens(&self) -> std::collections::HashMap<String, String> {
+            std::collections::HashMap::new()
+        }
     }
 
     struct FakeEventBus {
