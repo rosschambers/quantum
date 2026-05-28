@@ -1,9 +1,12 @@
 //! WebKit script message bridge to Dispatcher.
 
-use quantum_application::dispatcher::Dispatcher;
 use serde::{Deserialize, Serialize};
-use serde_json::{json, Value};
+use serde_json::Value;
 use std::sync::Arc;
+use tokio::runtime::Handle;
+use webkit6::{prelude::*, WebView};
+
+use crate::IpcDispatcher;
 
 /// Message sent from JavaScript to Rust.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -14,59 +17,104 @@ pub struct BridgeMessage {
 }
 
 /// Register the bridge message handler on a WebView.
-///
-/// This would normally integrate with webkit6::WebView to register script message handlers.
-/// For now, this is a placeholder that validates the message structure works.
-pub fn register_bridge(_webview: &webkit6::WebView, _dispatcher: Arc<Dispatcher>) {
-    // In a real implementation, we would:
-    // 1. Get or create the WebContext
-    // 2. Register a URI scheme handler for quantum://
-    // 3. Set up script message handler for IPC
-    //
-    // For now, this validates the bridge infrastructure is in place.
-}
+/// Wires WebKit script messages to the Tokio dispatcher with JS evaluation for responses.
+pub fn register_bridge(
+    webview: &WebView,
+    dispatcher: Arc<dyn IpcDispatcher>,
+    runtime: Handle,
+) {
+    let ucm = match webview.user_content_manager() {
+        Some(mgr) => mgr,
+        None => {
+            tracing::error!("failed to get user content manager");
+            return;
+        }
+    };
 
-/// Handle an incoming bridge message.
-#[allow(dead_code)]
-fn handle_message(json_str: &str, dispatcher: &Arc<Dispatcher>) {
-    match serde_json::from_str::<BridgeMessage>(json_str) {
-        Ok(msg) => {
-            let dispatcher = dispatcher.clone();
-            let id = msg.id;
-            let method = msg.method.clone();
-            let params = msg.params.clone();
+    ucm.register_script_message_handler("quantum", None);
 
-            // Spawn async handler on Tokio runtime
-            tokio::spawn(async move {
-                match dispatcher.dispatch(&method, params).await {
-                    Ok(result) => {
-                        // Send response back via JavaScript
-                        let json = serde_json::to_string(&result)
-                            .unwrap_or_else(|_| json!(null).to_string());
-                        let js =
-                            format!("window.__quantum_resolve({}, {})", id, escape_for_js(&json));
-                        // In real implementation, we'd evaluate this on the webview
-                        // For now, we log it
-                        eprintln!("Would send JS: {}", js);
-                    }
-                    Err(e) => {
-                        let error_json = serde_json::to_string(&e).unwrap_or_else(|_| {
-                            json!({"error": "serialization failed"}).to_string()
-                        });
-                        let js = format!(
-                            "window.__quantum_reject({}, {})",
-                            id,
-                            escape_for_js(&error_json)
-                        );
-                        eprintln!("Would send error JS: {}", js);
-                    }
+    let webview_clone = webview.clone();
+
+    ucm.connect_script_message_received(Some("quantum"), move |_ucm, msg| {
+        // The message is a JavaScriptResult containing the JSON value from the script
+        let json_str = match msg.to_string().as_str() {
+            s if !s.is_empty() => s.to_string(),
+            _ => {
+                tracing::warn!("empty script message");
+                return;
+            }
+        };
+
+        let Ok(parsed): Result<BridgeMessage, _> = serde_json::from_str(&json_str) else {
+            tracing::warn!("malformed bridge message: {json_str}");
+            return;
+        };
+
+        let dispatcher = dispatcher.clone();
+        let webview = webview_clone.clone();
+        let id = parsed.id;
+        let method = parsed.method.clone();
+        let params = parsed.params.clone();
+
+        // Create a channel to get the result back from the Tokio task
+        let (tx, mut rx) = tokio::sync::oneshot::channel();
+
+        // Spawn on Tokio to call the dispatcher
+        runtime.spawn(async move {
+            let result = dispatcher.dispatch(&method, params).await;
+            let js = match result {
+                Ok(value) => {
+                    let payload =
+                        serde_json::to_string(&value).unwrap_or_else(|_| "null".into());
+                    format!(
+                        "window.__quantum_resolve({}, {})",
+                        id,
+                        escape_for_js(&payload)
+                    )
                 }
-            });
-        }
-        Err(e) => {
-            eprintln!("Failed to parse bridge message: {}", e);
-        }
-    }
+                Err(err) => {
+                    let payload = serde_json::to_string(&serde_json::json!({
+                        "code": err.code,
+                        "message": err.message,
+                    }))
+                    .unwrap_or_else(|_| "{}".into());
+                    format!(
+                        "window.__quantum_reject({}, {})",
+                        id,
+                        escape_for_js(&payload)
+                    )
+                }
+            };
+
+            // Send the result back (ignore if receiver dropped)
+            let _ = tx.send(js);
+        });
+
+        // Wait for the result in a non-blocking way on the GTK main thread
+        glib::source::idle_add_local(move || {
+            // Try to receive the JS (non-blocking)
+            match rx.try_recv() {
+                Ok(js) => {
+                    webview.evaluate_javascript(
+                        &js,
+                        None,
+                        None,
+                        None::<&gio::Cancellable>,
+                        |_| {},
+                    );
+                    glib::ControlFlow::Break
+                }
+                Err(tokio::sync::oneshot::error::TryRecvError::Empty) => {
+                    // Not ready yet, keep waiting
+                    glib::ControlFlow::Continue
+                }
+                Err(_) => {
+                    // Sender dropped or channel closed
+                    glib::ControlFlow::Break
+                }
+            }
+        });
+    });
 }
 
 /// Escape JSON string for safe injection into JavaScript.
@@ -78,6 +126,7 @@ fn escape_for_js(json: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde_json::json;
 
     #[test]
     fn parses_bridge_message() {

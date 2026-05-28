@@ -109,8 +109,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let app = gtk4::Application::builder()
             .application_id("dev.quantum.daemon")
             .build();
-        let _exit_code =
-            crate::gtk_loop::run(&app, window_rx, setup.ipc_dispatcher, setup.theme_store);
+        let _exit_code = crate::gtk_loop::run(
+            &app,
+            window_rx,
+            setup.ipc_dispatcher,
+            setup.theme_store,
+            worker.handle.clone(),
+        );
         // After GTK exits, clean up socket.
         let _ = std::fs::remove_file(&setup.socket_path);
         return Ok(());

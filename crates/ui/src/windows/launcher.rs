@@ -5,6 +5,7 @@ use gtk4::prelude::*;
 use gtk4_layer_shell::{KeyboardMode, Layer, LayerShell};
 use quantum_domain::ports::ThemeStore;
 use std::sync::Arc;
+use tokio::runtime::Handle;
 use webkit6::{prelude::*, WebView};
 
 /// The launcher window - a top-layer panel window anchored on-demand.
@@ -22,8 +23,9 @@ impl LauncherWindow {
     /// Create a new launcher window.
     pub fn new(
         app: &gtk4::Application,
-        _dispatcher: Arc<dyn IpcDispatcher>,
-        _theme_store: Arc<dyn ThemeStore>,
+        dispatcher: Arc<dyn IpcDispatcher>,
+        theme_store: Arc<dyn ThemeStore>,
+        runtime: Handle,
     ) -> Self {
         let window = gtk4::ApplicationWindow::builder()
             .application(app)
@@ -45,11 +47,14 @@ impl LauncherWindow {
         webview.load_uri("quantum://theme/default/views/launcher/index.html");
         window.set_child(Some(&webview));
 
+        // Register the bridge to wire JS messages to the dispatcher
+        crate::bridge::register_bridge(&webview, dispatcher.clone(), runtime);
+
         Self {
             window,
             webview,
-            dispatcher: _dispatcher,
-            theme_store: _theme_store,
+            dispatcher,
+            theme_store,
         }
     }
 }
