@@ -1,7 +1,7 @@
 use clap::{Parser, Subcommand};
 use serde_json::{json, Value};
 use std::path::PathBuf;
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::UnixStream;
 
 #[derive(Parser)]
@@ -149,7 +149,7 @@ async fn call_daemon(
     params: Value,
 ) -> Result<Value, Box<dyn std::error::Error>> {
     // Connect to daemon
-    let mut stream = UnixStream::connect(socket_path).await.map_err(|e| {
+    let stream = UnixStream::connect(socket_path).await.map_err(|e| {
         format!(
             "Failed to connect to daemon at {}: {}",
             socket_path.display(),
@@ -165,15 +165,23 @@ async fn call_daemon(
         "params": params
     });
 
-    // Send request
-    let request_str = request.to_string() + "\n";
-    stream.write_all(request_str.as_bytes()).await?;
-    stream.flush().await?;
+    // Split for independent read/write halves so we can buffer the reader.
+    let (read_half, mut write_half) = stream.into_split();
+    let mut reader = BufReader::new(read_half);
 
-    // Read response
-    let mut buffer = vec![0u8; 4096];
-    let n = stream.read(&mut buffer).await?;
-    let response_str = String::from_utf8(buffer[..n].to_vec())?;
+    // Send request as a single newline-delimited JSON-RPC line.
+    let request_str = request.to_string() + "\n";
+    write_half.write_all(request_str.as_bytes()).await?;
+    write_half.flush().await?;
+
+    // Read exactly one newline-delimited response line. The daemon's IPC
+    // server (see crates/infrastructure/src/ipc/server.rs) writes each
+    // response as JSON followed by `\n`, so `read_line` consumes the
+    // entire response regardless of its size. The previous fixed 4 KB
+    // read truncated large responses such as search results containing
+    // many desktop entries plus Hyprland windows.
+    let mut response_str = String::new();
+    reader.read_line(&mut response_str).await?;
 
     // Parse response
     let response: Value = serde_json::from_str(&response_str)?;
