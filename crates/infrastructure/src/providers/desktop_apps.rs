@@ -16,7 +16,6 @@ struct AppInfo {
     id: String,
     name: String,
     generic_name: Option<String>,
-    #[allow(dead_code)]
     keywords: Vec<String>,
     exec: String,
 }
@@ -182,7 +181,22 @@ impl ProviderSource for DesktopAppsProvider {
                 0.0
             };
 
-            let combined_score = name_score.max(generic_score);
+            // Keywords are XDG Keywords= entries. We weight them below name
+            // and generic name so a literal name hit always outranks a
+            // keyword-only hit, but searching by category ("browser",
+            // "editor") still surfaces relevant apps whose name does not
+            // contain the term.
+            let keyword_score = if app
+                .keywords
+                .iter()
+                .any(|k| k.to_lowercase().contains(&query_lower))
+            {
+                0.4
+            } else {
+                0.0
+            };
+
+            let combined_score = name_score.max(generic_score).max(keyword_score);
 
             if combined_score > 0.1 {
                 matches.push(Match {
@@ -369,6 +383,78 @@ Type=Application"#,
 
         assert!(!matches.is_empty());
         assert_eq!(matches[0].title, "Firefox");
+    }
+
+    /// A search query that matches only via Keywords= (not Name or
+    /// GenericName) must still produce a hit. Real-world example: the
+    /// firefox.desktop file shipped by Mozilla declares
+    /// `Keywords=Internet;WWW;Browser;Web;Explorer;` — typing "browser"
+    /// into the launcher must surface Firefox even though "browser" only
+    /// appears in keywords, not in the title.
+    #[tokio::test]
+    async fn search_matches_via_keywords_only() {
+        let executor = Arc::new(FakeExecutor::new());
+        let provider = DesktopAppsProvider {
+            id: ProviderId::from("test"),
+            apps: RwLock::new(vec![AppInfo {
+                id: "firefox".to_string(),
+                name: "Firefox".to_string(),
+                generic_name: Some("Internet".to_string()),
+                keywords: vec![
+                    "WWW".to_string(),
+                    "Browser".to_string(),
+                    "Web".to_string(),
+                    "Explorer".to_string(),
+                ],
+                exec: "firefox".to_string(),
+            }]),
+            executor,
+        };
+
+        let query = Query::new("browser");
+        let matches = provider.search(&query).await.unwrap();
+
+        assert!(
+            !matches.is_empty(),
+            "expected at least one match when query hits Keywords= entry"
+        );
+        assert_eq!(matches[0].id, "firefox");
+    }
+
+    /// Even when a keyword matches, a name match for a different query
+    /// must outrank a keyword-only match. Otherwise typing the literal
+    /// name of an app would be ambiguous with keyword hits.
+    #[tokio::test]
+    async fn search_name_match_outranks_keyword_match() {
+        let executor = Arc::new(FakeExecutor::new());
+        let provider = DesktopAppsProvider {
+            id: ProviderId::from("test"),
+            apps: RwLock::new(vec![
+                AppInfo {
+                    id: "firefox".to_string(),
+                    name: "Firefox".to_string(),
+                    generic_name: None,
+                    keywords: vec!["Browser".to_string()],
+                    exec: "firefox".to_string(),
+                },
+                AppInfo {
+                    id: "browser-chooser".to_string(),
+                    name: "Browser Chooser".to_string(),
+                    generic_name: None,
+                    keywords: vec![],
+                    exec: "chooser".to_string(),
+                },
+            ]),
+            executor,
+        };
+
+        let query = Query::new("browser");
+        let matches = provider.search(&query).await.unwrap();
+
+        assert_eq!(
+            matches[0].id, "browser-chooser",
+            "name match should outrank keyword-only match"
+        );
     }
 
     #[tokio::test]
