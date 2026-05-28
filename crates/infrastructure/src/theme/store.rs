@@ -12,14 +12,6 @@ use quantum_domain::EventBus;
 static DEFAULT_THEME: include_dir::Dir<'_> =
     include_dir::include_dir!("$CARGO_MANIFEST_DIR/../../frontend/themes/default");
 
-/// Resolved view with template and style paths.
-#[derive(Debug, Clone)]
-pub struct ResolvedView {
-    pub template_path: PathBuf,
-    pub style_path: Option<PathBuf>,
-    pub script_path: Option<PathBuf>,
-}
-
 /// Resolved view from embedded or disk sources.
 #[derive(Debug, Clone)]
 pub struct ResolvedViewData {
@@ -147,40 +139,6 @@ impl ThemeStore {
     pub async fn reload(&self) -> Result<(), DomainError> {
         // For now, just re-confirm the active theme exists
         Ok(())
-    }
-
-    /// Get a view by name.
-    pub async fn view(&self, view_name: &str) -> Option<ResolvedView> {
-        let theme = self.active_theme.read().await;
-
-        let template_path = self
-            .themes_dir
-            .join(&*theme)
-            .join("views")
-            .join(view_name)
-            .join("index.html");
-
-        if template_path.exists() {
-            Some(ResolvedView {
-                template_path,
-                style_path: Some(
-                    self.themes_dir
-                        .join(&*theme)
-                        .join("views")
-                        .join(view_name)
-                        .join("style.css"),
-                ),
-                script_path: Some(
-                    self.themes_dir
-                        .join(&*theme)
-                        .join("views")
-                        .join(view_name)
-                        .join("script.ts"),
-                ),
-            })
-        } else {
-            None
-        }
     }
 
     /// Load a file from a theme, checking disk first then falling back to
