@@ -1,4 +1,6 @@
 <script lang="ts">
+  // Consuming real @quantum/client APIs for search, action.invoke, and view.hide.
+  // In browser, the client auto-detects WebKit bridge. In tests, it's mocked.
   import { createClient } from '@quantum/client';
   import SearchInput from './lib/SearchInput.svelte';
   import Results from './lib/Results.svelte';
