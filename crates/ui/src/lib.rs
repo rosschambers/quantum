@@ -7,7 +7,6 @@ pub mod error;
 pub mod messages;
 pub mod registry;
 pub mod scheme;
-pub mod tokens;
 pub mod window_host;
 pub mod windows;
 
@@ -18,7 +17,7 @@ pub use error::{Result, UiError};
 pub use messages::{WindowEvent, WindowRequest};
 pub use registry::{ManagedWindow, ManagedWindowConstructor, WindowOps, WindowRegistry};
 pub use scheme::register_quantum_scheme;
-pub use tokens::tokens_to_css;
+pub use quantum_domain::tokens_to_css;
 pub use window_host::{DummyWindowHost, GtkWindowHost};
 pub use windows::LauncherWindow;
 

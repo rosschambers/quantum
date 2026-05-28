@@ -118,7 +118,7 @@ fn content_type_for(path: &str) -> &'static str {
 
 /// Inject resolved tokens into HTML by replacing the placeholder with CSS.
 pub fn inject_tokens(html: &str, tokens: &std::collections::HashMap<String, String>) -> String {
-    let css = crate::tokens::tokens_to_css(tokens);
+    let css = quantum_domain::tokens_to_css(tokens);
     html.replace("/* QUANTUM_TOKENS */", &css)
 }
 

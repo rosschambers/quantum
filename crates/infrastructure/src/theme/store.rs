@@ -272,14 +272,20 @@ impl ThemeStore {
                 }
 
                 while let Ok(_events) = rx.recv() {
+                    // Resolve tokens and render CSS
+                    let tokens = store.resolved_tokens_sync();
+                    let css = quantum_domain::tokens_to_css(&tokens);
+                    
+                    // Create payload with rendered CSS
+                    let payload = serde_json::json!({ "css": css }).to_string();
+
                     // Publish ThemeReloaded event via the event bus
                     let bus = event_bus.clone();
-                    let empty_payload = "{}";
 
                     // Use futures::executor::block_on to call the async publish
                     // from this sync watcher thread
                     futures::executor::block_on(async {
-                        if let Err(e) = bus.publish("theme.reloaded", empty_payload).await {
+                        if let Err(e) = bus.publish("theme.reloaded", &payload).await {
                             tracing::error!("failed to publish ThemeReloaded event: {e}");
                         }
                     });

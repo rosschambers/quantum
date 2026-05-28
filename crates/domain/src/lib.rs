@@ -7,6 +7,7 @@ pub mod match_result;
 pub mod ports;
 pub mod query;
 pub mod score;
+pub mod tokens;
 pub mod window_mode;
 
 pub use action::Action;
@@ -19,6 +20,7 @@ pub use ports::{
 };
 pub use query::Query;
 pub use score::MatchScore;
+pub use tokens::tokens_to_css;
 pub use window_mode::WindowMode;
 
 pub fn version() -> &'static str {

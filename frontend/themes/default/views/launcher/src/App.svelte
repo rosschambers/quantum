@@ -2,6 +2,7 @@
   // Consuming real @quantum/client APIs for search, action.invoke, and view.hide.
   // In browser, the client auto-detects WebKit bridge. In tests, it's mocked.
   import { createClient } from '@quantum/client';
+  import { onMount } from 'svelte';
   import SearchInput from './lib/SearchInput.svelte';
   import Results from './lib/Results.svelte';
 
@@ -96,6 +97,17 @@
     } else {
       highlightedIndex = 0;
     }
+  });
+
+  onMount(() => {
+    // Subscribe to theme reload notifications and update CSS tokens in place
+    const unsubscribe = client.subscribe('theme.reloaded', (payload: any) => {
+      const style = document.getElementById('quantum-tokens');
+      if (style && payload?.css) {
+        style.textContent = payload.css;
+      }
+    });
+    return () => unsubscribe?.();
   });
 </script>
 
