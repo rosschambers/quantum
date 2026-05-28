@@ -13,14 +13,14 @@ use tokio::sync::broadcast;
 use webkit6::{prelude::*, WebView};
 
 /// The launcher window - a top-layer panel window anchored on-demand.
+///
+/// The `dispatcher` and `theme_store` constructor arguments are consumed
+/// during construction — `dispatcher` is handed to `register_bridge` and
+/// `theme_store` is owned by the quantum:// scheme handler registered on
+/// the GTK default context — so neither is stored on the struct.
 pub struct LauncherWindow {
     window: gtk4::ApplicationWindow,
-    #[allow(dead_code)] // held to keep the webview alive with the window
     webview: WebView,
-    #[allow(dead_code)]
-    dispatcher: Arc<dyn IpcDispatcher>,
-    #[allow(dead_code)]
-    theme_store: Arc<dyn ThemeStore>,
     visible: bool,
     layer_shell: bool,
 }
@@ -40,7 +40,7 @@ impl LauncherWindow {
     pub fn new(
         app: &gtk4::Application,
         dispatcher: Arc<dyn IpcDispatcher>,
-        theme_store: Arc<dyn ThemeStore>,
+        _theme_store: Arc<dyn ThemeStore>,
         runtime: Handle,
         event_tx: broadcast::Sender<EventEnvelope>,
     ) -> Self {
@@ -102,8 +102,10 @@ impl LauncherWindow {
         webview.load_uri("quantum://theme/default/views/launcher/index.html");
         window.set_child(Some(&webview));
 
-        // Register the bridge to wire JS messages to the dispatcher
-        crate::bridge::register_bridge(&webview, dispatcher.clone(), runtime.clone());
+        // Register the bridge to wire JS messages to the dispatcher. The
+        // dispatcher Arc is consumed here; the bridge keeps its own clone
+        // inside the script message handler closure.
+        crate::bridge::register_bridge(&webview, dispatcher, runtime.clone());
 
         // Subscribe to broadcast events and forward them to the WebView as
         // `window.__quantum_notify(channel, payload)` calls.
@@ -156,8 +158,6 @@ impl LauncherWindow {
         Self {
             window,
             webview,
-            dispatcher,
-            theme_store,
             visible: false,
             layer_shell,
         }
