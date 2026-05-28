@@ -170,7 +170,7 @@ struct DaemonSetup {
 
 async fn setup_daemon(
     socket_override: Option<String>,
-    _window_host: Arc<dyn quantum_domain::ports::WindowHost>,
+    window_host: Arc<dyn quantum_domain::ports::WindowHost>,
 ) -> Result<DaemonSetup, Box<dyn std::error::Error>> {
     // Load configuration. A missing config file is not fatal: ConfigStore::load
     // already falls back to defaults.
@@ -279,8 +279,9 @@ async fn setup_daemon(
         event_bus.clone(),
     ));
 
-    let window_host: Arc<dyn quantum_domain::ports::WindowHost> = Arc::new(DummyWindowHost::new());
-    let open_view_use_case = Arc::new(OpenViewUseCase::new(window_host.clone()));
+    // Use the window host passed in from main (GtkWindowHost when running with
+    // GTK, DummyWindowHost when headless).
+    let open_view_use_case = Arc::new(OpenViewUseCase::new(window_host));
 
     let dispatcher = Arc::new(AppDispatcher::new(
         search_use_case,
