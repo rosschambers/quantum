@@ -13,6 +13,7 @@ serde = { workspace = true, features = ["derive"] }
 serde_json.workspace = true
 thiserror.workspace = true
 async-trait.workspace = true
+tracing.workspace = true
 gtk4 = { version = "0.9", features = ["v4_14"] }
 webkit6 = "0.4"
 gtk4-layer-shell = "0.4"

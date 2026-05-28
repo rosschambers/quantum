@@ -1,10 +1,10 @@
 //! Launcher window with gtk4-layer-shell anchoring.
 
-use crate::scheme::ThemePort;
+use crate::dispatcher::IpcDispatcher;
 use gtk4::prelude::*;
 use gtk4::{ApplicationWindow, Orientation};
 use gtk4_layer_shell::{KeyboardMode, Layer, LayerShell};
-use quantum_application::dispatcher::Dispatcher;
+use quantum_domain::ports::ThemeStore;
 use std::cell::RefCell;
 use std::sync::Arc;
 use webkit6::WebView;
@@ -14,17 +14,17 @@ pub struct LauncherWindow {
     window: ApplicationWindow,
     webview: RefCell<Option<WebView>>,
     #[allow(dead_code)]
-    dispatcher: Arc<Dispatcher>,
+    dispatcher: Arc<dyn IpcDispatcher>,
     #[allow(dead_code)]
-    theme_store: Arc<dyn ThemePort>,
+    theme_store: Arc<dyn ThemeStore>,
 }
 
 impl LauncherWindow {
     /// Create a new launcher window.
     pub fn new(
         app: &gtk4::Application,
-        dispatcher: Arc<Dispatcher>,
-        theme_store: Arc<dyn ThemePort>,
+        dispatcher: Arc<dyn IpcDispatcher>,
+        theme_store: Arc<dyn ThemeStore>,
     ) -> Self {
         let window = ApplicationWindow::builder()
             .application(app)
