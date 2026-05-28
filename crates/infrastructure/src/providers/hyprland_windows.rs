@@ -14,7 +14,26 @@ struct WindowInfo {
     address: String,
     title: String,
     class: String,
-    workspace: String,
+    workspace_id: i64,
+    workspace_name: String,
+}
+
+/// Format a friendly subtitle from a workspace name, id, and window class.
+fn format_subtitle(workspace_id: i64, workspace_name: &str, class: &str) -> String {
+    if let Some(special) = workspace_name.strip_prefix("special:") {
+        let label = if special.is_empty() {
+            "scratchpad"
+        } else {
+            special
+        };
+        return format!("Special: {} \u{00B7} {}", label, class);
+    }
+
+    if !workspace_name.is_empty() {
+        return format!("{} \u{00B7} {}", workspace_name, class);
+    }
+
+    format!("Workspace {} \u{00B7} {}", workspace_id, class)
 }
 
 /// Provider for Hyprland windows.
@@ -50,17 +69,22 @@ impl HyprlandWindowsProvider {
 
             if let Some(clients) = json.as_array() {
                 for client in clients {
-                    if let (Some(address), Some(title), Some(class), Some(workspace)) = (
+                    if let (Some(address), Some(title), Some(class), Some(workspace_id)) = (
                         client["address"].as_str(),
                         client["title"].as_str(),
                         client["class"].as_str(),
                         client["workspace"]["id"].as_i64(),
                     ) {
+                        let workspace_name = client["workspace"]["name"]
+                            .as_str()
+                            .unwrap_or("")
+                            .to_string();
                         windows.push(WindowInfo {
                             address: address.to_string(),
                             title: title.to_string(),
                             class: class.to_string(),
-                            workspace: workspace.to_string(),
+                            workspace_id,
+                            workspace_name,
                         });
                     }
                 }
@@ -96,14 +120,17 @@ impl ProviderSource for HyprlandWindowsProvider {
         for window in windows.iter() {
             let title_lower = window.title.to_lowercase();
             let class_lower = window.class.to_lowercase();
-            let workspace_lower = window.workspace.to_lowercase();
+            let workspace_name_lower = window.workspace_name.to_lowercase();
+            let workspace_id_str = window.workspace_id.to_string();
 
             // Check if any field contains the query
             let score = if title_lower.contains(&query_lower) {
                 1.0
             } else if class_lower.contains(&query_lower) {
                 0.7
-            } else if workspace_lower.contains(&query_lower) {
+            } else if workspace_name_lower.contains(&query_lower)
+                || workspace_id_str.contains(&query_lower)
+            {
                 0.5
             } else {
                 0.0
@@ -114,7 +141,11 @@ impl ProviderSource for HyprlandWindowsProvider {
                     id: window.address.clone(),
                     provider: self.id.clone(),
                     title: window.title.clone(),
-                    subtitle: Some(format!("Workspace {} - {}", window.workspace, window.class)),
+                    subtitle: Some(format_subtitle(
+                        window.workspace_id,
+                        &window.workspace_name,
+                        &window.class,
+                    )),
                     icon: None,
                     score: MatchScore::new(score),
                     action: Action::Custom {
@@ -191,13 +222,13 @@ mod tests {
                 "address": "0x123",
                 "title": "Firefox",
                 "class": "firefox",
-                "workspace": {"id": 1}
+                "workspace": {"id": 1, "name": "1"}
             },
             {
                 "address": "0x456",
                 "title": "VSCode",
                 "class": "code",
-                "workspace": {"id": 1}
+                "workspace": {"id": 1, "name": "1"}
             }
         ]"#
         .to_string();
@@ -219,7 +250,7 @@ mod tests {
                 "address": "0x123",
                 "title": "Firefox",
                 "class": "firefox",
-                "workspace": {"id": 1}
+                "workspace": {"id": 1, "name": "1"}
             }
         ]"#
         .to_string();
@@ -260,5 +291,23 @@ mod tests {
         let result = provider.invoke(&action).await;
 
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn subtitle_uses_name_for_normal_workspace() {
+        assert_eq!(format_subtitle(1, "1", "firefox"), "1 \u{00B7} firefox");
+    }
+
+    #[test]
+    fn subtitle_friendly_for_special_workspace() {
+        assert_eq!(
+            format_subtitle(-98, "special:scratchpad", "alacritty"),
+            "Special: scratchpad \u{00B7} alacritty"
+        );
+    }
+
+    #[test]
+    fn subtitle_fallback_when_name_missing() {
+        assert_eq!(format_subtitle(7, "", "code"), "Workspace 7 \u{00B7} code");
     }
 }
