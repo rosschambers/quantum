@@ -1,3 +1,5 @@
+mod runtime;
+
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -44,8 +46,7 @@ impl IpcDispatcher for AppDispatcherAdapter {
     }
 }
 
-#[tokio::main]
-async fn main() -> Result<(), Box<dyn std::error::Error>> {
+fn main() -> Result<(), Box<dyn std::error::Error>> {
     tracing_subscriber::fmt()
         .with_env_filter(EnvFilter::from_default_env())
         .init();
@@ -56,6 +57,39 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let headless = args.iter().any(|a| a == "--headless");
     let socket_override = parse_socket_override(&args);
 
+    let tokio_runtime = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .thread_name("quantum-worker")
+        .build()?;
+    let worker = runtime::spawn_worker(tokio_runtime);
+
+    // All async setup happens on the worker.
+    let setup = worker
+        .handle
+        .block_on(async { setup_daemon(socket_override).await })?;
+
+    if headless {
+        // Run signal loop on the worker, blocking the main thread.
+        worker.handle.block_on(async move {
+            run_signal_loop(setup.socket_path).await;
+        });
+    } else {
+        // To be wired in Task 2.4.
+        eprintln!("GTK mode not yet wired; pass --headless");
+        return Ok(());
+    }
+
+    worker.shutdown();
+    Ok(())
+}
+
+struct DaemonSetup {
+    socket_path: std::path::PathBuf,
+}
+
+async fn setup_daemon(
+    socket_override: Option<String>,
+) -> Result<DaemonSetup, Box<dyn std::error::Error>> {
     // Load configuration. A missing config file is not fatal: ConfigStore::load
     // already falls back to defaults.
     let config_store = match ConfigStore::load().await {
@@ -169,7 +203,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         reload_theme_use_case,
         open_view_use_case,
     ));
-    let ipc_dispatcher = Arc::new(AppDispatcherAdapter::new(dispatcher));
+    let _ipc_dispatcher = Arc::new(AppDispatcherAdapter::new(dispatcher));
 
     // Determine socket path
     let socket_path = if let Some(path) = socket_override {
@@ -196,7 +230,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let server = Arc::new(UnixSocketServer::new(&socket_path));
     {
         let server = server.clone();
-        let dispatcher = ipc_dispatcher.clone();
+        let dispatcher = _ipc_dispatcher.clone();
         tokio::spawn(async move {
             if let Err(err) = server.serve(dispatcher).await {
                 tracing::error!("IPC server error: {err}");
@@ -206,17 +240,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     info!("IPC server listening on {}", socket_path.display());
 
-    // Signal handling for graceful shutdown
+    Ok(DaemonSetup { socket_path })
+}
+
+async fn run_signal_loop(socket_path: std::path::PathBuf) {
     let socket_path_clone = socket_path.clone();
     let mut sigterm = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
         .expect("signal setup");
     let mut sigint = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::interrupt())
         .expect("signal setup");
 
-    info!(
-        "Running daemon ({} mode)",
-        if headless { "headless" } else { "interactive" }
-    );
+    info!("Running daemon (headless mode)");
 
     tokio::select! {
         _ = sigterm.recv() => info!("Received SIGTERM"),
@@ -224,12 +258,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         _ = tokio::signal::ctrl_c() => info!("Received Ctrl+C"),
     }
 
-    // Clean up socket file on shutdown
     if let Err(err) = std::fs::remove_file(&socket_path_clone) {
         tracing::warn!("Failed to remove socket file: {err}");
     }
-
-    Ok(())
 }
 
 fn parse_socket_override(args: &[String]) -> Option<String> {
