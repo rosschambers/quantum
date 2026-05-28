@@ -100,6 +100,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .handle
         .block_on(async { setup_daemon(socket_override, window_host).await })?;
 
+    // Start watching theme files for changes and emit events
+    setup
+        .theme_store_concrete
+        .clone()
+        .start_watching(setup.event_bus.clone());
+
     if headless {
         // Run signal loop on the worker, blocking the main thread.
         worker.handle.block_on(async move {
@@ -129,6 +135,8 @@ struct DaemonSetup {
     socket_path: std::path::PathBuf,
     ipc_dispatcher: Arc<dyn UiIpcDispatcher>,
     theme_store: Arc<dyn quantum_domain::ports::ThemeStore>,
+    theme_store_concrete: Arc<ThemeStore>,
+    event_bus: Arc<dyn quantum_domain::EventBus>,
 }
 
 async fn setup_daemon(
@@ -288,7 +296,9 @@ async fn setup_daemon(
     Ok(DaemonSetup {
         socket_path,
         ipc_dispatcher: _ipc_dispatcher,
-        theme_store,
+        theme_store: theme_store.clone() as Arc<dyn quantum_domain::ports::ThemeStore>,
+        theme_store_concrete: theme_store,
+        event_bus,
     })
 }
 

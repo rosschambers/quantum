@@ -1482,11 +1482,14 @@ name = "quantum-infrastructure"
 version = "0.1.0"
 dependencies = [
  "async-trait",
+ "dirs 5.0.1",
  "freedesktop-desktop-entry",
+ "futures",
  "humantime-serde",
  "include_dir",
  "libc",
  "notify",
+ "notify-debouncer-mini",
  "nucleo-matcher",
  "quantum-domain",
  "serde",
