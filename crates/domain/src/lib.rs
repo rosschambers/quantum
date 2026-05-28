@@ -2,6 +2,7 @@
 
 pub mod action;
 pub mod error;
+pub mod event_bus;
 pub mod ids;
 pub mod match_result;
 pub mod ports;
@@ -12,6 +13,7 @@ pub mod window_mode;
 
 pub use action::Action;
 pub use error::DomainError;
+pub use event_bus::EventEnvelope;
 pub use ids::{ProviderId, WindowId};
 pub use match_result::{IconRef, Match};
 pub use ports::{
