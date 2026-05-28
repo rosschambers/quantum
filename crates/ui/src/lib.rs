@@ -1,6 +1,5 @@
 //! quantum-ui
 
-pub mod app;
 pub mod bridge;
 pub mod dispatcher;
 pub mod error;
@@ -10,7 +9,6 @@ pub mod scheme;
 pub mod window_host;
 pub mod windows;
 
-pub use app::QuantumApp;
 pub use bridge::register_bridge;
 pub use dispatcher::IpcDispatcher;
 pub use error::{Result, UiError};
