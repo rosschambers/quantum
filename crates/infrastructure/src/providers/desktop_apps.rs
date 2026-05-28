@@ -1,5 +1,6 @@
 use async_trait::async_trait;
 use freedesktop_desktop_entry::DesktopEntry;
+use std::collections::HashMap;
 use std::path::Path;
 use std::sync::Arc;
 use tokio::sync::RwLock;
@@ -41,9 +42,12 @@ impl DesktopAppsProvider {
     }
 
     /// Scan for desktop files in standard locations.
+    ///
+    /// Walks `XDG_DATA_HOME` first, then each entry of `XDG_DATA_DIRS`
+    /// left-to-right. Per the XDG Base Directory Specification, the
+    /// first occurrence of a given desktop id wins; later directories
+    /// only contribute ids not already seen.
     async fn scan_apps(&mut self) -> Result<(), DomainError> {
-        let mut apps = Vec::new();
-
         // Scan in common locations
         let data_home = std::env::var("XDG_DATA_HOME").unwrap_or_else(|_| {
             format!("{}/.local/share", std::env::var("HOME").unwrap_or_default())
@@ -54,12 +58,15 @@ impl DesktopAppsProvider {
         let mut dirs = vec![data_home];
         dirs.extend(data_dirs.split(':').map(|s| s.to_string()));
 
+        let mut by_id: HashMap<String, AppInfo> = HashMap::new();
         for base_dir in dirs {
             let app_dir = Path::new(&base_dir).join("applications");
             if app_dir.exists() {
-                self.scan_directory(&app_dir, &mut apps).await?;
+                self.scan_directory(&app_dir, &mut by_id).await?;
             }
         }
+
+        let mut apps: Vec<AppInfo> = by_id.into_values().collect();
 
         // Sort by name
         apps.sort_by(|a, b| a.name.cmp(&b.name));
@@ -68,8 +75,14 @@ impl DesktopAppsProvider {
         Ok(())
     }
 
-    /// Scan a single directory for .desktop files.
-    async fn scan_directory(&self, dir: &Path, apps: &mut Vec<AppInfo>) -> Result<(), DomainError> {
+    /// Scan a single directory for .desktop files, inserting each parsed
+    /// entry into `by_id` only if the id is not already present (first
+    /// seen wins, per XDG Base Directory Specification).
+    async fn scan_directory(
+        &self,
+        dir: &Path,
+        by_id: &mut HashMap<String, AppInfo>,
+    ) -> Result<(), DomainError> {
         match std::fs::read_dir(dir) {
             Ok(entries) => {
                 for entry in entries.flatten() {
@@ -92,7 +105,7 @@ impl DesktopAppsProvider {
                                 let exec = de.exec().unwrap_or_default().to_string();
 
                                 if let Some(name) = path.file_stem().and_then(|s| s.to_str()) {
-                                    apps.push(AppInfo {
+                                    by_id.entry(name.to_string()).or_insert(AppInfo {
                                         id: name.to_string(),
                                         name: app_name,
                                         generic_name,
@@ -303,7 +316,7 @@ Type=Application"#;
         };
 
         provider
-            .scan_directory(&apps_dir, &mut Vec::new())
+            .scan_directory(&apps_dir, &mut HashMap::new())
             .await
             .unwrap();
     }
@@ -343,9 +356,12 @@ Type=Application"#,
         };
 
         // Manually scan the temp directory
-        let mut apps = Vec::new();
-        provider.scan_directory(&apps_dir, &mut apps).await.unwrap();
-        *provider.apps.write().await = apps;
+        let mut by_id: HashMap<String, AppInfo> = HashMap::new();
+        provider
+            .scan_directory(&apps_dir, &mut by_id)
+            .await
+            .unwrap();
+        *provider.apps.write().await = by_id.into_values().collect();
 
         // Search for Firefox
         let query = Query::new("fox");
@@ -374,6 +390,92 @@ Type=Application"#,
         let matches = provider.search(&query).await.unwrap();
 
         assert!(matches.is_empty());
+    }
+
+    /// Regression test: when the same desktop id (e.g. firefox.desktop)
+    /// exists in both XDG_DATA_HOME and an XDG_DATA_DIRS entry, scan_apps
+    /// must keep only the first-seen one (XDG_DATA_HOME wins) and produce
+    /// exactly one AppInfo for that id.
+    #[tokio::test]
+    async fn scan_apps_dedupes_across_xdg_dirs_first_seen_wins() {
+        use tokio::sync::Mutex;
+        // Env is process-global; serialize tests that mutate it.
+        // Tokio's async Mutex is safe to hold across await points.
+        static ENV_LOCK: Mutex<()> = Mutex::const_new(());
+        let _guard = ENV_LOCK.lock().await;
+
+        let home_dir = tempfile::tempdir().unwrap();
+        let system_dir = tempfile::tempdir().unwrap();
+
+        let home_apps = home_dir.path().join("applications");
+        let system_apps = system_dir.path().join("applications");
+        std::fs::create_dir(&home_apps).unwrap();
+        std::fs::create_dir(&system_apps).unwrap();
+
+        // Two installs of firefox.desktop with DIFFERENT Exec lines so we
+        // can verify which directory's copy won.
+        std::fs::write(
+            home_apps.join("firefox.desktop"),
+            r#"[Desktop Entry]
+Name=Firefox
+GenericName=Web Browser
+Exec=firefox-from-home %u
+Type=Application"#,
+        )
+        .unwrap();
+
+        std::fs::write(
+            system_apps.join("firefox.desktop"),
+            r#"[Desktop Entry]
+Name=Firefox
+GenericName=Web Browser
+Exec=firefox-from-system %u
+Type=Application"#,
+        )
+        .unwrap();
+
+        // Snapshot and override env for the duration of this test.
+        let prev_data_home = std::env::var_os("XDG_DATA_HOME");
+        let prev_data_dirs = std::env::var_os("XDG_DATA_DIRS");
+        // SAFETY: serialized by ENV_LOCK above.
+        std::env::set_var("XDG_DATA_HOME", home_dir.path());
+        std::env::set_var("XDG_DATA_DIRS", system_dir.path());
+
+        let executor = Arc::new(FakeExecutor::new());
+        let result = DesktopAppsProvider::new(executor).await;
+
+        // Restore env before asserting so a panic still cleans up.
+        match prev_data_home {
+            Some(v) => std::env::set_var("XDG_DATA_HOME", v),
+            None => std::env::remove_var("XDG_DATA_HOME"),
+        }
+        match prev_data_dirs {
+            Some(v) => std::env::set_var("XDG_DATA_DIRS", v),
+            None => std::env::remove_var("XDG_DATA_DIRS"),
+        }
+
+        let provider = result.unwrap();
+
+        let query = Query::new("firefox");
+        let matches = provider.search(&query).await.unwrap();
+        assert_eq!(
+            matches.len(),
+            1,
+            "expected exactly one firefox match after dedup, got {}",
+            matches.len()
+        );
+        assert_eq!(matches[0].id, "firefox");
+
+        // The winning copy must be the one from XDG_DATA_HOME.
+        let apps = provider.apps.read().await;
+        let firefox = apps
+            .iter()
+            .find(|a| a.id == "firefox")
+            .expect("firefox AppInfo present");
+        assert_eq!(
+            firefox.exec, "firefox-from-home %u",
+            "XDG_DATA_HOME entry should win over XDG_DATA_DIRS entry"
+        );
     }
 
     #[tokio::test]
