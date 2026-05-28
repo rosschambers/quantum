@@ -114,7 +114,7 @@ ls -la "$XDG_RUNTIME_DIR"/quantum.sock
 
 ---
 
-### [MET] Launcher window appears via `quantumctl view.toggle launcher`
+### [MET] Launcher window appears via `quantumctl toggle launcher`
 
 **Command:** `./scripts/manual-smoke-launcher.sh`
 
@@ -258,7 +258,7 @@ cargo test -p quantum-ui tokens
 
 **Manual verification:**
 1. Start daemon: `RUST_LOG=info nix-shell --run ./target/debug/quantumd`
-2. Show launcher: `quantumctl view.show launcher`
+2. Show launcher: `quantumctl show launcher`
 3. Edit token: change `color-bg` in `frontend/themes/default/tokens.toml`
 4. Save file — launcher background updates within ~500ms
 5. Repeat with other colors (e.g., `color-text`)

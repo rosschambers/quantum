@@ -82,9 +82,9 @@ RUST_LOG=info nix-shell --run "./target/debug/quantumd" &
 Control the launcher via `quantumctl`:
 
 ```bash
-quantumctl view.toggle launcher    # Show/hide
-quantumctl view.show launcher      # Show
-quantumctl view.hide launcher      # Hide
+quantumctl toggle launcher    # Show/hide
+quantumctl show launcher      # Show
+quantumctl hide launcher      # Hide
 ```
 
 ### Smoke Test Scripts
@@ -101,7 +101,7 @@ Manual verification scripts for end-to-end testing:
 Add the launcher to your Hyprland config:
 
 ```conf
-bind = SUPER, SPACE, exec, quantumctl view.toggle launcher
+bind = SUPER, SPACE, exec, quantumctl toggle launcher
 ```
 
 See [packaging/hyprland/example.conf](packaging/hyprland/example.conf) for additional window rules and widget keybinds.

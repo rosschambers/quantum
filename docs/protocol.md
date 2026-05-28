@@ -361,10 +361,10 @@ quantumctl search firefox
 quantumctl provider list
 
 # Show launcher view
-quantumctl view.show launcher
+quantumctl show launcher
 
 # Toggle launcher
-quantumctl view.toggle launcher
+quantumctl toggle launcher
 
 # Reload theme
 quantumctl theme reload

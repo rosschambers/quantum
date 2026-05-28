@@ -366,7 +366,7 @@ cp -r ../launcher/* .
 # Edit App.svelte to show widgets instead
 ```
 
-Build and activate via `quantumctl view.show widgets`.
+Build and activate via `quantumctl show widgets`.
 
 ---
 

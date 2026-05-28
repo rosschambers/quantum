@@ -18,7 +18,7 @@ DAEMON_PID=$!
 sleep 2
 
 echo "[4/4] Show clock widget..."
-nix-shell --run "./target/debug/quantumctl view.show widgets/clock"
+nix-shell --run "./target/debug/quantumctl show widgets/clock"
 sleep 1
 
 echo

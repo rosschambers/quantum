@@ -18,7 +18,7 @@ DAEMON_PID=$!
 sleep 2
 
 echo "[4/4] Show launcher..."
-nix-shell --run "./target/debug/quantumctl view.show launcher"
+nix-shell --run "./target/debug/quantumctl show launcher"
 sleep 1
 
 echo
