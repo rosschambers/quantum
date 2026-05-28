@@ -121,6 +121,7 @@ impl<C: WindowConstructor> WindowRegistry<C> {
         C::Window: WindowOps,
     {
         let WindowRequest::Open { view, mode } = req;
+        tracing::debug!("WindowRegistry::handle view={} mode={:?}", view, mode);
         let window = match self.windows.entry(view.clone()) {
             std::collections::hash_map::Entry::Occupied(e) => e.into_mut(),
             std::collections::hash_map::Entry::Vacant(v) => {

@@ -18,6 +18,17 @@ pub struct LauncherWindow {
     #[allow(dead_code)]
     theme_store: Arc<dyn ThemeStore>,
     visible: bool,
+    layer_shell: bool,
+}
+
+/// When set to `1`, the launcher anchors as a layer-shell `Top` surface with
+/// exclusive keyboard, the production behavior. When unset (the default while
+/// the daemon is in early testing), the launcher opens as a normal xdg-toplevel
+/// window that the user can close or switch away from like any other window.
+fn use_layer_shell() -> bool {
+    std::env::var("QUANTUM_LAYER_SHELL")
+        .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+        .unwrap_or(false)
 }
 
 impl LauncherWindow {
@@ -28,19 +39,35 @@ impl LauncherWindow {
         theme_store: Arc<dyn ThemeStore>,
         runtime: Handle,
     ) -> Self {
-        let window = gtk4::ApplicationWindow::builder()
-            .application(app)
-            .decorated(false)
-            .default_width(600)
-            .resizable(false)
-            .build();
+        let layer_shell = use_layer_shell();
 
-        // Initialize layer shell
-        window.init_layer_shell();
-        window.set_layer(Layer::Top);
-        window.set_keyboard_mode(KeyboardMode::OnDemand);
-        window.set_namespace("quantum-launcher");
-        window.set_exclusive_zone(-1); // Don't reserve space
+        let mut builder = gtk4::ApplicationWindow::builder()
+            .application(app)
+            .default_width(600)
+            .default_height(420)
+            .resizable(!layer_shell);
+
+        // In layer-shell mode we want a chromeless surface. In windowed (test)
+        // mode we keep decorations so the user has a close button and can
+        // drag the window.
+        if layer_shell {
+            builder = builder.decorated(false);
+        } else {
+            builder = builder.decorated(true).title("Quantum");
+        }
+
+        let window = builder.build();
+
+        if layer_shell {
+            // Initialize layer shell as a Top surface centered on screen.
+            window.init_layer_shell();
+            window.set_layer(Layer::Top);
+            window.set_keyboard_mode(KeyboardMode::OnDemand);
+            window.set_namespace("quantum-launcher");
+            window.set_exclusive_zone(-1); // Don't reserve space
+        }
+        // In windowed mode we let the compositor place it like any other
+        // xdg-toplevel — Hyprland's default behavior is fine for testing.
 
         // Create and embed WebView
         let webview = webkit6::WebView::new();
@@ -56,6 +83,7 @@ impl LauncherWindow {
             dispatcher,
             theme_store,
             visible: false,
+            layer_shell,
         }
     }
 }
@@ -63,8 +91,11 @@ impl LauncherWindow {
 impl crate::registry::WindowOps for LauncherWindow {
     /// Show the launcher window.
     fn show(&mut self) {
-        // Use exclusive keyboard mode when shown so Hyprland routes all keystrokes to the launcher.
-        self.window.set_keyboard_mode(KeyboardMode::Exclusive);
+        if self.layer_shell {
+            // Exclusive keyboard so the compositor routes all keystrokes to
+            // the launcher while it is visible.
+            self.window.set_keyboard_mode(KeyboardMode::Exclusive);
+        }
         self.window.set_visible(true);
         // Focus the WebView so typing immediately reaches the search input.
         self.webview.grab_focus();
@@ -73,8 +104,11 @@ impl crate::registry::WindowOps for LauncherWindow {
 
     /// Hide the launcher window.
     fn hide(&mut self) {
-        // Revert to on-demand keyboard mode before hiding so the next compositor focus isn't redirected.
-        self.window.set_keyboard_mode(KeyboardMode::OnDemand);
+        if self.layer_shell {
+            // Revert to on-demand keyboard mode before hiding so the next
+            // compositor focus isn't redirected to a hidden surface.
+            self.window.set_keyboard_mode(KeyboardMode::OnDemand);
+        }
         self.window.set_visible(false);
         self.visible = false;
     }
