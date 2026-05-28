@@ -74,4 +74,3 @@ impl crate::registry::WindowOps for LauncherWindow {
         }
     }
 }
-

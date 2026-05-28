@@ -1,3 +1,4 @@
+mod gtk_loop;
 mod runtime;
 
 use std::path::PathBuf;
@@ -21,7 +22,7 @@ use quantum_infrastructure::{
     shell::TokioShellExecutor, theme::ThemeStore, HyprlandSocketClient, InMemoryEventBus,
     ShellCommandProvider, UnixSocketServer,
 };
-use quantum_ui::DummyWindowHost;
+use quantum_ui::{DummyWindowHost, IpcDispatcher as UiIpcDispatcher};
 
 /// Adapter that lets the infrastructure IPC server route requests into the
 /// application-layer dispatcher. The adapter converts `ApplicationError` into
@@ -46,6 +47,23 @@ impl IpcDispatcher for AppDispatcherAdapter {
     }
 }
 
+#[async_trait]
+impl UiIpcDispatcher for AppDispatcherAdapter {
+    async fn dispatch(
+        &self,
+        method: &str,
+        params: Value,
+    ) -> quantum_ui::dispatcher::DispatchResult {
+        match self.inner.dispatch(method, params).await {
+            Ok(value) => Ok(value),
+            Err(err) => Err(quantum_ui::dispatcher::DispatchError {
+                code: -32603,
+                message: err.to_string(),
+            }),
+        }
+    }
+}
+
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     tracing_subscriber::fmt()
         .with_env_filter(EnvFilter::from_default_env())
@@ -63,10 +81,24 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .build()?;
     let worker = runtime::spawn_worker(tokio_runtime);
 
+    // Set up window host (GTK or dummy).
+    let (window_host, window_rx) = if headless {
+        let dummy = Arc::new(DummyWindowHost::new()) as Arc<dyn quantum_domain::ports::WindowHost>;
+        // No channel in headless; use a never-receiving fake.
+        let (_unused_tx, rx) = tokio::sync::mpsc::unbounded_channel::<quantum_ui::WindowRequest>();
+        (dummy, rx)
+    } else {
+        let (host, rx) = quantum_ui::GtkWindowHost::new();
+        (
+            Arc::new(host) as Arc<dyn quantum_domain::ports::WindowHost>,
+            rx,
+        )
+    };
+
     // All async setup happens on the worker.
     let setup = worker
         .handle
-        .block_on(async { setup_daemon(socket_override).await })?;
+        .block_on(async { setup_daemon(socket_override, window_host).await })?;
 
     if headless {
         // Run signal loop on the worker, blocking the main thread.
@@ -74,8 +106,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             run_signal_loop(setup.socket_path).await;
         });
     } else {
-        // To be wired in Task 2.4.
-        eprintln!("GTK mode not yet wired; pass --headless");
+        let app = gtk4::Application::builder()
+            .application_id("dev.quantum.daemon")
+            .build();
+        let _exit_code =
+            crate::gtk_loop::run(&app, window_rx, setup.ipc_dispatcher, setup.theme_store);
+        // After GTK exits, clean up socket.
+        let _ = std::fs::remove_file(&setup.socket_path);
         return Ok(());
     }
 
@@ -85,10 +122,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 struct DaemonSetup {
     socket_path: std::path::PathBuf,
+    ipc_dispatcher: Arc<dyn UiIpcDispatcher>,
+    theme_store: Arc<dyn quantum_domain::ports::ThemeStore>,
 }
 
 async fn setup_daemon(
     socket_override: Option<String>,
+    _window_host: Arc<dyn quantum_domain::ports::WindowHost>,
 ) -> Result<DaemonSetup, Box<dyn std::error::Error>> {
     // Load configuration. A missing config file is not fatal: ConfigStore::load
     // already falls back to defaults.
@@ -240,7 +280,11 @@ async fn setup_daemon(
 
     info!("IPC server listening on {}", socket_path.display());
 
-    Ok(DaemonSetup { socket_path })
+    Ok(DaemonSetup {
+        socket_path,
+        ipc_dispatcher: _ipc_dispatcher,
+        theme_store,
+    })
 }
 
 async fn run_signal_loop(socket_path: std::path::PathBuf) {
