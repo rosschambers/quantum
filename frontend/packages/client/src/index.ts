@@ -1,5 +1,6 @@
 import type { Transport, JsonRpcRequest, JsonRpcResponse, JsonRpcNotification } from './transport';
 import { createMockTransport } from './transport';
+import { createBridgeTransport } from './bridge';
 
 export type { Transport, JsonRpcRequest, JsonRpcResponse, JsonRpcNotification };
 
@@ -20,7 +21,19 @@ interface PendingCall {
   reject: (reason: ClientError) => void;
 }
 
-export function createClient({ transport }: { transport: Transport }): Client {
+export function createClient(options?: { transport?: Transport }): Client {
+  const transport = options?.transport ?? 
+    (() => {
+      const w = typeof window !== 'undefined' ? (window as any) : undefined;
+      return w?.webkit?.messageHandlers?.quantum 
+        ? createBridgeTransport() 
+        : createMockTransport();
+    })();
+
+  if (!transport) {
+    throw new Error('Failed to initialize transport');
+  }
+
   let nextId = 1;
   const pending = new Map<number, PendingCall>();
   const subscriptions = new Map<string, Set<(payload: unknown) => void>>();

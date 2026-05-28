@@ -15,7 +15,7 @@ declare global {
   }
 }
 
-export function createWebKitTransport(): Transport | null {
+export function createBridgeTransport(): Transport | null {
   if (typeof window === 'undefined' || !window.webkit?.messageHandlers?.quantum) {
     return null;
   }
@@ -26,10 +26,11 @@ export function createWebKitTransport(): Transport | null {
   // Install global handlers for receiving responses and notifications
   if (!window.__quantum_resolve) {
     window.__quantum_resolve = (id: number, result: unknown) => {
+      const parsedResult = typeof result === 'string' ? JSON.parse(result) : result;
       const response: JsonRpcResponse = {
         jsonrpc: '2.0',
         id,
-        result,
+        result: parsedResult,
       };
       responseCallbacks.forEach((cb) => cb(response));
     };
@@ -60,7 +61,7 @@ export function createWebKitTransport(): Transport | null {
 
   return {
     send(request: JsonRpcRequest): void {
-      window.webkit!.messageHandlers!.quantum!.postMessage(request);
+      window.webkit!.messageHandlers!.quantum!.postMessage(JSON.stringify(request));
     },
 
     onResponse(callback: (response: JsonRpcResponse) => void): () => void {
