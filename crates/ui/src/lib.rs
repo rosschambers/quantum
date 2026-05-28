@@ -15,9 +15,9 @@ pub use bridge::register_bridge;
 pub use dispatcher::IpcDispatcher;
 pub use error::{Result, UiError};
 pub use messages::{WindowEvent, WindowRequest};
+pub use quantum_domain::tokens_to_css;
 pub use registry::{ManagedWindow, ManagedWindowConstructor, WindowOps, WindowRegistry};
 pub use scheme::register_quantum_scheme;
-pub use quantum_domain::tokens_to_css;
 pub use window_host::{DummyWindowHost, GtkWindowHost};
 pub use windows::LauncherWindow;
 

@@ -190,7 +190,8 @@ async fn setup_daemon(
 
     // Create broadcast channel for event notifications to IPC clients.
     let (event_tx, _) = tokio::sync::broadcast::channel::<EventEnvelope>(64);
-    let event_bus: Arc<dyn quantum_domain::EventBus> = Arc::new(BroadcastingEventBus::new(event_tx.clone()));
+    let event_bus: Arc<dyn quantum_domain::EventBus> =
+        Arc::new(BroadcastingEventBus::new(event_tx.clone()));
 
     // Desktop apps provider
     match DesktopAppsProvider::new(shell_executor.clone()).await {

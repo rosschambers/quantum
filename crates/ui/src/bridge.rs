@@ -18,11 +18,7 @@ pub struct BridgeMessage {
 
 /// Register the bridge message handler on a WebView.
 /// Wires WebKit script messages to the Tokio dispatcher with JS evaluation for responses.
-pub fn register_bridge(
-    webview: &WebView,
-    dispatcher: Arc<dyn IpcDispatcher>,
-    runtime: Handle,
-) {
+pub fn register_bridge(webview: &WebView, dispatcher: Arc<dyn IpcDispatcher>, runtime: Handle) {
     let ucm = match webview.user_content_manager() {
         Some(mgr) => mgr,
         None => {
@@ -64,8 +60,7 @@ pub fn register_bridge(
             let result = dispatcher.dispatch(&method, params).await;
             let js = match result {
                 Ok(value) => {
-                    let payload =
-                        serde_json::to_string(&value).unwrap_or_else(|_| "null".into());
+                    let payload = serde_json::to_string(&value).unwrap_or_else(|_| "null".into());
                     format!(
                         "window.__quantum_resolve({}, {})",
                         id,
@@ -95,13 +90,7 @@ pub fn register_bridge(
             // Try to receive the JS (non-blocking)
             match rx.try_recv() {
                 Ok(js) => {
-                    webview.evaluate_javascript(
-                        &js,
-                        None,
-                        None,
-                        None::<&gio::Cancellable>,
-                        |_| {},
-                    );
+                    webview.evaluate_javascript(&js, None, None, None::<&gio::Cancellable>, |_| {});
                     glib::ControlFlow::Break
                 }
                 Err(tokio::sync::oneshot::error::TryRecvError::Empty) => {

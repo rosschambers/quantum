@@ -275,7 +275,7 @@ impl ThemeStore {
                     // Resolve tokens and render CSS
                     let tokens = store.resolved_tokens_sync();
                     let css = quantum_domain::tokens_to_css(&tokens);
-                    
+
                     // Create payload with rendered CSS
                     let payload = serde_json::json!({ "css": css }).to_string();
 
