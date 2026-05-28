@@ -198,6 +198,15 @@ impl ThemeStore {
     }
 
     fn get_file_exact(&self, theme_name: &str, path: &str) -> Option<Vec<u8>> {
+        // Defense in depth: refuse to resolve any path containing `..` or
+        // `.` segments. The scheme-handler parser already rejects URIs with
+        // traversal segments, but the store must independently keep its
+        // sandbox closed in case another caller (a test, a future codepath,
+        // or a code-bug downstream of the parser) hands us a tainted path.
+        if path.split('/').any(|seg| seg == ".." || seg == ".") {
+            return None;
+        }
+
         // First try disk override if not the default theme
         if theme_name != "default" {
             let disk_path = self.themes_dir.join(theme_name).join(path);
@@ -511,6 +520,18 @@ mod tests {
             let content = String::from_utf8(dist_file.unwrap()).expect("valid utf8");
             assert!(!content.is_empty(), "index.html should have content");
         }
+    }
+
+    #[test]
+    fn get_file_rejects_dotdot() {
+        // Defense in depth: even when the URI parser is bypassed, the store
+        // must refuse to escape its themes directory via `..` segments.
+        let store = ThemeStore::new(None);
+        assert!(store.get_file("default", "../etc/passwd").is_none());
+        assert!(store
+            .get_file("default", "views/../../../etc/passwd")
+            .is_none());
+        assert!(store.get_file("default", "./tokens.toml").is_none());
     }
 
     #[test]

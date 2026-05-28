@@ -55,8 +55,15 @@ pub fn register_quantum_scheme(context: &WebContext, theme_store: Arc<dyn ThemeS
         };
         tracing::debug!("quantum:// served {uri_str}: {} bytes", bytes_data.len());
 
-        // For HTML files, inject resolved tokens
-        let final_bytes = if path_for_mime.ends_with(".html") {
+        // For HTML files, inject resolved tokens. Match the extension
+        // case-insensitively so user themes with `Index.HTML` or similar
+        // capitalized filenames still receive the token injection.
+        let is_html = path_for_mime
+            .rsplit('.')
+            .next()
+            .map(|s| s.eq_ignore_ascii_case("html"))
+            .unwrap_or(false);
+        let final_bytes = if is_html {
             let html = String::from_utf8_lossy(&bytes_data).into_owned();
             let tokens = theme_store.resolved_tokens();
             let injected = inject_tokens(&html, &tokens);
@@ -88,9 +95,21 @@ impl QuantumPath {
     }
 }
 
+/// Returns true when `s` is a safe path segment: non-empty, not `.`, and
+/// not `..`. Used by `parse_quantum_uri` to refuse URIs that try to escape
+/// their theme or assets sandbox via traversal segments.
+fn is_safe_segment(s: &str) -> bool {
+    !s.is_empty() && s != "." && s != ".."
+}
+
 /// Parse a quantum:// URI into its components.
 /// - quantum://theme/name/path/to/file -> Theme { name: "name", path: "path/to/file" }
 /// - quantum://assets/path/to/file -> Assets { path: "path/to/file" }
+///
+/// Rejects any URI whose path contains `.`, `..`, or empty segments
+/// (other than the implicit empty segment after `quantum://`). This stops
+/// `quantum://theme/default/../../etc/passwd` style traversal attacks
+/// before they ever reach the theme store.
 fn parse_quantum_uri(uri: &str) -> Option<QuantumPath> {
     if !uri.starts_with("quantum://") {
         return None;
@@ -100,34 +119,51 @@ fn parse_quantum_uri(uri: &str) -> Option<QuantumPath> {
     let parts: Vec<&str> = rest.split('/').collect();
 
     match parts.as_slice() {
-        ["theme", name, rest @ ..] if !name.is_empty() && !rest.is_empty() => {
+        ["theme", name, rest @ ..]
+            if is_safe_segment(name)
+                && !rest.is_empty()
+                && rest.iter().all(|seg| is_safe_segment(seg)) =>
+        {
             Some(QuantumPath::Theme {
-                name: name.to_string(),
+                name: (*name).to_string(),
                 path: rest.join("/"),
             })
         }
-        ["assets", rest @ ..] if !rest.is_empty() => Some(QuantumPath::Assets {
-            path: rest.join("/"),
-        }),
+        ["assets", rest @ ..]
+            if !rest.is_empty() && rest.iter().all(|seg| is_safe_segment(seg)) =>
+        {
+            Some(QuantumPath::Assets {
+                path: rest.join("/"),
+            })
+        }
         _ => None,
     }
 }
 
+/// Map a path's file extension to a MIME type. The extension is lowercased
+/// once so user themes with capitalized filenames (e.g. `Index.HTML`,
+/// `Logo.PNG`) get the right `Content-Type` instead of falling through to
+/// `application/octet-stream`.
 fn content_type_for(path: &str) -> &'static str {
-    match path.rsplit('.').next() {
-        Some("html") => "text/html",
-        Some("css") => "text/css",
-        Some("js") => "application/javascript",
-        Some("svg") => "image/svg+xml",
-        Some("png") => "image/png",
-        Some("woff") => "font/woff",
-        Some("woff2") => "font/woff2",
-        Some("ttf") => "font/ttf",
-        Some("otf") => "font/otf",
-        Some("jpeg") | Some("jpg") => "image/jpeg",
-        Some("gif") => "image/gif",
-        Some("webp") => "image/webp",
-        Some("json") => "application/json",
+    let ext = path
+        .rsplit('.')
+        .next()
+        .map(|s| s.to_ascii_lowercase())
+        .unwrap_or_default();
+    match ext.as_str() {
+        "html" => "text/html",
+        "css" => "text/css",
+        "js" => "application/javascript",
+        "svg" => "image/svg+xml",
+        "png" => "image/png",
+        "woff" => "font/woff",
+        "woff2" => "font/woff2",
+        "ttf" => "font/ttf",
+        "otf" => "font/otf",
+        "jpeg" | "jpg" => "image/jpeg",
+        "gif" => "image/gif",
+        "webp" => "image/webp",
+        "json" => "application/json",
         _ => "application/octet-stream",
     }
 }
@@ -248,5 +284,37 @@ mod tests {
     #[test]
     fn content_type_unknown() {
         assert_eq!(content_type_for("data.xyz"), "application/octet-stream");
+    }
+
+    #[test]
+    fn content_type_uppercase_extension() {
+        // Regression: capitalized extensions used to fall through to the
+        // octet-stream default because the match arms were case-sensitive.
+        assert_eq!(content_type_for("FILE.HTML"), "text/html");
+        assert_eq!(content_type_for("Logo.PNG"), "image/png");
+        assert_eq!(content_type_for("Style.Css"), "text/css");
+    }
+
+    #[test]
+    fn parse_rejects_dotdot_in_theme_path() {
+        // Regression: a malicious theme could embed a script that fetched
+        // `quantum://theme/default/../../etc/passwd` and `PathBuf::join`
+        // would happily walk out of the themes directory.
+        assert!(parse_quantum_uri("quantum://theme/default/../etc/passwd").is_none());
+        assert!(parse_quantum_uri("quantum://theme/default/../../etc/passwd").is_none());
+    }
+
+    #[test]
+    fn parse_rejects_dotdot_in_assets_path() {
+        assert!(parse_quantum_uri("quantum://assets/../etc/passwd").is_none());
+        assert!(parse_quantum_uri("quantum://assets/icons/../../etc/passwd").is_none());
+    }
+
+    #[test]
+    fn parse_rejects_dot_segment() {
+        // `.` segments are also disallowed: they would let an attacker
+        // bypass naive `..` filters while still resolving to the same path.
+        assert!(parse_quantum_uri("quantum://theme/default/./views/launcher/index.html").is_none());
+        assert!(parse_quantum_uri("quantum://assets/./icons/app.png").is_none());
     }
 }
