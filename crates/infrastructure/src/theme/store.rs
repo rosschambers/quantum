@@ -48,6 +48,56 @@ fn candidate_paths(path: &str) -> Vec<String> {
     out
 }
 
+/// Walk a parsed `tokens.toml` table one level deep and collect string-valued
+/// entries.
+///
+/// Top-level entries:
+/// - String value: inserted directly as `(key, value)`. Supports flat files
+///   where every token sits at the root.
+/// - Table value: each string-valued child is inserted as `(child_key, value)`;
+///   the section header is discarded. Supports the shipped nested file format
+///   with `[colors]`, `[typography]`, etc. categories.
+/// - Anything else (array, integer, bool, datetime, nested tables of tables):
+///   skipped with a warning.
+///
+/// When the same token key appears in two sections, the later one wins and
+/// a warning is logged.
+fn parse_tokens_table(parsed: toml::Table) -> HashMap<String, String> {
+    let mut tokens: HashMap<String, String> = HashMap::new();
+
+    for (key, value) in parsed {
+        match value {
+            toml::Value::String(s) => {
+                if tokens.insert(key.clone(), s).is_some() {
+                    tracing::warn!("duplicate token key {key}: later value wins");
+                }
+            }
+            toml::Value::Table(table) => {
+                for (child_key, child_value) in table {
+                    if let Some(s) = child_value.as_str() {
+                        if tokens.insert(child_key.clone(), s.to_string()).is_some() {
+                            tracing::warn!(
+                                "duplicate token key {child_key} (from section {key}): later value wins"
+                            );
+                        }
+                    } else {
+                        tracing::warn!(
+                            "ignoring non-string token {key}.{child_key}: expected string or table of strings"
+                        );
+                    }
+                }
+            }
+            _ => {
+                tracing::warn!(
+                    "ignoring non-string token {key}: expected string or table of strings"
+                );
+            }
+        }
+    }
+
+    tokens
+}
+
 /// Theme store for loading and cascading themes.
 pub struct ThemeStore {
     themes_dir: PathBuf,
@@ -184,21 +234,8 @@ impl ThemeStore {
     pub async fn resolved_tokens(&self) -> HashMap<String, String> {
         let theme = self.active_theme.read().await.clone();
 
-        // Try to load tokens.toml from theme
-        if let Some(content) = self.get_file(&theme, "tokens.toml") {
-            if let Ok(text) = String::from_utf8(content) {
-                if let Ok(parsed) = toml::from_str::<toml::Table>(&text) {
-                    let mut tokens = HashMap::new();
-                    for (key, value) in parsed {
-                        if let Some(s) = value.as_str() {
-                            tokens.insert(key, s.to_string());
-                        }
-                    }
-                    if !tokens.is_empty() {
-                        return tokens;
-                    }
-                }
-            }
+        if let Some(tokens) = self.load_tokens_from_theme(&theme) {
+            return tokens;
         }
 
         // Fall back to defaults
@@ -214,25 +251,28 @@ impl ThemeStore {
             Err(_) => "default".to_string(),
         };
 
-        // Try to load tokens.toml from theme
-        if let Some(content) = self.get_file(&theme, "tokens.toml") {
-            if let Ok(text) = String::from_utf8(content) {
-                if let Ok(parsed) = toml::from_str::<toml::Table>(&text) {
-                    let mut tokens = HashMap::new();
-                    for (key, value) in parsed {
-                        if let Some(s) = value.as_str() {
-                            tokens.insert(key, s.to_string());
-                        }
-                    }
-                    if !tokens.is_empty() {
-                        return tokens;
-                    }
-                }
-            }
+        if let Some(tokens) = self.load_tokens_from_theme(&theme) {
+            return tokens;
         }
 
         // Fall back to defaults
         self.default_tokens()
+    }
+
+    /// Load tokens.toml for `theme` and parse it, returning `Some` only if
+    /// the file existed, decoded as UTF-8, parsed as TOML, and yielded at
+    /// least one token. Returns `None` otherwise so callers can fall back
+    /// to the default token set.
+    fn load_tokens_from_theme(&self, theme: &str) -> Option<HashMap<String, String>> {
+        let content = self.get_file(theme, "tokens.toml")?;
+        let text = String::from_utf8(content).ok()?;
+        let parsed = toml::from_str::<toml::Table>(&text).ok()?;
+        let tokens = parse_tokens_table(parsed);
+        if tokens.is_empty() {
+            None
+        } else {
+            Some(tokens)
+        }
     }
 
     /// Default token set (fallback).
@@ -390,12 +430,39 @@ mod tests {
         let store = ThemeStore::new(None);
         let tokens = store.resolved_tokens().await;
 
-        // Check essential tokens exist
-        assert!(tokens.contains_key("color-bg"));
-        assert!(tokens.contains_key("font-sans"));
-        assert!(tokens.contains_key("space-1"));
-        assert!(tokens.contains_key("radius-sm"));
-        assert!(tokens.contains_key("duration-fast"));
+        // Values must come from the shipped tokens.toml (Catppuccin), not the
+        // hard-coded fallback in `default_tokens`. This guards against the
+        // parser regression where nested [colors] / [typography] sections
+        // were silently discarded and every user fell back to white-on-black.
+        assert_eq!(tokens.get("color-bg"), Some(&"#1e1e2e".to_string()));
+        assert_eq!(tokens.get("color-fg"), Some(&"#cdd6f4".to_string()));
+        assert_eq!(tokens.get("color-accent"), Some(&"#89b4fa".to_string()));
+        assert_eq!(tokens.get("font-size-base"), Some(&"14px".to_string()));
+        assert_eq!(tokens.get("space-1"), Some(&"0.25rem".to_string()));
+        assert_eq!(tokens.get("radius-sm"), Some(&"2px".to_string()));
+        assert_eq!(tokens.get("duration-fast"), Some(&"100ms".to_string()));
+    }
+
+    #[test]
+    fn parses_flat_tokens_file() {
+        let input = "color-bg = \"#000\"\nfont-sans = \"Foo\"\n";
+        let parsed = toml::from_str::<toml::Table>(input).expect("valid toml");
+        let tokens = parse_tokens_table(parsed);
+
+        assert_eq!(tokens.get("color-bg"), Some(&"#000".to_string()));
+        assert_eq!(tokens.get("font-sans"), Some(&"Foo".to_string()));
+        assert_eq!(tokens.len(), 2);
+    }
+
+    #[test]
+    fn parses_nested_tokens_file() {
+        let input = "[colors]\ncolor-bg = \"#abc\"\n\n[typography]\nfont-sans = \"Bar\"\n";
+        let parsed = toml::from_str::<toml::Table>(input).expect("valid toml");
+        let tokens = parse_tokens_table(parsed);
+
+        assert_eq!(tokens.get("color-bg"), Some(&"#abc".to_string()));
+        assert_eq!(tokens.get("font-sans"), Some(&"Bar".to_string()));
+        assert_eq!(tokens.len(), 2);
     }
 
     #[test]
