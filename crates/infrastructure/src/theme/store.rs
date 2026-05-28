@@ -66,6 +66,17 @@ impl ThemeStore {
         }
     }
 
+    /// Create a theme store with an explicit themes directory.
+    /// Intended for tests that need to isolate from the user's real config.
+    #[cfg(test)]
+    fn with_themes_dir(themes_dir: PathBuf, active_theme: Option<String>) -> Self {
+        let active = active_theme.unwrap_or_else(|| "default".to_string());
+        Self {
+            themes_dir,
+            active_theme: RwLock::new(active),
+        }
+    }
+
     /// Get the themes directory.
     fn themes_dir() -> PathBuf {
         // For now, use a standard location
@@ -281,11 +292,18 @@ impl ThemeStore {
                     };
 
                 let theme_dir = store.themes_dir.clone();
-                if let Err(err) = debouncer.watcher().watch(
-                    &theme_dir,
-                    notify_debouncer_mini::notify::RecursiveMode::Recursive,
-                ) {
-                    tracing::warn!("watching theme dir {} failed: {err}", theme_dir.display());
+                if theme_dir.exists() {
+                    if let Err(err) = debouncer.watcher().watch(
+                        &theme_dir,
+                        notify_debouncer_mini::notify::RecursiveMode::Recursive,
+                    ) {
+                        tracing::warn!("watching theme dir {} failed: {err}", theme_dir.display());
+                    }
+                } else {
+                    tracing::debug!(
+                        "user theme dir does not exist at {}, skipping watcher",
+                        theme_dir.display()
+                    );
                 }
 
                 // Watch user override file if it exists
@@ -447,6 +465,40 @@ mod tests {
         // If tokens.toml exists and parses, it will be used
         // Otherwise falls back to defaults
         assert!(tokens.contains_key("color-bg") || !tokens.is_empty());
+    }
+
+    #[tokio::test]
+    async fn start_watching_does_not_warn_when_dir_missing() {
+        use tempfile::tempdir;
+
+        struct NoopBus;
+
+        #[async_trait]
+        impl quantum_domain::EventBus for NoopBus {
+            async fn publish(&self, _event: &str, _payload: &str) -> Result<(), DomainError> {
+                Ok(())
+            }
+
+            async fn subscribe(&self, _event: &str) -> Result<(), DomainError> {
+                Ok(())
+            }
+        }
+
+        // Point themes_dir at a path that definitely does not exist.
+        let tmp = tempdir().expect("create tempdir");
+        let missing = tmp.path().join("does-not-exist").join("themes");
+        assert!(!missing.exists(), "precondition: path must not exist");
+
+        let store = Arc::new(ThemeStore::with_themes_dir(missing, None));
+        let bus: Arc<dyn EventBus> = Arc::new(NoopBus);
+
+        // Should run to completion without panicking. The watcher thread
+        // takes the missing-dir branch and logs at debug level instead of
+        // emitting a warn that confuses users on cold start.
+        store.start_watching(bus);
+
+        // Give the watcher thread a moment to spin up and hit the branch.
+        tokio::time::sleep(Duration::from_millis(50)).await;
     }
 
     #[tokio::test]
