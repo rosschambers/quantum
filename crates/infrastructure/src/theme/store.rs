@@ -317,7 +317,7 @@ impl ThemeStore {
     pub fn start_watching(self: Arc<Self>, event_bus: Arc<dyn EventBus>) {
         let store = self.clone();
 
-        std::thread::Builder::new()
+        let spawn_result = std::thread::Builder::new()
             .name("quantum-theme-watcher".to_string())
             .spawn(move || {
                 let (tx, rx) =
@@ -376,8 +376,18 @@ impl ThemeStore {
                         }
                     });
                 }
-            })
-            .expect("spawn theme watcher thread");
+            });
+
+        match spawn_result {
+            Ok(_handle) => {
+                tracing::debug!("theme watcher thread spawned");
+            }
+            Err(err) => {
+                tracing::error!(
+                    "failed to spawn theme watcher thread: {err} - hot reload disabled"
+                );
+            }
+        }
     }
 }
 
@@ -565,6 +575,55 @@ mod tests {
         store.start_watching(bus);
 
         // Give the watcher thread a moment to spin up and hit the branch.
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+
+    #[tokio::test]
+    async fn start_watching_is_safe_to_call_repeatedly() {
+        use tempfile::tempdir;
+
+        struct NoopBus;
+
+        #[async_trait]
+        impl quantum_domain::EventBus for NoopBus {
+            async fn publish(&self, _event: &str, _payload: &str) -> Result<(), DomainError> {
+                Ok(())
+            }
+
+            async fn subscribe(&self, _event: &str) -> Result<(), DomainError> {
+                Ok(())
+            }
+        }
+
+        // Regression test for issue #3: a thread-spawn failure inside
+        // start_watching must not abort the daemon. The public method should
+        // return normally even when called repeatedly under contention,
+        // because hot reload is non-essential and any failure to spawn the
+        // watcher thread should be logged rather than panicked on.
+        let tmp = tempdir().expect("create tempdir");
+        let themes_dir = tmp.path().join("themes");
+        std::fs::create_dir_all(&themes_dir).expect("create themes dir");
+
+        // First call against a real (empty) themes directory.
+        let store_one = Arc::new(ThemeStore::with_themes_dir(themes_dir.clone(), None));
+        let bus_one: Arc<dyn EventBus> = Arc::new(NoopBus);
+        store_one.start_watching(bus_one);
+
+        // Second call on a fresh store backed by the same directory: must
+        // also return without panicking even though watchers may now contend
+        // on the same inotify resources.
+        let store_two = Arc::new(ThemeStore::with_themes_dir(themes_dir, None));
+        let bus_two: Arc<dyn EventBus> = Arc::new(NoopBus);
+        store_two.start_watching(bus_two);
+
+        // Third call against a non-existent dir: exercises the empty / missing
+        // theme dir branch alongside the already-spawned watchers.
+        let missing = tmp.path().join("does-not-exist");
+        let store_three = Arc::new(ThemeStore::with_themes_dir(missing, None));
+        let bus_three: Arc<dyn EventBus> = Arc::new(NoopBus);
+        store_three.start_watching(bus_three);
+
+        // Give the watcher threads a moment to spin up and hit their branches.
         tokio::time::sleep(Duration::from_millis(50)).await;
     }
 

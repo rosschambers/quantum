@@ -106,7 +106,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .enable_all()
         .thread_name("quantum-worker")
         .build()?;
-    let worker = runtime::spawn_worker(tokio_runtime);
+    let worker = runtime::spawn_worker(tokio_runtime)?;
 
     // Set up window host (GTK or dummy).
     let (window_host, window_rx) = if headless {
@@ -340,17 +340,30 @@ async fn setup_daemon(
 
 async fn run_signal_loop(socket_path: std::path::PathBuf) {
     let socket_path_clone = socket_path.clone();
-    let mut sigterm = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
-        .expect("signal setup");
-    let mut sigint = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::interrupt())
-        .expect("signal setup");
+    let sigterm = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate());
+    let sigint = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::interrupt());
 
     info!("Running daemon (headless mode)");
 
-    tokio::select! {
-        _ = sigterm.recv() => info!("Received SIGTERM"),
-        _ = sigint.recv() => info!("Received SIGINT"),
-        _ = tokio::signal::ctrl_c() => info!("Received Ctrl+C"),
+    match (sigterm, sigint) {
+        (Ok(mut sigterm), Ok(mut sigint)) => {
+            tokio::select! {
+                _ = sigterm.recv() => info!("Received SIGTERM"),
+                _ = sigint.recv() => info!("Received SIGINT"),
+                _ = tokio::signal::ctrl_c() => info!("Received Ctrl+C"),
+            }
+        }
+        (sigterm_res, sigint_res) => {
+            if let Err(err) = sigterm_res {
+                tracing::warn!("failed to install SIGTERM handler: {err}");
+            }
+            if let Err(err) = sigint_res {
+                tracing::warn!("failed to install SIGINT handler: {err}");
+            }
+            // Fall back to ctrl_c only.
+            let _ = tokio::signal::ctrl_c().await;
+            info!("Received Ctrl+C");
+        }
     }
 
     if let Err(err) = std::fs::remove_file(&socket_path_clone) {
