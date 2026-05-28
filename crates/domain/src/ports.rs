@@ -43,6 +43,12 @@ pub trait ConfigStore: Send + Sync {
 pub trait ThemeStore: Send + Sync {
     async fn load_theme(&self, name: &str) -> Result<(), DomainError>;
     async fn reload(&self) -> Result<(), DomainError>;
+    /// Get a file from a theme by name and relative path. Returns None if not found.
+    /// This is a synchronous method since URI handlers run on the GTK thread.
+    fn get_file(&self, theme_name: &str, path: &str) -> Option<Vec<u8>>;
+    /// Get an asset file from the active theme. Returns None if not found.
+    /// This is a synchronous method since URI handlers run on the GTK thread.
+    fn get_asset(&self, path: &str) -> Option<Vec<u8>>;
 }
 
 /// Event bus for domain events.

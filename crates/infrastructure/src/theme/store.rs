@@ -210,6 +210,16 @@ impl quantum_domain::ThemeStore for ThemeStore {
     async fn reload(&self) -> Result<(), DomainError> {
         ThemeStore::reload(self).await
     }
+
+    fn get_file(&self, theme_name: &str, path: &str) -> Option<Vec<u8>> {
+        ThemeStore::get_file(self, theme_name, path)
+    }
+
+    fn get_asset(&self, path: &str) -> Option<Vec<u8>> {
+        // Asset path resolution: assets are in the active theme's root or fallback to embedded.
+        // Since we can't use async here, we assume default theme for now.
+        ThemeStore::get_file(self, "default", &format!("assets/{}", path))
+    }
 }
 
 #[cfg(test)]

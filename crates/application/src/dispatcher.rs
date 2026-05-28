@@ -216,6 +216,14 @@ mod tests {
         async fn reload(&self) -> std::result::Result<(), DomainError> {
             Ok(())
         }
+
+        fn get_file(&self, _theme_name: &str, _path: &str) -> Option<Vec<u8>> {
+            None
+        }
+
+        fn get_asset(&self, _path: &str) -> Option<Vec<u8>> {
+            None
+        }
     }
 
     struct FakeEventBus;

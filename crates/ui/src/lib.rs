@@ -16,7 +16,7 @@ pub use dispatcher::IpcDispatcher;
 pub use error::{Result, UiError};
 pub use messages::{WindowEvent, WindowRequest};
 pub use registry::{ManagedWindow, ManagedWindowConstructor, WindowOps, WindowRegistry};
-pub use scheme::{register_quantum_scheme, ThemePort};
+pub use scheme::register_quantum_scheme;
 pub use window_host::{DummyWindowHost, GtkWindowHost};
 pub use windows::LauncherWindow;
 
