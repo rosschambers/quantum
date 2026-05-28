@@ -71,6 +71,29 @@ impl LauncherWindow {
 
         // Create and embed WebView
         let webview = webkit6::WebView::new();
+
+        // Pipe JS console messages (log/warn/error) to stdout and enable the
+        // web inspector under QUANTUM_INSPECTOR=1 so we can right-click ->
+        // Inspect during smoke tests.
+        let settings: webkit6::Settings =
+            webkit6::prelude::WebViewExt::settings(&webview).unwrap_or_default();
+        settings.set_enable_write_console_messages_to_stdout(true);
+        settings
+            .set_enable_developer_extras(std::env::var("QUANTUM_INSPECTOR").as_deref() == Ok("1"));
+        settings.set_javascript_can_open_windows_automatically(false);
+        webkit6::prelude::WebViewExt::set_settings(&webview, &settings);
+
+        // Surface load failures so we can diagnose missing assets etc.
+        webview.connect_load_failed(|_view, event, uri, err| {
+            tracing::error!(
+                "WebView load_failed: event={:?} uri={} err={}",
+                event,
+                uri,
+                err
+            );
+            false
+        });
+
         webview.load_uri("quantum://theme/default/views/launcher/index.html");
         window.set_child(Some(&webview));
 

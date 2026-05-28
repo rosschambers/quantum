@@ -24,11 +24,14 @@ pub fn register_quantum_scheme_on_default(theme_store: Arc<dyn ThemeStore>) {
 pub fn register_quantum_scheme(context: &WebContext, theme_store: Arc<dyn ThemeStore>) {
     context.register_uri_scheme("quantum", move |request: &URISchemeRequest| {
         let Some(uri) = request.uri() else {
+            tracing::warn!("quantum:// request with no URI");
             return;
         };
         let uri_str = uri.as_str();
+        tracing::debug!("quantum:// request: {uri_str}");
 
         let Some(parsed) = parse_quantum_uri(uri_str) else {
+            tracing::warn!("malformed quantum URI: {uri_str}");
             let mut error = glib::Error::new(
                 glib::FileError::Noent,
                 &format!("malformed quantum URI: {uri_str}"),
@@ -44,11 +47,13 @@ pub fn register_quantum_scheme(context: &WebContext, theme_store: Arc<dyn ThemeS
         };
 
         let Some(bytes_data) = bytes else {
+            tracing::warn!("quantum:// not found: {uri_str}");
             let mut error =
                 glib::Error::new(glib::FileError::Noent, &format!("not found: {uri_str}"));
             request.finish_error(&mut error);
             return;
         };
+        tracing::debug!("quantum:// served {uri_str}: {} bytes", bytes_data.len());
 
         // For HTML files, inject resolved tokens
         let final_bytes = if path_for_mime.ends_with(".html") {
