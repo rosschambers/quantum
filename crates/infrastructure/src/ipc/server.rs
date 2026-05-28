@@ -5,8 +5,10 @@ use std::path::Path;
 use std::sync::Arc;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::{UnixListener, UnixStream};
+use tokio::sync::broadcast;
 
 use super::protocol::{JsonRpcError, JsonRpcRequest, JsonRpcResponse};
+use super::EventEnvelope;
 use crate::InfrastructureError;
 
 /// Result type for dispatch operations.
@@ -57,6 +59,7 @@ impl UnixSocketServer {
     pub async fn serve<D: Dispatcher + 'static>(
         &self,
         dispatcher: Arc<D>,
+        broadcast_tx: broadcast::Sender<EventEnvelope>,
     ) -> Result<(), InfrastructureError> {
         // Remove stale socket
         if self.socket_path.exists() {
@@ -74,8 +77,9 @@ impl UnixSocketServer {
                 .map_err(|e| InfrastructureError::Io(e.to_string()))?;
 
             let dispatcher = dispatcher.clone();
+            let broadcast_tx = broadcast_tx.clone();
             tokio::spawn(async move {
-                let _ = handle_connection(stream, dispatcher).await;
+                let _ = handle_connection(stream, dispatcher, broadcast_tx).await;
             });
         }
     }
@@ -85,11 +89,40 @@ impl UnixSocketServer {
 async fn handle_connection<D: Dispatcher + 'static>(
     stream: UnixStream,
     dispatcher: Arc<D>,
+    broadcast_tx: broadcast::Sender<EventEnvelope>,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let (reader, mut writer) = stream.into_split();
+    let (reader, writer) = stream.into_split();
     let mut reader = BufReader::new(reader);
+    let writer = Arc::new(tokio::sync::Mutex::new(writer));
     let mut line = String::new();
 
+    // Subscribe to broadcast events for this connection.
+    let mut event_rx = broadcast_tx.subscribe();
+    let writer_for_events = writer.clone();
+
+    // Spawn a task to forward broadcast events as notifications to this client.
+    tokio::spawn(async move {
+        loop {
+            match event_rx.recv().await {
+                Ok(env) => {
+                    let notification = json!({
+                        "jsonrpc": "2.0",
+                        "method": env.channel,
+                        "params": env.payload,
+                    });
+                    let line = format!("{}\n", notification);
+                    let mut w = writer_for_events.lock().await;
+                    if w.write_all(line.as_bytes()).await.is_err() {
+                        break;
+                    }
+                }
+                Err(broadcast::error::RecvError::Lagged(_)) => continue,
+                Err(_) => break,
+            }
+        }
+    });
+
+    // Handle JSON-RPC requests from the client on the main connection loop.
     loop {
         line.clear();
         let n = reader.read_line(&mut line).await?;
@@ -104,8 +137,9 @@ async fn handle_connection<D: Dispatcher + 'static>(
                 let response = handle_request(&request, dispatcher.clone()).await;
 
                 let response_json = serde_json::to_string(&response)?;
-                writer.write_all(response_json.as_bytes()).await?;
-                writer.write_all(b"\n").await?;
+                let mut w = writer.lock().await;
+                w.write_all(response_json.as_bytes()).await?;
+                w.write_all(b"\n").await?;
             }
             Err(e) => {
                 let error_response = JsonRpcResponse::error(
@@ -113,8 +147,9 @@ async fn handle_connection<D: Dispatcher + 'static>(
                     JsonRpcError::new(-32700, format!("Parse error: {}", e)),
                 );
                 let response_json = serde_json::to_string(&error_response)?;
-                writer.write_all(response_json.as_bytes()).await?;
-                writer.write_all(b"\n").await?;
+                let mut w = writer.lock().await;
+                w.write_all(response_json.as_bytes()).await?;
+                w.write_all(b"\n").await?;
             }
         }
     }
@@ -189,11 +224,12 @@ mod tests {
 
         let server = UnixSocketServer::new(&socket_path);
         let dispatcher = Arc::new(FakeDispatcher);
+        let (broadcast_tx, _) = broadcast::channel::<EventEnvelope>(16);
 
         // Spawn server in background
         let socket_path_clone = socket_path.clone();
         tokio::spawn(async move {
-            let _ = server.serve(dispatcher).await;
+            let _ = server.serve(dispatcher, broadcast_tx).await;
         });
 
         // Give server time to start
@@ -213,5 +249,61 @@ mod tests {
 
             assert!(!response.is_empty());
         }
+    }
+
+    #[tokio::test]
+    async fn server_forwards_broadcast_events_as_notifications() {
+        use std::time::Duration;
+
+        let temp_dir = tempfile::tempdir().unwrap();
+        let socket_path = temp_dir.path().join("test.sock");
+
+        let server = Arc::new(UnixSocketServer::new(&socket_path));
+        let dispatcher = Arc::new(FakeDispatcher);
+        let (broadcast_tx, _) = broadcast::channel::<EventEnvelope>(16);
+
+        // Spawn server in background
+        let server_for_task = server.clone();
+        let tx_for_task = broadcast_tx.clone();
+        tokio::spawn(async move {
+            let _ = server_for_task.serve(dispatcher, tx_for_task).await;
+        });
+
+        // Wait for socket to exist
+        for _ in 0..40 {
+            if socket_path.exists() {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(25)).await;
+        }
+
+        // Connect to server
+        let stream = tokio::net::UnixStream::connect(&socket_path).await.unwrap();
+        let (read, _write) = stream.into_split();
+        let mut reader = BufReader::new(read);
+
+        // Give the connection a moment to subscribe to events
+        tokio::time::sleep(Duration::from_millis(100)).await;
+
+        // Send an event through the broadcast channel
+        broadcast_tx
+            .send(EventEnvelope {
+                channel: "theme.reloaded".to_string(),
+                payload: json!({"css": ":root {}"}),
+            })
+            .ok();
+
+        // Read the notification
+        let mut line = String::new();
+        tokio::time::timeout(Duration::from_secs(1), reader.read_line(&mut line))
+            .await
+            .expect("notification arrives within 1s")
+            .unwrap();
+
+        // Parse and verify the notification
+        let parsed: Value = serde_json::from_str(line.trim()).unwrap();
+        assert_eq!(parsed["jsonrpc"], "2.0");
+        assert_eq!(parsed["method"], "theme.reloaded");
+        assert_eq!(parsed["params"]["css"], ":root {}");
     }
 }

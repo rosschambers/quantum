@@ -14,7 +14,7 @@ pub use config::ConfigStore;
 pub use error::InfrastructureError;
 pub use event_bus::InMemoryEventBus;
 pub use hyprland::HyprlandSocketClient;
-pub use ipc::UnixSocketServer;
+pub use ipc::{EventEnvelope, UnixSocketServer};
 pub use providers::{
     DeclarativeShellProvider, DesktopAppsProvider, HyprlandWindowsProvider, ShellCommandProvider,
 };

@@ -13,13 +13,13 @@ use quantum_application::{
     Dispatcher as AppDispatcher, LaunchActionUseCase, ListProvidersUseCase, OpenViewUseCase,
     ReloadThemeUseCase, SearchUseCase,
 };
-use quantum_domain::{ProviderId, ProviderSource};
+use quantum_domain::{DomainError, EventBus, ProviderId, ProviderSource};
 use quantum_infrastructure::ipc::server::{
     DispatchError, DispatchResult, Dispatcher as IpcDispatcher,
 };
 use quantum_infrastructure::{
     config::ConfigStore, providers::DesktopAppsProvider, registry::InMemoryProviderRegistry,
-    shell::TokioShellExecutor, theme::ThemeStore, HyprlandSocketClient, InMemoryEventBus,
+    shell::TokioShellExecutor, theme::ThemeStore, EventEnvelope, HyprlandSocketClient,
     ShellCommandProvider, UnixSocketServer,
 };
 use quantum_ui::{DummyWindowHost, IpcDispatcher as UiIpcDispatcher};
@@ -61,6 +61,33 @@ impl UiIpcDispatcher for AppDispatcherAdapter {
                 message: err.to_string(),
             }),
         }
+    }
+}
+
+/// An EventBus adapter that broadcasts domain events to IPC clients.
+struct BroadcastingEventBus {
+    tx: tokio::sync::broadcast::Sender<EventEnvelope>,
+}
+
+impl BroadcastingEventBus {
+    fn new(tx: tokio::sync::broadcast::Sender<EventEnvelope>) -> Self {
+        Self { tx }
+    }
+}
+
+#[async_trait]
+impl EventBus for BroadcastingEventBus {
+    async fn publish(&self, event: &str, payload: &str) -> Result<(), DomainError> {
+        let payload_json: Value = serde_json::from_str(payload).unwrap_or(Value::Null);
+        let _ = self.tx.send(EventEnvelope {
+            channel: event.to_string(),
+            payload: payload_json,
+        });
+        Ok(())
+    }
+
+    async fn subscribe(&self, _event: &str) -> Result<(), DomainError> {
+        Ok(())
     }
 }
 
@@ -137,6 +164,8 @@ struct DaemonSetup {
     theme_store: Arc<dyn quantum_domain::ports::ThemeStore>,
     theme_store_concrete: Arc<ThemeStore>,
     event_bus: Arc<dyn quantum_domain::EventBus>,
+    #[allow(dead_code)]
+    event_tx: tokio::sync::broadcast::Sender<EventEnvelope>,
 }
 
 async fn setup_daemon(
@@ -158,7 +187,10 @@ async fn setup_daemon(
     let theme_store = Arc::new(ThemeStore::new(active_theme));
     let shell_executor = Arc::new(TokioShellExecutor::new());
     let registry = Arc::new(InMemoryProviderRegistry::new());
-    let event_bus: Arc<dyn quantum_domain::EventBus> = Arc::new(InMemoryEventBus::new());
+
+    // Create broadcast channel for event notifications to IPC clients.
+    let (event_tx, _) = tokio::sync::broadcast::channel::<EventEnvelope>(64);
+    let event_bus: Arc<dyn quantum_domain::EventBus> = Arc::new(BroadcastingEventBus::new(event_tx.clone()));
 
     // Desktop apps provider
     match DesktopAppsProvider::new(shell_executor.clone()).await {
@@ -284,8 +316,9 @@ async fn setup_daemon(
     {
         let server = server.clone();
         let dispatcher = _ipc_dispatcher.clone();
+        let event_tx = event_tx.clone();
         tokio::spawn(async move {
-            if let Err(err) = server.serve(dispatcher).await {
+            if let Err(err) = server.serve(dispatcher, event_tx).await {
                 tracing::error!("IPC server error: {err}");
             }
         });
@@ -299,6 +332,7 @@ async fn setup_daemon(
         theme_store: theme_store.clone() as Arc<dyn quantum_domain::ports::ThemeStore>,
         theme_store_concrete: theme_store,
         event_bus,
+        event_tx,
     })
 }
 
