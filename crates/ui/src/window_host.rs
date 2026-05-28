@@ -25,14 +25,6 @@ impl WindowHost for GtkWindowHost {
             })
             .map_err(|_| DomainError::Unsupported("window host receiver dropped".into()))
     }
-
-    async fn hide(&self, _view: &str) -> Result<(), DomainError> {
-        Ok(())
-    }
-
-    async fn toggle(&self, _view: &str) -> Result<(), DomainError> {
-        Ok(())
-    }
 }
 
 /// Dummy window host for headless mode.
@@ -56,14 +48,6 @@ impl WindowHost for DummyWindowHost {
     async fn open(&self, _view: &str, _mode: WindowMode) -> Result<(), DomainError> {
         Ok(())
     }
-
-    async fn hide(&self, _view: &str) -> Result<(), DomainError> {
-        Ok(())
-    }
-
-    async fn toggle(&self, _view: &str) -> Result<(), DomainError> {
-        Ok(())
-    }
 }
 
 #[cfg(test)]
@@ -79,20 +63,6 @@ mod tests {
     async fn dummy_window_host_open() {
         let host = DummyWindowHost::new();
         let result = host.open("launcher", WindowMode::Toggle).await;
-        assert!(result.is_ok());
-    }
-
-    #[tokio::test]
-    async fn dummy_window_host_hide() {
-        let host = DummyWindowHost::new();
-        let result = host.hide("launcher").await;
-        assert!(result.is_ok());
-    }
-
-    #[tokio::test]
-    async fn dummy_window_host_toggle() {
-        let host = DummyWindowHost::new();
-        let result = host.toggle("launcher").await;
         assert!(result.is_ok());
     }
 

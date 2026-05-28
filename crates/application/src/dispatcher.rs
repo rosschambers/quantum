@@ -259,14 +259,6 @@ mod tests {
         ) -> std::result::Result<(), DomainError> {
             Ok(())
         }
-
-        async fn hide(&self, _view: &str) -> std::result::Result<(), DomainError> {
-            Ok(())
-        }
-
-        async fn toggle(&self, _view: &str) -> std::result::Result<(), DomainError> {
-            Ok(())
-        }
     }
 
     fn build_dispatcher() -> Dispatcher {

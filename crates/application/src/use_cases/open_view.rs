@@ -48,34 +48,6 @@ mod tests {
                 Ok(())
             }
         }
-
-        async fn hide(&self, view: &str) -> std::result::Result<(), DomainError> {
-            if self.should_fail {
-                Err(DomainError::ActionFailed {
-                    reason: "hide failed".to_string(),
-                })
-            } else {
-                self.calls
-                    .lock()
-                    .unwrap()
-                    .push((view.to_string(), "hide".to_string()));
-                Ok(())
-            }
-        }
-
-        async fn toggle(&self, view: &str) -> std::result::Result<(), DomainError> {
-            if self.should_fail {
-                Err(DomainError::ActionFailed {
-                    reason: "toggle failed".to_string(),
-                })
-            } else {
-                self.calls
-                    .lock()
-                    .unwrap()
-                    .push((view.to_string(), "toggle".to_string()));
-                Ok(())
-            }
-        }
     }
 
     #[tokio::test]
@@ -96,7 +68,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn hide_view_calls_window_host_hide() {
+    async fn execute_with_hide_mode_calls_window_host_open_with_hide() {
         let host = FakeWindowHost {
             calls: Arc::new(Mutex::new(Vec::new())),
             should_fail: false,
@@ -113,7 +85,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn toggle_view_calls_window_host_toggle() {
+    async fn execute_with_toggle_mode_calls_window_host_open_with_toggle() {
         let host = FakeWindowHost {
             calls: Arc::new(Mutex::new(Vec::new())),
             should_fail: false,
