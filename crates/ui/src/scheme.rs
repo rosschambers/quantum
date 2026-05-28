@@ -6,6 +6,17 @@ use quantum_domain::ports::ThemeStore;
 use std::sync::Arc;
 use webkit6::{URISchemeRequest, WebContext};
 
+/// Register the quantum:// URI scheme on `WebContext::default()`. Use this
+/// convenience from binaries that don't want to take a webkit6 dependency
+/// just to call into the default context.
+pub fn register_quantum_scheme_on_default(theme_store: Arc<dyn ThemeStore>) {
+    let Some(ctx) = WebContext::default() else {
+        tracing::error!("WebContext::default() returned None; quantum:// scheme not registered");
+        return;
+    };
+    register_quantum_scheme(&ctx, theme_store);
+}
+
 /// Register the quantum:// URI scheme.
 /// Routes:
 /// - quantum://theme/<name>/views/<view>/... -> bytes from ThemeStore
