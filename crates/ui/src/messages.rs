@@ -5,13 +5,6 @@ pub enum WindowRequest {
     Open { view: String, mode: WindowMode },
 }
 
-#[derive(Debug, Clone)]
-pub enum WindowEvent {
-    Opened { view: String },
-    Closed { view: String },
-    Error { view: String, message: String },
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
