@@ -194,6 +194,110 @@ Frontend re-renders with new tokens/views
 
 ---
 
+## Threading Model
+
+Quantum runs two concurrent execution contexts:
+
+### Main Thread — GTK Event Loop
+
+GTK4 is single-threaded by design. The main OS thread runs `gtk4::Application::run()`, which:
+- Owns all GTK4 window objects and WebKitGTK WebView instances
+- Dispatches GTK signals in strict serial order
+- Must never block (or the UI freezes)
+
+### Worker Thread — Tokio Multi-Threaded Runtime
+
+A background worker thread (`std::thread::spawn`) parks a `tokio::runtime::Runtime` that:
+- Runs the IPC server and accepts client connections
+- Drives provider searches (with per-provider 2-second timeouts)
+- Executes shell commands via `TokioShellExecutor`
+- Watches theme files and publishes events
+
+### Cross-Thread Communication
+
+```
+┌─────────────────────────────┐
+│   Tokio Worker Thread       │
+│  (providers, IPC, events)   │
+└──────────┬──────────────────┘
+           │
+      tokio::sync::mpsc
+      UnboundedChannel
+           │
+    WindowRequest::Open
+           │
+┌──────────▼──────────────────┐
+│   GTK Main Thread           │
+│  (windows, WebKit, events)  │
+└──────────┬──────────────────┘
+           │
+    glib::MainContext::spawn_local
+    (back to Tokio on idle)
+           │
+┌──────────▼──────────────────┐
+│   WebView Script Context    │
+│  (JavaScript, DOM)          │
+└─────────────────────────────┘
+```
+
+#### 1. Window Requests (Tokio → GTK)
+
+When `OpenViewUseCase::execute` calls `WindowHost::open("launcher", mode)`:
+
+- `GtkWindowHost::open` is called on a Tokio task
+- It sends `WindowRequest::Open { view, mode }` on an `UnboundedChannel`
+- The GTK thread drains this channel via `glib::MainContext::spawn_local` (async closure)
+- `WindowRegistry::handle(req)` processes on the GTK main thread
+- Actual window show/hide/toggle happens synchronously in GTK context
+
+**Why this design:** GTK object construction and visibility toggling must happen on the main thread. Tokio tasks can't call GTK APIs directly.
+
+#### 2. IPC Dispatcher Calls (WebView → Tokio)
+
+When the launcher's TypeScript calls `window.webkit.messageHandlers.quantum.postMessage(...)`:
+
+- The WebKit script message handler (`bridge.rs::register_bridge`) receives on the GTK main thread
+- It clones the dispatcher and WebView, then calls `runtime.spawn(async move { ... })`
+- The dispatcher runs on a Tokio worker task, calling into use cases
+- When the result arrives, `glib::MainContext::default().spawn(...)` schedules a callback on GTK
+- The callback calls `webview.evaluate_javascript(...)` to return the result to JS
+
+**Why this design:** Providers and IPC logic are async and CPU-intensive. They run on Tokio. But WebView is `!Send`, so callbacks must execute back on GTK to call its methods.
+
+#### 3. Theme Reload Events (File Watcher → WebView)
+
+When the theme file watcher detects a change:
+
+- `ThemeStore` publishes `Event::ThemeReloaded` on an `Arc<EventBus>`
+- A broadcaster adapter converts this to an IPC notification
+- The IPC server sends `{ "jsonrpc": "2.0", "method": "theme.reloaded", "params": {...} }` to all clients
+- The WebView client's `bridge.ts` receives the notification and calls `window.__quantum_notify`
+- The launcher's `App.svelte` subscription updates the `<style id="quantum-tokens">` innerHTML
+- CSS repaints instantly (no page reload)
+
+**Why this design:** Events are rare enough that a broadcast channel (not a dedicated sync primitive) is appropriate. Notifications traverse the same IPC wire as RPC calls, so the transport layer handles delivery.
+
+### Send/Sync Guarantees
+
+- **`DomainError`, `Query`, `Match`, `Action`:** All `Send + Sync + 'static`. Cloned freely across threads.
+- **`Dispatcher`:** Held in `Arc<dyn IpcDispatcher>`. All implementations are `Send + Sync`.
+- **`WindowHost`:** Held in `Arc<dyn WindowHost>`. `GtkWindowHost` is `Send` (tokio::sync::mpsc is `Send`).
+- **`WebView`:** Is `!Send`. Held exclusively on GTK main thread. Never cloned across threads.
+- **`gtk4::Window`:** Is `!Send`. Only accessed on GTK main thread.
+
+### Synchronization Points
+
+| Synchronization | Type | Purpose |
+|---|---|---|
+| `tokio::sync::mpsc::UnboundedChannel<WindowRequest>` | SPMC | Tokio spawns window requests; GTK drains |
+| `glib::MainContext::spawn_local(...)` | Callback queue | Bridge returns results to WebView |
+| `Arc<Dispatcher>` | Reference count | Share provider registry across threads |
+| `Arc<ThemeStore>` | Reference count | Share theme data and file watcher |
+| `EventBus` broadcast channel | Pub/Sub | Theme reload events to IPC subscribers |
+| `tokio::runtime::Handle` | Handle clone | Pass async runtime into GTK closures |
+
+---
+
 ## Key Design Decisions
 
 1. **Onion architecture at the crate level** — Not just convention, but enforced by CI tests
@@ -201,8 +305,9 @@ Frontend re-renders with new tokens/views
 3. **All IPC errors serializable** — `ApplicationError` and `DomainError` impl `Serialize`
 4. **Per-provider 2-second timeout** — Slow providers don't block the entire search
 5. **Theme cascade with max depth 8** — Prevents accidental cycles
-6. **GTK and Tokio coexist** — GTK main loop receives commands via `glib::MainContext::spawn_local`
+6. **GTK on main, Tokio on worker** — Async I/O and providers run on Tokio; windows and WebKit on GTK
 7. **`quantum://` URI scheme** — Theme bundles embedded via `include_dir!` or served from filesystem
+8. **Hot reload without restart** — Token changes detected by file watcher, broadcast via IPC, injected into DOM
 
 ---
 

@@ -55,21 +55,56 @@ cargo install --path crates/bin/quantumctl
 
 ### Running
 
-Start the daemon:
+Build via `just build`:
+
+```bash
+just build
+```
+
+Or build inside the container and run on the host via `nix-shell`:
+
+```bash
+nix-shell --run "cargo build --bin quantumd --bin quantumctl"
+```
+
+Start the daemon in dev mode via `just`:
 
 ```bash
 just dev
 ```
 
-Or run in the background:
+Or run directly via `nix-shell`:
 
 ```bash
-quantumd &
+RUST_LOG=info nix-shell --run "./target/debug/quantumd" &
+```
+
+Control the launcher via `quantumctl`:
+
+```bash
+quantumctl view.toggle launcher    # Show/hide
+quantumctl view.show launcher      # Show
+quantumctl view.hide launcher      # Hide
+```
+
+### Smoke Test Scripts
+
+Manual verification scripts for end-to-end testing:
+
+```bash
+./scripts/manual-smoke-launcher.sh  # Test launcher window: type, enter, esc
+./scripts/manual-smoke-widget.sh    # Test widget window: clock display
 ```
 
 ### Keybind Setup
 
-Add the launcher to your Hyprland config. See [packaging/hyprland/example.conf](packaging/hyprland/example.conf) for the example keybind.
+Add the launcher to your Hyprland config:
+
+```conf
+bind = SUPER, SPACE, exec, quantumctl view.toggle launcher
+```
+
+See [packaging/hyprland/example.conf](packaging/hyprland/example.conf) for additional window rules and widget keybinds.
 
 ### Systemd Setup
 
@@ -98,6 +133,8 @@ See [AGENTS.md](AGENTS.md) for dependency rules.
 ## Documentation
 
 - [Design Document](docs/plans/2026-05-26-quantum-launcher-design.md) — Full technical vision and design decisions
-- [Architecture](docs/architecture.md) — Onion layer structure and module organization
+- [GUI Realization Plan](docs/plans/2026-05-28-quantum-gui-realization.md) — GTK4 + WebKit integration, threading model
+- [Architecture](docs/architecture.md) — Onion layer structure, module organization, and threading model
+- [Verification](docs/VERIFICATION.md) — v1 acceptance criteria checklist
 - [Protocol Reference](docs/protocol.md) — IPC methods and message formats
 - [Theming Guide](docs/theming.md) — How to write and customize themes
