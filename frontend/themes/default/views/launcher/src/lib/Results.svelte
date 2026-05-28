@@ -26,7 +26,7 @@
 </script>
 
 <div class="results-list">
-  {#each items as item, index (item.provider + ':' + item.id + ':' + index)}
+  {#each items as item, index (item.provider + ':' + item.id)}
     <div
       class="match-item"
       class:highlighted={index === highlighted}
