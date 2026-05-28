@@ -173,7 +173,7 @@ async fn search_and_launch_desktop_app() -> Result<(), Box<dyn std::error::Error
         "id": 2,
         "method": "action.invoke",
         "params": {
-            "provider_id": firefox_match.get("provider").unwrap_or(&serde_json::Value::Null),
+            "provider": firefox_match.get("provider").unwrap_or(&serde_json::Value::Null),
             "action": action
         }
     });

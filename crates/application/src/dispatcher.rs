@@ -59,7 +59,7 @@ impl Dispatcher {
     async fn handle_action_invoke(&self, params: Value) -> Result<Value> {
         #[derive(serde::Deserialize)]
         struct ActionInvokeParams {
-            provider_id: String,
+            provider: String,
             action: quantum_domain::Action,
         }
 
@@ -68,7 +68,7 @@ impl Dispatcher {
         })?;
 
         self.launch_action
-            .execute(params.provider_id.into(), params.action)
+            .execute(params.provider.into(), params.action)
             .await?;
 
         Ok(json!({}))
@@ -315,7 +315,7 @@ mod tests {
             .dispatch(
                 "action.invoke",
                 json!({
-                    "provider_id": "apps",
+                    "provider": "apps",
                     "action": {
                         "kind": "launch",
                         "data": { "desktop_id": "firefox" }
