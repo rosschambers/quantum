@@ -44,17 +44,41 @@ pub fn register_bridge(webview: &WebView, dispatcher: Arc<dyn IpcDispatcher>, ru
     let webview_clone = webview.clone();
 
     ucm.connect_script_message_received(Some("quantum"), move |_ucm, msg| {
-        // The message is a JavaScriptResult containing the JSON value from the script
-        let json_str = match msg.to_string().as_str() {
-            s if !s.is_empty() => s.to_string(),
-            _ => {
-                tracing::warn!("empty script message");
+        // `msg` is a `javascriptcore::Value` from the JS side. We need to
+        // pull a JS object out of it as a serde_json::Value, regardless of
+        // whether the caller passed an object directly or a JSON-encoded
+        // string. The TS client today calls `postMessage(JSON.stringify(req))`
+        // which arrives here as a JS string — `to_json(0)` on a JS string
+        // produces a quoted, escape-encoded JSON string literal. Parse that
+        // out first, then if the result is itself a JSON string, parse that
+        // inner string. This handles both shapes transparently.
+        let outer_json = match msg.to_json(0) {
+            Some(s) => s.to_string(),
+            None => {
+                tracing::warn!("script message could not be serialized to JSON");
                 return;
             }
         };
 
-        let Ok(parsed): Result<BridgeMessage, _> = serde_json::from_str(&json_str) else {
-            tracing::warn!("malformed bridge message: {json_str}");
+        let payload_value: Value = match serde_json::from_str::<Value>(&outer_json) {
+            Ok(Value::String(inner)) => match serde_json::from_str::<Value>(&inner) {
+                Ok(v) => v,
+                Err(err) => {
+                    tracing::warn!(
+                        "bridge message wrapped a string that wasn't JSON: {err} (raw: {inner})"
+                    );
+                    return;
+                }
+            },
+            Ok(v) => v,
+            Err(err) => {
+                tracing::warn!("bridge message wasn't valid JSON: {err} (raw: {outer_json})");
+                return;
+            }
+        };
+
+        let Ok(parsed): Result<BridgeMessage, _> = serde_json::from_value(payload_value) else {
+            tracing::warn!("bridge message did not match BridgeMessage shape: {outer_json}");
             return;
         };
 
