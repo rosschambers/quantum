@@ -81,7 +81,7 @@ pub trait HyprlandClient: Send + Sync {
 /// Window host for managing windows.
 #[async_trait]
 pub trait WindowHost: Send + Sync {
-    async fn open(&self, view: &str) -> Result<(), DomainError>;
+    async fn open(&self, view: &str, mode: crate::WindowMode) -> Result<(), DomainError>;
     async fn hide(&self, view: &str) -> Result<(), DomainError>;
     async fn toggle(&self, view: &str) -> Result<(), DomainError>;
 }

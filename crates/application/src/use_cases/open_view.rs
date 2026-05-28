@@ -12,24 +12,10 @@ impl OpenViewUseCase {
     }
 
     pub async fn execute(&self, view_name: String, mode: WindowMode) -> Result<()> {
-        match mode {
-            WindowMode::Toggle => self
-                .window_host
-                .toggle(&view_name)
-                .await
-                .map_err(crate::ApplicationError::Domain)?,
-            WindowMode::Show => self
-                .window_host
-                .open(&view_name)
-                .await
-                .map_err(crate::ApplicationError::Domain)?,
-            WindowMode::Hide => self
-                .window_host
-                .hide(&view_name)
-                .await
-                .map_err(crate::ApplicationError::Domain)?,
-        }
-        Ok(())
+        self.window_host
+            .open(&view_name, mode)
+            .await
+            .map_err(crate::ApplicationError::Domain)
     }
 }
 
@@ -48,16 +34,17 @@ mod tests {
 
     #[async_trait]
     impl WindowHost for FakeWindowHost {
-        async fn open(&self, view: &str) -> std::result::Result<(), DomainError> {
+        async fn open(&self, view: &str, mode: WindowMode) -> std::result::Result<(), DomainError> {
             if self.should_fail {
                 Err(DomainError::ActionFailed {
                     reason: "open failed".to_string(),
                 })
             } else {
+                let mode_str = format!("{:?}", mode);
                 self.calls
                     .lock()
                     .unwrap()
-                    .push((view.to_string(), "open".to_string()));
+                    .push((view.to_string(), mode_str));
                 Ok(())
             }
         }
@@ -104,7 +91,8 @@ mod tests {
         assert!(result.is_ok());
         let calls = host.calls.lock().unwrap();
         assert_eq!(calls.len(), 1);
-        assert_eq!(calls[0], ("launcher".to_string(), "open".to_string()));
+        assert_eq!(calls[0].0, "launcher".to_string());
+        assert!(calls[0].1.contains("Show"));
     }
 
     #[tokio::test]
@@ -120,7 +108,8 @@ mod tests {
         assert!(result.is_ok());
         let calls = host.calls.lock().unwrap();
         assert_eq!(calls.len(), 1);
-        assert_eq!(calls[0], ("launcher".to_string(), "hide".to_string()));
+        assert_eq!(calls[0].0, "launcher".to_string());
+        assert!(calls[0].1.contains("Hide"));
     }
 
     #[tokio::test]
@@ -136,7 +125,8 @@ mod tests {
         assert!(result.is_ok());
         let calls = host.calls.lock().unwrap();
         assert_eq!(calls.len(), 1);
-        assert_eq!(calls[0], ("launcher".to_string(), "toggle".to_string()));
+        assert_eq!(calls[0].0, "launcher".to_string());
+        assert!(calls[0].1.contains("Toggle"));
     }
 
     #[tokio::test]

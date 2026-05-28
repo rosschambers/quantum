@@ -240,7 +240,11 @@ mod tests {
 
     #[async_trait]
     impl WindowHost for FakeWindowHost {
-        async fn open(&self, _view: &str) -> std::result::Result<(), DomainError> {
+        async fn open(
+            &self,
+            _view: &str,
+            _mode: WindowMode,
+        ) -> std::result::Result<(), DomainError> {
             Ok(())
         }
 
