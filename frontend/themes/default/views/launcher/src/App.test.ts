@@ -9,6 +9,8 @@ vi.mock('@quantum/client', () => {
   return {
     createClient: () => ({
       call: mockCall,
+      subscribe: vi.fn(() => () => {}),
+      close: vi.fn(),
     }),
     __esModule: true,
   };
@@ -166,7 +168,7 @@ describe('App.svelte', () => {
       expect(mockCall).toHaveBeenCalledWith('action.invoke', expect.objectContaining({
         provider: 'apps',
       }));
-      expect(mockCall).toHaveBeenCalledWith('view.hide', { view: 'launcher' });
+      expect(mockCall).toHaveBeenCalledWith('view.hide', { name: 'launcher' });
     });
   });
 
@@ -181,7 +183,7 @@ describe('App.svelte', () => {
     await fireEvent.keyDown(input, { key: 'Escape' });
 
     await waitFor(() => {
-      expect(mockCall).toHaveBeenCalledWith('view.hide', { view: 'launcher' });
+      expect(mockCall).toHaveBeenCalledWith('view.hide', { name: 'launcher' });
     });
   });
 });
