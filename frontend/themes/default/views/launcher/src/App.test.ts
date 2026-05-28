@@ -172,6 +172,47 @@ describe('App.svelte', () => {
     });
   });
 
+  it('uses combobox + listbox ARIA pattern', async () => {
+    const matches = [
+      {
+        id: '1',
+        provider: 'apps',
+        title: 'Fox Browser',
+        score: 0.95,
+        action: { kind: 'launch', data: { desktop_id: 'fox' } },
+      },
+    ];
+    mockCall.mockImplementation((method) => {
+      if (method === 'search') {
+        return Promise.resolve({ matches });
+      }
+      return Promise.resolve({});
+    });
+
+    const user = userEvent.setup();
+    render(App);
+    const input = screen.getByPlaceholderText('Search...');
+
+    // Input should have combobox semantics even before results
+    expect(input.getAttribute('role')).toBe('combobox');
+    expect(input.getAttribute('aria-controls')).toBe('quantum-results');
+    expect(input.getAttribute('aria-autocomplete')).toBe('list');
+
+    await user.type(input, 'fox');
+
+    await waitFor(() => {
+      expect(screen.getByText('Fox Browser')).toBeDefined();
+    });
+
+    // Listbox container
+    const listbox = document.getElementById('quantum-results');
+    expect(listbox).not.toBeNull();
+    expect(listbox?.getAttribute('role')).toBe('listbox');
+
+    // Input should now track the highlighted match via aria-activedescendant
+    expect(input.getAttribute('aria-activedescendant')).toBe('match-apps-1');
+  });
+
   it('hides view on Escape', async () => {
     const user = userEvent.setup();
     mockCall.mockResolvedValue({ matches: [] });

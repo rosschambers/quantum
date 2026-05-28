@@ -5,19 +5,11 @@
   import { onMount } from 'svelte';
   import SearchInput from './lib/SearchInput.svelte';
   import Results from './lib/Results.svelte';
+  import type { Match } from './lib/types';
 
-  type Match = {
-    id: string;
-    provider: string;
-    title: string;
-    subtitle?: string;
-    icon?: string;
-    score: number;
-    action: {
-      kind: string;
-      data: unknown;
-    };
-  };
+  interface ThemeReloadedPayload {
+    css: string;
+  }
 
   const client = createClient();
 
@@ -99,12 +91,19 @@
     }
   });
 
+  let activeDescendant = $derived(
+    matches.length > 0 && matches[highlightedIndex]
+      ? `match-${matches[highlightedIndex].provider}-${matches[highlightedIndex].id}`
+      : undefined
+  );
+
   onMount(() => {
     // Subscribe to theme reload notifications and update CSS tokens in place
-    const unsubscribe = client.subscribe('theme.reloaded', (payload: any) => {
+    const unsubscribe = client.subscribe('theme.reloaded', (payload: unknown) => {
+      const p = payload as ThemeReloadedPayload;
       const style = document.getElementById('quantum-tokens');
-      if (style && payload?.css) {
-        style.textContent = payload.css;
+      if (style && typeof p?.css === 'string') {
+        style.textContent = p.css;
       }
     });
     return () => unsubscribe?.();
@@ -116,6 +115,8 @@
     value={searchText}
     onInput={handleSearch}
     onKeyDown={handleKeyDown}
+    expanded={matches.length > 0}
+    activeDescendant={activeDescendant}
   />
 </div>
 

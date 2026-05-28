@@ -1,16 +1,5 @@
 <script lang="ts">
-  type Match = {
-    id: string;
-    provider: string;
-    title: string;
-    subtitle?: string;
-    icon?: string;
-    score: number;
-    action: {
-      kind: string;
-      data: unknown;
-    };
-  };
+  import type { Match } from './types';
 
   interface Props {
     items: Match[];
@@ -25,14 +14,16 @@
   }
 </script>
 
-<div class="results-list">
+<div class="results-list" id="quantum-results" role="listbox">
   {#each items as item, index (item.provider + ':' + item.id)}
+    <!-- svelte-ignore a11y_click_events_have_key_events -->
+    <!-- svelte-ignore a11y_no_static_element_interactions -->
     <div
       class="match-item"
       class:highlighted={index === highlighted}
-      on:click={() => handleClick(item)}
-      role="option"
-      aria-selected={index === highlighted}
+      id={`match-${item.provider}-${item.id}`}
+      aria-selected={index === highlighted ? 'true' : undefined}
+      onclick={() => handleClick(item)}
     >
       <div class="icon"></div>
       <div class="title">{item.title}</div>

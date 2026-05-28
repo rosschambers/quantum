@@ -5,9 +5,17 @@
     value: string;
     onInput: (text: string) => void;
     onKeyDown: (event: KeyboardEvent) => void;
+    activeDescendant?: string;
+    expanded?: boolean;
   }
 
-  let { value = $bindable(), onInput, onKeyDown }: Props = $props();
+  let {
+    value = $bindable(),
+    onInput,
+    onKeyDown,
+    activeDescendant,
+    expanded = false,
+  }: Props = $props();
 
   let inputElement: HTMLInputElement;
 
@@ -33,6 +41,11 @@
   type="text"
   placeholder="Search..."
   value={value}
-  on:input={handleInput}
-  on:keydown={handleKeyDown}
+  role="combobox"
+  aria-expanded={expanded}
+  aria-controls="quantum-results"
+  aria-autocomplete="list"
+  aria-activedescendant={activeDescendant}
+  oninput={handleInput}
+  onkeydown={handleKeyDown}
 />
