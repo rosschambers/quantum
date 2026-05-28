@@ -197,22 +197,15 @@ impl ThemeStore {
         Some(file.contents().to_vec())
     }
 
-    /// Get resolved tokens, reading from tokens.toml in the theme.
-    pub async fn resolved_tokens(&self) -> HashMap<String, String> {
-        let theme = self.active_theme.read().await.clone();
-
-        if let Some(tokens) = self.load_tokens_from_theme(&theme) {
-            return tokens;
-        }
-
-        // Fall back to defaults
-        self.default_tokens()
-    }
-
-    /// Get resolved tokens synchronously (blocks on RwLock).
-    /// Used by URI scheme handlers on GTK thread where async is unavailable.
-    pub fn resolved_tokens_sync(&self) -> HashMap<String, String> {
-        // Use try_read to avoid panicking if RwLock is poisoned
+    /// Get resolved tokens for the active theme.
+    ///
+    /// This is synchronous because every production caller — the URI scheme
+    /// handler on the GTK thread, the theme-watcher thread, and the
+    /// `quantum_domain::ThemeStore` trait impl — runs outside a Tokio
+    /// context. `try_read` is used so a poisoned `RwLock` falls back to
+    /// the `"default"` theme name rather than panicking; the worst case is
+    /// one cycle of default-themed CSS while the lock is contended.
+    pub fn resolved_tokens(&self) -> HashMap<String, String> {
         let theme = match self.active_theme.try_read() {
             Ok(guard) => guard.clone(),
             Err(_) => "default".to_string(),
@@ -326,7 +319,7 @@ impl ThemeStore {
 
                 while let Ok(_events) = rx.recv() {
                     // Resolve tokens and render CSS
-                    let tokens = store.resolved_tokens_sync();
+                    let tokens = store.resolved_tokens();
                     let css = quantum_domain::tokens_to_css(&tokens);
 
                     // Create payload with rendered CSS
@@ -379,7 +372,7 @@ impl quantum_domain::ThemeStore for ThemeStore {
     }
 
     fn resolved_tokens(&self) -> std::collections::HashMap<String, String> {
-        ThemeStore::resolved_tokens_sync(self)
+        ThemeStore::resolved_tokens(self)
     }
 }
 
@@ -390,7 +383,7 @@ mod tests {
     #[tokio::test]
     async fn theme_store_creates_with_default() {
         let store = ThemeStore::new(None);
-        let tokens = store.resolved_tokens().await;
+        let tokens = store.resolved_tokens();
         assert!(tokens.contains_key("color-bg"));
     }
 
@@ -405,7 +398,7 @@ mod tests {
     #[tokio::test]
     async fn theme_store_resolved_tokens_complete() {
         let store = ThemeStore::new(None);
-        let tokens = store.resolved_tokens().await;
+        let tokens = store.resolved_tokens();
 
         // Values must come from the shipped tokens.toml (Catppuccin), not the
         // hard-coded fallback in `default_tokens`. This guards against the
@@ -515,7 +508,7 @@ mod tests {
     #[tokio::test]
     async fn tokens_resolve_from_embedded_file() {
         let store = ThemeStore::new(None);
-        let tokens = store.resolved_tokens().await;
+        let tokens = store.resolved_tokens();
 
         // Should have loaded from embedded tokens.toml
         // If tokens.toml exists and parses, it will be used
