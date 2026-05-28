@@ -7,7 +7,7 @@ use quantum_domain::{ports::ThemeStore, WindowMode};
 
 use crate::dispatcher::IpcDispatcher;
 use crate::messages::WindowRequest;
-use crate::windows::LauncherWindow;
+use crate::windows::{LauncherWindow, WidgetWindow};
 
 use tracing::warn;
 
@@ -29,6 +29,7 @@ pub trait WindowConstructor {
 /// Enum of all managed window types.
 pub enum ManagedWindow {
     Launcher(LauncherWindow),
+    Widget(WidgetWindow),
 }
 
 /// Real window constructor that builds GTK windows.
@@ -63,6 +64,9 @@ impl WindowConstructor for ManagedWindowConstructor {
                 self.dispatcher.clone(),
                 self.theme_store.clone(),
             ))),
+            other if other.starts_with("widgets/") => Some(ManagedWindow::Widget(
+                WidgetWindow::new(&self.app, other.to_string(), self.theme_store.clone()),
+            )),
             _ => None,
         }
     }
@@ -72,18 +76,21 @@ impl WindowOps for ManagedWindow {
     fn show(&mut self) {
         match self {
             ManagedWindow::Launcher(w) => w.show(),
+            ManagedWindow::Widget(w) => w.show(),
         }
     }
 
     fn hide(&mut self) {
         match self {
             ManagedWindow::Launcher(w) => w.hide(),
+            ManagedWindow::Widget(w) => w.hide(),
         }
     }
 
     fn toggle(&mut self) {
         match self {
             ManagedWindow::Launcher(w) => w.toggle(),
+            ManagedWindow::Widget(w) => w.toggle(),
         }
     }
 }
