@@ -27,6 +27,27 @@ pub struct ResolvedViewData {
     pub mime_type: String,
 }
 
+/// Generate candidate filesystem paths to try for a logical view path.
+///
+/// For a request like `views/launcher/index.html`, we also try
+/// `views/launcher/dist/index.html` and `views/launcher/dist/assets/...`
+/// to support Vite-built bundles that output to a `dist/` subdir.
+/// Non-view paths (`tokens.toml`, `theme.toml`, etc.) are returned unchanged.
+fn candidate_paths(path: &str) -> Vec<String> {
+    let mut out = Vec::with_capacity(2);
+
+    // For Vite-built view bundles, prefer the dist/ output over the source
+    // template (which references src/main.ts that doesn't exist at runtime).
+    if let Some(rest) = path.strip_prefix("views/") {
+        if let Some((view, tail)) = rest.split_once('/') {
+            out.push(format!("views/{view}/dist/{tail}"));
+        }
+    }
+
+    out.push(path.to_string());
+    out
+}
+
 /// Theme store for loading and cascading themes.
 pub struct ThemeStore {
     themes_dir: PathBuf,
@@ -101,8 +122,21 @@ impl ThemeStore {
         }
     }
 
-    /// Load a file from a theme, checking disk first then falling back to embedded default.
+    /// Load a file from a theme, checking disk first then falling back to
+    /// embedded default. View-bundle paths are tried as-is and with a
+    /// `dist/` segment inserted under `views/<view>/` so Vite-built bundles
+    /// (which output to `dist/`) are addressable via their conceptual paths
+    /// like `views/launcher/index.html`.
     pub fn get_file(&self, theme_name: &str, path: &str) -> Option<Vec<u8>> {
+        for candidate in candidate_paths(path) {
+            if let Some(bytes) = self.get_file_exact(theme_name, &candidate) {
+                return Some(bytes);
+            }
+        }
+        None
+    }
+
+    fn get_file_exact(&self, theme_name: &str, path: &str) -> Option<Vec<u8>> {
         // First try disk override if not the default theme
         if theme_name != "default" {
             let disk_path = self.themes_dir.join(theme_name).join(path);
@@ -127,17 +161,11 @@ impl ThemeStore {
         }
     }
 
-    /// Recursively search for a file in an embedded directory.
+    /// Search for a file in an embedded directory by full path.
+    /// `include_dir::Dir::get_file` accepts the full relative path, no
+    /// per-segment traversal needed.
     fn get_embedded_file(&self, dir: &include_dir::Dir<'_>, path: &str) -> Option<Vec<u8>> {
-        let parts: Vec<&str> = path.split('/').collect();
-        let mut current_dir = dir;
-
-        for part in &parts[..parts.len().saturating_sub(1)] {
-            current_dir = current_dir.get_dir(part)?;
-        }
-
-        let file_name = parts.last()?;
-        let file = current_dir.get_file(file_name)?;
+        let file = dir.get_file(path)?;
         Some(file.contents().to_vec())
     }
 
