@@ -8,6 +8,18 @@ use webkit6::{prelude::*, WebView};
 
 use crate::IpcDispatcher;
 
+/// Post-process a serialized JSON string so it is safe to splice into a
+/// JavaScript program as an expression.
+///
+/// JSON permits the literal Unicode line separators U+2028 and U+2029 inside
+/// string values, but JavaScript string literals do not — they terminate the
+/// line. Replace them with their `\uXXXX` escapes. Everything else in valid
+/// JSON is already a valid JS expression.
+fn json_to_js_expression(json: &str) -> String {
+    json.replace('\u{2028}', "\\u2028")
+        .replace('\u{2029}', "\\u2029")
+}
+
 /// Message sent from JavaScript to Rust.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BridgeMessage {
@@ -52,64 +64,46 @@ pub fn register_bridge(webview: &WebView, dispatcher: Arc<dyn IpcDispatcher>, ru
         let method = parsed.method.clone();
         let params = parsed.params.clone();
 
-        // Create a channel to get the result back from the Tokio task
-        let (tx, mut rx) = tokio::sync::oneshot::channel();
+        // One-shot channel for the JS expression to evaluate once the
+        // dispatcher completes. The receiver is awaited on the GLib main
+        // context, so the GTK thread suspends until the value is ready
+        // rather than busy-polling.
+        let (tx, rx) = tokio::sync::oneshot::channel::<String>();
 
-        // Spawn on Tokio to call the dispatcher
         runtime.spawn(async move {
             let result = dispatcher.dispatch(&method, params).await;
             let js = match result {
                 Ok(value) => {
                     let payload = serde_json::to_string(&value).unwrap_or_else(|_| "null".into());
-                    format!(
-                        "window.__quantum_resolve({}, {})",
-                        id,
-                        escape_for_js(&payload)
-                    )
+                    let payload = json_to_js_expression(&payload);
+                    format!("window.__quantum_resolve({id}, {payload})")
                 }
                 Err(err) => {
-                    let payload = serde_json::to_string(&serde_json::json!({
+                    let error_json = serde_json::to_string(&serde_json::json!({
                         "code": err.code,
                         "message": err.message,
                     }))
                     .unwrap_or_else(|_| "{}".into());
-                    format!(
-                        "window.__quantum_reject({}, {})",
-                        id,
-                        escape_for_js(&payload)
-                    )
+                    let error_json = json_to_js_expression(&error_json);
+                    format!("window.__quantum_reject({id}, {error_json})")
                 }
             };
 
-            // Send the result back (ignore if receiver dropped)
+            // Ignore send failure: the GTK side has gone away.
             let _ = tx.send(js);
         });
 
-        // Wait for the result in a non-blocking way on the GTK main thread
-        glib::source::idle_add_local(move || {
-            // Try to receive the JS (non-blocking)
-            match rx.try_recv() {
-                Ok(js) => {
-                    webview.evaluate_javascript(&js, None, None, None::<&gio::Cancellable>, |_| {});
-                    glib::ControlFlow::Break
-                }
-                Err(tokio::sync::oneshot::error::TryRecvError::Empty) => {
-                    // Not ready yet, keep waiting
-                    glib::ControlFlow::Continue
-                }
-                Err(_) => {
-                    // Sender dropped or channel closed
-                    glib::ControlFlow::Break
-                }
+        // Drive the oneshot on the GLib main context. `spawn_local` yields
+        // to the loop while awaiting, so there is no busy loop on the GTK
+        // thread. A oneshot receiver is executor-agnostic — its waker is
+        // supplied by whoever polls it (here, the GLib executor), so the
+        // sender on the Tokio side correctly wakes this future.
+        glib::MainContext::default().spawn_local(async move {
+            if let Ok(js) = rx.await {
+                webview.evaluate_javascript(&js, None, None, None::<&gio::Cancellable>, |_| {});
             }
         });
     });
-}
-
-/// Escape JSON string for safe injection into JavaScript.
-#[allow(dead_code)]
-fn escape_for_js(json: &str) -> String {
-    format!("\"{}\"", json.replace('\\', "\\\\").replace('"', "\\\""))
 }
 
 #[cfg(test)]
@@ -126,13 +120,17 @@ mod tests {
     }
 
     #[test]
-    fn escapes_json_for_javascript() {
-        let json = r#"{"key": "value with \"quotes\""}"#;
-        let escaped = escape_for_js(json);
-        assert!(escaped.starts_with('"'));
-        assert!(escaped.ends_with('"'));
-        // Should properly escape backslashes and quotes
-        assert!(escaped.contains("\\\\"));
+    fn json_to_js_expression_handles_all_cases() {
+        // Plain strings pass through unchanged.
+        assert_eq!(json_to_js_expression("\"abc\""), "\"abc\"");
+        // U+2028 (line separator) is escaped — JSON allows it, JS forbids
+        // it inside string literals.
+        assert_eq!(json_to_js_expression("\"\u{2028}foo\""), "\"\\u2028foo\"");
+        // U+2029 (paragraph separator) is escaped for the same reason.
+        assert_eq!(json_to_js_expression("\"bar\u{2029}\""), "\"bar\\u2029\"");
+        // Normal JSON objects are valid JS expression syntax already.
+        let input = r#"{"key":"value"}"#;
+        assert_eq!(json_to_js_expression(input), input);
     }
 
     #[test]

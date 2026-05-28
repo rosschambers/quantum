@@ -10,7 +10,7 @@ declare global {
       };
     };
     __quantum_resolve?: (id: number, result: unknown) => void;
-    __quantum_reject?: (id: number, error: unknown) => void;
+    __quantum_reject?: (id: number, error: { code?: number; message?: string; data?: unknown }) => void;
     __quantum_notify?: (channel: string, payload: unknown) => void;
   }
 }
@@ -23,22 +23,23 @@ export function createBridgeTransport(): Transport | null {
   const responseCallbacks: ((response: JsonRpcResponse) => void)[] = [];
   const notificationCallbacks: ((notification: JsonRpcNotification) => void)[] = [];
 
-  // Install global handlers for receiving responses and notifications
+  // Install global handlers for receiving responses and notifications.
+  // The Rust side splices JSON directly into a JS expression, so these
+  // callbacks receive structured values — no JSON.parse needed.
   if (!window.__quantum_resolve) {
     window.__quantum_resolve = (id: number, result: unknown) => {
-      const parsedResult = typeof result === 'string' ? JSON.parse(result) : result;
       const response: JsonRpcResponse = {
         jsonrpc: '2.0',
         id,
-        result: parsedResult,
+        result,
       };
       responseCallbacks.forEach((cb) => cb(response));
     };
   }
 
   if (!window.__quantum_reject) {
-    window.__quantum_reject = (id: number, error: unknown) => {
-      const errorObj = error as any || {};
+    window.__quantum_reject = (id: number, error: { code?: number; message?: string; data?: unknown }) => {
+      const errorObj = error ?? {};
       const response: JsonRpcResponse = {
         jsonrpc: '2.0',
         id,

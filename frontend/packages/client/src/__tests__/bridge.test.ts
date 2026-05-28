@@ -36,8 +36,36 @@ describe('bridge transport', () => {
 
     const received: any[] = [];
     transport.onResponse((m) => received.push(m));
-    (globalThis as any).window.__quantum_resolve(7, JSON.stringify({ ok: true }));
+    (globalThis as any).window.__quantum_resolve(7, { ok: true });
     expect(received).toHaveLength(1);
     expect(received[0]).toEqual({ jsonrpc: '2.0', id: 7, result: { ok: true } });
+  });
+
+  it('dispatches reject callbacks via window.__quantum_reject with structured error', () => {
+    const transport = createBridgeTransport();
+    expect(transport).not.toBeNull();
+    if (!transport) return;
+
+    const received: any[] = [];
+    transport.onResponse((m) => received.push(m));
+    (globalThis as any).window.__quantum_reject(9, { code: -32000, message: 'boom' });
+    expect(received).toHaveLength(1);
+    expect(received[0]).toEqual({
+      jsonrpc: '2.0',
+      id: 9,
+      error: { code: -32000, message: 'boom', data: undefined },
+    });
+  });
+
+  it('preserves U+2028 in resolved payload (no JSON.parse round-trip)', () => {
+    const transport = createBridgeTransport();
+    expect(transport).not.toBeNull();
+    if (!transport) return;
+
+    const received: any[] = [];
+    transport.onResponse((m) => received.push(m));
+    (globalThis as any).window.__quantum_resolve(11, { title: 'line\u2028break' });
+    expect(received).toHaveLength(1);
+    expect(received[0].result).toEqual({ title: 'line\u2028break' });
   });
 });

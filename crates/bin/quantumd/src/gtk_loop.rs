@@ -13,21 +13,18 @@
 //!                                       |
 //!                              tokio::mpsc::Unbounded
 //!                                       v
-//!                            Tokio forwarder task
-//!                                       |
-//!                            std::sync::mpsc::Sender
-//!                                       v
-//!                          GTK idle_add_local on main
+//!                      glib::MainContext::spawn_local task
 //!                                       |
 //!                                       v
 //!                              WindowRegistry::handle
 //! ```
 //!
-//! The tokio mpsc receiver must be polled inside a tokio task because that's
-//! where its wakers register. We can't poll it from `glib::MainContext::spawn_local`
-//! — that won't drive Tokio's reactor. The std::sync::mpsc bridge into the GTK
-//! main loop is `!Send` on the receiver but lives entirely on the GTK thread,
-//! so that's fine.
+//! Tokio mpsc channels are executor-agnostic — their wakers are supplied by
+//! whatever runtime polls the receiver. Polling from a `MainContext::spawn_local`
+//! task means the GLib main context drives the receiver natively without any
+//! busy-loop, and the receiver yields control back to the loop while waiting
+//! for the next message. Only Tokio's IO and timer primitives (sockets, sleep)
+//! require Tokio's reactor; channels do not.
 
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -78,24 +75,14 @@ pub fn run(
         );
         let registry = Rc::new(RefCell::new(WindowRegistry::new(ctor)));
 
-        let Some(rx) = rx_for_activate.borrow_mut().take() else {
+        let Some(mut rx) = rx_for_activate.borrow_mut().take() else {
             return;
         };
         let registry_for_loop = registry.clone();
-        let (forward_tx, forward_rx) = std::sync::mpsc::channel::<quantum_ui::WindowRequest>();
-        runtime.spawn(async move {
-            let mut rx = rx;
+        glib::MainContext::default().spawn_local(async move {
             while let Some(req) = rx.recv().await {
-                if forward_tx.send(req).is_err() {
-                    break;
-                }
-            }
-        });
-        glib::idle_add_local(move || {
-            while let Ok(req) = forward_rx.try_recv() {
                 registry_for_loop.borrow_mut().handle(req);
             }
-            glib::ControlFlow::Continue
         });
     });
 
