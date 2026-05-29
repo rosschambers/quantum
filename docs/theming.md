@@ -399,11 +399,25 @@ displays the current CPU usage. To install it:
 
 ### Provider channels you can subscribe to
 
-| Channel                          | Payload type        | Update cadence              |
-| -------------------------------- | ------------------- | --------------------------- |
-| `system.stats.event`             | `SystemStats`       | 1 Hz                        |
-| `mpris.state.event`              | `MprisState`        | On DBus signal or 1 Hz poll |
-| `hyprland.activewindow.event`    | `ActiveWindowState` | On Hyprland event push      |
+| Channel                          | Payload type           | Update cadence              |
+| -------------------------------- | ---------------------- | --------------------------- |
+| `system.stats.event`             | `SystemStats`          | 1 Hz                        |
+| `mpris.event`                    | `MprisState`           | On DBus signal or 1 Hz poll |
+| `hyprland.activewindow.event`    | `ActiveWindowState`    | On Hyprland event push      |
+| `power.event`                    | `PowerState`           | On UPower PropertiesChanged |
+| `network.event`                  | `NetworkState`         | On NM PropertiesChanged     |
+| `bluetooth.event`                | `BluetoothState`       | On BlueZ ObjectManager      |
+| `power_profile.event`            | `PowerProfileState`    | On PPD PropertiesChanged    |
+| `audio.event`                    | `AudioState`           | 200 ms poll via pactl       |
+| `brightness.event`               | `BrightnessState`      | 1 Hz sysfs poll             |
+
+Every tray payload has a top-level `available: boolean`. When `false` the
+rest of the fields are `null` / empty / default — the backing service
+(UPower, NetworkManager, BlueZ, etc.) is not present on this host.
+Indicator widgets should render nothing in that case. The provider keeps
+the stream alive and re-emits once the service appears via
+`NameOwnerChanged`, so plugging in a Bluetooth dongle later transitions
+the bar from empty to populated without a daemon restart.
 
 ### Invoking actions
 
@@ -430,6 +444,81 @@ For TypeScript widgets with bundling (Vite, etc.), use the
 `@quantum/client` package which provides a typed API around the bridge.
 See `frontend/themes/default/views/widgets/bar/` for a Svelte 5
 example.
+
+---
+
+## Tray indicators
+
+The default `widgets/bar` view ships with a `Tray` region containing six
+indicators driven by the providers listed above. Each indicator is a
+self-contained Svelte 5 component under
+`frontend/themes/default/views/widgets/bar/src/lib/tray/`. They are a
+useful reference for building custom indicators in your own theme.
+
+Each indicator follows the same pattern: subscribe to the channel,
+ignore the payload when `available === false`, render a small glyph plus
+tooltip otherwise, dispatch `action.invoke` on user interaction.
+
+| Indicator              | Channel              | Interaction                                |
+| ---------------------- | -------------------- | ------------------------------------------ |
+| `BatteryIndicator`     | `power.event`        | Display only                               |
+| `NetworkIndicator`     | `network.event`      | Left click toggles WiFi                    |
+| `BluetoothIndicator`   | `bluetooth.event`    | Left click toggles adapter power           |
+| `VolumeIndicator`      | `audio.event`        | Left click toggles mute; scroll = +/-5%    |
+| `BrightnessIndicator`  | `brightness.event`   | Scroll = +/-5% on the first display        |
+| `PowerProfileIndicator`| `power_profile.event`| Left click cycles to the next available    |
+
+### Custom indicator skeleton
+
+```svelte
+<script lang="ts">
+    import type { Client } from '@quantum/client';
+    import type { PowerState } from '../types';
+    import { POWER_CHANNEL } from '../channels';
+
+    interface Props { client: Client }
+    let { client }: Props = $props();
+    let state: PowerState = $state({
+        available: false,
+        on_battery: false,
+        percentage: null,
+        state: null,
+        time_to_empty_secs: null,
+        time_to_full_secs: null,
+    });
+
+    $effect(() => {
+        const off = client.subscribe(POWER_CHANNEL, (p: unknown) => {
+            state = p as PowerState;
+        });
+        return () => off?.();
+    });
+</script>
+
+{#if state.available}
+    <div class="tray-icon">{Math.round(state.percentage ?? 0)}%</div>
+{/if}
+```
+
+### Action envelope
+
+For provider-specific commands, wrap the payload in
+`Action::Custom`:
+
+```js
+await client.call('action.invoke', {
+    provider: 'audio',
+    action: {
+        kind: 'custom',
+        data: { kind: 'audio', payload: { command: 'toggle_mute' } },
+    },
+});
+```
+
+The inner `data` carries the variant fields; the inner `payload` carries
+the provider-specific command shape. See the per-provider sections in
+`docs/plans/2026-05-29-quantum-tray-design.md` for the full payload
+catalog.
 
 ---
 
