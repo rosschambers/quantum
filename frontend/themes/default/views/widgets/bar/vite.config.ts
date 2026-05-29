@@ -10,4 +10,7 @@ export default defineConfig({
     outDir: "dist",
     rollupOptions: { output: { manualChunks: undefined } },
   },
+  test: {
+    environment: "jsdom",
+  },
 });
