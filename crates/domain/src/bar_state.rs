@@ -377,6 +377,8 @@ mod tests {
     #[test]
     fn system_power_state_default_all_false() {
         let d = SystemPowerState::default();
-        assert!(!d.can_shutdown && !d.can_restart && !d.can_suspend && !d.can_hibernate && !d.can_lock);
+        assert!(
+            !d.can_shutdown && !d.can_restart && !d.can_suspend && !d.can_hibernate && !d.can_lock
+        );
     }
 }

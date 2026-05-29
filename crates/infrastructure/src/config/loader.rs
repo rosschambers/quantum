@@ -45,6 +45,20 @@ pub struct Config {
     pub provider: Vec<ProviderConfig>,
     #[serde(default)]
     pub widget: Vec<WidgetConfig>,
+    #[serde(default)]
+    pub system_power: Option<SystemPowerConfig>,
+}
+
+/// Configuration for the `system_power` provider.
+///
+/// `lock_command` is a shell-style command line; tokens are split on
+/// whitespace honouring quoting. When unset the provider probes
+/// `hyprlock`, `swaylock`, `gtklock`, then falls back to
+/// `loginctl lock-session`.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct SystemPowerConfig {
+    #[serde(default)]
+    pub lock_command: Option<String>,
 }
 
 /// General configuration.
@@ -83,6 +97,7 @@ impl ConfigStore {
                 general: GeneralConfig::default(),
                 provider: Vec::new(),
                 widget: Vec::new(),
+                system_power: None,
             }
         };
 
@@ -155,6 +170,7 @@ invalid syntax
                 general: GeneralConfig::default(),
                 provider: Vec::new(),
                 widget: Vec::new(),
+                system_power: None,
             }),
         };
 
@@ -171,6 +187,7 @@ invalid syntax
                 },
                 provider: Vec::new(),
                 widget: Vec::new(),
+                system_power: None,
             }),
         };
 
@@ -193,5 +210,23 @@ invalid syntax
         assert_eq!(config.widget[0].view, "widgets/bar");
         assert!(config.widget[0].auto_show);
         assert!(!config.widget[1].auto_show);
+    }
+
+    #[test]
+    fn parses_system_power_section() {
+        let toml = r#"
+            [system_power]
+            lock_command = "swaylock --color 000"
+        "#;
+        let config: Config = toml::from_str(toml).unwrap();
+        let sp = config.system_power.expect("system_power present");
+        assert_eq!(sp.lock_command.as_deref(), Some("swaylock --color 000"));
+    }
+
+    #[test]
+    fn config_without_system_power_section_parses() {
+        let toml = "";
+        let config: Config = toml::from_str(toml).unwrap();
+        assert!(config.system_power.is_none());
     }
 }
