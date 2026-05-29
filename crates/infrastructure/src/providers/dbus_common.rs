@@ -28,9 +28,7 @@ use crate::error::InfrastructureError;
 /// the same bus (BlueZ's ObjectManager needs this). Returns
 /// `InfrastructureError` so transport errors surface for backoff.
 pub type BuildFn<S> = Box<
-    dyn for<'a> Fn(&'a Connection) -> BoxFuture<'a, Result<S, InfrastructureError>>
-        + Send
-        + Sync,
+    dyn for<'a> Fn(&'a Connection) -> BoxFuture<'a, Result<S, InfrastructureError>> + Send + Sync,
 >;
 
 /// Check whether a DBus service is currently owned on the given bus.
