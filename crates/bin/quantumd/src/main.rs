@@ -18,9 +18,17 @@ use quantum_infrastructure::ipc::server::{
     DispatchError, DispatchResult, Dispatcher as IpcDispatcher,
 };
 use quantum_infrastructure::{
-    config::ConfigStore, providers::DesktopAppsProvider, registry::InMemoryProviderRegistry,
-    shell::TokioShellExecutor, theme::ThemeStore, EventEnvelope, HyprlandActiveWindowProvider,
-    HyprlandSocketClient, MprisProvider, ProcStatsProvider, ShellCommandProvider, UnixSocketServer,
+    config::ConfigStore,
+    providers::DesktopAppsProvider,
+    providers::{
+        BluezProvider, LogindBrightnessProvider, NetworkManagerProvider,
+        PowerProfilesDaemonProvider, PulseAudioProvider, UpowerBatteryProvider,
+    },
+    registry::InMemoryProviderRegistry,
+    shell::TokioShellExecutor,
+    theme::ThemeStore,
+    EventEnvelope, HyprlandActiveWindowProvider, HyprlandSocketClient, MprisProvider,
+    ProcStatsProvider, ShellCommandProvider, UnixSocketServer,
 };
 use quantum_ui::{DummyWindowHost, IpcDispatcher as UiIpcDispatcher};
 
@@ -331,6 +339,70 @@ async fn setup_daemon(
         info!("Registered HyprlandActiveWindowProvider");
     }
 
+    // Tray providers — each registered with graceful fallback. If the
+    // underlying service is missing the provider still publishes an
+    // unavailable state so the frontend has a uniform contract.
+    match UpowerBatteryProvider::connect().await {
+        Ok(p) => {
+            let p = Arc::new(p);
+            registry
+                .register(p.id().clone(), p as Arc<dyn quantum_domain::ProviderSource>)
+                .await;
+            info!("Registered UpowerBatteryProvider");
+        }
+        Err(e) => tracing::warn!(error = ?e, "UpowerBatteryProvider unavailable"),
+    }
+    match NetworkManagerProvider::connect().await {
+        Ok(p) => {
+            let p = Arc::new(p);
+            registry
+                .register(p.id().clone(), p as Arc<dyn quantum_domain::ProviderSource>)
+                .await;
+            info!("Registered NetworkManagerProvider");
+        }
+        Err(e) => tracing::warn!(error = ?e, "NetworkManagerProvider unavailable"),
+    }
+    match BluezProvider::connect().await {
+        Ok(p) => {
+            let p = Arc::new(p);
+            registry
+                .register(p.id().clone(), p as Arc<dyn quantum_domain::ProviderSource>)
+                .await;
+            info!("Registered BluezProvider");
+        }
+        Err(e) => tracing::warn!(error = ?e, "BluezProvider unavailable"),
+    }
+    match PowerProfilesDaemonProvider::connect().await {
+        Ok(p) => {
+            let p = Arc::new(p);
+            registry
+                .register(p.id().clone(), p as Arc<dyn quantum_domain::ProviderSource>)
+                .await;
+            info!("Registered PowerProfilesDaemonProvider");
+        }
+        Err(e) => tracing::warn!(error = ?e, "PowerProfilesDaemonProvider unavailable"),
+    }
+    match LogindBrightnessProvider::connect(tokio::runtime::Handle::current()).await {
+        Ok(p) => {
+            let p = Arc::new(p);
+            registry
+                .register(p.id().clone(), p as Arc<dyn quantum_domain::ProviderSource>)
+                .await;
+            info!("Registered LogindBrightnessProvider");
+        }
+        Err(e) => tracing::warn!(error = ?e, "LogindBrightnessProvider unavailable"),
+    }
+    match PulseAudioProvider::connect(tokio::runtime::Handle::current()).await {
+        Ok(p) => {
+            let p = Arc::new(p);
+            registry
+                .register(p.id().clone(), p as Arc<dyn quantum_domain::ProviderSource>)
+                .await;
+            info!("Registered PulseAudioProvider");
+        }
+        Err(e) => tracing::warn!(error = ?e, "PulseAudioProvider unavailable"),
+    }
+
     // Use cases
     let search_use_case = Arc::new(SearchUseCase::new(registry.clone()));
     let launch_action_use_case = Arc::new(LaunchActionUseCase::new(registry.clone()));
@@ -353,6 +425,17 @@ async fn setup_daemon(
         let _ = subscribe_provider_use_case
             .execute("hyprland.activewindow".into())
             .await;
+    }
+    // Pre-subscribe tray providers (silent fail if not registered).
+    for id in [
+        "power",
+        "network",
+        "bluetooth",
+        "power_profile",
+        "brightness",
+        "audio",
+    ] {
+        let _ = subscribe_provider_use_case.execute(id.into()).await;
     }
 
     // Use the window host passed in from main (GtkWindowHost when running with
