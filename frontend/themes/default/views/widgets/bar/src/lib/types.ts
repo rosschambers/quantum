@@ -97,3 +97,11 @@ export interface BrightnessState {
   available: boolean;
   displays: BrightnessDisplay[];
 }
+
+export interface SystemPowerState {
+  can_shutdown: boolean;
+  can_restart: boolean;
+  can_suspend: boolean;
+  can_hibernate: boolean;
+  can_lock: boolean;
+}

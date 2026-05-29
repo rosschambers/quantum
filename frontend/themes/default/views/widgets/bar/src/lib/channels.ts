@@ -14,3 +14,4 @@ export const BLUETOOTH_CHANNEL = 'bluetooth.event';
 export const POWER_PROFILE_CHANNEL = 'power_profile.event';
 export const AUDIO_CHANNEL = 'audio.event';
 export const BRIGHTNESS_CHANNEL = 'brightness.event';
+export const SYSTEM_POWER_CHANNEL = 'system_power.event';

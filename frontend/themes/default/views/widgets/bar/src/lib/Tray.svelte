@@ -6,6 +6,7 @@
     import BrightnessIndicator from './tray/BrightnessIndicator.svelte';
     import BatteryIndicator from './tray/BatteryIndicator.svelte';
     import PowerProfileIndicator from './tray/PowerProfileIndicator.svelte';
+    import PowerMenuIndicator from './tray/PowerMenuIndicator.svelte';
 
     interface Props {
         client: Client;
@@ -21,6 +22,7 @@
     <BrightnessIndicator {client} />
     <BatteryIndicator {client} />
     <PowerProfileIndicator {client} />
+    <PowerMenuIndicator {client} />
 </div>
 
 <style>
