@@ -35,7 +35,7 @@ pub struct ActiveWindowState {
     pub workspace_name: String,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct PowerState {
     pub available: bool,
     pub on_battery: bool,
@@ -43,19 +43,6 @@ pub struct PowerState {
     pub state: Option<BatteryChargeState>,
     pub time_to_empty_secs: Option<u64>,
     pub time_to_full_secs: Option<u64>,
-}
-
-impl Default for PowerState {
-    fn default() -> Self {
-        Self {
-            available: false,
-            on_battery: false,
-            percentage: None,
-            state: None,
-            time_to_empty_secs: None,
-            time_to_full_secs: None,
-        }
-    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -116,23 +103,12 @@ pub enum NetworkKind {
     Other,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct BluetoothState {
     pub available: bool,
     pub powered: bool,
     pub discovering: bool,
     pub connected_devices: Vec<BluetoothDevice>,
-}
-
-impl Default for BluetoothState {
-    fn default() -> Self {
-        Self {
-            available: false,
-            powered: false,
-            discovering: false,
-            connected_devices: Vec::new(),
-        }
-    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -142,23 +118,12 @@ pub struct BluetoothDevice {
     pub battery_percent: Option<u8>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PowerProfileState {
     pub available: bool,
     pub active: Option<PowerProfile>,
     pub profiles: Vec<PowerProfile>,
     pub performance_inhibited: Option<String>,
-}
-
-impl Default for PowerProfileState {
-    fn default() -> Self {
-        Self {
-            available: false,
-            active: None,
-            profiles: Vec::new(),
-            performance_inhibited: None,
-        }
-    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -169,19 +134,10 @@ pub enum PowerProfile {
     Performance,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AudioState {
     pub available: bool,
     pub default_sink: Option<AudioSink>,
-}
-
-impl Default for AudioState {
-    fn default() -> Self {
-        Self {
-            available: false,
-            default_sink: None,
-        }
-    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -192,19 +148,10 @@ pub struct AudioSink {
     pub muted: bool,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct BrightnessState {
     pub available: bool,
     pub displays: Vec<BrightnessDisplay>,
-}
-
-impl Default for BrightnessState {
-    fn default() -> Self {
-        Self {
-            available: false,
-            displays: Vec::new(),
-        }
-    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

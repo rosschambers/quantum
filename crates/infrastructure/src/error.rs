@@ -25,6 +25,12 @@ pub enum InfrastructureError {
 
     #[error("spawn error: {0}")]
     Spawn(String),
+
+    #[error("DBus service unavailable: {0}")]
+    ServiceUnavailable(String),
+
+    #[error("DBus transport error: {0}")]
+    DbusTransport(String),
 }
 
 impl From<io::Error> for InfrastructureError {
@@ -55,6 +61,12 @@ impl InfrastructureError {
                 DomainError::Unsupported("Hyprland unreachable".to_string())
             }
             InfrastructureError::Spawn(msg) => DomainError::Unsupported(format!("spawn: {}", msg)),
+            InfrastructureError::ServiceUnavailable(msg) => {
+                DomainError::Unsupported(format!("service unavailable: {}", msg))
+            }
+            InfrastructureError::DbusTransport(msg) => {
+                DomainError::Unsupported(format!("DBus transport: {}", msg))
+            }
         }
     }
 
@@ -74,6 +86,8 @@ impl InfrastructureError {
             Self::ConfigParse(_) => -32102,
             Self::HyprlandUnreachable => -32103,
             Self::Spawn(_) => -32104,
+            Self::ServiceUnavailable(_) => -32105,
+            Self::DbusTransport(_) => -32106,
         }
     }
 }
@@ -158,6 +172,8 @@ mod tests {
             InfrastructureError::ConfigParse("x".to_string()).rpc_code(),
             InfrastructureError::HyprlandUnreachable.rpc_code(),
             InfrastructureError::Spawn("x".to_string()).rpc_code(),
+            InfrastructureError::ServiceUnavailable("x".to_string()).rpc_code(),
+            InfrastructureError::DbusTransport("x".to_string()).rpc_code(),
         ];
         for code in codes {
             assert!(
