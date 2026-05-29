@@ -22,7 +22,8 @@ use quantum_infrastructure::{
     providers::DesktopAppsProvider,
     providers::{
         BluezProvider, LogindBrightnessProvider, NetworkManagerProvider,
-        PowerProfilesDaemonProvider, PulseAudioProvider, UpowerBatteryProvider,
+        PowerProfilesDaemonProvider, PulseAudioProvider, SystemPowerProvider,
+        UpowerBatteryProvider,
     },
     registry::InMemoryProviderRegistry,
     shell::TokioShellExecutor,
@@ -403,6 +404,22 @@ async fn setup_daemon(
         Err(e) => tracing::warn!(error = ?e, "PulseAudioProvider unavailable"),
     }
 
+    // Action-only system_power provider (shutdown/restart/suspend/hibernate/lock).
+    let lock_command_cfg = config
+        .system_power
+        .as_ref()
+        .and_then(|sp| sp.lock_command.clone());
+    match SystemPowerProvider::connect(lock_command_cfg).await {
+        Ok(p) => {
+            let p = Arc::new(p);
+            registry
+                .register(p.id().clone(), p as Arc<dyn quantum_domain::ProviderSource>)
+                .await;
+            info!("Registered SystemPowerProvider");
+        }
+        Err(e) => tracing::warn!(error = ?e, "SystemPowerProvider unavailable"),
+    }
+
     // Use cases
     let search_use_case = Arc::new(SearchUseCase::new(registry.clone()));
     let launch_action_use_case = Arc::new(LaunchActionUseCase::new(registry.clone()));
@@ -434,6 +451,7 @@ async fn setup_daemon(
         "power_profile",
         "brightness",
         "audio",
+        "system_power",
     ] {
         let _ = subscribe_provider_use_case.execute(id.into()).await;
     }
