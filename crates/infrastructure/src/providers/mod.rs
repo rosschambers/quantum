@@ -1,3 +1,4 @@
+pub mod battery;
 pub mod dbus_common;
 pub mod declarative_shell;
 pub mod desktop_apps;
@@ -7,6 +8,7 @@ pub mod mpris;
 pub mod proc_stats;
 pub mod shell_command;
 
+pub use battery::UpowerBatteryProvider;
 pub use declarative_shell::DeclarativeShellProvider;
 pub use desktop_apps::DesktopAppsProvider;
 pub use hyprland_active_window::HyprlandActiveWindowProvider;
