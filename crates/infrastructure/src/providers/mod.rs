@@ -12,6 +12,7 @@ pub mod network;
 pub mod power_profile;
 pub mod proc_stats;
 pub mod shell_command;
+pub mod system_power;
 
 pub use audio::PulseAudioProvider;
 pub use battery::UpowerBatteryProvider;
@@ -26,3 +27,4 @@ pub use network::NetworkManagerProvider;
 pub use power_profile::PowerProfilesDaemonProvider;
 pub use proc_stats::ProcStatsProvider;
 pub use shell_command::ShellCommandProvider;
+pub use system_power::SystemPowerProvider;
