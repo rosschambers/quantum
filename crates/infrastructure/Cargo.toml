@@ -26,6 +26,8 @@ dirs = "5.0"
 async-stream = "0.3"
 tokio-stream = { version = "0.1", features = ["sync"] }
 zbus = { version = "4", default-features = false, features = ["tokio"] }
+libpulse-binding = "2"
+which = "8"
 
 [dev-dependencies]
 tempfile = "3"
