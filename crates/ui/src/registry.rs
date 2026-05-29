@@ -74,9 +74,16 @@ impl WindowConstructor for ManagedWindowConstructor {
                 self.runtime.clone(),
                 self.event_tx.clone(),
             ))),
-            other if other.starts_with("widgets/") => Some(ManagedWindow::Widget(
-                WidgetWindow::new(&self.app, other.to_string(), self.theme_store.clone()),
-            )),
+            other if other.starts_with("widgets/") => {
+                Some(ManagedWindow::Widget(WidgetWindow::new(
+                    &self.app,
+                    other.to_string(),
+                    self.dispatcher.clone(),
+                    self.theme_store.clone(),
+                    self.runtime.clone(),
+                    self.event_tx.clone(),
+                )))
+            }
             _ => None,
         }
     }
