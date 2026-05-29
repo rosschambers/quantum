@@ -27,6 +27,7 @@ async-stream = "0.3"
 tokio-stream = { version = "0.1", features = ["sync"] }
 zbus = { version = "4", default-features = false, features = ["tokio"] }
 which = "8"
+shell-words = "1"
 
 [dev-dependencies]
 tempfile = "3"
