@@ -410,6 +410,7 @@ displays the current CPU usage. To install it:
 | `power_profile.event`            | `PowerProfileState`    | On PPD PropertiesChanged    |
 | `audio.event`                    | `AudioState`           | 200 ms poll via pactl       |
 | `brightness.event`               | `BrightnessState`      | 1 Hz sysfs poll             |
+| `system_power.event`             | `SystemPowerState`     | One-shot capability snapshot|
 
 Every tray payload has a top-level `available: boolean`. When `false` the
 rest of the fields are `null` / empty / default — the backing service
@@ -418,6 +419,13 @@ Indicator widgets should render nothing in that case. The provider keeps
 the stream alive and re-emits once the service appears via
 `NameOwnerChanged`, so plugging in a Bluetooth dongle later transitions
 the bar from empty to populated without a daemon restart.
+
+`system_power` is action-only: it emits its capability flags once on
+subscribe and then the stream stays pending. The capability flags
+(`can_shutdown`, `can_restart`, `can_suspend`, `can_hibernate`,
+`can_lock`) reflect what logind reports for the current session at
+daemon startup; they do not change at runtime because polkit rules
+don't reload on a running daemon.
 
 ### Invoking actions
 
@@ -467,6 +475,7 @@ tooltip otherwise, dispatch `action.invoke` on user interaction.
 | `VolumeIndicator`      | `audio.event`        | Left click toggles mute; scroll = +/-5%    |
 | `BrightnessIndicator`  | `brightness.event`   | Scroll = +/-5% on the first display        |
 | `PowerProfileIndicator`| `power_profile.event`| Left click cycles to the next available    |
+| `PowerMenuIndicator`   | `system_power.event` | Click opens menu; two-click confirms       |
 
 ### Custom indicator skeleton
 
@@ -519,6 +528,38 @@ The inner `data` carries the variant fields; the inner `payload` carries
 the provider-specific command shape. See the per-provider sections in
 `docs/plans/2026-05-29-quantum-tray-design.md` for the full payload
 catalog.
+
+### system_power configuration
+
+The `system_power` provider invokes a configurable lock command for the
+`lock` action. Configure it in `~/.config/quantum/config.toml`:
+
+```toml
+[system_power]
+lock_command = "hyprlock --grace 0"
+```
+
+The value is shell-tokenized (so `"hyprlock --grace 0"` becomes
+`["hyprlock", "--grace", "0"]`). When unset the daemon probes
+`hyprlock`, `swaylock`, `gtklock`, then falls back to
+`loginctl lock-session`. The first that resolves on `$PATH` wins.
+
+The five `system_power` commands are:
+
+```js
+// In a custom widget. provider id = 'system_power'.
+{ kind: 'custom', data: { kind: 'system_power', payload: { command: 'shutdown' } } }
+{ kind: 'custom', data: { kind: 'system_power', payload: { command: 'restart' } } }
+{ kind: 'custom', data: { kind: 'system_power', payload: { command: 'suspend' } } }
+{ kind: 'custom', data: { kind: 'system_power', payload: { command: 'hibernate' } } }
+{ kind: 'custom', data: { kind: 'system_power', payload: { command: 'lock' } } }
+```
+
+Each command is gated on its `can_*` flag from the snapshot; invoking
+when the flag is false returns an error. The first four go through
+`org.freedesktop.login1.Manager.{PowerOff,Reboot,Suspend,Hibernate}(false)`
+(with auth prompts disabled — polkit rules either allow it or fail
+fast). `lock` spawns the resolved lock command detached.
 
 ---
 
