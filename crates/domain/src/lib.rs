@@ -1,6 +1,7 @@
 //! quantum-domain
 
 pub mod action;
+pub mod bar_state;
 pub mod error;
 pub mod event_bus;
 pub mod ids;
@@ -12,6 +13,7 @@ pub mod tokens;
 pub mod window_mode;
 
 pub use action::Action;
+pub use bar_state::{ActiveWindowState, MprisState, PlaybackStatus, SystemStats};
 pub use error::DomainError;
 pub use event_bus::EventEnvelope;
 pub use ids::{ProviderId, WindowId};
