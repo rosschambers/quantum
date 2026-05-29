@@ -1,5 +1,4 @@
 <script lang="ts">
-    import { onMount } from 'svelte';
     import type { Client } from '@quantum/client';
     import type { ActiveWindowState } from '../lib/types';
 
@@ -10,7 +9,8 @@
     let { client }: Props = $props();
     let state: ActiveWindowState | null = $state(null);
 
-    onMount(() => {
+    // `$effect` runs reliably in testing-library + Svelte 5 where `onMount` does not.
+    $effect(() => {
         const unsubscribe = client.subscribe('hyprland.activewindow.event', (payload: unknown) => {
             state = payload as ActiveWindowState;
         });

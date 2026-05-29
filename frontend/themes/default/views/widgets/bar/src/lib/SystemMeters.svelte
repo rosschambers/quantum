@@ -1,5 +1,4 @@
 <script lang="ts">
-    import { onMount } from 'svelte';
     import type { Client } from '@quantum/client';
     import type { SystemStats } from '../lib/types';
 
@@ -10,7 +9,9 @@
     let { client }: Props = $props();
     let stats: SystemStats | null = $state(null);
 
-    onMount(() => {
+    // `$effect` runs reliably in testing-library + Svelte 5 where `onMount` does not.
+    // Behaviour at runtime in WebKit is the same: subscribe on mount, unsubscribe on unmount.
+    $effect(() => {
         const unsubscribe = client.subscribe('system.stats.event', (payload: unknown) => {
             stats = payload as SystemStats;
         });
