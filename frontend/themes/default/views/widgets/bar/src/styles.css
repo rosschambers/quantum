@@ -1,0 +1,41 @@
+:root {
+  --bar-height: 32px;
+  color-scheme: light dark;
+}
+
+body {
+  margin: 0;
+  padding: 0;
+  height: var(--bar-height);
+  background: var(--color-bg, #111);
+  color: var(--color-fg, #eee);
+  font-family: var(--font-sans, system-ui, sans-serif);
+}
+
+.bar {
+  height: var(--bar-height);
+  display: flex;
+  align-items: center;
+  padding: 0 var(--space-2, 8px);
+  gap: var(--space-2, 8px);
+  border-bottom: 1px solid var(--color-border, #333);
+}
+
+.region {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2, 8px);
+}
+
+.region-left {
+  flex: 1;
+  min-width: 0;
+}
+
+.region-center {
+  flex: 0 1 auto;
+}
+
+.region-right {
+  flex: 0 0 auto;
+}
