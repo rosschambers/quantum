@@ -13,7 +13,12 @@ pub mod tokens;
 pub mod window_mode;
 
 pub use action::Action;
-pub use bar_state::{ActiveWindowState, MprisState, PlaybackStatus, SystemStats};
+pub use bar_state::{
+    ActiveWindowState, AudioSink, AudioState, BatteryChargeState, BluetoothDevice, BluetoothState,
+    BrightnessDisplay, BrightnessState, MprisState, NetworkConnection, NetworkConnectivity,
+    NetworkKind, NetworkState, PlaybackStatus, PowerProfile, PowerProfileState, PowerState,
+    SystemStats,
+};
 pub use error::DomainError;
 pub use event_bus::EventEnvelope;
 pub use ids::{ProviderId, WindowId};
