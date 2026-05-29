@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
-import { render, screen, fireEvent, waitFor } from '@testing-library/svelte/svelte5';
+import { render, screen, fireEvent, waitFor, act } from '@testing-library/svelte/svelte5';
 import userEvent from '@testing-library/user-event';
 import App from './App.svelte';
 
@@ -226,5 +226,50 @@ describe('App.svelte', () => {
     await waitFor(() => {
       expect(mockCall).toHaveBeenCalledWith('view.hide', { name: 'launcher' });
     });
+  });
+
+  it('document keydown forwards printable character to input when not focused', async () => {
+    mockCall.mockResolvedValue({ matches: [] });
+
+    render(App);
+    // Flush effects so the document-level keydown listener is installed.
+    await act();
+
+    const input = screen.getByPlaceholderText('Search...') as HTMLInputElement;
+
+    // Blur the input so it is not the active element.
+    input.blur();
+    expect(document.activeElement).not.toBe(input);
+
+    // Dispatch a keydown on document (not on the input).
+    const event = new KeyboardEvent('keydown', {
+      key: 'a',
+      bubbles: true,
+      cancelable: true,
+    });
+    document.dispatchEvent(event);
+
+    // The forwarder must refocus the input and append the character.
+    expect(document.activeElement).toBe(input);
+    expect(input.value).toBe('a');
+  });
+
+  it('window focus event refocuses input', async () => {
+    mockCall.mockResolvedValue({ matches: [] });
+
+    render(App);
+    // Flush effects so the window focus listener is installed.
+    await act();
+
+    const input = screen.getByPlaceholderText('Search...') as HTMLInputElement;
+
+    // Blur the input.
+    input.blur();
+    expect(document.activeElement).not.toBe(input);
+
+    // Dispatch a focus event on window.
+    window.dispatchEvent(new Event('focus'));
+
+    expect(document.activeElement).toBe(input);
   });
 });
