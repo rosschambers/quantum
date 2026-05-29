@@ -34,13 +34,31 @@ impl WidgetWindow {
             .decorated(false)
             .build();
 
-        // Initialize layer shell for background
+        // Initialize layer shell
         window.init_layer_shell();
-        window.set_layer(Layer::Background);
-        window.set_anchor(Edge::Top, true);
-        window.set_anchor(Edge::Right, true);
-        window.set_keyboard_mode(KeyboardMode::None);
-        window.set_exclusive_zone(0);
+
+        // Determine layout based on view name.
+        // TODO: Long-term, this should be per-view config in theme.toml.
+        let is_bar = view_name == "widgets/bar" || view_name.starts_with("widgets/bar/");
+
+        if is_bar {
+            // Bar widget: top layer, full width with exclusive zone.
+            window.set_layer(Layer::Top);
+            window.set_anchor(Edge::Top, true);
+            window.set_anchor(Edge::Left, true);
+            window.set_anchor(Edge::Right, true);
+            window.set_keyboard_mode(KeyboardMode::None);
+            window.set_exclusive_zone(32);
+            window.set_default_height(32);
+        } else {
+            // Other widgets (clock, etc.): background layer, top-right.
+            window.set_layer(Layer::Background);
+            window.set_anchor(Edge::Top, true);
+            window.set_anchor(Edge::Right, true);
+            window.set_keyboard_mode(KeyboardMode::None);
+            window.set_exclusive_zone(0);
+        }
+
         window.set_namespace(&format!("quantum-widget-{}", view_name.replace('/', "-")));
 
         // Create and embed WebView
