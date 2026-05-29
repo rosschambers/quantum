@@ -1,3 +1,4 @@
+pub mod audio;
 pub mod battery;
 pub mod bluetooth;
 pub mod brightness;
@@ -12,6 +13,7 @@ pub mod power_profile;
 pub mod proc_stats;
 pub mod shell_command;
 
+pub use audio::PulseAudioProvider;
 pub use battery::UpowerBatteryProvider;
 pub use bluetooth::BluezProvider;
 pub use brightness::LogindBrightnessProvider;
