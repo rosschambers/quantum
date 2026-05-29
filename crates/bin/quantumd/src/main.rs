@@ -19,8 +19,8 @@ use quantum_infrastructure::ipc::server::{
 };
 use quantum_infrastructure::{
     config::ConfigStore, providers::DesktopAppsProvider, registry::InMemoryProviderRegistry,
-    shell::TokioShellExecutor, theme::ThemeStore, EventEnvelope, HyprlandSocketClient,
-    ShellCommandProvider, UnixSocketServer,
+    shell::TokioShellExecutor, theme::ThemeStore, EventEnvelope, HyprlandActiveWindowProvider,
+    HyprlandSocketClient, MprisProvider, ProcStatsProvider, ShellCommandProvider, UnixSocketServer,
 };
 use quantum_ui::{DummyWindowHost, IpcDispatcher as UiIpcDispatcher};
 
@@ -142,6 +142,28 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let app = gtk4::Application::builder()
             .application_id("dev.quantum.daemon")
             .build();
+
+        // Spawn a task to auto-show widgets after a brief delay for GTK to activate
+        let dispatcher_for_autoshow = setup.ipc_dispatcher.clone();
+        let widgets_to_show: Vec<String> = setup
+            .config
+            .widget
+            .iter()
+            .filter(|w| w.auto_show)
+            .map(|w| w.view.clone())
+            .collect();
+        if !widgets_to_show.is_empty() {
+            worker.handle.spawn(async move {
+                tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+                for view in widgets_to_show {
+                    let params = serde_json::json!({"name": view});
+                    if let Err(err) = dispatcher_for_autoshow.dispatch("view.show", params).await {
+                        tracing::warn!("auto-show widget {view} failed: {:?}", err);
+                    }
+                }
+            });
+        }
+
         let _exit_code = crate::gtk_loop::run(
             &app,
             window_rx,
@@ -166,6 +188,7 @@ struct DaemonSetup {
     theme_store_concrete: Arc<ThemeStore>,
     event_bus: Arc<dyn quantum_domain::EventBus>,
     event_tx: tokio::sync::broadcast::Sender<EventEnvelope>,
+    config: quantum_infrastructure::config::Config,
 }
 
 async fn setup_daemon(
@@ -222,9 +245,12 @@ async fn setup_daemon(
     info!("Registered ShellCommandProvider");
 
     // Hyprland provider (optional)
+    let mut hypr_client_opt: Option<Arc<HyprlandSocketClient>> = None;
     match HyprlandSocketClient::new() {
         Ok(client) => {
-            match quantum_infrastructure::HyprlandWindowsProvider::new(Arc::new(client)).await {
+            let client_arc = Arc::new(client);
+            hypr_client_opt = Some(client_arc.clone());
+            match quantum_infrastructure::HyprlandWindowsProvider::new(client_arc).await {
                 Ok(provider) => {
                     let id = provider.id().clone();
                     registry
@@ -270,6 +296,41 @@ async fn setup_daemon(
         }
     }
 
+    // ProcStatsProvider — never fails; /proc is universally available on Linux.
+    let proc_stats = Arc::new(ProcStatsProvider::new(tokio::runtime::Handle::current()));
+    registry
+        .register(
+            proc_stats.id().clone(),
+            proc_stats.clone() as Arc<dyn quantum_domain::ProviderSource>,
+        )
+        .await;
+    info!("Registered ProcStatsProvider");
+
+    // MprisProvider — provider is registered even if DBus fails (the inner task degrades to publishing 'no player' state).
+    let mpris = Arc::new(MprisProvider::new(tokio::runtime::Handle::current()));
+    registry
+        .register(
+            mpris.id().clone(),
+            mpris.clone() as Arc<dyn quantum_domain::ProviderSource>,
+        )
+        .await;
+    info!("Registered MprisProvider");
+
+    // HyprlandActiveWindowProvider — gated on the same conditional that already gates HyprlandWindowsProvider.
+    if let Some(hypr_client) = &hypr_client_opt {
+        let active_window = Arc::new(HyprlandActiveWindowProvider::new(
+            hypr_client.clone(),
+            tokio::runtime::Handle::current(),
+        ));
+        registry
+            .register(
+                active_window.id().clone(),
+                active_window as Arc<dyn quantum_domain::ProviderSource>,
+            )
+            .await;
+        info!("Registered HyprlandActiveWindowProvider");
+    }
+
     // Use cases
     let search_use_case = Arc::new(SearchUseCase::new(registry.clone()));
     let launch_action_use_case = Arc::new(LaunchActionUseCase::new(registry.clone()));
@@ -282,6 +343,17 @@ async fn setup_daemon(
         registry.clone(),
         event_bus.clone(),
     ));
+
+    // Pre-subscribe to the system providers so streams start publishing immediately
+    let _ = subscribe_provider_use_case
+        .execute("system.stats".into())
+        .await;
+    let _ = subscribe_provider_use_case.execute("mpris".into()).await;
+    if hypr_client_opt.is_some() {
+        let _ = subscribe_provider_use_case
+            .execute("hyprland.activewindow".into())
+            .await;
+    }
 
     // Use the window host passed in from main (GtkWindowHost when running with
     // GTK, DummyWindowHost when headless).
@@ -340,6 +412,7 @@ async fn setup_daemon(
         theme_store_concrete: theme_store,
         event_bus,
         event_tx,
+        config,
     })
 }
 

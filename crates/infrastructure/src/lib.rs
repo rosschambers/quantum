@@ -14,7 +14,8 @@ pub use error::InfrastructureError;
 pub use hyprland::HyprlandSocketClient;
 pub use ipc::{EventEnvelope, UnixSocketServer};
 pub use providers::{
-    DeclarativeShellProvider, DesktopAppsProvider, HyprlandWindowsProvider, ShellCommandProvider,
+    DeclarativeShellProvider, DesktopAppsProvider, HyprlandActiveWindowProvider,
+    HyprlandWindowsProvider, MprisProvider, ProcStatsProvider, ShellCommandProvider,
 };
 pub use registry::InMemoryProviderRegistry;
 pub use shell::TokioShellExecutor;
