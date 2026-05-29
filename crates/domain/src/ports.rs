@@ -22,6 +22,15 @@ pub trait ProviderSource: Send + Sync {
     fn capabilities(&self) -> ProviderCapabilities;
     async fn search(&self, q: &Query) -> Result<Vec<Match>, DomainError>;
     async fn invoke(&self, action: &Action) -> Result<ActionOutcome, DomainError>;
+    /// Optional event stream. Providers that publish state updates return a
+    /// boxed stream of serialized events here. Default returns `None`,
+    /// signalling the provider does not expose subscriptions.
+    ///
+    /// Events are opaque `serde_json::Value`s — each provider serializes its
+    /// own state struct and the dispatcher forwards the JSON to subscribers.
+    fn subscribe(&self) -> Option<futures::stream::BoxStream<'static, serde_json::Value>> {
+        None
+    }
 }
 
 /// Registry for looking up providers.
@@ -149,5 +158,45 @@ mod tests {
         let caps = p.capabilities();
         assert!(caps.searchable);
         assert!(!caps.streamable);
+    }
+}
+
+#[cfg(test)]
+mod subscribe_tests {
+    use super::*;
+    use futures::stream::{self, StreamExt};
+
+    struct FakeSubscriber {
+        id: ProviderId,
+    }
+
+    #[async_trait]
+    impl ProviderSource for FakeSubscriber {
+        fn id(&self) -> &ProviderId {
+            &self.id
+        }
+        fn capabilities(&self) -> ProviderCapabilities {
+            ProviderCapabilities {
+                searchable: false,
+                streamable: true,
+            }
+        }
+        async fn search(&self, _: &Query) -> Result<Vec<Match>, DomainError> {
+            Ok(vec![])
+        }
+        async fn invoke(&self, _: &Action) -> Result<ActionOutcome, DomainError> {
+            Ok(ActionOutcome { message: None })
+        }
+        fn subscribe(&self) -> Option<futures::stream::BoxStream<'static, serde_json::Value>> {
+            Some(stream::iter(vec![serde_json::json!({"x": 1})]).boxed())
+        }
+    }
+
+    #[tokio::test]
+    async fn subscribe_returns_stream_when_supported() {
+        let p = FakeSubscriber { id: "fake".into() };
+        let mut stream = p.subscribe().expect("stream");
+        let event = stream.next().await.expect("event");
+        assert_eq!(event, serde_json::json!({"x": 1}));
     }
 }
