@@ -370,6 +370,69 @@ Build and activate via `quantumctl show widgets`.
 
 ---
 
+## Writing a custom widget
+
+Custom widgets are pure HTML/CSS/JS bundles served from a theme directory.
+They subscribe to the same providers as built-in widgets through the
+`window.__quantum_notify` global or, more conveniently, through
+`@quantum/client`.
+
+### Minimal example
+
+See `examples/widgets/cpu-test/index.html` for a pure-HTML widget that
+displays the current CPU usage. To install it:
+
+1. Copy the folder to your user theme:
+   ```bash
+   mkdir -p ~/.config/quantum/themes/default/views/widgets/cpu-test
+   cp examples/widgets/cpu-test/index.html \
+      ~/.config/quantum/themes/default/views/widgets/cpu-test/
+   ```
+2. Tell the daemon about it in `~/.config/quantum/config.toml`:
+   ```toml
+   [[widget]]
+   view = "widgets/cpu-test"
+   auto_show = true
+   ```
+3. Restart quantumd. The widget appears at top-right of the screen and
+   updates once per second.
+
+### Provider channels you can subscribe to
+
+| Channel                          | Payload type        | Update cadence              |
+| -------------------------------- | ------------------- | --------------------------- |
+| `system.stats.event`             | `SystemStats`       | 1 Hz                        |
+| `mpris.state.event`              | `MprisState`        | On DBus signal or 1 Hz poll |
+| `hyprland.activewindow.event`    | `ActiveWindowState` | On Hyprland event push      |
+
+### Invoking actions
+
+Any widget can call dispatcher methods over the same WebKit bridge:
+
+```js
+window.webkit.messageHandlers.quantum.postMessage(JSON.stringify({
+    jsonrpc: '2.0',
+    id: 42,
+    method: 'action.invoke',
+    params: {
+        provider: 'mpris',
+        action: { kind: 'custom', data: { kind: 'mpris', payload: { command: 'play-pause' } } }
+    }
+}));
+```
+
+Responses come back through `window.__quantum_resolve(id, value)`
+and `window.__quantum_reject(id, error)`.
+
+### Using @quantum/client
+
+For TypeScript widgets with bundling (Vite, etc.), use the
+`@quantum/client` package which provides a typed API around the bridge.
+See `frontend/themes/default/views/widgets/bar/` for a Svelte 5
+example.
+
+---
+
 ## Cycle Detection
 
 If a theme's `extends` chain forms a cycle, the daemon logs an error and falls back to the default theme:
