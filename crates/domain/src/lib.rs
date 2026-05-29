@@ -17,7 +17,7 @@ pub use bar_state::{
     ActiveWindowState, AudioSink, AudioState, BatteryChargeState, BluetoothDevice, BluetoothState,
     BrightnessDisplay, BrightnessState, MprisState, NetworkConnection, NetworkConnectivity,
     NetworkKind, NetworkState, PlaybackStatus, PowerProfile, PowerProfileState, PowerState,
-    SystemStats,
+    SystemPowerState, SystemStats,
 };
 pub use error::DomainError;
 pub use event_bus::EventEnvelope;

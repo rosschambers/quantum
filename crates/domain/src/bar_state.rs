@@ -162,6 +162,15 @@ pub struct BrightnessDisplay {
     pub max: u32,
 }
 
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SystemPowerState {
+    pub can_shutdown: bool,
+    pub can_restart: bool,
+    pub can_suspend: bool,
+    pub can_hibernate: bool,
+    pub can_lock: bool,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -349,5 +358,25 @@ mod tests {
     #[test]
     fn brightness_state_default_is_unavailable() {
         assert!(!BrightnessState::default().available);
+    }
+
+    #[test]
+    fn system_power_state_round_trips() {
+        let s = SystemPowerState {
+            can_shutdown: true,
+            can_restart: true,
+            can_suspend: true,
+            can_hibernate: false,
+            can_lock: true,
+        };
+        let v = serde_json::to_value(&s).unwrap();
+        let back: SystemPowerState = serde_json::from_value(v).unwrap();
+        assert_eq!(s, back);
+    }
+
+    #[test]
+    fn system_power_state_default_all_false() {
+        let d = SystemPowerState::default();
+        assert!(!d.can_shutdown && !d.can_restart && !d.can_suspend && !d.can_hibernate && !d.can_lock);
     }
 }
