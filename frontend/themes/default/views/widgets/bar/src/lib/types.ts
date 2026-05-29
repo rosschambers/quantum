@@ -23,3 +23,77 @@ export interface ActiveWindowState {
   workspace_id: number;
   workspace_name: string;
 }
+
+export type BatteryChargeState = 'charging' | 'discharging' | 'full' | 'empty' | 'unknown';
+
+export interface PowerState {
+  available: boolean;
+  on_battery: boolean;
+  percentage: number | null;
+  state: BatteryChargeState | null;
+  time_to_empty_secs: number | null;
+  time_to_full_secs: number | null;
+}
+
+export type NetworkConnectivity = 'none' | 'portal' | 'limited' | 'full' | 'unknown';
+export type NetworkKind = 'ethernet' | 'wifi' | 'cellular' | 'vpn' | 'other';
+
+export interface NetworkConnection {
+  kind: NetworkKind;
+  id: string;
+  ssid: string | null;
+}
+
+export interface NetworkState {
+  available: boolean;
+  connectivity: NetworkConnectivity;
+  primary: NetworkConnection | null;
+  wifi_enabled: boolean;
+  wifi_signal_percent: number | null;
+}
+
+export interface BluetoothDevice {
+  address: string;
+  name: string;
+  battery_percent: number | null;
+}
+
+export interface BluetoothState {
+  available: boolean;
+  powered: boolean;
+  discovering: boolean;
+  connected_devices: BluetoothDevice[];
+}
+
+export type PowerProfile = 'power_saver' | 'balanced' | 'performance';
+
+export interface PowerProfileState {
+  available: boolean;
+  active: PowerProfile | null;
+  profiles: PowerProfile[];
+  performance_inhibited: string | null;
+}
+
+export interface AudioSink {
+  name: string;
+  description: string;
+  volume_percent: number;
+  muted: boolean;
+}
+
+export interface AudioState {
+  available: boolean;
+  default_sink: AudioSink | null;
+}
+
+export interface BrightnessDisplay {
+  subsystem: string;
+  name: string;
+  current: number;
+  max: number;
+}
+
+export interface BrightnessState {
+  available: boolean;
+  displays: BrightnessDisplay[];
+}
