@@ -154,7 +154,9 @@ impl Dispatcher {
 
         let params: SubscribeParams = serde_json::from_value(params)
             .map_err(|e| ApplicationError::Unknown(format!("invalid subscribe params: {}", e)))?;
-        self.subscribe_provider.execute(params.provider.into()).await?;
+        self.subscribe_provider
+            .execute(params.provider.into())
+            .await?;
         Ok(json!({}))
     }
 }

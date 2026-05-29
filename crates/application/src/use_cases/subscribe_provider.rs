@@ -1,6 +1,6 @@
-use std::sync::Arc;
 use futures::stream::StreamExt;
 use quantum_domain::{DomainError, EventBus, ProviderId, ProviderRegistry};
+use std::sync::Arc;
 
 use crate::error::{ApplicationError, Result};
 
@@ -11,15 +11,16 @@ pub struct SubscribeProviderUseCase {
 
 impl SubscribeProviderUseCase {
     pub fn new(registry: Arc<dyn ProviderRegistry>, event_bus: Arc<dyn EventBus>) -> Self {
-        Self { registry, event_bus }
+        Self {
+            registry,
+            event_bus,
+        }
     }
 
     pub async fn execute(&self, provider_id: ProviderId) -> Result<()> {
-        let provider = self
-            .registry
-            .get(&provider_id)
-            .await
-            .ok_or_else(|| ApplicationError::Domain(DomainError::ProviderNotFound(provider_id.clone())))?;
+        let provider = self.registry.get(&provider_id).await.ok_or_else(|| {
+            ApplicationError::Domain(DomainError::ProviderNotFound(provider_id.clone()))
+        })?;
         let stream = provider.subscribe().ok_or_else(|| {
             ApplicationError::Domain(DomainError::Unsupported(format!(
                 "provider {provider_id} does not support subscriptions"
@@ -74,10 +75,7 @@ mod tests {
             Err(DomainError::Unsupported("fake provider".into()))
         }
         fn subscribe(&self) -> Option<futures::stream::BoxStream<'static, serde_json::Value>> {
-            let events = vec![
-                serde_json::json!({"x": 1}),
-                serde_json::json!({"x": 2}),
-            ];
+            let events = vec![serde_json::json!({"x": 1}), serde_json::json!({"x": 2})];
             Some(stream::iter(events).boxed())
         }
     }
@@ -89,7 +87,12 @@ mod tests {
     #[async_trait]
     impl quantum_domain::ProviderRegistry for FakeRegistry {
         async fn list(&self) -> Vec<ProviderId> {
-            self.providers.lock().unwrap().iter().map(|(id, _)| id.clone()).collect()
+            self.providers
+                .lock()
+                .unwrap()
+                .iter()
+                .map(|(id, _)| id.clone())
+                .collect()
         }
         async fn get(&self, id: &ProviderId) -> Option<Arc<dyn quantum_domain::ProviderSource>> {
             self.providers
@@ -107,8 +110,15 @@ mod tests {
 
     #[async_trait]
     impl EventBus for FakeEventBus {
-        async fn publish(&self, event: &str, payload: &str) -> std::result::Result<(), DomainError> {
-            self.events.lock().await.push((event.to_string(), payload.to_string()));
+        async fn publish(
+            &self,
+            event: &str,
+            payload: &str,
+        ) -> std::result::Result<(), DomainError> {
+            self.events
+                .lock()
+                .await
+                .push((event.to_string(), payload.to_string()));
             Ok(())
         }
         async fn subscribe(&self, _: &str) -> std::result::Result<(), DomainError> {
@@ -120,7 +130,10 @@ mod tests {
     async fn forwards_stream_events_through_event_bus() {
         let provider = Arc::new(FakeProvider { id: "test".into() });
         let registry = FakeRegistry {
-            providers: Mutex::new(vec![("test".into(), provider as Arc<dyn quantum_domain::ProviderSource>)]),
+            providers: Mutex::new(vec![(
+                "test".into(),
+                provider as Arc<dyn quantum_domain::ProviderSource>,
+            )]),
         };
         let bus = Arc::new(FakeEventBus {
             events: TokioMutex::new(Vec::new()),
