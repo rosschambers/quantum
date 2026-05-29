@@ -55,10 +55,63 @@ Commit per task in the implementation plan. Small commits beat big ones.
 | `just dev`      | Run quantumd in dev mode                 |
 | `just ts-bindgen` | Regenerate TS types from Rust DTOs     |
 
+## Build Environment
+
+- **All builds, tests, lint, and format checks run inside the dev container
+  via `./scripts/devsh.sh <command>`.** The container pins Rust 1.85 and has
+  GTK4, WebKit2GTK, libxkbcommon, gtk4-layer-shell preinstalled.
+- **Never use `nix-shell` for builds.** `shell.nix` only exists so the daemon
+  can run on the host with a real Wayland session for smoke testing.
+- Host (likely newer rustc) and container (1.85) share the bind-mounted
+  `target/` directory. If you switch environments mid-task, expect a full
+  rebuild. Always run the binary in the environment that built it.
+
+## Provider and Event Conventions
+
+- `ProviderSource` trait (in `crates/domain/src/ports.rs`) has an optional
+  `fn subscribe(&self) -> Option<BoxStream<'static, serde_json::Value>>`.
+  Streaming providers override it; one-shot query providers do not.
+- `EventBus::publish` takes `(channel: &str, payload: &str)`, not an
+  `EventEnvelope`. The daemon's `BroadcastingEventBus` adapter converts
+  string payloads to `EventEnvelope` for the broadcast channel.
+- **Channel naming**: `SubscribeProviderUseCase` publishes on
+  `format!("{provider_id}.event")`. Provider id `mpris` publishes on
+  `mpris.event`. Frontend subscriptions must match exactly.
+- `Action::Custom { kind, payload }`: outer dispatcher envelope is
+  `{"kind": "custom", "data": {"kind": "<provider>", "payload": {...}}}`.
+  The inner `payload` (not `data`) carries provider-specific command fields.
+- Register streaming providers in `crates/bin/quantumd/src/main.rs` AND
+  pre-subscribe them at startup via `SubscribeProviderUseCase` so events
+  start flowing before any frontend connects.
+
+## UI and Frontend Conventions
+
+- **Layer-shell is opt-in via `QUANTUM_LAYER_SHELL=1`.** Default is a normal
+  xdg-toplevel so a stuck launcher window cannot lock the user out. The bar
+  widget's WidgetWindow specializes layer-shell config (Layer::Top, anchor
+  T/L/R, exclusive zone) only when the env flag is set.
+- All Vite views must set `base: './'` in `vite.config.ts` — the
+  `quantum://` custom URI scheme breaks absolute URL normalization.
+- Widget URLs are `quantum://theme/<theme>/views/widgets/<name>/index.html`.
+  The `views/` prefix is required and is handled by `candidate_paths` in
+  `crates/infrastructure/src/theme/store.rs`.
+- Always wrap window notify calls in
+  `if (typeof window.__quantum_notify === 'function') { ... }` — events can
+  arrive before the JS client has loaded.
+- Svelte 5 components used in vitest must use `$effect` for setup work, not
+  `onMount`. testing-library's legacy adapter does not fire `onMount`
+  reliably under Svelte 5 runes mode.
+- All Svelte views consume IPC through `@quantum/client`. Never reach into
+  `window.__quantum_*` directly from view code.
+
 ## Rules
 
 - No `unwrap`/`expect` outside tests and `main` setup.
 - Errors are typed per-layer. Never leak Rust types across IPC.
 - TDD. Write the failing test first.
 - No emojis in source or commits.
-- Verify before claiming done — run the actual command, read the actual output.
+- No abbreviations in code, comments, or docs. Standard acronyms (JSON,
+  DBus, IPC, GTK) are fine because they are names, not abbreviations.
+- Verify before claiming done — run the actual command, read the actual
+  output. No "should work" claims.
+- Never `git commit --amend` without explicit user permission.
