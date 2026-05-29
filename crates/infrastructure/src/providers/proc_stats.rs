@@ -37,7 +37,11 @@ impl ProcStatsProvider {
                 let cpu_percent = if let Some((pb, pt)) = prev {
                     let bd = busy.saturating_sub(pb) as f32;
                     let td = total.saturating_sub(pt) as f32;
-                    if td > 0.0 { (bd / td) * 100.0 } else { 0.0 }
+                    if td > 0.0 {
+                        (bd / td) * 100.0
+                    } else {
+                        0.0
+                    }
                 } else {
                     0.0
                 };
