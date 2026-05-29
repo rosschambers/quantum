@@ -10,7 +10,7 @@ function mockClient(): { client: any; emit: (p: PowerState) => Promise<void> } {
         saved = cb;
         return () => {};
     });
-    const client = { call: vi.fn(), subscribe, close: vi.fn() };
+    const client = { call: vi.fn().mockResolvedValue(undefined), subscribe, close: vi.fn() };
     const emit = async (p: PowerState) => {
         await tick();
         saved?.(p);

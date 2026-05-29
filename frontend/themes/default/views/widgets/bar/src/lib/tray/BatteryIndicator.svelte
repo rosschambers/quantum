@@ -18,6 +18,9 @@
     });
 
     $effect(() => {
+        client.call('provider.query', { id: 'power' })
+            .then((r: unknown) => { if (r) state = r as PowerState; })
+            .catch(() => {});
         const unsubscribe = client.subscribe(POWER_CHANNEL, (payload: unknown) => {
             state = payload as PowerState;
         });

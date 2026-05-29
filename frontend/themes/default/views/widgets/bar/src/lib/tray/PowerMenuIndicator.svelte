@@ -26,6 +26,9 @@
 	const CONFIRM_WINDOW_MS = 3000;
 
 	$effect(() => {
+		client.call('provider.query', { id: 'system_power' })
+			.then((r: unknown) => { if (r) state = r as SystemPowerState; })
+			.catch(() => {});
 		const off = client.subscribe(SYSTEM_POWER_CHANNEL, (payload: unknown) => {
 			state = payload as SystemPowerState;
 		});

@@ -19,6 +19,9 @@
 	let root: HTMLElement | undefined = $state(undefined);
 
 	$effect(() => {
+		client.call('provider.query', { id: 'network' })
+			.then((r: unknown) => { if (r) state = r as NetworkState; })
+			.catch(() => {});
 		const unsubscribe = client.subscribe(NETWORK_CHANNEL, (payload: unknown) => {
 			state = payload as NetworkState;
 		});

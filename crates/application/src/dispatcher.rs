@@ -1,6 +1,6 @@
 use crate::{
     ApplicationError, LaunchActionUseCase, ListProvidersUseCase, OpenViewUseCase,
-    ReloadThemeUseCase, Result, SearchUseCase, SubscribeProviderUseCase,
+    QueryProviderUseCase, ReloadThemeUseCase, Result, SearchUseCase, SubscribeProviderUseCase,
 };
 use quantum_domain::{DomainError, WindowMode};
 use serde_json::{json, Value};
@@ -13,6 +13,7 @@ pub struct Dispatcher {
     reload_theme: Arc<ReloadThemeUseCase>,
     open_view: Arc<OpenViewUseCase>,
     subscribe_provider: Arc<SubscribeProviderUseCase>,
+    query_provider: Arc<QueryProviderUseCase>,
 }
 
 impl Dispatcher {
@@ -23,6 +24,7 @@ impl Dispatcher {
         reload_theme: Arc<ReloadThemeUseCase>,
         open_view: Arc<OpenViewUseCase>,
         subscribe_provider: Arc<SubscribeProviderUseCase>,
+        query_provider: Arc<QueryProviderUseCase>,
     ) -> Self {
         Self {
             search,
@@ -31,6 +33,7 @@ impl Dispatcher {
             reload_theme,
             open_view,
             subscribe_provider,
+            query_provider,
         }
     }
 
@@ -40,6 +43,7 @@ impl Dispatcher {
             "action.invoke" => self.handle_action_invoke(params).await,
             "provider.list" => self.handle_provider_list(params).await,
             "provider.subscribe" => self.handle_provider_subscribe(params).await,
+            "provider.query" => self.handle_provider_query(params).await,
             "view.toggle" => self.handle_view_toggle(params).await,
             "view.show" => self.handle_view_show(params).await,
             "view.hide" => self.handle_view_hide(params).await,
@@ -158,6 +162,16 @@ impl Dispatcher {
             .execute(params.provider.into())
             .await?;
         Ok(json!({}))
+    }
+
+    async fn handle_provider_query(&self, params: Value) -> Result<Value> {
+        #[derive(serde::Deserialize)]
+        struct QueryParams {
+            id: String,
+        }
+        let params: QueryParams = serde_json::from_value(params)
+            .map_err(|e| ApplicationError::Unknown(format!("invalid query params: {}", e)))?;
+        self.query_provider.execute(params.id.into()).await
     }
 }
 
@@ -296,9 +310,10 @@ mod tests {
         ));
         let open_view = Arc::new(OpenViewUseCase::new(Arc::new(FakeWindowHost)));
         let subscribe_provider = Arc::new(SubscribeProviderUseCase::new(
-            registry,
+            registry.clone(),
             Arc::new(FakeEventBus),
         ));
+        let query_provider = Arc::new(QueryProviderUseCase::new(registry));
 
         Dispatcher::new(
             search,
@@ -307,6 +322,7 @@ mod tests {
             reload_theme,
             open_view,
             subscribe_provider,
+            query_provider,
         )
     }
 

@@ -18,6 +18,9 @@
 	let root: HTMLElement | undefined = $state(undefined);
 
 	$effect(() => {
+		client.call('provider.query', { id: 'power_profile' })
+			.then((r: unknown) => { if (r) state = r as PowerProfileState; })
+			.catch(() => {});
 		const unsubscribe = client.subscribe(POWER_PROFILE_CHANNEL, (payload: unknown) => {
 			state = payload as PowerProfileState;
 		});

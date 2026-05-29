@@ -5,7 +5,7 @@ import ActiveWindow from './ActiveWindow.svelte';
 
 function makeMockClient(subscribeCallback?: (payload: unknown) => void) {
     return {
-        call: vi.fn(),
+        call: vi.fn().mockResolvedValue(undefined),
         subscribe: vi.fn((_channel: string, cb: (payload: unknown) => void) => {
             if (subscribeCallback) {
                 // tests grab the callback to invoke later
@@ -28,7 +28,7 @@ describe('ActiveWindow', () => {
     it('renders workspace and title after event', async () => {
         let savedCallback: ((p: unknown) => void) | undefined;
         const client = {
-            call: vi.fn(),
+            call: vi.fn().mockResolvedValue(undefined),
             subscribe: vi.fn((_channel: string, cb: (payload: unknown) => void) => {
                 savedCallback = cb;
                 return () => {};
@@ -59,7 +59,7 @@ describe('ActiveWindow', () => {
     it('hides workspace badge for special workspaces', async () => {
         let savedCallback: ((p: unknown) => void) | undefined;
         const client = {
-            call: vi.fn(),
+            call: vi.fn().mockResolvedValue(undefined),
             subscribe: vi.fn((_channel: string, cb: (payload: unknown) => void) => {
                 savedCallback = cb;
                 return () => {};

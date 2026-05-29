@@ -97,7 +97,7 @@ describe('PowerMenuIndicator', () => {
 		).find((b) => b.textContent?.includes('Shutdown'))!;
 		await fireEvent.click(shutdownButton);
 		await tick();
-		expect(client.call).not.toHaveBeenCalled();
+		expect(client.call).not.toHaveBeenCalledWith('action.invoke', expect.anything());
 		expect((shutdownButton as HTMLElement).classList.contains('armed')).toBe(true);
 		expect(shutdownButton.textContent).toContain('Confirm Shutdown');
 	});
@@ -152,7 +152,7 @@ describe('PowerMenuIndicator', () => {
 		vi.advanceTimersByTime(3500);
 		await tick();
 		expect((shutdownButton as HTMLElement).classList.contains('armed')).toBe(false);
-		expect(client.call).not.toHaveBeenCalled();
+		expect(client.call).not.toHaveBeenCalledWith('action.invoke', expect.anything());
 		vi.useRealTimers();
 	});
 });

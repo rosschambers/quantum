@@ -16,6 +16,9 @@
 	let root: HTMLElement | undefined = $state(undefined);
 
 	$effect(() => {
+		client.call('provider.query', { id: 'audio' })
+			.then((r: unknown) => { if (r) state = r as AudioState; })
+			.catch(() => {});
 		const unsubscribe = client.subscribe(AUDIO_CHANNEL, (payload: unknown) => {
 			state = payload as AudioState;
 		});

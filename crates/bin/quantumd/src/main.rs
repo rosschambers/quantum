@@ -11,7 +11,7 @@ use tracing_subscriber::EnvFilter;
 
 use quantum_application::{
     Dispatcher as AppDispatcher, LaunchActionUseCase, ListProvidersUseCase, OpenViewUseCase,
-    ReloadThemeUseCase, SearchUseCase, SubscribeProviderUseCase,
+    QueryProviderUseCase, ReloadThemeUseCase, SearchUseCase, SubscribeProviderUseCase,
 };
 use quantum_domain::{DomainError, EventBus, ProviderId, ProviderSource};
 use quantum_infrastructure::ipc::server::{
@@ -432,6 +432,7 @@ async fn setup_daemon(
         registry.clone(),
         event_bus.clone(),
     ));
+    let query_provider_use_case = Arc::new(QueryProviderUseCase::new(registry.clone()));
 
     // Pre-subscribe to the system providers so streams start publishing immediately
     let _ = subscribe_provider_use_case
@@ -467,6 +468,7 @@ async fn setup_daemon(
         reload_theme_use_case,
         open_view_use_case,
         subscribe_provider_use_case,
+        query_provider_use_case,
     ));
     let _ipc_dispatcher = Arc::new(AppDispatcherAdapter::new(dispatcher));
 

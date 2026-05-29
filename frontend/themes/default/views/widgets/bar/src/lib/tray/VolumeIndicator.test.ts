@@ -13,7 +13,7 @@ function mockClient(): {
 		saved = cb;
 		return () => {};
 	});
-	const call = vi.fn();
+	const call = vi.fn().mockResolvedValue(undefined);
 	const client = { call, subscribe, close: vi.fn() };
 	const emit = async (p: AudioState) => {
 		await tick();

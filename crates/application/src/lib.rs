@@ -7,8 +7,8 @@ pub mod use_cases;
 pub use dispatcher::Dispatcher;
 pub use error::{ApplicationError, Result};
 pub use use_cases::{
-    LaunchActionUseCase, ListProvidersUseCase, OpenViewUseCase, ReloadThemeUseCase, SearchResponse,
-    SearchUseCase, SubscribeProviderUseCase,
+    LaunchActionUseCase, ListProvidersUseCase, OpenViewUseCase, QueryProviderUseCase,
+    ReloadThemeUseCase, SearchResponse, SearchUseCase, SubscribeProviderUseCase,
 };
 
 pub fn version() -> &'static str {

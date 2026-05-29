@@ -13,7 +13,7 @@ function mockClient(): {
 		saved = cb;
 		return () => {};
 	});
-	const call = vi.fn();
+	const call = vi.fn().mockResolvedValue(undefined);
 	const client = { call, subscribe, close: vi.fn() };
 	const emit = async (p: NetworkState) => {
 		await tick();
@@ -135,6 +135,6 @@ describe('NetworkIndicator', () => {
 		expect(el).not.toBeNull();
 		fireEvent.contextMenu(el!);
 		await tick();
-		expect(client.call).not.toHaveBeenCalled();
+		expect(client.call).not.toHaveBeenCalledWith('action.invoke', expect.anything());
 	});
 });

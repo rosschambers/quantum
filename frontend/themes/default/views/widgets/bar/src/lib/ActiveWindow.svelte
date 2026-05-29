@@ -11,6 +11,9 @@
 
     // `$effect` runs reliably in testing-library + Svelte 5 where `onMount` does not.
     $effect(() => {
+        client.call('provider.query', { id: 'hyprland.activewindow' })
+            .then((r: unknown) => { if (r) state = r as ActiveWindowState; })
+            .catch(() => {});
         const unsubscribe = client.subscribe('hyprland.activewindow.event', (payload: unknown) => {
             state = payload as ActiveWindowState;
         });

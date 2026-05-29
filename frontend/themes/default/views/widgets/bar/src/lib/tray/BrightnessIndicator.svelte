@@ -16,6 +16,9 @@
 	let root: HTMLElement | undefined = $state(undefined);
 
 	$effect(() => {
+		client.call('provider.query', { id: 'brightness' })
+			.then((r: unknown) => { if (r) state = r as BrightnessState; })
+			.catch(() => {});
 		const unsubscribe = client.subscribe(BRIGHTNESS_CHANNEL, (payload: unknown) => {
 			state = payload as BrightnessState;
 		});

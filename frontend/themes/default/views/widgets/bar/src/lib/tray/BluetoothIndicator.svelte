@@ -18,6 +18,9 @@
 	let root: HTMLElement | undefined = $state(undefined);
 
 	$effect(() => {
+		client.call('provider.query', { id: 'bluetooth' })
+			.then((r: unknown) => { if (r) state = r as BluetoothState; })
+			.catch(() => {});
 		const unsubscribe = client.subscribe(BLUETOOTH_CHANNEL, (payload: unknown) => {
 			state = payload as BluetoothState;
 		});
