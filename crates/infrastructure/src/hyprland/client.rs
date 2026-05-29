@@ -28,7 +28,9 @@ pub fn parse_hypr_event_line(line: &str) -> Option<HyprlandEvent> {
                 title: title.to_string(),
             })
         }
-        "workspace" => Some(HyprlandEvent::Workspace { name: args.to_string() }),
+        "workspace" => Some(HyprlandEvent::Workspace {
+            name: args.to_string(),
+        }),
         _ => Some(HyprlandEvent::Unknown(line.to_string())),
     }
 }
@@ -59,7 +61,9 @@ impl HyprlandSocketClient {
 
     /// Subscribe to Hyprland events from the event socket.
     /// Returns a stream of parsed events.
-    pub fn subscribe_events(&self) -> Result<BoxStream<'static, HyprlandEvent>, InfrastructureError> {
+    pub fn subscribe_events(
+        &self,
+    ) -> Result<BoxStream<'static, HyprlandEvent>, InfrastructureError> {
         let path = self.event_socket.clone();
         let stream = async_stream::stream! {
             let stream = match UnixStream::connect(&path).await {
@@ -235,8 +239,10 @@ mod event_tests {
     #[test]
     fn parse_active_window_event() {
         let e = parse_hypr_event_line("activewindow>>firefox,Mozilla Firefox").unwrap();
-        assert!(matches!(e, HyprlandEvent::ActiveWindow { ref class, ref title }
-            if class == "firefox" && title == "Mozilla Firefox"));
+        assert!(
+            matches!(e, HyprlandEvent::ActiveWindow { ref class, ref title }
+            if class == "firefox" && title == "Mozilla Firefox")
+        );
     }
 
     #[test]
