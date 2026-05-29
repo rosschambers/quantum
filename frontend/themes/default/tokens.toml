@@ -34,3 +34,10 @@ duration-fast = "100ms"
 duration-base = "200ms"
 duration-slow = "300ms"
 ease-default = "cubic-bezier(0.4, 0, 0.2, 1)"
+
+[tray]
+tray-icon-size = "14px"
+tray-icon-color = "#cdd6f4"
+tray-icon-color-active = "#89b4fa"
+tray-icon-color-warning = "#f38ba8"
+tray-gap = "8px"
