@@ -11,7 +11,7 @@ use tracing_subscriber::EnvFilter;
 
 use quantum_application::{
     Dispatcher as AppDispatcher, LaunchActionUseCase, ListProvidersUseCase, OpenViewUseCase,
-    ReloadThemeUseCase, SearchUseCase,
+    ReloadThemeUseCase, SearchUseCase, SubscribeProviderUseCase,
 };
 use quantum_domain::{DomainError, EventBus, ProviderId, ProviderSource};
 use quantum_infrastructure::ipc::server::{
@@ -278,6 +278,10 @@ async fn setup_daemon(
         theme_store.clone() as Arc<dyn quantum_domain::ThemeStore>,
         event_bus.clone(),
     ));
+    let subscribe_provider_use_case = Arc::new(SubscribeProviderUseCase::new(
+        registry.clone(),
+        event_bus.clone(),
+    ));
 
     // Use the window host passed in from main (GtkWindowHost when running with
     // GTK, DummyWindowHost when headless).
@@ -289,6 +293,7 @@ async fn setup_daemon(
         list_providers_use_case,
         reload_theme_use_case,
         open_view_use_case,
+        subscribe_provider_use_case,
     ));
     let _ipc_dispatcher = Arc::new(AppDispatcherAdapter::new(dispatcher));
 

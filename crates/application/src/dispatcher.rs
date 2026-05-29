@@ -1,6 +1,6 @@
 use crate::{
     ApplicationError, LaunchActionUseCase, ListProvidersUseCase, OpenViewUseCase,
-    ReloadThemeUseCase, Result, SearchUseCase,
+    ReloadThemeUseCase, Result, SearchUseCase, SubscribeProviderUseCase,
 };
 use quantum_domain::{DomainError, WindowMode};
 use serde_json::{json, Value};
@@ -12,6 +12,7 @@ pub struct Dispatcher {
     list_providers: Arc<ListProvidersUseCase>,
     reload_theme: Arc<ReloadThemeUseCase>,
     open_view: Arc<OpenViewUseCase>,
+    subscribe_provider: Arc<SubscribeProviderUseCase>,
 }
 
 impl Dispatcher {
@@ -21,6 +22,7 @@ impl Dispatcher {
         list_providers: Arc<ListProvidersUseCase>,
         reload_theme: Arc<ReloadThemeUseCase>,
         open_view: Arc<OpenViewUseCase>,
+        subscribe_provider: Arc<SubscribeProviderUseCase>,
     ) -> Self {
         Self {
             search,
@@ -28,6 +30,7 @@ impl Dispatcher {
             list_providers,
             reload_theme,
             open_view,
+            subscribe_provider,
         }
     }
 
@@ -36,6 +39,7 @@ impl Dispatcher {
             "search" => self.handle_search(params).await,
             "action.invoke" => self.handle_action_invoke(params).await,
             "provider.list" => self.handle_provider_list(params).await,
+            "provider.subscribe" => self.handle_provider_subscribe(params).await,
             "view.toggle" => self.handle_view_toggle(params).await,
             "view.show" => self.handle_view_show(params).await,
             "view.hide" => self.handle_view_hide(params).await,
@@ -140,6 +144,18 @@ impl Dispatcher {
             "providers_count": providers.len(),
             "themes_count": 1,
         }))
+    }
+
+    async fn handle_provider_subscribe(&self, params: Value) -> Result<Value> {
+        #[derive(serde::Deserialize)]
+        struct SubscribeParams {
+            provider: String,
+        }
+
+        let params: SubscribeParams = serde_json::from_value(params)
+            .map_err(|e| ApplicationError::Unknown(format!("invalid subscribe params: {}", e)))?;
+        self.subscribe_provider.execute(params.provider.into()).await?;
+        Ok(json!({}))
     }
 }
 
@@ -271,12 +287,16 @@ mod tests {
         let registry = Arc::new(FakeRegistry { providers });
         let search = Arc::new(SearchUseCase::new(registry.clone()));
         let launch_action = Arc::new(LaunchActionUseCase::new(registry.clone()));
-        let list_providers = Arc::new(ListProvidersUseCase::new(registry));
+        let list_providers = Arc::new(ListProvidersUseCase::new(registry.clone()));
         let reload_theme = Arc::new(ReloadThemeUseCase::new(
             Arc::new(FakeThemeStore),
             Arc::new(FakeEventBus),
         ));
         let open_view = Arc::new(OpenViewUseCase::new(Arc::new(FakeWindowHost)));
+        let subscribe_provider = Arc::new(SubscribeProviderUseCase::new(
+            registry,
+            Arc::new(FakeEventBus),
+        ));
 
         Dispatcher::new(
             search,
@@ -284,6 +304,7 @@ mod tests {
             list_providers,
             reload_theme,
             open_view,
+            subscribe_provider,
         )
     }
 
@@ -330,6 +351,20 @@ mod tests {
         let providers: Vec<String> = serde_json::from_value(resp).unwrap();
         assert_eq!(providers.len(), 1);
         assert!(providers.contains(&"apps".to_string()));
+    }
+
+    #[tokio::test]
+    async fn dispatches_provider_subscribe() {
+        let dispatcher = build_dispatcher();
+        let resp = dispatcher
+            .dispatch("provider.subscribe", json!({ "provider": "apps" }))
+            .await;
+
+        // FakeProvider does not support subscriptions, so this should fail with Unsupported.
+        assert!(matches!(
+            resp,
+            Err(ApplicationError::Domain(DomainError::Unsupported(_)))
+        ));
     }
 
     #[tokio::test]
