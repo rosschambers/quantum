@@ -3,6 +3,7 @@
     import ActiveWindow from './lib/ActiveWindow.svelte';
     import SystemMeters from './lib/SystemMeters.svelte';
     import MediaControls from './lib/MediaControls.svelte';
+    import Tray from './lib/Tray.svelte';
 
     const client = createClient();
 
@@ -17,4 +18,5 @@
     <ActiveWindow {client} />
     <SystemMeters {client} />
     <MediaControls {client} />
+    <Tray {client} />
 </div>
