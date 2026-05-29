@@ -24,6 +24,8 @@ include_dir = "0.7"
 futures = "0.3"
 dirs = "5.0"
 async-stream = "0.3"
+tokio-stream = { version = "0.1", features = ["sync"] }
+zbus = { version = "4", default-features = false, features = ["tokio"] }
 
 [dev-dependencies]
 tempfile = "3"
