@@ -24,16 +24,16 @@ pub struct UpowerBatteryProvider {
 }
 
 impl UpowerBatteryProvider {
-    /// Attempt to connect to UPower on the session bus.
+    /// Attempt to connect to UPower on the system bus.
     ///
-    /// If the session bus is unavailable, returns `Ok(Self { ... available: false })`
+    /// If the system bus is unavailable, returns `Ok(Self { ... available: false })`
     /// with no error — the provider degrades gracefully. If the bus is available
     /// but UPower is not, marks `available: false` and continues.
     pub async fn connect() -> Result<Self, InfrastructureError> {
-        let conn = match Connection::session().await {
+        let conn = match Connection::system().await {
             Ok(c) => c,
             Err(_e) => {
-                // Session bus unavailable — this is not an error from the provider's
+                // System bus unavailable — this is not an error from the provider's
                 // perspective; it's a graceful fallback.
                 return Ok(Self {
                     id: ProviderId::from("power"),
@@ -241,7 +241,7 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "requires real UPower on session bus"]
+    #[ignore = "requires real UPower on system bus"]
     async fn yields_initial_state_within_2s() {
         use futures::StreamExt;
         use std::time::Duration;

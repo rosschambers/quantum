@@ -25,13 +25,13 @@ pub struct BluezProvider {
 }
 
 impl BluezProvider {
-    /// Attempt to connect to BlueZ on the session bus.
+    /// Attempt to connect to BlueZ on the system bus.
     ///
-    /// If the session bus is unavailable, returns `Ok(Self { ... available: false })`
+    /// If the system bus is unavailable, returns `Ok(Self { ... available: false })`
     /// with no error — the provider degrades gracefully. If the bus is available
     /// but BlueZ is not, marks `available: false` and continues.
     pub async fn connect() -> Result<Self, InfrastructureError> {
-        let conn = match Connection::session().await {
+        let conn = match Connection::system().await {
             Ok(c) => c,
             Err(_e) => {
                 return Ok(Self {

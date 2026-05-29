@@ -8,8 +8,8 @@ use std::path::{Path, PathBuf};
 
 use async_trait::async_trait;
 use futures::stream::{BoxStream, StreamExt};
-use tokio::sync::broadcast;
-use tokio_stream::wrappers::BroadcastStream;
+use tokio::sync::watch;
+use tokio_stream::wrappers::WatchStream;
 use zbus::Connection;
 
 use quantum_domain::{
@@ -24,7 +24,7 @@ pub struct LogindBrightnessProvider {
     conn: Option<Connection>,
     session_path: Option<zbus::zvariant::OwnedObjectPath>,
     specs: Vec<BrightnessSpec>,
-    tx: broadcast::Sender<serde_json::Value>,
+    state_rx: watch::Receiver<serde_json::Value>,
 }
 
 #[derive(Clone)]
@@ -49,13 +49,13 @@ impl LogindBrightnessProvider {
 
         // If no devices found, return unavailable.
         if specs.is_empty() {
-            let (tx, _rx) = broadcast::channel(16);
+            let (_tx, state_rx) = watch::channel(serde_json::Value::Null);
             return Ok(Self {
                 id,
                 conn: None,
                 session_path: None,
                 specs,
-                tx,
+                state_rx,
             });
         }
 
@@ -71,47 +71,34 @@ impl LogindBrightnessProvider {
             Err(_) => (None, None),
         };
 
-        // Create broadcast channel and spawn polling task.
-        let (tx, _rx) = broadcast::channel(16);
-        let tx_task = tx.clone();
-        let specs_task = specs.clone();
+        // Read an initial sample synchronously so the watch holds real state
+        // immediately. Subscribers attached AFTER startup still see this
+        // initial value because watch retains the latest sent payload — no
+        // race between pre-subscribe and frontend connection.
+        let initial_state = sample_brightness(&specs).await;
+        let initial_value = serde_json::to_value(&initial_state).unwrap_or(serde_json::Value::Null);
+        let (state_tx, state_rx) = watch::channel(initial_value);
 
+        let specs_task = specs.clone();
         runtime.spawn(async move {
             let mut interval = tokio::time::interval(std::time::Duration::from_secs(1));
-            let mut last_emitted: Option<serde_json::Value> = None;
-
+            // Skip the immediate first tick — we already sampled before spawn.
+            interval.tick().await;
             loop {
                 interval.tick().await;
-
-                let mut displays = Vec::new();
-                for spec in &specs_task {
-                    match tokio::fs::read_to_string(&spec.brightness_path).await {
-                        Ok(content) => {
-                            if let Ok(current) = content.trim().parse::<u32>() {
-                                displays.push(BrightnessDisplay {
-                                    subsystem: spec.subsystem.clone(),
-                                    name: spec.name.clone(),
-                                    current,
-                                    max: spec.max,
-                                });
-                            }
-                        }
-                        Err(_) => continue,
-                    }
-                }
-
-                let state = BrightnessState {
-                    available: true,
-                    displays,
-                };
-
+                let state = sample_brightness(&specs_task).await;
                 let value = serde_json::to_value(&state).unwrap_or(serde_json::Value::Null);
-
-                // Dedupe: only emit if different from last.
-                if last_emitted.as_ref() != Some(&value) {
-                    let _ = tx_task.send(value.clone());
-                    last_emitted = Some(value);
-                }
+                // watch::send_if_modified only fires on change, deduping by
+                // serde_json::Value equality. No subscribers? Fine, watch
+                // retains the latest value for future receivers.
+                state_tx.send_if_modified(|current| {
+                    if *current != value {
+                        *current = value.clone();
+                        true
+                    } else {
+                        false
+                    }
+                });
             }
         });
 
@@ -120,8 +107,31 @@ impl LogindBrightnessProvider {
             conn,
             session_path,
             specs,
-            tx,
+            state_rx,
         })
+    }
+}
+
+async fn sample_brightness(specs: &[BrightnessSpec]) -> BrightnessState {
+    let mut displays = Vec::new();
+    for spec in specs {
+        match tokio::fs::read_to_string(&spec.brightness_path).await {
+            Ok(content) => {
+                if let Ok(current) = content.trim().parse::<u32>() {
+                    displays.push(BrightnessDisplay {
+                        subsystem: spec.subsystem.clone(),
+                        name: spec.name.clone(),
+                        current,
+                        max: spec.max,
+                    });
+                }
+            }
+            Err(_) => continue,
+        }
+    }
+    BrightnessState {
+        available: true,
+        displays,
     }
 }
 
@@ -175,13 +185,10 @@ impl ProviderSource for LogindBrightnessProvider {
                 BrightnessState,
             >());
         }
-
-        let rx = self.tx.subscribe();
-        Some(
-            BroadcastStream::new(rx)
-                .filter_map(|res| async move { res.ok() })
-                .boxed(),
-        )
+        // WatchStream yields the current value immediately on subscribe,
+        // then every time the watch sender mutates it. Late subscribers
+        // catch up automatically.
+        Some(WatchStream::new(self.state_rx.clone()).boxed())
     }
 }
 

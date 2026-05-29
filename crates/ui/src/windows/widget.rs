@@ -2,6 +2,7 @@
 
 use crate::bridge::json_to_js_expression;
 use crate::dispatcher::IpcDispatcher;
+use gtk4::gdk;
 use gtk4::gio;
 use gtk4::prelude::*;
 use gtk4_layer_shell::{Edge, KeyboardMode, Layer, LayerShell};
@@ -43,13 +44,21 @@ impl WidgetWindow {
 
         if is_bar {
             // Bar widget: top layer, full width with exclusive zone.
+            //
+            // The surface is intentionally taller than the visible bar
+            // (300px vs the 32px exclusive zone). Popovers like the
+            // PowerMenuIndicator render below the bar row and would be
+            // clipped by a 32px surface. The extra 268px is transparent
+            // overflow space; only the top 32px is opaque, and the
+            // exclusive zone tells Hyprland to reserve only those 32px
+            // for window layout.
             window.set_layer(Layer::Top);
             window.set_anchor(Edge::Top, true);
             window.set_anchor(Edge::Left, true);
             window.set_anchor(Edge::Right, true);
             window.set_keyboard_mode(KeyboardMode::None);
             window.set_exclusive_zone(32);
-            window.set_default_height(32);
+            window.set_default_height(300);
         } else {
             // Other widgets (clock, etc.): background layer, top-right.
             window.set_layer(Layer::Background);
@@ -63,6 +72,13 @@ impl WidgetWindow {
 
         // Create and embed WebView
         let webview = webkit6::WebView::new();
+
+        // Transparent WebView background so the layer-shell surface's
+        // overflow region stays see-through. Without this WebKit paints
+        // opaque white over the entire surface, defeating the purpose of
+        // sizing the bar surface larger than its visible chrome.
+        let transparent = gdk::RGBA::new(0.0, 0.0, 0.0, 0.0);
+        webkit6::prelude::WebViewExt::set_background_color(&webview, &transparent);
 
         // Pipe JS console + enable developer inspector (gated by env var).
         let settings: webkit6::Settings =
