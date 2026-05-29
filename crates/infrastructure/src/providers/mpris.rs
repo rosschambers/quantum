@@ -1,15 +1,23 @@
+use std::collections::HashMap;
 use std::sync::Arc;
+use std::time::Duration;
 
 use async_trait::async_trait;
 use futures::stream::{BoxStream, StreamExt};
 use tokio::sync::broadcast;
 use tokio_stream::wrappers::BroadcastStream;
-use zbus::Connection;
+use zbus::names::BusName;
+use zbus::zvariant::OwnedValue;
+use zbus::{Connection, Proxy};
 
 use quantum_domain::{
-    Action, ActionOutcome, DomainError, Match, ProviderCapabilities, ProviderId, ProviderSource,
-    Query,
+    Action, ActionOutcome, DomainError, Match, MprisState, PlaybackStatus, ProviderCapabilities,
+    ProviderId, ProviderSource, Query,
 };
+
+const MPRIS_PREFIX: &str = "org.mpris.MediaPlayer2.";
+const MPRIS_OBJECT_PATH: &str = "/org/mpris/MediaPlayer2";
+const MPRIS_PLAYER_INTERFACE: &str = "org.mpris.MediaPlayer2.Player";
 
 pub struct MprisProvider {
     id: ProviderId,
@@ -31,7 +39,6 @@ impl MprisProvider {
             loop {
                 match mpris_task(active_player_for_task.clone(), tx_for_task.clone()).await {
                     Ok(_) => {
-                        // Connection closed cleanly; reset backoff and reconnect
                         backoff_secs = 1;
                     }
                     Err(err) => {
@@ -39,7 +46,7 @@ impl MprisProvider {
                         backoff_secs = (backoff_secs * 2).min(30);
                     }
                 }
-                tokio::time::sleep(std::time::Duration::from_secs(backoff_secs)).await;
+                tokio::time::sleep(Duration::from_secs(backoff_secs)).await;
             }
         });
 
@@ -54,30 +61,39 @@ impl MprisProvider {
         let method = mpris_method_for_command(command)
             .ok_or_else(|| DomainError::Unsupported(format!("unknown mpris command: {command}")))?;
 
-        let player_name = self
-            .active_player
-            .lock()
-            .await
-            .clone()
-            .ok_or_else(|| {
-                DomainError::ActionFailed {
+        let player_name =
+            self.active_player
+                .lock()
+                .await
+                .clone()
+                .ok_or_else(|| DomainError::ActionFailed {
                     reason: "no active mpris player".into(),
-                }
-            })?;
+                })?;
 
-        let _conn = Connection::session()
+        let conn = Connection::session()
             .await
             .map_err(|e| DomainError::ActionFailed {
                 reason: format!("dbus connect: {e}"),
             })?;
 
-        // TODO: Implement proper zbus method invocation on the player service.
-        // This is a stub that matches the spec: "handle play-pause/next/previous/stop actions".
-        // For now, we return Ok to unblock tests. The real implementation needs:
-        // 1. Get a proxy to the player_name service at /org/mpris/MediaPlayer2
-        // 2. Call the method on the org.mpris.MediaPlayer2.Player interface
-        // 3. Handle any DBus errors
-        _ = (method, player_name);
+        let bus_name =
+            BusName::try_from(player_name.clone()).map_err(|e| DomainError::ActionFailed {
+                reason: format!("invalid bus name {player_name}: {e}"),
+            })?;
+
+        let proxy = Proxy::new(&conn, bus_name, MPRIS_OBJECT_PATH, MPRIS_PLAYER_INTERFACE)
+            .await
+            .map_err(|e| DomainError::ActionFailed {
+                reason: format!("build mpris proxy: {e}"),
+            })?;
+
+        proxy
+            .call_method(method, &())
+            .await
+            .map_err(|e| DomainError::ActionFailed {
+                reason: format!("mpris {method} failed: {e}"),
+            })?;
+
         Ok(())
     }
 }
@@ -141,31 +157,309 @@ pub(crate) fn mpris_method_for_command(cmd: &str) -> Option<&'static str> {
     })
 }
 
+fn parse_playback_status(s: &str) -> PlaybackStatus {
+    match s {
+        "Playing" => PlaybackStatus::Playing,
+        "Paused" => PlaybackStatus::Paused,
+        _ => PlaybackStatus::Stopped,
+    }
+}
+
+fn empty_mpris_state() -> MprisState {
+    MprisState {
+        player_id: None,
+        title: None,
+        artist: None,
+        album: None,
+        art_url: None,
+        playback_status: PlaybackStatus::Stopped,
+        position_micros: None,
+        length_micros: None,
+    }
+}
+
+/// Extract a `String` from an `OwnedValue` representing a `s`-typed variant.
+fn metadata_string(value: &OwnedValue) -> Option<String> {
+    let s: &str = value.downcast_ref().ok()?;
+    Some(s.to_string())
+}
+
+/// Extract the first string from an `as` (array of string) variant. MPRIS
+/// stores `xesam:artist` as an array.
+fn metadata_first_string_in_array(value: &OwnedValue) -> Option<String> {
+    let arr: &zbus::zvariant::Array<'_> = value.downcast_ref().ok()?;
+    for item in arr.iter() {
+        if let Ok(s) = <&str>::try_from(item) {
+            return Some(s.to_string());
+        }
+    }
+    None
+}
+
+/// Extract an `i64` (or other integer) from a numeric variant.
+fn metadata_i64(value: &OwnedValue) -> Option<i64> {
+    if let Ok(v) = i64::try_from(value) {
+        return Some(v);
+    }
+    if let Ok(v) = u64::try_from(value) {
+        return i64::try_from(v).ok();
+    }
+    if let Ok(v) = i32::try_from(value) {
+        return Some(v as i64);
+    }
+    if let Ok(v) = u32::try_from(value) {
+        return Some(v as i64);
+    }
+    None
+}
+
+async fn fetch_player_state(conn: &Connection, bus_name: &str) -> zbus::Result<MprisState> {
+    let owned_bus = BusName::try_from(bus_name.to_string())
+        .map_err(|e| zbus::Error::Address(format!("invalid bus name {bus_name}: {e}")))?;
+
+    let player_proxy =
+        Proxy::new(conn, owned_bus, MPRIS_OBJECT_PATH, MPRIS_PLAYER_INTERFACE).await?;
+
+    let playback_status_str: String = player_proxy
+        .get_property("PlaybackStatus")
+        .await
+        .unwrap_or_else(|_| "Stopped".to_string());
+    let playback_status = parse_playback_status(&playback_status_str);
+
+    let metadata: HashMap<String, OwnedValue> = player_proxy
+        .get_property("Metadata")
+        .await
+        .unwrap_or_default();
+
+    let title = metadata.get("xesam:title").and_then(metadata_string);
+    let album = metadata.get("xesam:album").and_then(metadata_string);
+    let art_url = metadata.get("mpris:artUrl").and_then(metadata_string);
+    let artist = metadata
+        .get("xesam:artist")
+        .and_then(metadata_first_string_in_array);
+    let length_micros = metadata
+        .get("mpris:length")
+        .and_then(metadata_i64)
+        .and_then(|v| u64::try_from(v).ok());
+
+    let position_micros = if matches!(playback_status, PlaybackStatus::Playing) {
+        player_proxy
+            .get_property::<i64>("Position")
+            .await
+            .ok()
+            .and_then(|v| u64::try_from(v).ok())
+    } else {
+        None
+    };
+
+    Ok(MprisState {
+        player_id: Some(bus_name.to_string()),
+        title,
+        artist,
+        album,
+        art_url,
+        playback_status,
+        position_micros,
+        length_micros,
+    })
+}
+
+/// Selects the active player from the known set using the documented rule:
+/// 1. Any `Playing` player (alphabetical tiebreak).
+/// 2. Else any `Paused` player (alphabetical tiebreak).
+/// 3. Else the alphabetically-first player overall.
+/// 4. Else `None`.
+pub(crate) fn pick_active_player(players: &HashMap<String, MprisState>) -> Option<String> {
+    if players.is_empty() {
+        return None;
+    }
+
+    let mut playing: Vec<&String> = players
+        .iter()
+        .filter(|(_, s)| matches!(s.playback_status, PlaybackStatus::Playing))
+        .map(|(k, _)| k)
+        .collect();
+    playing.sort();
+    if let Some(name) = playing.first() {
+        return Some((*name).clone());
+    }
+
+    let mut paused: Vec<&String> = players
+        .iter()
+        .filter(|(_, s)| matches!(s.playback_status, PlaybackStatus::Paused))
+        .map(|(k, _)| k)
+        .collect();
+    paused.sort();
+    if let Some(name) = paused.first() {
+        return Some((*name).clone());
+    }
+
+    let mut all: Vec<&String> = players.keys().collect();
+    all.sort();
+    all.first().map(|s| (*s).clone())
+}
+
+async fn refresh_all_players(
+    conn: &Connection,
+    players: &mut HashMap<String, MprisState>,
+) -> zbus::Result<()> {
+    let names: Vec<String> = players.keys().cloned().collect();
+    for name in names {
+        match fetch_player_state(conn, &name).await {
+            Ok(state) => {
+                players.insert(name, state);
+            }
+            Err(err) => {
+                tracing::warn!("mpris: failed to refresh {name}: {err}");
+                players.remove(&name);
+            }
+        }
+    }
+    Ok(())
+}
+
+async fn publish_state(
+    conn: &Connection,
+    players: &HashMap<String, MprisState>,
+    active_player: &Arc<tokio::sync::Mutex<Option<String>>>,
+    tx: &broadcast::Sender<serde_json::Value>,
+) {
+    let active = pick_active_player(players);
+
+    {
+        let mut guard = active_player.lock().await;
+        *guard = active.clone();
+    }
+
+    let state = match active.as_deref() {
+        Some(name) => match players.get(name) {
+            Some(s) => s.clone(),
+            None => {
+                // Active picked but state missing; refetch on demand.
+                match fetch_player_state(conn, name).await {
+                    Ok(s) => s,
+                    Err(_) => empty_mpris_state(),
+                }
+            }
+        },
+        None => empty_mpris_state(),
+    };
+
+    match serde_json::to_value(&state) {
+        Ok(value) => {
+            let _ = tx.send(value);
+        }
+        Err(err) => {
+            tracing::warn!("mpris: failed to serialize state: {err}");
+        }
+    }
+}
+
 async fn mpris_task(
-    _active_player: Arc<tokio::sync::Mutex<Option<String>>>,
-    _tx: broadcast::Sender<serde_json::Value>,
-) -> Result<(), Box<dyn std::error::Error>> {
-    let _conn = Connection::session().await?;
+    active_player: Arc<tokio::sync::Mutex<Option<String>>>,
+    tx: broadcast::Sender<serde_json::Value>,
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    let conn = Connection::session().await?;
+    let dbus_proxy = zbus::fdo::DBusProxy::new(&conn).await?;
 
-    // TODO: Implement full DBus subscription logic:
-    // - List org.mpris.MediaPlayer2.* services
-    // - Subscribe to NameOwnerChanged
-    // - Subscribe to PropertiesChanged on each player
-    // - Poll position every 1s
-    // - Recompute active player heuristic
-    // - Publish MprisState
-    //
-    // For now, this is a stub that never publishes, which is acceptable per the spec:
-    // "DBus connection failure at startup -> task logs warning and exits (the provider is
-    // still registered but never publishes)."
+    // Initial discovery: list all mpris services on the bus.
+    let names = dbus_proxy.list_names().await?;
+    let mut players: HashMap<String, MprisState> = HashMap::new();
+    for owned in names {
+        let name = owned.as_str();
+        if name.starts_with(MPRIS_PREFIX) {
+            match fetch_player_state(&conn, name).await {
+                Ok(state) => {
+                    players.insert(name.to_string(), state);
+                }
+                Err(err) => {
+                    tracing::warn!("mpris: failed to fetch initial state for {name}: {err}");
+                }
+            }
+        }
+    }
 
-    // Block indefinitely so we don't spin-loop; reconnect logic in MprisProvider::new handles it.
-    std::future::pending().await
+    publish_state(&conn, &players, &active_player, &tx).await;
+
+    let mut name_owner_changed = dbus_proxy.receive_name_owner_changed().await?;
+    let mut tick = tokio::time::interval(Duration::from_secs(1));
+    tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+    // Drop the immediate first tick that `interval` emits.
+    tick.tick().await;
+
+    loop {
+        tokio::select! {
+            biased;
+
+            maybe_signal = name_owner_changed.next() => {
+                let Some(signal) = maybe_signal else {
+                    // Stream closed; bail so the outer loop reconnects.
+                    return Ok(());
+                };
+                let args = match signal.args() {
+                    Ok(a) => a,
+                    Err(err) => {
+                        tracing::warn!("mpris: bad NameOwnerChanged args: {err}");
+                        continue;
+                    }
+                };
+
+                let name = args.name().to_string();
+                if !name.starts_with(MPRIS_PREFIX) {
+                    continue;
+                }
+
+                let new_owner_is_empty = args
+                    .new_owner()
+                    .as_ref()
+                    .map(|n| n.as_str().is_empty())
+                    .unwrap_or(true);
+
+                if new_owner_is_empty {
+                    players.remove(&name);
+                } else {
+                    match fetch_player_state(&conn, &name).await {
+                        Ok(state) => {
+                            players.insert(name.clone(), state);
+                        }
+                        Err(err) => {
+                            tracing::warn!("mpris: failed to fetch state for new player {name}: {err}");
+                        }
+                    }
+                }
+
+                publish_state(&conn, &players, &active_player, &tx).await;
+            }
+
+            _ = tick.tick() => {
+                // Refresh all known players. This both updates position for
+                // playing tracks and picks up property changes without an
+                // explicit PropertiesChanged subscription.
+                if let Err(err) = refresh_all_players(&conn, &mut players).await {
+                    tracing::warn!("mpris: refresh error: {err}");
+                }
+                publish_state(&conn, &players, &active_player, &tx).await;
+            }
+        }
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn state_with_status(status: PlaybackStatus) -> MprisState {
+        MprisState {
+            player_id: None,
+            title: None,
+            artist: None,
+            album: None,
+            art_url: None,
+            playback_status: status,
+            position_micros: None,
+            length_micros: None,
+        }
+    }
 
     #[test]
     fn maps_known_commands_to_methods() {
@@ -181,5 +475,82 @@ mod tests {
     fn unknown_command_returns_none() {
         assert_eq!(mpris_method_for_command("rewind"), None);
         assert_eq!(mpris_method_for_command(""), None);
+    }
+
+    #[test]
+    fn parse_playback_status_handles_known_and_unknown() {
+        assert_eq!(parse_playback_status("Playing"), PlaybackStatus::Playing);
+        assert_eq!(parse_playback_status("Paused"), PlaybackStatus::Paused);
+        assert_eq!(parse_playback_status("Stopped"), PlaybackStatus::Stopped);
+        assert_eq!(parse_playback_status("gibberish"), PlaybackStatus::Stopped);
+    }
+
+    #[test]
+    fn picks_playing_over_paused() {
+        let mut players = HashMap::new();
+        players.insert(
+            "org.mpris.MediaPlayer2.spotify".to_string(),
+            state_with_status(PlaybackStatus::Paused),
+        );
+        players.insert(
+            "org.mpris.MediaPlayer2.mpv".to_string(),
+            state_with_status(PlaybackStatus::Playing),
+        );
+
+        assert_eq!(
+            pick_active_player(&players),
+            Some("org.mpris.MediaPlayer2.mpv".to_string())
+        );
+    }
+
+    #[test]
+    fn picks_paused_when_no_playing() {
+        let mut players = HashMap::new();
+        players.insert(
+            "org.mpris.MediaPlayer2.spotify".to_string(),
+            state_with_status(PlaybackStatus::Paused),
+        );
+        players.insert(
+            "org.mpris.MediaPlayer2.mpv".to_string(),
+            state_with_status(PlaybackStatus::Paused),
+        );
+
+        let picked = pick_active_player(&players);
+        assert!(picked.is_some());
+        let name = picked.unwrap();
+        assert!(
+            name == "org.mpris.MediaPlayer2.spotify" || name == "org.mpris.MediaPlayer2.mpv",
+            "unexpected pick: {name}"
+        );
+        // Alphabetical tiebreak: mpv < spotify.
+        assert_eq!(name, "org.mpris.MediaPlayer2.mpv");
+    }
+
+    #[test]
+    fn picks_alphabetically_first_when_none_playing_or_paused() {
+        let mut players = HashMap::new();
+        players.insert(
+            "org.mpris.MediaPlayer2.spotify".to_string(),
+            state_with_status(PlaybackStatus::Stopped),
+        );
+        players.insert(
+            "org.mpris.MediaPlayer2.mpv".to_string(),
+            state_with_status(PlaybackStatus::Stopped),
+        );
+        players.insert(
+            "org.mpris.MediaPlayer2.firefox".to_string(),
+            state_with_status(PlaybackStatus::Stopped),
+        );
+
+        assert_eq!(
+            pick_active_player(&players),
+            Some("org.mpris.MediaPlayer2.firefox".to_string())
+        );
+    }
+
+    #[test]
+    fn returns_none_when_empty() {
+        let players: HashMap<String, MprisState> = HashMap::new();
+        assert_eq!(pick_active_player(&players), None);
     }
 }
