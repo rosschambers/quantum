@@ -15,6 +15,7 @@ RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-ins
         libpango1.0-dev \
         libgdk-pixbuf-2.0-dev \
         libgraphene-1.0-dev \
+        libpulse-dev \
         libsoup-3.0-dev \
         libwayland-dev \
         wayland-protocols \

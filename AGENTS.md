@@ -65,6 +65,9 @@ Commit per task in the implementation plan. Small commits beat big ones.
 - Host (likely newer rustc) and container (1.85) share the bind-mounted
   `target/` directory. If you switch environments mid-task, expect a full
   rebuild. Always run the binary in the environment that built it.
+- The container ships `libpulse-dev` so the audio provider can link
+  against `libpulse-binding`. Rebuild the container after a Dockerfile
+  bump or the audio crate will fail to link.
 
 ## Provider and Event Conventions
 
