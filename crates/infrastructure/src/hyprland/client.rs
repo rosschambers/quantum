@@ -1,11 +1,37 @@
 use async_trait::async_trait;
+use futures::stream::BoxStream;
 use std::path::PathBuf;
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::net::UnixStream;
 
 use quantum_domain::{DomainError, HyprlandClient};
 
 use crate::InfrastructureError;
+
+/// Hyprland event parsed from the event socket.
+#[derive(Debug, Clone, PartialEq)]
+pub enum HyprlandEvent {
+    ActiveWindow { class: String, title: String },
+    Workspace { name: String },
+    Unknown(String),
+}
+
+/// Parse a single Hyprland event line (newline-stripped).
+/// Format: `<event>>><args>` where args are comma-separated.
+pub fn parse_hypr_event_line(line: &str) -> Option<HyprlandEvent> {
+    let (kind, args) = line.split_once(">>")?;
+    match kind {
+        "activewindow" => {
+            let (class, title) = args.split_once(',')?;
+            Some(HyprlandEvent::ActiveWindow {
+                class: class.to_string(),
+                title: title.to_string(),
+            })
+        }
+        "workspace" => Some(HyprlandEvent::Workspace { name: args.to_string() }),
+        _ => Some(HyprlandEvent::Unknown(line.to_string())),
+    }
+}
 
 /// Real Hyprland IPC client using Unix sockets.
 pub struct HyprlandSocketClient {
@@ -29,6 +55,29 @@ impl HyprlandSocketClient {
             command_socket: PathBuf::from(format!("{}/.socket.sock", base_dir)),
             event_socket: PathBuf::from(format!("{}/.socket2.sock", base_dir)),
         })
+    }
+
+    /// Subscribe to Hyprland events from the event socket.
+    /// Returns a stream of parsed events.
+    pub fn subscribe_events(&self) -> Result<BoxStream<'static, HyprlandEvent>, InfrastructureError> {
+        let path = self.event_socket.clone();
+        let stream = async_stream::stream! {
+            let stream = match UnixStream::connect(&path).await {
+                Ok(s) => s,
+                Err(err) => {
+                    tracing::warn!("hyprland event socket connect failed: {err}");
+                    return;
+                }
+            };
+            let reader = BufReader::new(stream);
+            let mut lines = reader.lines();
+            while let Ok(Some(line)) = lines.next_line().await {
+                if let Some(ev) = parse_hypr_event_line(line.trim()) {
+                    yield ev;
+                }
+            }
+        };
+        Ok(Box::pin(stream))
     }
 }
 
@@ -176,5 +225,34 @@ mod tests {
         // as a parse failure on the truncated tail.
         let parsed: serde_json::Value = serde_json::from_str(&response).unwrap();
         assert_eq!(parsed.as_array().unwrap().len(), 80);
+    }
+}
+
+#[cfg(test)]
+mod event_tests {
+    use super::*;
+
+    #[test]
+    fn parse_active_window_event() {
+        let e = parse_hypr_event_line("activewindow>>firefox,Mozilla Firefox").unwrap();
+        assert!(matches!(e, HyprlandEvent::ActiveWindow { ref class, ref title }
+            if class == "firefox" && title == "Mozilla Firefox"));
+    }
+
+    #[test]
+    fn parse_workspace_event() {
+        let e = parse_hypr_event_line("workspace>>2").unwrap();
+        assert!(matches!(e, HyprlandEvent::Workspace { ref name } if name == "2"));
+    }
+
+    #[test]
+    fn parse_unknown_event_kind() {
+        let e = parse_hypr_event_line("createworkspace>>foo").unwrap();
+        assert!(matches!(e, HyprlandEvent::Unknown(_)));
+    }
+
+    #[test]
+    fn parse_garbage_returns_none() {
+        assert!(parse_hypr_event_line("not an event").is_none());
     }
 }
