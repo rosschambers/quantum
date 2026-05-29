@@ -12,7 +12,7 @@
     // `$effect` runs reliably in testing-library + Svelte 5 where `onMount` does not.
     // Behaviour at runtime in WebKit is the same.
     $effect(() => {
-        const unsubscribe = client.subscribe('mpris.state.event', (payload: unknown) => {
+        const unsubscribe = client.subscribe('mpris.event', (payload: unknown) => {
             state = payload as MprisState;
         });
         return () => unsubscribe?.();
