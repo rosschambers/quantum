@@ -28,6 +28,14 @@ pub struct MatchTemplate {
     pub subtitle: Option<String>,
 }
 
+/// Configuration for a widget.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct WidgetConfig {
+    pub view: String,
+    #[serde(default)]
+    pub auto_show: bool,
+}
+
 /// Main configuration structure.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Config {
@@ -35,6 +43,8 @@ pub struct Config {
     pub general: GeneralConfig,
     #[serde(default)]
     pub provider: Vec<ProviderConfig>,
+    #[serde(default)]
+    pub widget: Vec<WidgetConfig>,
 }
 
 /// General configuration.
@@ -72,6 +82,7 @@ impl ConfigStore {
             Config {
                 general: GeneralConfig::default(),
                 provider: Vec::new(),
+                widget: Vec::new(),
             }
         };
 
@@ -143,6 +154,7 @@ invalid syntax
             config: RwLock::new(Config {
                 general: GeneralConfig::default(),
                 provider: Vec::new(),
+                widget: Vec::new(),
             }),
         };
 
@@ -158,10 +170,28 @@ invalid syntax
                     active_theme: Some("dark".to_string()),
                 },
                 provider: Vec::new(),
+                widget: Vec::new(),
             }),
         };
 
         let theme = store.get("active_theme").await;
         assert_eq!(theme, Some("dark".to_string()));
+    }
+
+    #[test]
+    fn parses_widget_entries() {
+        let toml = r#"
+            [[widget]]
+            view = "widgets/bar"
+            auto_show = true
+
+            [[widget]]
+            view = "widgets/clock"
+        "#;
+        let config: Config = toml::from_str(toml).unwrap();
+        assert_eq!(config.widget.len(), 2);
+        assert_eq!(config.widget[0].view, "widgets/bar");
+        assert!(config.widget[0].auto_show);
+        assert!(!config.widget[1].auto_show);
     }
 }
