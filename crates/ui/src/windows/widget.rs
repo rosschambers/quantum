@@ -63,7 +63,29 @@ impl WidgetWindow {
 
         // Create and embed WebView
         let webview = webkit6::WebView::new();
-        let uri = format!("quantum://theme/default/{}/index.html", view_name);
+
+        // Pipe JS console + enable developer inspector (gated by env var).
+        let settings: webkit6::Settings =
+            webkit6::prelude::WebViewExt::settings(&webview).unwrap_or_default();
+        settings.set_enable_write_console_messages_to_stdout(true);
+        settings
+            .set_enable_developer_extras(std::env::var("QUANTUM_INSPECTOR").as_deref() == Ok("1"));
+        webkit6::prelude::WebViewExt::set_settings(&webview, &settings);
+
+        webview.connect_load_failed(|_view, event, uri, err| {
+            tracing::error!(
+                "widget WebView load_failed: event={:?} uri={} err={}",
+                event,
+                uri,
+                err
+            );
+            false
+        });
+
+        // The scheme handler resolves paths against `views/<view_name>/...`
+        // so the URL must include the `views/` segment. ThemeStore's
+        // candidate_paths helper then maps to the Vite `dist/` subdir.
+        let uri = format!("quantum://theme/default/views/{}/index.html", view_name);
         webview.load_uri(&uri);
         window.set_child(Some(&webview));
 
@@ -82,7 +104,14 @@ impl WidgetWindow {
                             serde_json::to_string(&env.channel).unwrap_or_else(|_| "\"\"".into());
                         let payload =
                             serde_json::to_string(&env.payload).unwrap_or_else(|_| "null".into());
-                        let raw = format!("window.__quantum_notify({channel}, {payload})");
+                        // Guard against notifications arriving before the JS
+                        // client has installed `window.__quantum_notify`. This
+                        // happens at daemon startup because providers begin
+                        // publishing immediately while the WebView is still
+                        // loading its bundle.
+                        let raw = format!(
+                            "if (typeof window.__quantum_notify === 'function') {{ window.__quantum_notify({channel}, {payload}); }}"
+                        );
                         let js = json_to_js_expression(&raw);
                         if js_tx.send(js).is_err() {
                             // GLib forwarder has gone away — webview dropped.

@@ -125,7 +125,11 @@ impl LauncherWindow {
                             serde_json::to_string(&env.channel).unwrap_or_else(|_| "\"\"".into());
                         let payload =
                             serde_json::to_string(&env.payload).unwrap_or_else(|_| "null".into());
-                        let raw = format!("window.__quantum_notify({channel}, {payload})");
+                        // Guard against notifications arriving before the JS
+                        // client has installed `window.__quantum_notify`.
+                        let raw = format!(
+                            "if (typeof window.__quantum_notify === 'function') {{ window.__quantum_notify({channel}, {payload}); }}"
+                        );
                         let js = json_to_js_expression(&raw);
                         if js_tx.send(js).is_err() {
                             // GLib forwarder has gone away — webview dropped.

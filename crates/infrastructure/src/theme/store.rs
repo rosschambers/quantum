@@ -21,18 +21,33 @@ pub struct ResolvedViewData {
 
 /// Generate candidate filesystem paths to try for a logical view path.
 ///
-/// For a request like `views/launcher/index.html`, we also try
-/// `views/launcher/dist/index.html` and `views/launcher/dist/assets/...`
-/// to support Vite-built bundles that output to a `dist/` subdir.
+/// Views can be nested at different depths:
+///   `views/launcher/index.html` -> `views/launcher/dist/index.html`
+///   `views/launcher/assets/x.js` -> `views/launcher/dist/assets/x.js`
+///   `views/widgets/clock/index.html` -> `views/widgets/clock/dist/index.html`
+///   `views/widgets/bar/assets/x.js` -> `views/widgets/bar/dist/assets/x.js`
+///
+/// Generate candidates by trying to insert `dist/` after each possible view
+/// directory boundary (positions 1 and 2 segments deep under `views/`). The
+/// first existing path wins.
 /// Non-view paths (`tokens.toml`, `theme.toml`, etc.) are returned unchanged.
 fn candidate_paths(path: &str) -> Vec<String> {
-    let mut out = Vec::with_capacity(2);
+    let mut out = Vec::with_capacity(4);
 
-    // For Vite-built view bundles, prefer the dist/ output over the source
-    // template (which references src/main.ts that doesn't exist at runtime).
     if let Some(rest) = path.strip_prefix("views/") {
-        if let Some((view, tail)) = rest.split_once('/') {
-            out.push(format!("views/{view}/dist/{tail}"));
+        let segments: Vec<&str> = rest.split('/').collect();
+        // Skip if path already contains `dist/` somewhere.
+        let already_has_dist = segments.iter().any(|seg| *seg == "dist");
+        if !already_has_dist {
+            // Try inserting `dist/` after each potential view-root boundary.
+            // Most-nested first so `widgets/clock` wins over `widgets`.
+            // We only consider boundaries where at least one segment remains
+            // after the insertion point.
+            for cut in (1..segments.len()).rev() {
+                let head = segments[..cut].join("/");
+                let tail = segments[cut..].join("/");
+                out.push(format!("views/{head}/dist/{tail}"));
+            }
         }
     }
 
