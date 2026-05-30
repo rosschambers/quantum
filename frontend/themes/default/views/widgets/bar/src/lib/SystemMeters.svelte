@@ -9,38 +9,18 @@
     let { client }: Props = $props();
     let stats: SystemStats | null = $state(null);
 
-    /**
-     * Rolling history of (cpu_percent, mem_percent) samples used to draw
-     * the inline sparkline. Capped at HISTORY_LENGTH samples; new entries
-     * push, old entries shift. Stats stream at 1 Hz so 32 samples covers
-     * the last ~32 seconds.
-     */
-    const HISTORY_LENGTH = 32;
-    let cpuHistory: number[] = $state([]);
-    let memHistory: number[] = $state([]);
-
     $effect(() => {
         client
             .call('provider.query', { id: 'system.stats' })
             .then((r: unknown) => {
-                if (r) pushStats(r as SystemStats);
+                if (r) stats = r as SystemStats;
             })
             .catch(() => {});
         const unsubscribe = client.subscribe('system.stats.event', (payload: unknown) => {
-            pushStats(payload as SystemStats);
+            stats = payload as SystemStats;
         });
         return () => unsubscribe?.();
     });
-
-    function pushStats(s: SystemStats): void {
-        stats = s;
-        cpuHistory = [...cpuHistory, clampPercent(s.cpu_percent)].slice(-HISTORY_LENGTH);
-        const memPct =
-            s.mem_total_bytes === 0
-                ? 0
-                : clampPercent((s.mem_used_bytes / s.mem_total_bytes) * 100);
-        memHistory = [...memHistory, memPct].slice(-HISTORY_LENGTH);
-    }
 
     function clampPercent(v: number): number {
         if (!Number.isFinite(v) || v < 0) return 0;
@@ -58,94 +38,123 @@
         return clampPercent((s.mem_used_bytes / s.mem_total_bytes) * 100);
     }
 
-    const CPU_ICON = '\u2699'; // gear
-    const MEM_ICON = '\u25a3'; // white square containing black small square
-
-    function bucketBar(pct: number | null): string {
-        if (pct === null) return '   '; // three spaces: same width as bar glyphs
-        if (pct < 33) return '\u25ae\u25af\u25af';
-        if (pct < 67) return '\u25ae\u25ae\u25af';
-        return '\u25ae\u25ae\u25ae';
-    }
-
     function tooltipFor(label: string, pct: number | null): string {
         if (pct === null) return `${label}: unknown`;
         return `${label}: ${pct.toFixed(0)}%`;
     }
 
     /**
-     * Build an SVG polyline path for the sparkline. Returns a coordinate
-     * string like "0,12 4,8 8,5" for the `points` attribute. Empty
-     * string when no history has accumulated yet.
+     * Smooth cool-to-hot gradient. 0% maps to a cool blue, 100% maps to
+     * a hot red. Linearly interpolated through a medium-saturation
+     * yellow-ish midpoint. Used both for the active ring stroke and any
+     * downstream styling that wants to color by load.
      */
-    function sparklinePoints(
-        history: number[],
-        width: number,
-        height: number,
-    ): string {
-        if (history.length === 0) return '';
-        const n = history.length;
-        const stepX = n > 1 ? width / (n - 1) : 0;
-        const points: string[] = [];
-        for (let i = 0; i < n; i += 1) {
-            const x = stepX * i;
-            // Y is inverted (0 at top in SVG) and inset by 1px so the
-            // line never lies flush against the top/bottom edges.
-            const y = height - 1 - (history[i] / 100) * (height - 2);
-            points.push(`${x.toFixed(2)},${y.toFixed(2)}`);
-        }
-        return points.join(' ');
+    function gradientColor(pct: number | null): string {
+        const p = pct === null ? 0 : pct;
+        const r = Math.round(80 + (p / 100) * 175);
+        const g = Math.round(180 - (p / 100) * 130);
+        const b = Math.round(250 - (p / 100) * 200);
+        return `rgb(${r}, ${g}, ${b})`;
     }
 
-    const SPARKLINE_W = 36;
-    const SPARKLINE_H = 14;
+    // Ring geometry. Diameter, stroke width, and computed radius +
+    // circumference. The stroke is positioned with a half-pixel inset so
+    // it doesn't get clipped by the SVG viewBox.
+    const RING_SIZE = 22;
+    const STROKE = 2;
+    const RADIUS = (RING_SIZE - STROKE) / 2;
+    const CIRC = 2 * Math.PI * RADIUS;
+
+    function dashOffsetFor(pct: number | null): number {
+        const p = pct ?? 0;
+        return CIRC * (1 - p / 100);
+    }
+
+    function ringLabel(pct: number | null): string {
+        // No percent sign: the ring is the percent indicator. `--` while
+        // we wait for the first sample, otherwise a 0-100 integer.
+        if (pct === null) return '--';
+        return `${Math.round(pct)}`;
+    }
+
+    const TRACK_COLOR = 'rgba(255, 255, 255, 0.12)';
 </script>
 
 <div class="meters">
     <div class="meter cpu" title={tooltipFor('CPU', cpuPercent(stats))}>
-        <span class="icon" aria-hidden="true">{CPU_ICON}</span>
-        <span class="bar">{bucketBar(cpuPercent(stats))}</span>
         <svg
-            class="sparkline"
-            width={SPARKLINE_W}
-            height={SPARKLINE_H}
-            viewBox="0 0 {SPARKLINE_W} {SPARKLINE_H}"
-            preserveAspectRatio="none"
-            aria-hidden="true"
+            width={RING_SIZE}
+            height={RING_SIZE}
+            viewBox="0 0 {RING_SIZE} {RING_SIZE}"
+            aria-label={tooltipFor('CPU', cpuPercent(stats))}
+            role="img"
         >
-            {#if cpuHistory.length > 1}
-                <polyline
-                    points={sparklinePoints(cpuHistory, SPARKLINE_W, SPARKLINE_H)}
-                    fill="none"
-                    stroke="currentColor"
-                    stroke-width="1"
-                    stroke-linecap="round"
-                    stroke-linejoin="round"
-                />
-            {/if}
+            <circle
+                cx={RING_SIZE / 2}
+                cy={RING_SIZE / 2}
+                r={RADIUS}
+                fill="none"
+                stroke={TRACK_COLOR}
+                stroke-width={STROKE}
+            />
+            <circle
+                class="ring-fill"
+                cx={RING_SIZE / 2}
+                cy={RING_SIZE / 2}
+                r={RADIUS}
+                fill="none"
+                stroke={gradientColor(cpuPercent(stats))}
+                stroke-width={STROKE}
+                stroke-linecap="round"
+                stroke-dasharray={CIRC}
+                stroke-dashoffset={dashOffsetFor(cpuPercent(stats))}
+                transform="rotate(-90 {RING_SIZE / 2} {RING_SIZE / 2})"
+            />
+            <text
+                class="ring-label"
+                x={RING_SIZE / 2}
+                y={RING_SIZE / 2}
+                text-anchor="middle"
+                dominant-baseline="central"
+            >{ringLabel(cpuPercent(stats))}</text>
         </svg>
     </div>
     <div class="meter mem" title={tooltipFor('MEM', memPercent(stats))}>
-        <span class="icon" aria-hidden="true">{MEM_ICON}</span>
-        <span class="bar">{bucketBar(memPercent(stats))}</span>
         <svg
-            class="sparkline"
-            width={SPARKLINE_W}
-            height={SPARKLINE_H}
-            viewBox="0 0 {SPARKLINE_W} {SPARKLINE_H}"
-            preserveAspectRatio="none"
-            aria-hidden="true"
+            width={RING_SIZE}
+            height={RING_SIZE}
+            viewBox="0 0 {RING_SIZE} {RING_SIZE}"
+            aria-label={tooltipFor('MEM', memPercent(stats))}
+            role="img"
         >
-            {#if memHistory.length > 1}
-                <polyline
-                    points={sparklinePoints(memHistory, SPARKLINE_W, SPARKLINE_H)}
-                    fill="none"
-                    stroke="currentColor"
-                    stroke-width="1"
-                    stroke-linecap="round"
-                    stroke-linejoin="round"
-                />
-            {/if}
+            <circle
+                cx={RING_SIZE / 2}
+                cy={RING_SIZE / 2}
+                r={RADIUS}
+                fill="none"
+                stroke={TRACK_COLOR}
+                stroke-width={STROKE}
+            />
+            <circle
+                class="ring-fill"
+                cx={RING_SIZE / 2}
+                cy={RING_SIZE / 2}
+                r={RADIUS}
+                fill="none"
+                stroke={gradientColor(memPercent(stats))}
+                stroke-width={STROKE}
+                stroke-linecap="round"
+                stroke-dasharray={CIRC}
+                stroke-dashoffset={dashOffsetFor(memPercent(stats))}
+                transform="rotate(-90 {RING_SIZE / 2} {RING_SIZE / 2})"
+            />
+            <text
+                class="ring-label"
+                x={RING_SIZE / 2}
+                y={RING_SIZE / 2}
+                text-anchor="middle"
+                dominant-baseline="central"
+            >{ringLabel(memPercent(stats))}</text>
         </svg>
     </div>
 </div>
@@ -154,32 +163,28 @@
     .meters {
         display: flex;
         gap: var(--space-3, 0.75rem);
-        color: var(--color-fg-alt, #a6adc8);
+        align-items: center;
     }
     .meter {
-        display: flex;
+        display: inline-flex;
         align-items: center;
-        gap: 4px;
-        line-height: 1;
         cursor: default;
+        line-height: 0;
     }
-    .icon {
-        /* Match the tray indicator glyph size so CPU/MEM align with
-         * the right-side icons. */
-        font-size: var(--tray-icon-size, 14px);
-        opacity: 0.9;
-    }
-    .bar {
-        font-family: var(--font-mono, monospace);
-        /* Same px size as the icon: the bucket glyphs (\u25ae\u25af) read as
-         * icons themselves and should be the same visual weight as the
-         * indicator glyphs on the right. */
-        font-size: var(--tray-icon-size, 14px);
-        letter-spacing: 1px;
-        line-height: 1;
-    }
-    .sparkline {
+    .meter svg {
         display: block;
-        color: var(--color-fg-alt, #a6adc8);
+    }
+    .ring-fill {
+        transition: stroke-dashoffset 0.4s ease, stroke 0.4s ease;
+    }
+    .ring-label {
+        font-family: var(--font-mono, ui-monospace, monospace);
+        font-size: 9px;
+        font-weight: 600;
+        fill: var(--color-fg, #cdd6f4);
+        font-variant-numeric: tabular-nums;
+        /* pointer-events off so the parent .meter title tooltip still
+         * fires when hovering over the number itself */
+        pointer-events: none;
     }
 </style>
