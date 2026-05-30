@@ -35,6 +35,20 @@ impl WidgetWindow {
             .decorated(false)
             .build();
 
+        // Make the GTK ApplicationWindow background transparent so the
+        // layer-shell surface's overflow region passes through. Without
+        // this, GTK paints its theme's default opaque background
+        // (typically white) behind the WebView regardless of the
+        // WebView's own background color. CSS applies via a window-
+        // scoped provider so we don't pollute the global GTK style.
+        let css = gtk4::CssProvider::new();
+        css.load_from_string("window.background, window { background: transparent; }");
+        gtk4::style_context_add_provider_for_display(
+            &gtk4::prelude::WidgetExt::display(&window),
+            &css,
+            gtk4::STYLE_PROVIDER_PRIORITY_APPLICATION,
+        );
+
         // Initialize layer shell
         window.init_layer_shell();
 
