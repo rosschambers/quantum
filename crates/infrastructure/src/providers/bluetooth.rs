@@ -153,20 +153,100 @@ impl ProviderSource for BluezProvider {
             let mut last_emitted: Option<serde_json::Value> = None;
 
             loop {
-                match run_bluetooth_loop(&conn, &mut last_emitted).await {
-                    Ok(emissions) => {
-                        for v in emissions {
-                            yield v;
+                // Open ObjectManagerProxy at org.bluez root.
+                let om_proxy = match zbus::fdo::ObjectManagerProxy::builder(&conn)
+                    .destination("org.bluez")
+                    .and_then(|b| b.path("/"))
+                    .map(|b| b.build())
+                {
+                    Ok(fut) => match fut.await {
+                        Ok(p) => p,
+                        Err(e) => {
+                            tracing::warn!(error = %e, "bluez ObjectManagerProxy build failed");
+                            tokio::time::sleep(backoff).await;
+                            backoff = (backoff * 2).min(max_backoff);
+                            continue;
                         }
-                        backoff = std::time::Duration::from_secs(1);
-                    }
-                    Err((emissions, _err)) => {
-                        for v in emissions {
-                            yield v;
-                        }
+                    },
+                    Err(e) => {
+                        tracing::warn!(error = %e, "bluez ObjectManagerProxy builder failed");
                         tokio::time::sleep(backoff).await;
                         backoff = (backoff * 2).min(max_backoff);
+                        continue;
                     }
+                };
+
+                // Initial state.
+                match om_proxy.get_managed_objects().await {
+                    Ok(objs) => {
+                        let state = map_managed_objects(&objs);
+                        let v = serde_json::to_value(&state).unwrap_or(serde_json::Value::Null);
+                        if last_emitted.as_ref() != Some(&v) {
+                            last_emitted = Some(v.clone());
+                            yield v;
+                        }
+                    }
+                    Err(e) => {
+                        tracing::warn!(error = %e, "bluez get_managed_objects failed");
+                        tokio::time::sleep(backoff).await;
+                        backoff = (backoff * 2).min(max_backoff);
+                        continue;
+                    }
+                }
+
+                // Subscribe to InterfacesAdded / InterfacesRemoved.
+                let mut interfaces_added = match om_proxy.receive_interfaces_added().await {
+                    Ok(s) => s,
+                    Err(e) => {
+                        tracing::warn!(error = %e, "bluez receive_interfaces_added failed");
+                        tokio::time::sleep(backoff).await;
+                        backoff = (backoff * 2).min(max_backoff);
+                        continue;
+                    }
+                };
+                let mut interfaces_removed = match om_proxy.receive_interfaces_removed().await {
+                    Ok(s) => s,
+                    Err(e) => {
+                        tracing::warn!(error = %e, "bluez receive_interfaces_removed failed");
+                        tokio::time::sleep(backoff).await;
+                        backoff = (backoff * 2).min(max_backoff);
+                        continue;
+                    }
+                };
+
+                backoff = std::time::Duration::from_secs(1);
+
+                // Yield deduped rebuilds on each event.
+                let mut clean = true;
+                loop {
+                    tokio::select! {
+                        next = interfaces_added.next() => {
+                            if next.is_none() { break; }
+                        }
+                        next = interfaces_removed.next() => {
+                            if next.is_none() { break; }
+                        }
+                    }
+                    match om_proxy.get_managed_objects().await {
+                        Ok(objs) => {
+                            let state = map_managed_objects(&objs);
+                            let v = serde_json::to_value(&state).unwrap_or(serde_json::Value::Null);
+                            if last_emitted.as_ref() != Some(&v) {
+                                last_emitted = Some(v.clone());
+                                yield v;
+                            }
+                        }
+                        Err(e) => {
+                            tracing::warn!(error = %e, "bluez get_managed_objects failed during loop");
+                            clean = false;
+                            break;
+                        }
+                    }
+                }
+
+                if !clean {
+                    tokio::time::sleep(backoff).await;
+                    backoff = (backoff * 2).min(max_backoff);
                 }
             }
         }))
@@ -331,97 +411,6 @@ pub(crate) fn map_managed_objects(
         discovering,
         connected_devices,
     }
-}
-
-/// Run one Bluetooth event loop: fetch initial state, then watch for changes.
-///
-/// Returns (emissions, error) so the caller can flush any yielded values
-/// before applying backoff.
-async fn run_bluetooth_loop(
-    conn: &Connection,
-    last_emitted: &mut Option<serde_json::Value>,
-) -> Result<Vec<serde_json::Value>, (Vec<serde_json::Value>, InfrastructureError)> {
-    let mut emissions = Vec::new();
-
-    // Open ObjectManagerProxy.
-    let om_proxy = match zbus::fdo::ObjectManagerProxy::builder(conn)
-        .destination("org.bluez")
-        .map_err(|e| {
-            (
-                emissions.clone(),
-                InfrastructureError::DbusTransport(e.to_string()),
-            )
-        })?
-        .path("/")
-        .map_err(|e| {
-            (
-                emissions.clone(),
-                InfrastructureError::DbusTransport(e.to_string()),
-            )
-        })?
-        .build()
-        .await
-    {
-        Ok(p) => p,
-        Err(e) => return Err((emissions, InfrastructureError::DbusTransport(e.to_string()))),
-    };
-
-    // Fetch and yield initial state.
-    let managed_objects = match om_proxy.get_managed_objects().await {
-        Ok(objs) => objs,
-        Err(e) => return Err((emissions, InfrastructureError::DbusTransport(e.to_string()))),
-    };
-
-    let state = map_managed_objects(&managed_objects);
-    let state_json = serde_json::to_value(&state).unwrap_or(serde_json::Value::Null);
-    if last_emitted.as_ref() != Some(&state_json) {
-        emissions.push(state_json.clone());
-        *last_emitted = Some(state_json);
-    }
-
-    // TODO: per-device PropertiesChanged subscriptions would catch connection
-    // state flips faster, but for v1 we rebuild on InterfacesAdded/Removed.
-    // Devices appear/disappear from the ObjectManager view within a few
-    // seconds, so the bar will update with acceptable latency.
-
-    // Subscribe to InterfacesAdded and InterfacesRemoved.
-    let mut interfaces_added = match om_proxy.receive_interfaces_added().await {
-        Ok(s) => s,
-        Err(e) => return Err((emissions, InfrastructureError::DbusTransport(e.to_string()))),
-    };
-
-    let mut interfaces_removed = match om_proxy.receive_interfaces_removed().await {
-        Ok(s) => s,
-        Err(e) => return Err((emissions, InfrastructureError::DbusTransport(e.to_string()))),
-    };
-
-    // Loop until an error occurs, listening for interface changes.
-    loop {
-        tokio::select! {
-            _ = interfaces_added.next() => {
-                // InterfacesAdded: rebuild state
-            }
-            _ = interfaces_removed.next() => {
-                // InterfacesRemoved: rebuild state
-            }
-        }
-
-        // Rebuild from current ObjectManager state.
-        match om_proxy.get_managed_objects().await {
-            Ok(objs) => {
-                let state = map_managed_objects(&objs);
-                let state_json = serde_json::to_value(&state).unwrap_or(serde_json::Value::Null);
-                if last_emitted.as_ref() != Some(&state_json) {
-                    emissions.push(state_json.clone());
-                    *last_emitted = Some(state_json);
-                }
-            }
-            Err(e) => return Err((emissions, InfrastructureError::DbusTransport(e.to_string()))),
-        }
-    }
-
-    #[allow(unreachable_code)]
-    Ok(emissions)
 }
 
 #[cfg(test)]

@@ -145,13 +145,13 @@ impl ProviderSource for NetworkManagerProvider {
                             )
                         });
 
-                    let primary = if primary_path.as_str() != "/" {
+                    let (primary, wifi_signal_percent) = if primary_path.as_str() != "/" {
                         match build_primary_connection(conn, &primary_path).await {
-                            Ok(conn_info) => Some(conn_info),
-                            Err(_) => None,
+                            Ok((conn_info, strength)) => (Some(conn_info), strength),
+                            Err(_) => (None, None),
                         }
                     } else {
-                        None
+                        (None, None)
                     };
 
                     Ok(NetworkState {
@@ -159,7 +159,7 @@ impl ProviderSource for NetworkManagerProvider {
                         connectivity: map_connectivity(connectivity),
                         primary,
                         wifi_enabled,
-                        wifi_signal_percent: None, // Will be set if we have a primary wifi connection
+                        wifi_signal_percent,
                     })
                 })
             });
@@ -174,11 +174,12 @@ impl ProviderSource for NetworkManagerProvider {
     }
 }
 
-/// Build primary connection details from a Connection.Active object path.
+/// Build primary connection details from a Connection.Active object
+/// path. Returns the connection and (for wifi) the signal strength.
 async fn build_primary_connection(
     conn: &Connection,
     primary_path: &zbus::zvariant::OwnedObjectPath,
-) -> Result<NetworkConnection, InfrastructureError> {
+) -> Result<(NetworkConnection, Option<u8>), InfrastructureError> {
     let proxy = zbus::Proxy::new(
         conn,
         "org.freedesktop.NetworkManager",
@@ -199,23 +200,24 @@ async fn build_primary_connection(
 
     let kind = map_nm_connection_type(&connection_type);
 
-    let ssid = if kind == NetworkKind::Wifi {
-        match read_wifi_ssid(conn, &proxy).await {
-            Ok(s) => Some(s),
-            Err(_) => None,
+    let (ssid, strength) = if kind == NetworkKind::Wifi {
+        match read_wifi_access_point(conn, &proxy).await {
+            Ok((s, st)) => (Some(s), st),
+            Err(_) => (None, None),
         }
     } else {
-        None
+        (None, None)
     };
 
-    Ok(NetworkConnection { kind, id, ssid })
+    Ok((NetworkConnection { kind, id, ssid }, strength))
 }
 
-/// Read SSID from the WiFi access point associated with this active connection.
-async fn read_wifi_ssid(
+/// Read SSID and signal strength from the WiFi access point associated
+/// with this active connection.
+async fn read_wifi_access_point(
     conn: &Connection,
     active_proxy: &zbus::Proxy<'_>,
-) -> Result<String, InfrastructureError> {
+) -> Result<(String, Option<u8>), InfrastructureError> {
     let specific_object: zbus::zvariant::OwnedObjectPath = active_proxy
         .get_property("SpecificObject")
         .await
@@ -241,7 +243,12 @@ async fn read_wifi_ssid(
         .await
         .map_err(|e| InfrastructureError::DbusTransport(e.to_string()))?;
 
-    String::from_utf8(ssid_bytes).map_err(|e| InfrastructureError::DbusTransport(e.to_string()))
+    let ssid = String::from_utf8(ssid_bytes)
+        .map_err(|e| InfrastructureError::DbusTransport(e.to_string()))?;
+
+    let strength: Option<u8> = ap_proxy.get_property("Strength").await.ok();
+
+    Ok((ssid, strength))
 }
 
 /// Map NetworkManager connectivity u32 to NetworkConnectivity enum.

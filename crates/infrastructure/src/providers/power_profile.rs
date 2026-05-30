@@ -140,23 +140,19 @@ impl ProviderSource for PowerProfilesDaemonProvider {
                         .unwrap_or_default();
                     let active = parse_profile_str(&active_profile_str);
 
-                    // Profiles is an array of dicts; each dict is (String, Variant)
-                    let profiles_data: Vec<(
-                        String,
-                        std::collections::HashMap<String, zbus::zvariant::Value>,
-                    )> = proxy.get_property("Profiles").await.unwrap_or_default();
+                    // Profiles is `aa{sv}`: an array of dicts (string →
+                    // variant). Each dict has a "Profile" key whose value
+                    // is the profile name string (power-saver / balanced /
+                    // performance) plus driver metadata we ignore.
+                    let profiles_data: Vec<
+                        std::collections::HashMap<String, zbus::zvariant::OwnedValue>,
+                    > = proxy.get_property("Profiles").await.unwrap_or_default();
                     let profiles: Vec<PowerProfile> = profiles_data
                         .iter()
-                        .filter_map(|(_profile_name, dict)| {
-                            dict.get("Profile")
-                                .and_then(|v| {
-                                    if let Ok(s) = <String>::try_from(v) {
-                                        Some(s)
-                                    } else {
-                                        None
-                                    }
-                                })
-                                .and_then(|s| parse_profile_str(&s))
+                        .filter_map(|dict| {
+                            let val = dict.get("Profile")?;
+                            let s: String = val.try_clone().ok()?.try_into().ok()?;
+                            parse_profile_str(&s)
                         })
                         .collect();
 

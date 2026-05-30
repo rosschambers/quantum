@@ -80,7 +80,7 @@ pub fn property_subscription_stream<S>(
     conn: Connection,
     service: &'static str,
     path: &'static str,
-    interface: &'static str,
+    _interface: &'static str,
     build: BuildFn<S>,
 ) -> BoxStream<'static, serde_json::Value>
 where
@@ -92,22 +92,92 @@ where
         let mut last_emitted: Option<serde_json::Value> = None;
 
         loop {
-            match run_one_session(&conn, service, path, interface, &build, &mut last_emitted).await {
-                Ok(emissions) => {
-                    for v in emissions {
-                        yield v;
-                    }
-                    // Successful sub ended (proxy dropped) — reconnect from scratch.
-                    backoff = Duration::from_secs(1);
-                }
-                Err((emissions, _err)) => {
-                    for v in emissions {
-                        yield v;
-                    }
+            // Open a PropertiesProxy for the target path.
+            let props_proxy = match open_properties_proxy(&conn, service, path).await {
+                Ok(p) => p,
+                Err(e) => {
+                    tracing::warn!(
+                        service,
+                        path,
+                        error = %e,
+                        "open_properties_proxy failed, backing off"
+                    );
                     tokio::time::sleep(backoff).await;
                     backoff = (backoff * 2).min(max_backoff);
+                    continue;
+                }
+            };
+
+            // Initial state.
+            match build(&conn).await {
+                Ok(state) => match serde_json::to_value(&state) {
+                    Ok(v) => {
+                        if last_emitted.as_ref() != Some(&v) {
+                            last_emitted = Some(v.clone());
+                            yield v;
+                        }
+                    }
+                    Err(e) => {
+                        tracing::warn!(service, path, error = %e, "initial state serialization failed");
+                        tokio::time::sleep(backoff).await;
+                        backoff = (backoff * 2).min(max_backoff);
+                        continue;
+                    }
+                },
+                Err(e) => {
+                    tracing::warn!(service, path, error = %e, "initial state build failed, backing off");
+                    tokio::time::sleep(backoff).await;
+                    backoff = (backoff * 2).min(max_backoff);
+                    continue;
                 }
             }
+
+            // Subscribe to PropertiesChanged.
+            let mut changes = match props_proxy.receive_properties_changed().await {
+                Ok(s) => s,
+                Err(e) => {
+                    tracing::warn!(service, path, error = %e, "receive_properties_changed failed");
+                    tokio::time::sleep(backoff).await;
+                    backoff = (backoff * 2).min(max_backoff);
+                    continue;
+                }
+            };
+
+            // Reset backoff on a successful subscription.
+            backoff = Duration::from_secs(1);
+
+            // Stream changes. Yield each rebuilt DTO directly, dedupe by
+            // PartialEq on the serialized JSON.
+            let mut stream_ended_cleanly = true;
+            while let Some(_signal) = changes.next().await {
+                match build(&conn).await {
+                    Ok(state) => match serde_json::to_value(&state) {
+                        Ok(v) => {
+                            if last_emitted.as_ref() != Some(&v) {
+                                last_emitted = Some(v.clone());
+                                yield v;
+                            }
+                        }
+                        Err(e) => {
+                            tracing::warn!(service, path, error = %e, "state serialization failed");
+                            stream_ended_cleanly = false;
+                            break;
+                        }
+                    },
+                    Err(e) => {
+                        tracing::warn!(service, path, error = %e, "state build failed during signal loop");
+                        stream_ended_cleanly = false;
+                        break;
+                    }
+                }
+            }
+
+            if !stream_ended_cleanly {
+                tokio::time::sleep(backoff).await;
+                backoff = (backoff * 2).min(max_backoff);
+            }
+            // Either the signal stream ended (proxy dropped) or we broke
+            // out on error. Either way, loop back and re-open the proxy.
         }
     })
 }
@@ -123,68 +193,6 @@ async fn open_properties_proxy<'a>(
         .interface("org.freedesktop.DBus.Properties")?
         .build()
         .await
-}
-
-/// One connect + initial fetch + signal loop. Returns the list of
-/// emissions to yield in either branch so callers can flush them
-/// before retrying.
-async fn run_one_session<S>(
-    conn: &Connection,
-    service: &str,
-    path: &str,
-    interface: &str,
-    build: &BuildFn<S>,
-    last_emitted: &mut Option<serde_json::Value>,
-) -> Result<Vec<serde_json::Value>, (Vec<serde_json::Value>, InfrastructureError)>
-where
-    S: Serialize + Send + Sync + 'static,
-{
-    let mut emissions = Vec::new();
-
-    // Open a PropertiesProxy for the target path.
-    let props_proxy = match open_properties_proxy(conn, service, path).await {
-        Ok(p) => p,
-        Err(e) => return Err((emissions, InfrastructureError::DbusTransport(e.to_string()))),
-    };
-
-    // Yield initial state.
-    match build(conn).await {
-        Ok(state) => {
-            let v = serde_json::to_value(&state)
-                .map_err(|e| (emissions.clone(), InfrastructureError::from(e)))?;
-            if last_emitted.as_ref() != Some(&v) {
-                *last_emitted = Some(v.clone());
-                emissions.push(v);
-            }
-        }
-        Err(e) => return Err((emissions, e)),
-    }
-
-    // Subscribe.
-    let mut changes = match props_proxy.receive_properties_changed().await {
-        Ok(s) => s,
-        Err(e) => return Err((emissions, InfrastructureError::DbusTransport(e.to_string()))),
-    };
-
-    let _ = interface; // reserved for future per-interface filtering
-
-    while let Some(_signal) = changes.next().await {
-        match build(conn).await {
-            Ok(state) => {
-                let v = match serde_json::to_value(&state) {
-                    Ok(v) => v,
-                    Err(e) => return Err((emissions, InfrastructureError::from(e))),
-                };
-                if last_emitted.as_ref() != Some(&v) {
-                    *last_emitted = Some(v.clone());
-                    emissions.push(v);
-                }
-            }
-            Err(e) => return Err((emissions, e)),
-        }
-    }
-
-    Ok(emissions)
 }
 
 #[cfg(test)]
