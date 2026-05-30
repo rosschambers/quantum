@@ -154,7 +154,6 @@
     .meters {
         display: flex;
         gap: var(--space-3, 0.75rem);
-        font-size: var(--font-size-sm, 12px);
         color: var(--color-fg-alt, #a6adc8);
     }
     .meter {
@@ -165,12 +164,17 @@
         cursor: default;
     }
     .icon {
-        font-size: 12px;
+        /* Match the tray indicator glyph size so CPU/MEM align with
+         * the right-side icons. */
+        font-size: var(--tray-icon-size, 14px);
         opacity: 0.9;
     }
     .bar {
         font-family: var(--font-mono, monospace);
-        font-size: 10px;
+        /* Same px size as the icon: the bucket glyphs (\u25ae\u25af) read as
+         * icons themselves and should be the same visual weight as the
+         * indicator glyphs on the right. */
+        font-size: var(--tray-icon-size, 14px);
         letter-spacing: 1px;
         line-height: 1;
     }
