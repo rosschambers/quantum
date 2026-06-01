@@ -102,6 +102,45 @@ mod tests {
         // Job should have fired and removed itself from the map
         assert!(!uc.jobs.lock().await.contains_key(&id));
     }
+
+    #[tokio::test]
+    async fn list_starts_empty() {
+        let uc = ScheduleActionUseCase::new(empty_dispatcher());
+        assert!(uc.list().await.is_empty());
+    }
+
+    #[tokio::test]
+    async fn list_returns_scheduled_jobs() {
+        let uc = ScheduleActionUseCase::new(empty_dispatcher());
+        let id = uc
+            .schedule(60, "Suspend".into(), serde_json::json!({}))
+            .await
+            .unwrap();
+        let jobs = uc.list().await;
+        assert_eq!(jobs.len(), 1);
+        assert_eq!(jobs[0].id, id);
+        assert_eq!(jobs[0].label, "Suspend");
+    }
+
+    #[tokio::test]
+    async fn cancel_unknown_id_returns_err() {
+        let uc = ScheduleActionUseCase::new(empty_dispatcher());
+        assert!(uc.cancel("doesnotexist".into()).await.is_err());
+    }
+
+    #[tokio::test]
+    async fn cancel_real_id_prevents_fire() {
+        let uc = ScheduleActionUseCase::new(empty_dispatcher());
+        let id = uc
+            .schedule(60, "Suspend".into(), serde_json::json!({}))
+            .await
+            .unwrap();
+        uc.cancel(id.clone()).await.unwrap();
+        assert!(uc.list().await.is_empty());
+        // Wait a bit to ensure the aborted task doesn't somehow re-insert
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        assert!(uc.list().await.is_empty());
+    }
 }
 
 struct ScheduledJobInternal {
@@ -183,5 +222,28 @@ impl ScheduleActionUseCase {
                 return candidate;
             }
         }
+    }
+
+    pub async fn cancel(&self, id: ScheduleId) -> Result<(), ApplicationError> {
+        let mut jobs = self.jobs.lock().await;
+        let job = jobs.remove(&id).ok_or_else(|| {
+            ApplicationError::Domain(DomainError::Unsupported(format!(
+                "scheduled job not found: {id}"
+            )))
+        })?;
+        job.abort.abort();
+        tracing::info!("cancelled scheduled job {id} ({label})", id = id, label = job.label);
+        Ok(())
+    }
+
+    pub async fn list(&self) -> Vec<ScheduledJobSummary> {
+        let jobs = self.jobs.lock().await;
+        jobs.values()
+            .map(|j| ScheduledJobSummary {
+                id: j.id.clone(),
+                fires_at: j.fires_at,
+                label: j.label.clone(),
+            })
+            .collect()
     }
 }
