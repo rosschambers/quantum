@@ -462,20 +462,18 @@ async fn setup_daemon(
     // GTK, DummyWindowHost when headless).
     let open_view_use_case = Arc::new(OpenViewUseCase::new(window_host));
 
-    let dispatcher = Arc::new_cyclic(|weak_dispatcher| {
-        let schedule_action_use_case =
-            Arc::new(ScheduleActionUseCase::new(weak_dispatcher.clone()));
-        AppDispatcher::new(
-            search_use_case,
-            launch_action_use_case,
-            list_providers_use_case,
-            reload_theme_use_case,
-            open_view_use_case,
-            subscribe_provider_use_case,
-            query_provider_use_case,
-            schedule_action_use_case,
-        )
-    });
+    let schedule_action_use_case =
+        Arc::new(ScheduleActionUseCase::new(launch_action_use_case.clone()));
+    let dispatcher = Arc::new(AppDispatcher::new(
+        search_use_case,
+        launch_action_use_case,
+        list_providers_use_case,
+        reload_theme_use_case,
+        open_view_use_case,
+        subscribe_provider_use_case,
+        query_provider_use_case,
+        schedule_action_use_case,
+    ));
     let _ipc_dispatcher = Arc::new(AppDispatcherAdapter::new(dispatcher));
 
     // Determine socket path

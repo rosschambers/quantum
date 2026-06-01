@@ -18,9 +18,6 @@ pub struct Dispatcher {
     schedule_action: Arc<ScheduleActionUseCase>,
 }
 
-unsafe impl Send for Dispatcher {}
-unsafe impl Sync for Dispatcher {}
-
 impl Dispatcher {
     #[allow(clippy::too_many_arguments)]
     pub fn new(
@@ -202,16 +199,20 @@ impl Dispatcher {
     }
 
     async fn handle_action_schedule(&self, params: Value) -> Result<Value> {
+        use crate::use_cases::schedule_action::InvokeParams;
         #[derive(serde::Deserialize)]
         struct ScheduleParams {
             delay_secs: u64,
             label: String,
-            action: serde_json::Value,
+            action: InvokeParams,
         }
         let p: ScheduleParams = serde_json::from_value(params).map_err(|e| {
             ApplicationError::Unknown(format!("invalid action.schedule params: {e}"))
         })?;
-        let id = self.schedule_action.schedule(p.delay_secs, p.label, p.action).await?;
+        let id = self
+            .schedule_action
+            .schedule(p.delay_secs, p.label, p.action)
+            .await?;
         Ok(json!({ "id": id }))
     }
 
@@ -220,9 +221,8 @@ impl Dispatcher {
         struct CancelParams {
             id: String,
         }
-        let p: CancelParams = serde_json::from_value(params).map_err(|e| {
-            ApplicationError::Unknown(format!("invalid action.cancel params: {e}"))
-        })?;
+        let p: CancelParams = serde_json::from_value(params)
+            .map_err(|e| ApplicationError::Unknown(format!("invalid action.cancel params: {e}")))?;
         self.schedule_action.cancel(p.id).await?;
         Ok(json!({}))
     }
@@ -386,19 +386,17 @@ mod tests {
         ));
         let query_provider = Arc::new(QueryProviderUseCase::new(registry));
 
-        Arc::new_cyclic(|weak_dispatcher| {
-            let schedule_action = Arc::new(super::ScheduleActionUseCase::new(weak_dispatcher.clone()));
-            Dispatcher::new(
-                search,
-                launch_action,
-                list_providers,
-                reload_theme,
-                open_view,
-                subscribe_provider,
-                query_provider,
-                schedule_action,
-            )
-        })
+        let schedule_action = Arc::new(super::ScheduleActionUseCase::new(launch_action.clone()));
+        Arc::new(Dispatcher::new(
+            search,
+            launch_action,
+            list_providers,
+            reload_theme,
+            open_view,
+            subscribe_provider,
+            query_provider,
+            schedule_action,
+        ))
     }
 
     #[tokio::test]
@@ -532,5 +530,48 @@ mod tests {
             .expect("list");
         let jobs = listed["jobs"].as_array().expect("jobs");
         assert_eq!(jobs.len(), 0);
+    }
+
+    #[tokio::test]
+    async fn action_schedule_then_scheduled_then_cancel_round_trip() {
+        let dispatcher = build_dispatcher();
+        // Schedule a job 60s out (won't fire during the test).
+        let scheduled = dispatcher
+            .dispatch(
+                "action.schedule",
+                json!({
+                    "delay_secs": 60,
+                    "label": "Suspend",
+                    "action": {
+                        "provider": "apps",
+                        "action": { "kind": "launch", "data": { "desktop_id": "noop" } }
+                    }
+                }),
+            )
+            .await
+            .expect("schedule");
+        let id = scheduled["id"].as_str().expect("id").to_string();
+        assert_eq!(id.len(), 8);
+
+        // List shows the job.
+        let listed = dispatcher
+            .dispatch("action.scheduled", json!({}))
+            .await
+            .expect("list");
+        let jobs = listed["jobs"].as_array().expect("jobs");
+        assert_eq!(jobs.len(), 1);
+        assert_eq!(jobs[0]["id"], id);
+        assert_eq!(jobs[0]["label"], "Suspend");
+
+        // Cancel removes it.
+        dispatcher
+            .dispatch("action.cancel", json!({ "id": id }))
+            .await
+            .expect("cancel");
+        let listed2 = dispatcher
+            .dispatch("action.scheduled", json!({}))
+            .await
+            .expect("list 2");
+        assert_eq!(listed2["jobs"].as_array().expect("jobs").len(), 0);
     }
 }

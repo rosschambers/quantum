@@ -9,10 +9,10 @@
 //! This avoids adding chrono as a dependency.
 
 use crate::error::ApplicationError;
-use quantum_domain::DomainError;
+use crate::use_cases::launch_action::LaunchActionUseCase;
+use quantum_domain::{Action, DomainError, ProviderId};
 use rand::Rng;
-use serde::Serialize;
-use serde_json::Value;
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration, SystemTime};
@@ -38,21 +38,31 @@ struct ScheduledJobInternal {
 }
 
 pub struct ScheduleActionUseCase {
-    #[allow(dead_code)]
-    dispatcher: std::sync::Weak<crate::Dispatcher>,
+    /// Direct reference to the action-invoke use case. We avoid going
+    /// through the full Dispatcher because that creates a recursive
+    /// Send bound (`dispatch()` would await a future that spawns a
+    /// task that calls `dispatch()` again).
+    launch_action: Arc<LaunchActionUseCase>,
     #[allow(private_interfaces)]
     pub(crate) jobs: Arc<Mutex<HashMap<ScheduleId, ScheduledJobInternal>>>,
 }
 
-unsafe impl Send for ScheduleActionUseCase {}
-unsafe impl Sync for ScheduleActionUseCase {}
+/// Parameter shape for a scheduled invoke: the same `{provider, action}`
+/// envelope that `action.invoke` accepts over IPC. Stored verbatim and
+/// reconstructed into the LaunchActionUseCase's typed args when the
+/// timer fires.
+#[derive(Debug, Clone, Deserialize)]
+pub struct InvokeParams {
+    pub provider: ProviderId,
+    pub action: Action,
+}
 
 const MAX_DELAY_SECS: u64 = 86_400; // 24h cap
 
 impl ScheduleActionUseCase {
-    pub fn new(dispatcher: std::sync::Weak<crate::Dispatcher>) -> Self {
+    pub fn new(launch_action: Arc<LaunchActionUseCase>) -> Self {
         Self {
-            dispatcher,
+            launch_action,
             jobs: Arc::new(Mutex::new(HashMap::new())),
         }
     }
@@ -61,7 +71,7 @@ impl ScheduleActionUseCase {
         &self,
         delay_secs: u64,
         label: String,
-        invoke_params: Value,
+        params: InvokeParams,
     ) -> Result<ScheduleId, ApplicationError> {
         if delay_secs == 0 || delay_secs > MAX_DELAY_SECS {
             return Err(ApplicationError::Domain(DomainError::Unsupported(format!(
@@ -73,20 +83,19 @@ impl ScheduleActionUseCase {
         let jobs = self.jobs.clone();
         let id_for_task = id.clone();
         let label_for_log = label.clone();
+        let launch_action = self.launch_action.clone();
+        let provider = params.provider;
+        let action = params.action;
 
         let handle = tokio::spawn(async move {
             tokio::time::sleep(Duration::from_secs(delay_secs)).await;
-            // Log that the scheduled action fired. In a future version, we would
-            // invoke the dispatcher here. For now, we just clean up the job.
-            // Note: we don't use dispatcher_weak here to avoid Send-checking issues
-            // with circular dependencies between ScheduleActionUseCase and Dispatcher.
-            tracing::info!("scheduled action fired: {id_for_task} ({label_for_log})");
-            // Remove self from the map.
+            tracing::info!("scheduled action firing: {id_for_task} ({label_for_log})");
+            if let Err(e) = launch_action.execute(provider, action).await {
+                tracing::warn!("scheduled action {id_for_task} ({label_for_log}) failed: {e}");
+            }
+            // Always remove self from the map regardless of outcome.
             jobs.lock().await.remove(&id_for_task);
         });
-
-        // Store the action params for potential future use
-        let _invoke_params = invoke_params;
 
         let internal = ScheduledJobInternal {
             id: id.clone(),
@@ -119,7 +128,11 @@ impl ScheduleActionUseCase {
             )))
         })?;
         job.abort.abort();
-        tracing::info!("cancelled scheduled job {id} ({label})", id = id, label = job.label);
+        tracing::info!(
+            "cancelled scheduled job {id} ({label})",
+            id = id,
+            label = job.label
+        );
         Ok(())
     }
 
@@ -138,13 +151,79 @@ impl ScheduleActionUseCase {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::Dispatcher;
-    use std::sync::Weak;
+    use async_trait::async_trait;
+    use quantum_domain::{
+        ActionOutcome, DomainError, Match, ProviderCapabilities, ProviderId, ProviderRegistry,
+        ProviderSource, Query,
+    };
 
-    fn empty_dispatcher() -> Weak<Dispatcher> {
-        // For tests that don't actually fire, we use Weak::new() so
-        // upgrade() returns None and the spawned task exits cleanly.
-        Weak::new()
+    /// Fake provider that records its received actions and reports
+    /// `invoke()` succeeded so the scheduled-fire path can be asserted
+    /// without touching real DBus or system services.
+    struct FakeProvider {
+        id: ProviderId,
+        invoked: Arc<Mutex<Vec<String>>>,
+    }
+
+    #[async_trait]
+    impl ProviderSource for FakeProvider {
+        fn id(&self) -> &ProviderId {
+            &self.id
+        }
+        fn capabilities(&self) -> ProviderCapabilities {
+            ProviderCapabilities {
+                searchable: false,
+                streamable: false,
+            }
+        }
+        async fn search(&self, _q: &Query) -> std::result::Result<Vec<Match>, DomainError> {
+            Ok(vec![])
+        }
+        async fn invoke(
+            &self,
+            action: &quantum_domain::Action,
+        ) -> std::result::Result<ActionOutcome, DomainError> {
+            self.invoked.lock().await.push(format!("{action:?}"));
+            Ok(ActionOutcome { message: None })
+        }
+    }
+
+    struct FakeRegistry {
+        provider: Arc<dyn ProviderSource>,
+    }
+
+    #[async_trait]
+    impl ProviderRegistry for FakeRegistry {
+        async fn list(&self) -> Vec<ProviderId> {
+            vec![self.provider.id().clone()]
+        }
+        async fn get(&self, _id: &ProviderId) -> Option<Arc<dyn ProviderSource>> {
+            Some(self.provider.clone())
+        }
+    }
+
+    /// Build a ScheduleActionUseCase whose LaunchActionUseCase routes
+    /// to a FakeProvider. The returned `invoked` vec lets tests assert
+    /// the scheduled action actually fired.
+    fn build_uc() -> (ScheduleActionUseCase, Arc<Mutex<Vec<String>>>) {
+        let invoked = Arc::new(Mutex::new(Vec::new()));
+        let provider = Arc::new(FakeProvider {
+            id: ProviderId::from("test"),
+            invoked: invoked.clone(),
+        }) as Arc<dyn ProviderSource>;
+        let registry = Arc::new(FakeRegistry { provider });
+        let launch_action = Arc::new(LaunchActionUseCase::new(registry));
+        let uc = ScheduleActionUseCase::new(launch_action);
+        (uc, invoked)
+    }
+
+    fn sample_params() -> InvokeParams {
+        InvokeParams {
+            provider: ProviderId::from("test"),
+            action: quantum_domain::Action::Launch {
+                desktop_id: "noop".into(),
+            },
+        }
     }
 
     #[test]
@@ -157,32 +236,28 @@ mod tests {
         let v = serde_json::to_value(&summary).expect("serialize");
         assert_eq!(v["id"], "abc12345");
         assert_eq!(v["label"], "Suspend");
-        // The exact shape of fires_at depends on the serialization choice
-        // — assert it's present at minimum.
         assert!(v.get("fires_at").is_some());
     }
 
     #[tokio::test]
     async fn rejects_zero_delay() {
-        let uc = ScheduleActionUseCase::new(empty_dispatcher());
-        let res = uc.schedule(0, "Suspend".into(), serde_json::json!({})).await;
+        let (uc, _) = build_uc();
+        let res = uc.schedule(0, "Suspend".into(), sample_params()).await;
         assert!(res.is_err());
     }
 
     #[tokio::test]
     async fn rejects_delay_over_24h() {
-        let uc = ScheduleActionUseCase::new(empty_dispatcher());
-        let res = uc
-            .schedule(86_401, "Suspend".into(), serde_json::json!({}))
-            .await;
+        let (uc, _) = build_uc();
+        let res = uc.schedule(86_401, "Suspend".into(), sample_params()).await;
         assert!(res.is_err());
     }
 
     #[tokio::test]
     async fn accepts_valid_delay_and_returns_id() {
-        let uc = ScheduleActionUseCase::new(empty_dispatcher());
+        let (uc, _) = build_uc();
         let id = uc
-            .schedule(60, "Suspend".into(), serde_json::json!({}))
+            .schedule(60, "Suspend".into(), sample_params())
             .await
             .expect("schedule");
         assert_eq!(id.len(), 8);
@@ -191,34 +266,40 @@ mod tests {
 
     #[tokio::test]
     async fn fires_after_delay_elapsed() {
-        // Test with a very short delay (1 second) and real time
-        let uc = Arc::new(ScheduleActionUseCase::new(empty_dispatcher()));
+        // Real-time 1s sleep so the spawned task actually wakes. Using
+        // tokio::time::pause() with multi-step advance was unreliable
+        // because the spawned task only re-schedules on the multi-thread
+        // runtime; cargo test defaults to single-thread.
+        let (uc, invoked) = build_uc();
+        let uc = Arc::new(uc);
         let id = uc
-            .schedule(1, "Suspend".into(), serde_json::json!({}))
+            .schedule(1, "Suspend".into(), sample_params())
             .await
             .expect("schedule");
-        
-        // Job is present immediately after scheduling
+
         assert!(uc.jobs.lock().await.contains_key(&id));
-        
-        // Wait for the job to complete (plus a small buffer)
+
         tokio::time::sleep(Duration::from_millis(1200)).await;
-        
-        // Job should have fired and removed itself from the map
+
+        // Scheduled action fired through LaunchActionUseCase ->
+        // FakeProvider::invoke (recorded in `invoked`).
+        let inv = invoked.lock().await;
+        assert_eq!(inv.len(), 1, "scheduled action should have fired once");
+        // Job removed itself.
         assert!(!uc.jobs.lock().await.contains_key(&id));
     }
 
     #[tokio::test]
     async fn list_starts_empty() {
-        let uc = ScheduleActionUseCase::new(empty_dispatcher());
+        let (uc, _) = build_uc();
         assert!(uc.list().await.is_empty());
     }
 
     #[tokio::test]
     async fn list_returns_scheduled_jobs() {
-        let uc = ScheduleActionUseCase::new(empty_dispatcher());
+        let (uc, _) = build_uc();
         let id = uc
-            .schedule(60, "Suspend".into(), serde_json::json!({}))
+            .schedule(60, "Suspend".into(), sample_params())
             .await
             .unwrap();
         let jobs = uc.list().await;
@@ -229,21 +310,26 @@ mod tests {
 
     #[tokio::test]
     async fn cancel_unknown_id_returns_err() {
-        let uc = ScheduleActionUseCase::new(empty_dispatcher());
+        let (uc, _) = build_uc();
         assert!(uc.cancel("doesnotexist".into()).await.is_err());
     }
 
     #[tokio::test]
     async fn cancel_real_id_prevents_fire() {
-        let uc = ScheduleActionUseCase::new(empty_dispatcher());
+        let (uc, invoked) = build_uc();
         let id = uc
-            .schedule(60, "Suspend".into(), serde_json::json!({}))
+            .schedule(60, "Suspend".into(), sample_params())
             .await
             .unwrap();
         uc.cancel(id.clone()).await.unwrap();
         assert!(uc.list().await.is_empty());
-        // Wait a bit to ensure the aborted task doesn't somehow re-insert
+        // Wait past the original delay to make sure the aborted task
+        // doesn't somehow still invoke or re-insert.
         tokio::time::sleep(Duration::from_millis(100)).await;
         assert!(uc.list().await.is_empty());
+        assert!(
+            invoked.lock().await.is_empty(),
+            "cancelled action must not fire"
+        );
     }
 }

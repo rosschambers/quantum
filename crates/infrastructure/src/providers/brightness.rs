@@ -210,8 +210,10 @@ impl LogindBrightnessProvider {
         // zero. Look up the device's max to derive the floor; if the
         // device is unknown, fall through with the raw value (it will
         // fail downstream).
-        let value = if let Some(spec) =
-            self.specs.iter().find(|s| s.subsystem == subsystem && s.name == name)
+        let value = if let Some(spec) = self
+            .specs
+            .iter()
+            .find(|s| s.subsystem == subsystem && s.name == name)
         {
             value.max(min_brightness(spec.max)).min(spec.max)
         } else {
