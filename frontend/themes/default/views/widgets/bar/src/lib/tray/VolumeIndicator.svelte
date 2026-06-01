@@ -81,12 +81,11 @@
 
 {#if state.available && state.default_sink !== null}
     <div bind:this={root} class="tray-icon volume" title={tooltipFor(state)}>
-        <span class="icon" aria-hidden="true"
-            >{volumeIcon(state.default_sink.volume_percent, state.default_sink.muted)}</span
-        >
         <Ring
             percent={state.default_sink.muted ? 0 : state.default_sink.volume_percent}
             color={gradientColor(state.default_sink.volume_percent)}
+            kind="icon"
+            label={volumeIcon(state.default_sink.volume_percent, state.default_sink.muted)}
         />
     </div>
 {/if}
@@ -95,21 +94,9 @@
     .tray-icon {
         display: inline-flex;
         align-items: center;
-        gap: 6px;
-        font-size: var(--tray-icon-size, 14px);
         color: var(--tray-icon-color, var(--color-fg, #cdd6f4));
-        padding: 0 4px;
         user-select: none;
         cursor: pointer;
-        line-height: 1;
-    }
-    .icon {
-        font-family:
-            'JetBrainsMono Nerd Font',
-            'Symbols Nerd Font',
-            'FontAwesome',
-            var(--font-mono, ui-monospace, monospace);
-        font-size: var(--tray-icon-size, 14px);
         line-height: 1;
     }
 </style>

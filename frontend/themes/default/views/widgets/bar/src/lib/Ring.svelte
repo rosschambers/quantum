@@ -1,14 +1,19 @@
 <script lang="ts">
     /**
-     * Compact SVG donut ring used by the tray indicators and the
-     * SystemMeters. Two circles (track + arc); the arc's stroke length
-     * is driven by stroke-dasharray + stroke-dashoffset so it fills
-     * proportionally to `percent`. Stroke color comes from the parent
-     * style (currentColor) so the caller controls the gradient mapping.
+     * Compact SVG donut ring used across the bar. Two concentric
+     * circles (track + active arc); the arc's stroke length is driven
+     * by stroke-dasharray + stroke-dashoffset so it fills proportionally
+     * to `percent`. Stroke color is supplied by the caller so each
+     * indicator can map the value to its own gradient.
      *
-     * Pass `null` for percent to render an empty ring (just the track).
-     * Used pre-first-sample so the indicator's slot stays the right
-     * width while data loads.
+     * The center hosts an optional `label` — either a number (CPU%,
+     * MEM%) or an icon glyph (battery, sun, wifi, etc). The `kind`
+     * prop selects the font family so number labels use the monospace
+     * tabular digits and icon labels use the Nerd Font.
+     *
+     * `percent: null` renders an empty ring (just the track) and the
+     * label still draws. Used pre-first-sample so the indicator's
+     * width stays stable while data loads.
      */
     interface Props {
         percent: number | null;
@@ -18,8 +23,21 @@
         stroke?: number;
         /** Optional inline text rendered at the ring's center. */
         label?: string;
+        /**
+         * How to render the label. `'number'` (default) uses a small
+         * monospace digit; `'icon'` uses the Nerd Font stack so glyphs
+         * from the private-use area render correctly. The label color
+         * inherits from CSS in both cases.
+         */
+        kind?: 'number' | 'icon';
         /** CSS color used for the active arc; defaults to currentColor. */
         color?: string;
+        /**
+         * Override the auto-derived label font-size. Useful when an icon
+         * needs to be larger (or smaller) than the default 60% of the
+         * ring diameter.
+         */
+        labelSize?: number;
     }
 
     let {
@@ -27,7 +45,9 @@
         size = 18,
         stroke = 2,
         label,
+        kind = 'number',
         color = 'currentColor',
+        labelSize,
     }: Props = $props();
 
     const radius = $derived((size - stroke) / 2);
@@ -36,11 +56,19 @@
         percent === null ? circ : circ * (1 - Math.max(0, Math.min(100, percent)) / 100),
     );
 
+    // Default label size scales with the ring. Icons get a bit larger
+    // proportional space than numbers because Nerd Font glyphs are
+    // drawn smaller than the unit em-square.
+    const resolvedLabelSize = $derived(
+        labelSize ?? (kind === 'icon' ? Math.round(size * 0.62) : Math.round(size * 0.42)),
+    );
+
     const TRACK_COLOR = 'rgba(255, 255, 255, 0.12)';
 </script>
 
 <svg
     class="ring"
+    class:ring-icon={kind === 'icon'}
     width={size}
     height={size}
     viewBox="0 0 {size} {size}"
@@ -74,6 +102,7 @@
             y={size / 2}
             text-anchor="middle"
             dominant-baseline="central"
+            font-size={resolvedLabelSize}
         >{label}</text>
     {/if}
 </svg>
@@ -85,10 +114,22 @@
     }
     .ring-label {
         font-family: var(--font-mono, ui-monospace, monospace);
-        font-size: 9px;
         font-weight: 600;
         fill: var(--color-fg, #cdd6f4);
         font-variant-numeric: tabular-nums;
         pointer-events: none;
+    }
+    /*
+     * Icon-mode label uses the Nerd Font stack so private-use-area
+     * glyphs render properly. Slightly lighter weight because Nerd
+     * Font glyphs already have their own visual weight baked in.
+     */
+    .ring-icon .ring-label {
+        font-family:
+            'JetBrainsMono Nerd Font',
+            'Symbols Nerd Font',
+            'FontAwesome',
+            var(--font-mono, ui-monospace, monospace);
+        font-weight: 400;
     }
 </style>

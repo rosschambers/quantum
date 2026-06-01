@@ -4,6 +4,7 @@
     import { POWER_PROFILE_CHANNEL } from '../channels';
     import { Icons, powerProfileIcon } from '../icons';
     import { onClick } from './interaction';
+    import Ring from '../Ring.svelte';
 
     interface Props {
         client: Client;
@@ -96,7 +97,7 @@
 
 {#if state.available && state.active !== null}
     <div bind:this={root} class="tray-icon power-profile" title={tooltipFor(state)}>
-        <span class="icon" aria-hidden="true">{iconFor(state)}</span>
+        <Ring percent={100} color="var(--color-fg-alt, #a6adc8)" kind="icon" label={iconFor(state)} />
     </div>
 {/if}
 
@@ -104,20 +105,9 @@
     .tray-icon {
         display: inline-flex;
         align-items: center;
-        font-size: var(--tray-icon-size, 14px);
         color: var(--tray-icon-color, var(--color-fg, #cdd6f4));
-        padding: 0 4px;
         user-select: none;
         cursor: pointer;
-        line-height: 1;
-    }
-    .icon {
-        font-family:
-            'JetBrainsMono Nerd Font',
-            'Symbols Nerd Font',
-            'FontAwesome',
-            var(--font-mono, ui-monospace, monospace);
-        font-size: var(--tray-icon-size, 14px);
         line-height: 1;
     }
 </style>

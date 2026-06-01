@@ -48,10 +48,12 @@
 
 {#if state.available}
     <div class="tray-icon battery" title={tooltipFor(state)}>
-        <span class="icon" aria-hidden="true"
-            >{batteryIcon(state.percentage, state.state === 'charging')}</span
-        >
-        <Ring percent={state.percentage} color={gradientColor(state.percentage)} />
+        <Ring
+            percent={state.percentage}
+            color={gradientColor(state.percentage)}
+            kind="icon"
+            label={batteryIcon(state.percentage, state.state === 'charging')}
+        />
     </div>
 {/if}
 
@@ -59,27 +61,9 @@
     .tray-icon {
         display: inline-flex;
         align-items: center;
-        gap: 6px;
-        font-size: var(--tray-icon-size, 14px);
         color: var(--tray-icon-color, var(--color-fg, #cdd6f4));
-        padding: 0 4px;
         user-select: none;
         cursor: default;
-        line-height: 1;
-    }
-    .icon {
-        /*
-         * Nerd Font glyph. JetBrains Mono Nerd Font (and most other
-         * Nerd Font variants) provide the icons in the private-use
-         * area; we list it first so the icon renders properly while
-         * the rest of the bar still uses the sans-serif body font.
-         */
-        font-family:
-            'JetBrainsMono Nerd Font',
-            'Symbols Nerd Font',
-            'FontAwesome',
-            var(--font-mono, ui-monospace, monospace);
-        font-size: var(--tray-icon-size, 14px);
         line-height: 1;
     }
 </style>

@@ -77,10 +77,11 @@
 
 {#if state.available && state.displays.length > 0}
     <div bind:this={root} class="tray-icon brightness" title={tooltipFor(state)}>
-        <span class="icon" aria-hidden="true">{Icons.brightness}</span>
         <Ring
             percent={brightnessPercent(state)}
             color={gradientColor(brightnessPercent(state))}
+            kind="icon"
+            label={Icons.brightness}
         />
     </div>
 {/if}
@@ -89,21 +90,9 @@
     .tray-icon {
         display: inline-flex;
         align-items: center;
-        gap: 6px;
-        font-size: var(--tray-icon-size, 14px);
         color: var(--tray-icon-color, var(--color-fg, #cdd6f4));
-        padding: 0 4px;
         user-select: none;
         cursor: pointer;
-        line-height: 1;
-    }
-    .icon {
-        font-family:
-            'JetBrainsMono Nerd Font',
-            'Symbols Nerd Font',
-            'FontAwesome',
-            var(--font-mono, ui-monospace, monospace);
-        font-size: var(--tray-icon-size, 14px);
         line-height: 1;
     }
 </style>

@@ -4,6 +4,7 @@
     import { BLUETOOTH_CHANNEL } from '../channels';
     import { Icons } from '../icons';
     import { onClick } from './interaction';
+    import Ring from '../Ring.svelte';
 
     interface Props {
         client: Client;
@@ -64,12 +65,19 @@
     }
 
     /**
-     * Use the Nerd Font bluetooth glyph (private-use area, monochrome
-     * and color-inheriting). All other state lives in the `powered`
-     * CSS class and the device-count badge.
+     * Ring fill percent for the bluetooth state. Powered + at least
+     * one device → full ring in the accent color; powered + no
+     * devices → half ring; off → empty ring.
      */
-    function iconFor(_s: BluetoothState): string {
-        return Icons.bluetooth;
+    function ringPercent(s: BluetoothState): number {
+        if (!s.powered) return 0;
+        if (s.connected_devices.length > 0) return 100;
+        return 50;
+    }
+
+    function ringColor(s: BluetoothState): string {
+        if (!s.powered) return 'var(--color-fg-alt, #a6adc8)';
+        return 'var(--color-accent, #89b4fa)';
     }
 
     function tooltipFor(s: BluetoothState): string {
@@ -77,7 +85,8 @@
         if (s.connected_devices.length === 0) return 'bluetooth on, no devices';
         const names = s.connected_devices
             .map((dev) => {
-                const battery = dev.battery_percent !== null ? ` (${dev.battery_percent}%)` : '';
+                const battery =
+                    dev.battery_percent !== null ? ` (${dev.battery_percent}%)` : '';
                 return `${dev.name}${battery}`;
             })
             .join(', ');
@@ -93,7 +102,12 @@
         class:has-devices={state.connected_devices.length > 0}
         title={tooltipFor(state)}
     >
-        <span class="icon" aria-hidden="true">{iconFor(state)}</span>
+        <Ring
+            percent={ringPercent(state)}
+            color={ringColor(state)}
+            kind="icon"
+            label={Icons.bluetooth}
+        />
         {#if state.connected_devices.length > 0}
             <span class="badge">{state.connected_devices.length}</span>
         {/if}
@@ -104,23 +118,14 @@
     .tray-icon {
         display: inline-flex;
         align-items: center;
-        gap: 2px;
-        font-size: var(--tray-icon-size, 14px);
-        color: var(--tray-icon-color, var(--color-fg-alt, #a6adc8));
-        padding: 0 4px;
+        gap: 3px;
+        color: var(--color-fg-alt, #a6adc8);
         user-select: none;
         cursor: pointer;
         line-height: 1;
     }
-    .tray-icon.powered { color: var(--tray-icon-color-active, var(--color-accent, #89b4fa)); }
-    .icon {
-        font-family:
-            'JetBrainsMono Nerd Font',
-            'Symbols Nerd Font',
-            'FontAwesome',
-            var(--font-mono, ui-monospace, monospace);
-        font-size: var(--tray-icon-size, 14px);
-        line-height: 1;
+    .tray-icon.powered {
+        color: var(--color-accent, #89b4fa);
     }
     .badge {
         font-family: var(--font-mono, ui-monospace, monospace);
@@ -129,5 +134,6 @@
         padding: 1px 3px;
         border-radius: 999px;
         line-height: 1;
+        color: var(--color-fg, #cdd6f4);
     }
 </style>

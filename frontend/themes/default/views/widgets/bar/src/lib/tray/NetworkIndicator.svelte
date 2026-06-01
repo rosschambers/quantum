@@ -66,12 +66,6 @@
         // TODO: connection-list popover. Deferred from batch 1.
     }
 
-    /**
-     * Percentage that drives the ring. Wifi/cellular use signal
-     * strength. Ethernet uses 100 when connected (the ring is just a
-     * visual confirmation of an active link). No primary connection
-     * returns null so the ring renders empty.
-     */
     function ringPercent(s: NetworkState): number | null {
         if (!s.available || !s.primary) return null;
         if (s.primary.kind === 'wifi' || s.primary.kind === 'cellular') {
@@ -92,10 +86,12 @@
 
 {#if state.available}
     <div bind:this={root} class="tray-icon network" title={tooltipFor(state)}>
-        <span class="icon" aria-hidden="true"
-            >{networkIcon(state.primary?.kind ?? null, state.primary !== null)}</span
-        >
-        <Ring percent={ringPercent(state)} color={gradientColor(ringPercent(state))} />
+        <Ring
+            percent={ringPercent(state)}
+            color={gradientColor(ringPercent(state))}
+            kind="icon"
+            label={networkIcon(state.primary?.kind ?? null, state.primary !== null)}
+        />
     </div>
 {/if}
 
@@ -103,21 +99,9 @@
     .tray-icon {
         display: inline-flex;
         align-items: center;
-        gap: 6px;
-        font-size: var(--tray-icon-size, 14px);
         color: var(--tray-icon-color, var(--color-fg, #cdd6f4));
-        padding: 0 4px;
         user-select: none;
         cursor: pointer;
-        line-height: 1;
-    }
-    .icon {
-        font-family:
-            'JetBrainsMono Nerd Font',
-            'Symbols Nerd Font',
-            'FontAwesome',
-            var(--font-mono, ui-monospace, monospace);
-        font-size: var(--tray-icon-size, 14px);
         line-height: 1;
     }
 </style>

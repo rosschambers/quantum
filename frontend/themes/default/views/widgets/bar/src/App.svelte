@@ -78,7 +78,7 @@
     .group {
         display: flex;
         align-items: center;
-        gap: 10px;
+        gap: 14px;
     }
     .divider {
         width: 1px;
