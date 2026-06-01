@@ -74,6 +74,7 @@ impl WindowConstructor for ManagedWindowConstructor {
         match view {
             "launcher" => Some(ManagedWindow::Panel(PanelWindow::new(
                 &self.app,
+                "launcher",
                 self.dispatcher.clone(),
                 self.theme_store.clone(),
                 self.runtime.clone(),

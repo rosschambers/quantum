@@ -39,17 +39,25 @@ impl PanelWindow {
     /// Create a new panel window.
     pub fn new(
         app: &gtk4::Application,
+        view_name: impl Into<String>,
         dispatcher: Arc<dyn IpcDispatcher>,
         _theme_store: Arc<dyn ThemeStore>,
         runtime: Handle,
         event_tx: broadcast::Sender<EventEnvelope>,
     ) -> Self {
+        let view_name: String = view_name.into();
         let layer_shell = use_layer_shell();
+
+        let (width, height) = match view_name.as_str() {
+            "launcher" => (600, 420),
+            "widgets/power-menu" => (440, 320),
+            _ => (480, 320),
+        };
 
         let mut builder = gtk4::ApplicationWindow::builder()
             .application(app)
-            .default_width(600)
-            .default_height(420)
+            .default_width(width)
+            .default_height(height)
             .resizable(!layer_shell);
 
         // In layer-shell mode we want a chromeless surface. In windowed (test)
@@ -63,12 +71,13 @@ impl PanelWindow {
 
         let window = builder.build();
 
+        let namespace = format!("quantum-panel-{}", view_name.replace('/', "-"));
         if layer_shell {
             // Initialize layer shell as a Top surface centered on screen.
             window.init_layer_shell();
             window.set_layer(Layer::Top);
             window.set_keyboard_mode(KeyboardMode::OnDemand);
-            window.set_namespace("quantum-panel");
+            window.set_namespace(&namespace);
             window.set_exclusive_zone(-1); // Don't reserve space
         }
         // In windowed mode we let the compositor place it like any other
@@ -99,7 +108,8 @@ impl PanelWindow {
             false
         });
 
-        webview.load_uri("quantum://theme/default/views/launcher/index.html");
+        let url = format!("quantum://theme/default/views/{}/index.html", view_name);
+        webview.load_uri(&url);
         window.set_child(Some(&webview));
 
         // Register the bridge to wire JS messages to the dispatcher. The
