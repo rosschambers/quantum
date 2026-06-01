@@ -39,7 +39,7 @@ describe('BatteryIndicator', () => {
         });
         const el = container.querySelector('.tray-icon');
         expect(el).not.toBeNull();
-        const icon = el!.querySelector('svg.ring .ring-label');
+        const icon = el!.querySelector('.icon-label');
         expect(icon).not.toBeNull();
         expect(icon!.textContent).not.toBe('');
         // Battery icon while discharging is one of the bucketed
@@ -60,7 +60,7 @@ describe('BatteryIndicator', () => {
             time_to_empty_secs: null,
             time_to_full_secs: 1200,
         });
-        const icon = container.querySelector('svg.ring .ring-label');
+        const icon = container.querySelector('.icon-label');
         // Nerd Font md-battery_charging glyph in the PUA.
         expect(icon!.textContent).toContain('\u{f0084}');
         expect(container.querySelector('.tray-icon')!.getAttribute('title')).toContain('80%');

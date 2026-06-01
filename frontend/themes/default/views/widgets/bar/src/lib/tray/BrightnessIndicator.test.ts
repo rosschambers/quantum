@@ -56,7 +56,7 @@ describe('BrightnessIndicator', () => {
 		});
 		const el = container.querySelector('.tray-icon');
 		expect(el).not.toBeNull();
-		expect(el!.querySelector('svg.ring .ring-label')!.textContent).not.toBe('');
+		expect(el!.querySelector('.icon-label')!.textContent).not.toBe('');
 		const fill = el!.querySelector('svg.ring .ring-fill');
 		const circ = Number(fill!.getAttribute('stroke-dasharray'));
 		const off = Number(fill!.getAttribute('stroke-dashoffset'));
