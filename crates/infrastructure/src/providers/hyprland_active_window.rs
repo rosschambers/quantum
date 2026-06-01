@@ -5,6 +5,8 @@ use futures::stream::{self, BoxStream, StreamExt};
 use tokio::sync::broadcast;
 use tokio_stream::wrappers::BroadcastStream;
 
+use crate::error::InfrastructureError;
+
 use quantum_domain::{
     Action, ActionOutcome, DomainError, Match, MonitorActiveWindowState, ProviderCapabilities,
     ProviderId, ProviderSource, Query,
@@ -63,16 +65,16 @@ pub(crate) fn apply_event(state: &mut MonitorActiveWindowState, ev: HyprlandEven
 /// log a single warning if it fails. If hyprctl is missing or returns
 /// malformed JSON we return an error and let the caller fall back to the
 /// event stream to populate the map.
-async fn fetch_initial_monitors() -> Result<Vec<MonitorSeed>, crate::error::InfrastructureError> {
+async fn fetch_initial_monitors() -> Result<Vec<MonitorSeed>, InfrastructureError> {
     let output = tokio::process::Command::new("hyprctl")
         .args(["monitors", "-j"])
         .output()
         .await
-        .map_err(|e| crate::error::InfrastructureError::Io(e.to_string()))?;
+        .map_err(|e| InfrastructureError::Spawn(e.to_string()))?;
     let json: serde_json::Value = serde_json::from_slice(&output.stdout)?;
     let arr = json
         .as_array()
-        .ok_or(crate::error::InfrastructureError::HyprlandUnreachable)?;
+        .ok_or_else(|| InfrastructureError::Serde("hyprctl monitors -j: expected array".into()))?;
     Ok(arr
         .iter()
         .filter_map(|v| {
@@ -101,22 +103,23 @@ impl HyprlandActiveWindowProvider {
         // the seed completes, `entry().or_default()` here won't overwrite
         // anything; only `focused_monitor` can race, and that resolves on
         // the next `FocusedMon` event from the live stream.
+        // Seed task is fire-and-forget: it updates `state` so that
+        // `subscribe()` returns the seeded snapshot to any caller
+        // that connects after the seed completes. We deliberately do
+        // NOT broadcast the seed payload because no subscriber has
+        // connected yet at construction time — the snapshot in
+        // `subscribe()` covers late subscribers.
         let state_for_seed = state.clone();
-        let tx_for_seed = tx.clone();
         runtime.spawn(async move {
             match fetch_initial_monitors().await {
                 Ok(seeds) => {
-                    let payload = {
-                        let mut guard = state_for_seed.lock().unwrap();
-                        for seed in seeds {
-                            guard.monitors.entry(seed.name.clone()).or_default();
-                            if seed.focused {
-                                guard.focused_monitor = Some(seed.name);
-                            }
+                    let mut guard = state_for_seed.lock().unwrap();
+                    for seed in seeds {
+                        guard.monitors.entry(seed.name.clone()).or_default();
+                        if seed.focused {
+                            guard.focused_monitor = Some(seed.name);
                         }
-                        serde_json::to_value(&*guard).unwrap_or(serde_json::Value::Null)
-                    };
-                    let _ = tx_for_seed.send(payload);
+                    }
                 }
                 Err(e) => {
                     tracing::warn!("hyprctl monitor seed failed: {e:?}; relying on event stream");
