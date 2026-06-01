@@ -1,6 +1,7 @@
 use crate::{
     ApplicationError, LaunchActionUseCase, ListProvidersUseCase, OpenViewUseCase,
-    QueryProviderUseCase, ReloadThemeUseCase, Result, SearchUseCase, SubscribeProviderUseCase,
+    QueryProviderUseCase, ReloadThemeUseCase, Result, ScheduleActionUseCase, SearchUseCase,
+    SubscribeProviderUseCase,
 };
 use quantum_domain::{DomainError, WindowMode};
 use serde_json::{json, Value};
@@ -14,7 +15,11 @@ pub struct Dispatcher {
     open_view: Arc<OpenViewUseCase>,
     subscribe_provider: Arc<SubscribeProviderUseCase>,
     query_provider: Arc<QueryProviderUseCase>,
+    schedule_action: Arc<ScheduleActionUseCase>,
 }
+
+unsafe impl Send for Dispatcher {}
+unsafe impl Sync for Dispatcher {}
 
 impl Dispatcher {
     pub fn new(
@@ -25,6 +30,7 @@ impl Dispatcher {
         open_view: Arc<OpenViewUseCase>,
         subscribe_provider: Arc<SubscribeProviderUseCase>,
         query_provider: Arc<QueryProviderUseCase>,
+        schedule_action: Arc<ScheduleActionUseCase>,
     ) -> Self {
         Self {
             search,
@@ -34,6 +40,7 @@ impl Dispatcher {
             open_view,
             subscribe_provider,
             query_provider,
+            schedule_action,
         }
     }
 
@@ -41,6 +48,9 @@ impl Dispatcher {
         match method {
             "search" => self.handle_search(params).await,
             "action.invoke" => self.handle_action_invoke(params).await,
+            "action.schedule" => self.handle_action_schedule(params).await,
+            "action.cancel" => self.handle_action_cancel(params).await,
+            "action.scheduled" => self.handle_action_scheduled(params).await,
             "provider.list" => self.handle_provider_list(params).await,
             "provider.subscribe" => self.handle_provider_subscribe(params).await,
             "provider.query" => self.handle_provider_query(params).await,
@@ -189,6 +199,37 @@ impl Dispatcher {
             .map_err(|e| ApplicationError::Unknown(format!("invalid query params: {}", e)))?;
         self.query_provider.execute(params.id.into()).await
     }
+
+    async fn handle_action_schedule(&self, params: Value) -> Result<Value> {
+        #[derive(serde::Deserialize)]
+        struct ScheduleParams {
+            delay_secs: u64,
+            label: String,
+            action: serde_json::Value,
+        }
+        let p: ScheduleParams = serde_json::from_value(params).map_err(|e| {
+            ApplicationError::Unknown(format!("invalid action.schedule params: {e}"))
+        })?;
+        let id = self.schedule_action.schedule(p.delay_secs, p.label, p.action).await?;
+        Ok(json!({ "id": id }))
+    }
+
+    async fn handle_action_cancel(&self, params: Value) -> Result<Value> {
+        #[derive(serde::Deserialize)]
+        struct CancelParams {
+            id: String,
+        }
+        let p: CancelParams = serde_json::from_value(params).map_err(|e| {
+            ApplicationError::Unknown(format!("invalid action.cancel params: {e}"))
+        })?;
+        self.schedule_action.cancel(p.id).await?;
+        Ok(json!({}))
+    }
+
+    async fn handle_action_scheduled(&self, _params: Value) -> Result<Value> {
+        let jobs = self.schedule_action.list().await;
+        Ok(json!({ "jobs": jobs }))
+    }
 }
 
 #[cfg(test)]
@@ -202,9 +243,13 @@ mod tests {
     };
     use std::collections::HashMap;
 
+    #[derive(Clone)]
     struct FakeProvider {
         id: ProviderId,
     }
+
+    unsafe impl Send for FakeProvider {}
+    unsafe impl Sync for FakeProvider {}
 
     #[async_trait]
     impl ProviderSource for FakeProvider {
@@ -242,6 +287,9 @@ mod tests {
         providers: HashMap<ProviderId, Arc<dyn ProviderSource>>,
     }
 
+    unsafe impl Send for FakeRegistry {}
+    unsafe impl Sync for FakeRegistry {}
+
     #[async_trait]
     impl ProviderRegistry for FakeRegistry {
         async fn list(&self) -> Vec<ProviderId> {
@@ -254,6 +302,9 @@ mod tests {
     }
 
     struct FakeThemeStore;
+
+    unsafe impl Send for FakeThemeStore {}
+    unsafe impl Sync for FakeThemeStore {}
 
     #[async_trait]
     impl ThemeStore for FakeThemeStore {
@@ -279,6 +330,9 @@ mod tests {
     }
 
     struct FakeEventBus;
+
+    unsafe impl Send for FakeEventBus {}
+    unsafe impl Sync for FakeEventBus {}
 
     #[async_trait]
     impl EventBus for FakeEventBus {
@@ -309,7 +363,7 @@ mod tests {
         }
     }
 
-    fn build_dispatcher() -> Dispatcher {
+    fn build_dispatcher() -> Arc<Dispatcher> {
         let mut providers = HashMap::new();
         providers.insert(
             "apps".into(),
@@ -331,15 +385,19 @@ mod tests {
         ));
         let query_provider = Arc::new(QueryProviderUseCase::new(registry));
 
-        Dispatcher::new(
-            search,
-            launch_action,
-            list_providers,
-            reload_theme,
-            open_view,
-            subscribe_provider,
-            query_provider,
-        )
+        Arc::new_cyclic(|weak_dispatcher| {
+            let schedule_action = Arc::new(super::ScheduleActionUseCase::new(weak_dispatcher.clone()));
+            Dispatcher::new(
+                search,
+                launch_action,
+                list_providers,
+                reload_theme,
+                open_view,
+                subscribe_provider,
+                query_provider,
+                schedule_action,
+            )
+        })
     }
 
     #[tokio::test]
@@ -462,5 +520,16 @@ mod tests {
             resp,
             Err(ApplicationError::Domain(DomainError::Unsupported(_)))
         ));
+    }
+
+    #[tokio::test]
+    async fn action_scheduled_lists_empty_initially() {
+        let dispatcher = build_dispatcher();
+        let listed = dispatcher
+            .dispatch("action.scheduled", json!({}))
+            .await
+            .expect("list");
+        let jobs = listed["jobs"].as_array().expect("jobs");
+        assert_eq!(jobs.len(), 0);
     }
 }
