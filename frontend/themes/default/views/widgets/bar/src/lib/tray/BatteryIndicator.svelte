@@ -2,7 +2,7 @@
     import type { Client } from '@quantum/client';
     import type { PowerState } from '../types';
     import { POWER_CHANNEL } from '../channels';
-    import { gradientColor } from '../gradient';
+    import { inverseGradientColor } from '../gradient';
     import { batteryIcon } from '../icons';
     import Ring from '../Ring.svelte';
 
@@ -50,7 +50,7 @@
     <div class="tray-icon battery" title={tooltipFor(state)}>
         <Ring
             percent={state.percentage}
-            color={gradientColor(state.percentage)}
+            color={inverseGradientColor(state.percentage)}
             kind="icon"
             iconName={batteryIcon(state.percentage, state.state === 'charging')}
         />

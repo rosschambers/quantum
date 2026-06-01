@@ -2,7 +2,7 @@
     import type { Client } from '@quantum/client';
     import type { NetworkState } from '../types';
     import { NETWORK_CHANNEL } from '../channels';
-    import { gradientColor } from '../gradient';
+    import { inverseGradientColor } from '../gradient';
     import { networkIcon } from '../icons';
     import { onClick } from './interaction';
     import Ring from '../Ring.svelte';
@@ -88,7 +88,7 @@
     <div bind:this={root} class="tray-icon network" title={tooltipFor(state)}>
         <Ring
             percent={ringPercent(state)}
-            color={gradientColor(ringPercent(state))}
+            color={inverseGradientColor(ringPercent(state))}
             kind="icon"
             iconName={networkIcon(state.primary?.kind ?? null, state.primary !== null)}
         />
