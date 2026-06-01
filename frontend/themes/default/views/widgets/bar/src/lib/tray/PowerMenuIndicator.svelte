@@ -3,7 +3,6 @@
 	import type { SystemPowerState } from '../types';
 	import { SYSTEM_POWER_CHANNEL } from '../channels';
 	import { Icons } from '../icons';
-	import Ring from '../Ring.svelte';
 
 	interface Props {
 		client: Client;
@@ -158,7 +157,7 @@
 			bind:this={trigger}
 			onclick={toggleMenu}
 		>
-			<Ring percent={100} color="var(--color-fg-alt, #a6adc8)" kind="icon" label={Icons.powerMenu} />
+			<span class="icon" aria-hidden="true">{Icons.powerMenu}</span>
 		</button>
 		{#if open}
 			<div class="power-menu-popover" bind:this={popover} role="menu">

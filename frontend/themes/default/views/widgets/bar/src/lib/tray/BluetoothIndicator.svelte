@@ -4,7 +4,6 @@
     import { BLUETOOTH_CHANNEL } from '../channels';
     import { Icons } from '../icons';
     import { onClick } from './interaction';
-    import Ring from '../Ring.svelte';
 
     interface Props {
         client: Client;
@@ -64,22 +63,6 @@
         // TODO: device-list popover. Deferred from batch 1.
     }
 
-    /**
-     * Ring fill percent for the bluetooth state. Powered + at least
-     * one device → full ring in the accent color; powered + no
-     * devices → half ring; off → empty ring.
-     */
-    function ringPercent(s: BluetoothState): number {
-        if (!s.powered) return 0;
-        if (s.connected_devices.length > 0) return 100;
-        return 50;
-    }
-
-    function ringColor(s: BluetoothState): string {
-        if (!s.powered) return 'var(--color-fg-alt, #a6adc8)';
-        return 'var(--color-accent, #89b4fa)';
-    }
-
     function tooltipFor(s: BluetoothState): string {
         if (!s.powered) return 'bluetooth off';
         if (s.connected_devices.length === 0) return 'bluetooth on, no devices';
@@ -102,12 +85,7 @@
         class:has-devices={state.connected_devices.length > 0}
         title={tooltipFor(state)}
     >
-        <Ring
-            percent={ringPercent(state)}
-            color={ringColor(state)}
-            kind="icon"
-            label={Icons.bluetooth}
-        />
+        <span class="icon" aria-hidden="true">{Icons.bluetooth}</span>
         {#if state.connected_devices.length > 0}
             <span class="badge">{state.connected_devices.length}</span>
         {/if}
@@ -124,8 +102,23 @@
         cursor: pointer;
         line-height: 1;
     }
-    .tray-icon.powered {
+    /*
+     * Powered + at least one connected device shifts the icon to the
+     * accent color; powered + no devices keeps it muted (still tells
+     * the user the radio is on but reads less prominent than active
+     * connections); off keeps it muted too.
+     */
+    .tray-icon.powered.has-devices {
         color: var(--color-accent, #89b4fa);
+    }
+    .icon {
+        font-family:
+            'JetBrainsMono Nerd Font',
+            'Symbols Nerd Font',
+            'FontAwesome',
+            var(--font-mono, ui-monospace, monospace);
+        font-size: var(--tray-icon-size, 14px);
+        line-height: 1;
     }
     .badge {
         font-family: var(--font-mono, ui-monospace, monospace);
