@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct SystemStats {
@@ -27,12 +28,26 @@ pub struct MprisState {
     pub length_micros: Option<u64>,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ActiveWindowState {
     pub title: String,
     pub class: String,
     pub workspace_id: i64,
     pub workspace_name: String,
+}
+
+/// Per-monitor focused-window snapshot. Keyed by Hyprland monitor
+/// connector name (e.g. "DP-1", "eDP-1"). Single-monitor systems
+/// have exactly one entry; multi-monitor systems have one entry per
+/// connected output.
+///
+/// UIs that don't know their own monitor (e.g. single-monitor
+/// systems, or a custom widget without `__quantum_monitor` set)
+/// read the entry under `focused_monitor`.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct MonitorActiveWindowState {
+    pub monitors: HashMap<String, ActiveWindowState>,
+    pub focused_monitor: Option<String>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
@@ -380,5 +395,42 @@ mod tests {
         assert!(
             !d.can_shutdown && !d.can_restart && !d.can_suspend && !d.can_hibernate && !d.can_lock
         );
+    }
+
+    #[test]
+    fn monitor_active_window_state_default_is_empty() {
+        let s = MonitorActiveWindowState::default();
+        assert!(s.monitors.is_empty());
+        assert_eq!(s.focused_monitor, None);
+    }
+
+    #[test]
+    fn monitor_active_window_state_round_trips_with_one_monitor() {
+        let mut s = MonitorActiveWindowState::default();
+        s.monitors.insert(
+            "DP-1".into(),
+            ActiveWindowState {
+                class: "firefox".into(),
+                title: "Mozilla Firefox".into(),
+                workspace_id: 1,
+                workspace_name: "1".into(),
+            },
+        );
+        s.focused_monitor = Some("DP-1".into());
+        let v = serde_json::to_value(&s).unwrap();
+        let back: MonitorActiveWindowState = serde_json::from_value(v).unwrap();
+        assert_eq!(s, back);
+    }
+
+    #[test]
+    fn monitor_active_window_state_round_trips_with_multiple_monitors() {
+        let mut s = MonitorActiveWindowState::default();
+        s.monitors
+            .insert("DP-1".into(), ActiveWindowState::default());
+        s.monitors
+            .insert("HDMI-A-1".into(), ActiveWindowState::default());
+        let v = serde_json::to_value(&s).unwrap();
+        let back: MonitorActiveWindowState = serde_json::from_value(v).unwrap();
+        assert_eq!(s, back);
     }
 }

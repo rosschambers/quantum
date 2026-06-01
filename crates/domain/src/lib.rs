@@ -15,9 +15,9 @@ pub mod window_mode;
 pub use action::Action;
 pub use bar_state::{
     ActiveWindowState, AudioSink, AudioState, BatteryChargeState, BluetoothDevice, BluetoothState,
-    BrightnessDisplay, BrightnessState, MprisState, NetworkConnection, NetworkConnectivity,
-    NetworkKind, NetworkState, PlaybackStatus, PowerProfile, PowerProfileState, PowerState,
-    SystemPowerState, SystemStats,
+    BrightnessDisplay, BrightnessState, MonitorActiveWindowState, MprisState, NetworkConnection,
+    NetworkConnectivity, NetworkKind, NetworkState, PlaybackStatus, PowerProfile,
+    PowerProfileState, PowerState, SystemPowerState, SystemStats,
 };
 pub use error::DomainError;
 pub use event_bus::EventEnvelope;
