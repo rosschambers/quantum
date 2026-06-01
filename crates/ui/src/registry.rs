@@ -7,6 +7,9 @@ use tokio::sync::broadcast;
 
 use quantum_domain::{ports::ThemeStore, EventEnvelope, WindowMode};
 
+use gtk4::gdk;
+use gtk4::prelude::*;
+
 use crate::dispatcher::IpcDispatcher;
 use crate::messages::WindowRequest;
 use crate::windows::{PanelWindow, WidgetWindow};
@@ -64,6 +67,20 @@ impl ManagedWindowConstructor {
             runtime,
             event_tx,
         }
+    }
+
+    /// Look up a `gdk::Monitor` by its Wayland connector name (the
+    /// suffix in `widgets/bar@<connector>` view keys). Returns
+    /// `None` if no currently-connected monitor matches.
+    // Wired into `construct` in Task B.3; kept dead-code-allowed until then.
+    #[allow(dead_code)]
+    fn find_monitor(&self, name: &str) -> Option<gdk::Monitor> {
+        let display = gdk::Display::default()?;
+        display
+            .monitors()
+            .iter::<gdk::Monitor>()
+            .filter_map(Result::ok)
+            .find(|m| crate::windows::widget::monitor_name(m).as_deref() == Some(name))
     }
 }
 

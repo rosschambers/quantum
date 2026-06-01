@@ -21,6 +21,15 @@ use webkit6::{prelude::*, WebView};
 /// children have room to render without being clipped by Wayland.
 pub const BAR_HEIGHT: i32 = 32;
 
+/// Wayland connector name for a `gdk::Monitor`. Hyprland uses the
+/// same name (both come from Wayland's `wl_output` protocol).
+/// Returns `None` if the platform doesn't expose a connector (e.g.
+/// virtual outputs, headless mode) — callers should skip such
+/// monitors rather than spawn untracked bars.
+pub fn monitor_name(monitor: &gdk::Monitor) -> Option<String> {
+    monitor.connector().map(|s| s.to_string())
+}
+
 /// A widget window - positioned on-screen as a background-layer widget.
 pub struct WidgetWindow {
     window: gtk4::ApplicationWindow,
