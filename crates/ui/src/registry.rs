@@ -113,6 +113,9 @@ impl WindowConstructor for ManagedWindowConstructor {
                     self.theme_store.clone(),
                     self.runtime.clone(),
                     self.event_tx.clone(),
+                    // Task B.3 will resolve the connector suffix into a
+                    // gdk::Monitor and pass it here.
+                    None,
                 )))
             }
             _ => None,

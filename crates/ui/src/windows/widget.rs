@@ -47,6 +47,7 @@ impl WidgetWindow {
         _theme_store: Arc<dyn ThemeStore>,
         runtime: Handle,
         event_tx: broadcast::Sender<EventEnvelope>,
+        monitor: Option<gdk::Monitor>,
     ) -> Self {
         let window = gtk4::ApplicationWindow::builder()
             .application(app)
@@ -69,6 +70,15 @@ impl WidgetWindow {
 
         // Initialize layer shell
         window.init_layer_shell();
+
+        // Pin the layer-shell surface to a specific monitor before any
+        // anchor/exclusive-zone configuration so the compositor places
+        // it correctly the first time. Without this the bar lands on
+        // whichever output the compositor picks (usually the focused
+        // one) regardless of the `widgets/bar@<connector>` suffix.
+        if let Some(m) = monitor.as_ref() {
+            window.set_monitor(m);
+        }
 
         // Determine layout based on view name.
         // TODO: Long-term, this should be per-view config in theme.toml.
@@ -129,6 +139,37 @@ impl WidgetWindow {
             );
             false
         });
+
+        // If this window is pinned to a specific monitor, expose that
+        // monitor's Wayland connector name to the Svelte view as
+        // `window.__quantum_monitor` before any page script runs. The
+        // ActiveWindow widget reads it to filter Hyprland events to
+        // the bar's own output. Inject on LoadEvent::Committed: at that
+        // point the document object exists but no page script has run.
+        if let Some(m) = monitor.as_ref() {
+            if let Some(name) = monitor_name(m) {
+                // Quote the name as a valid JS string literal. The
+                // Wayland connector names we see in practice ("DP-1",
+                // "eDP-1", "HDMI-A-1") don't need escaping, but going
+                // through serde_json::to_string covers
+                // backslashes/quotes/control characters defensively.
+                let quoted = serde_json::to_string(&name).unwrap_or_else(|_| "null".into());
+                let js = format!("window.__quantum_monitor = {};", quoted);
+                let webview_for_handler = webview.clone();
+                webview.connect_load_changed(move |_view, event| {
+                    if event == webkit6::LoadEvent::Committed {
+                        webkit6::prelude::WebViewExt::evaluate_javascript(
+                            &webview_for_handler,
+                            &js,
+                            None,
+                            None,
+                            gtk4::gio::Cancellable::NONE,
+                            |_| {},
+                        );
+                    }
+                });
+            }
+        }
 
         // The scheme handler resolves paths against `views/<view_name>/...`
         // so the URL must include the `views/` segment. ThemeStore's
