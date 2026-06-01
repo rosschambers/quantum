@@ -24,6 +24,11 @@ export interface ActiveWindowState {
   workspace_name: string;
 }
 
+export interface MonitorActiveWindowState {
+  monitors: Record<string, ActiveWindowState>;
+  focused_monitor: string | null;
+}
+
 export type BatteryChargeState = 'charging' | 'discharging' | 'full' | 'empty' | 'unknown';
 
 export interface PowerState {

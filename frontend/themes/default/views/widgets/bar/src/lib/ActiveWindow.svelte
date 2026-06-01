@@ -1,23 +1,34 @@
 <script lang="ts">
     import type { Client } from '@quantum/client';
-    import type { ActiveWindowState } from '../lib/types';
+    import type { ActiveWindowState, MonitorActiveWindowState } from '../lib/types';
+    import { ACTIVE_WINDOW_CHANNEL } from './channels';
 
     interface Props {
         client: Client;
     }
 
     let { client }: Props = $props();
-    let state: ActiveWindowState | null = $state(null);
+    let payload: MonitorActiveWindowState = $state({ monitors: {}, focused_monitor: null });
 
     // `$effect` runs reliably in testing-library + Svelte 5 where `onMount` does not.
     $effect(() => {
         client.call('provider.query', { id: 'hyprland.activewindow' })
-            .then((r: unknown) => { if (r) state = r as ActiveWindowState; })
+            .then((r: unknown) => { if (r) payload = r as MonitorActiveWindowState; })
             .catch(() => {});
-        const unsubscribe = client.subscribe('hyprland.activewindow.event', (payload: unknown) => {
-            state = payload as ActiveWindowState;
+        const unsubscribe = client.subscribe(ACTIVE_WINDOW_CHANNEL, (p: unknown) => {
+            payload = p as MonitorActiveWindowState;
         });
         return () => unsubscribe?.();
+    });
+
+    function selectMonitor(p: MonitorActiveWindowState): string | null {
+        return (window as any).__quantum_monitor ?? p.focused_monitor ?? null;
+    }
+
+    let state: ActiveWindowState | null = $derived.by(() => {
+        const selected = selectMonitor(payload);
+        if (!selected) return null;
+        return payload.monitors[selected] ?? null;
     });
 
     function displayTitle(s: ActiveWindowState | null): string {
