@@ -22,7 +22,7 @@
     });
 
     function selectMonitor(p: MonitorActiveWindowState): string | null {
-        return (window as any).__quantum_monitor ?? p.focused_monitor ?? null;
+        return window.__quantum_monitor ?? p.focused_monitor ?? null;
     }
 
     let state: ActiveWindowState | null = $derived.by(() => {

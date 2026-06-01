@@ -82,7 +82,7 @@ describe('ActiveWindow', () => {
     });
 
     it('selects the entry for window.__quantum_monitor when set', async () => {
-        (window as any).__quantum_monitor = 'DP-2';
+        window.__quantum_monitor = 'DP-2';
         try {
             let savedCallback: ((p: unknown) => void) | undefined;
             const client = {
@@ -104,7 +104,7 @@ describe('ActiveWindow', () => {
             await tick();
             expect(container.querySelector('.title')?.textContent).toContain('Firefox-B');
         } finally {
-            delete (window as any).__quantum_monitor;
+            delete window.__quantum_monitor;
         }
     });
 
