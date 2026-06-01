@@ -9,7 +9,7 @@ use quantum_domain::{ports::ThemeStore, EventEnvelope, WindowMode};
 
 use crate::dispatcher::IpcDispatcher;
 use crate::messages::WindowRequest;
-use crate::windows::{LauncherWindow, WidgetWindow};
+use crate::windows::{PanelWindow, WidgetWindow};
 
 use tracing::warn;
 
@@ -35,7 +35,7 @@ pub trait WindowConstructor {
 
 /// Enum of all managed window types.
 pub enum ManagedWindow {
-    Launcher(LauncherWindow),
+    Panel(PanelWindow),
     Widget(WidgetWindow),
 }
 
@@ -72,7 +72,7 @@ impl WindowConstructor for ManagedWindowConstructor {
 
     fn construct(&mut self, view: &str) -> Option<Self::Window> {
         match view {
-            "launcher" => Some(ManagedWindow::Launcher(LauncherWindow::new(
+            "launcher" => Some(ManagedWindow::Panel(PanelWindow::new(
                 &self.app,
                 self.dispatcher.clone(),
                 self.theme_store.clone(),
@@ -97,28 +97,28 @@ impl WindowConstructor for ManagedWindowConstructor {
 impl WindowOps for ManagedWindow {
     fn show(&mut self) {
         match self {
-            ManagedWindow::Launcher(w) => w.show(),
+            ManagedWindow::Panel(w) => w.show(),
             ManagedWindow::Widget(w) => w.show(),
         }
     }
 
     fn hide(&mut self) {
         match self {
-            ManagedWindow::Launcher(w) => w.hide(),
+            ManagedWindow::Panel(w) => w.hide(),
             ManagedWindow::Widget(w) => w.hide(),
         }
     }
 
     fn toggle(&mut self) {
         match self {
-            ManagedWindow::Launcher(w) => w.toggle(),
+            ManagedWindow::Panel(w) => w.toggle(),
             ManagedWindow::Widget(w) => w.toggle(),
         }
     }
 
     fn set_height(&mut self, height: u32) {
         match self {
-            ManagedWindow::Launcher(w) => w.set_height(height),
+            ManagedWindow::Panel(w) => w.set_height(height),
             ManagedWindow::Widget(w) => w.set_height(height),
         }
     }

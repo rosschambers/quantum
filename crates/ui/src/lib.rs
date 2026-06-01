@@ -17,7 +17,7 @@ pub use quantum_domain::tokens_to_css;
 pub use registry::{ManagedWindow, ManagedWindowConstructor, WindowOps, WindowRegistry};
 pub use scheme::{register_quantum_scheme, register_quantum_scheme_on_default};
 pub use window_host::{DummyWindowHost, GtkWindowHost};
-pub use windows::LauncherWindow;
+pub use windows::PanelWindow;
 
 pub fn version() -> &'static str {
     env!("CARGO_PKG_VERSION")

@@ -1,4 +1,4 @@
-//! Launcher window with gtk4-layer-shell anchoring.
+//! Panel window with gtk4-layer-shell anchoring.
 
 use crate::bridge::json_to_js_expression;
 use crate::dispatcher::IpcDispatcher;
@@ -12,13 +12,13 @@ use tokio::runtime::Handle;
 use tokio::sync::broadcast;
 use webkit6::{prelude::*, WebView};
 
-/// The launcher window - a top-layer panel window anchored on-demand.
+/// The panel window - a top-layer panel window anchored on-demand.
 ///
 /// The `dispatcher` and `theme_store` constructor arguments are consumed
 /// during construction — `dispatcher` is handed to `register_bridge` and
 /// `theme_store` is owned by the quantum:// scheme handler registered on
 /// the GTK default context — so neither is stored on the struct.
-pub struct LauncherWindow {
+pub struct PanelWindow {
     window: gtk4::ApplicationWindow,
     webview: WebView,
     visible: bool,
@@ -35,8 +35,8 @@ fn use_layer_shell() -> bool {
         .unwrap_or(false)
 }
 
-impl LauncherWindow {
-    /// Create a new launcher window.
+impl PanelWindow {
+    /// Create a new panel window.
     pub fn new(
         app: &gtk4::Application,
         dispatcher: Arc<dyn IpcDispatcher>,
@@ -68,7 +68,7 @@ impl LauncherWindow {
             window.init_layer_shell();
             window.set_layer(Layer::Top);
             window.set_keyboard_mode(KeyboardMode::OnDemand);
-            window.set_namespace("quantum-launcher");
+            window.set_namespace("quantum-panel");
             window.set_exclusive_zone(-1); // Don't reserve space
         }
         // In windowed mode we let the compositor place it like any other
@@ -168,7 +168,7 @@ impl LauncherWindow {
     }
 }
 
-impl crate::registry::WindowOps for LauncherWindow {
+impl crate::registry::WindowOps for PanelWindow {
     /// Show the launcher window.
     fn show(&mut self) {
         if self.layer_shell {

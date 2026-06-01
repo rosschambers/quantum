@@ -1,7 +1,7 @@
 //! Window management for Quantum UI.
 
-pub mod launcher;
+pub mod panel;
 pub mod widget;
 
-pub use launcher::LauncherWindow;
+pub use panel::PanelWindow;
 pub use widget::WidgetWindow;
