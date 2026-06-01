@@ -2,7 +2,7 @@
     import type { Client } from '@quantum/client';
     import type { BluetoothState } from '../types';
     import { BLUETOOTH_CHANNEL } from '../channels';
-    import { Icons } from '../icons';
+    import Icon from '../Icon.svelte';
     import { onClick } from './interaction';
 
     interface Props {
@@ -85,7 +85,7 @@
         class:has-devices={state.connected_devices.length > 0}
         title={tooltipFor(state)}
     >
-        <span class="icon" aria-hidden="true">{Icons.bluetooth}</span>
+        <Icon name="bluetooth" size={14} />
         {#if state.connected_devices.length > 0}
             <span class="badge">{state.connected_devices.length}</span>
         {/if}
@@ -111,15 +111,7 @@
     .tray-icon.powered.has-devices {
         color: var(--color-accent, #89b4fa);
     }
-    .icon {
-        font-family:
-            'JetBrainsMono Nerd Font',
-            'Symbols Nerd Font',
-            'FontAwesome',
-            var(--font-mono, ui-monospace, monospace);
-        font-size: var(--tray-icon-size, 14px);
-        line-height: 1;
-    }
+
     .badge {
         font-family: var(--font-mono, ui-monospace, monospace);
         font-size: 9px;

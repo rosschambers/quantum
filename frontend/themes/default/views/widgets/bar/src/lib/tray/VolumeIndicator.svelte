@@ -85,7 +85,7 @@
             percent={state.default_sink.muted ? 0 : state.default_sink.volume_percent}
             color={gradientColor(state.default_sink.volume_percent)}
             kind="icon"
-            label={volumeIcon(state.default_sink.volume_percent, state.default_sink.muted)}
+            iconName={volumeIcon(state.default_sink.volume_percent, state.default_sink.muted)}
         />
     </div>
 {/if}

@@ -52,7 +52,7 @@
             percent={state.percentage}
             color={gradientColor(state.percentage)}
             kind="icon"
-            label={batteryIcon(state.percentage, state.state === 'charging')}
+            iconName={batteryIcon(state.percentage, state.state === 'charging')}
         />
     </div>
 {/if}

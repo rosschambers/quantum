@@ -39,17 +39,16 @@ describe('BatteryIndicator', () => {
         });
         const el = container.querySelector('.tray-icon');
         expect(el).not.toBeNull();
-        const icon = el!.querySelector('.icon-label');
-        expect(icon).not.toBeNull();
-        expect(icon!.textContent).not.toBe('');
-        // Battery icon while discharging is one of the bucketed
-        // battery glyphs, not the charging glyph.
-        expect(icon!.textContent).not.toContain('\u{f0084}');
+        // The icon overlay sits absolute-positioned over the SVG ring;
+        // both SVGs render via the Icon and Ring components.
+        const overlay = el!.querySelector('.icon-overlay');
+        expect(overlay).not.toBeNull();
+        expect(overlay!.querySelector('svg.icon')).not.toBeNull();
         expect(el!.querySelector('svg.ring')).not.toBeNull();
         expect(el!.getAttribute('title')).toContain('50%');
     });
 
-    it('uses the charging icon when charging', async () => {
+    it('renders a charging icon when charging', async () => {
         const { client, emit } = mockClient();
         const { container } = render(BatteryIndicator, { props: { client } });
         await emit({
@@ -60,9 +59,13 @@ describe('BatteryIndicator', () => {
             time_to_empty_secs: null,
             time_to_full_secs: 1200,
         });
-        const icon = container.querySelector('.icon-label');
-        // Nerd Font md-battery_charging glyph in the PUA.
-        expect(icon!.textContent).toContain('\u{f0084}');
+        // The charging variant draws a battery outline AND a bolt
+        // polygon inside. Easiest check: there should be a polygon
+        // child inside the icon SVG (none of the other battery
+        // variants include one).
+        const iconSvg = container.querySelector('.icon-overlay svg.icon');
+        expect(iconSvg).not.toBeNull();
+        expect(iconSvg!.querySelector('polygon')).not.toBeNull();
         expect(container.querySelector('.tray-icon')!.getAttribute('title')).toContain('80%');
     });
 

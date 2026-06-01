@@ -54,7 +54,7 @@ describe('VolumeIndicator', () => {
 		});
 		const el = container.querySelector('.tray-icon');
 		expect(el).not.toBeNull();
-		expect(el!.querySelector('.icon-label')!.textContent).not.toBe('');
+		expect(el!.querySelector('.icon-overlay svg.icon')).not.toBeNull();
 		expect(el!.querySelector('svg.ring')).not.toBeNull();
 	});
 
@@ -72,8 +72,12 @@ describe('VolumeIndicator', () => {
 		});
 		const el = container.querySelector('.tray-icon');
 		expect(el).not.toBeNull();
-		// Nerd Font fa-volume_off glyph.
-		expect(el!.querySelector('.icon-label')!.textContent).toContain('\u{f026}');
+		// Volume off icon contains crossed lines (the mute X) in its
+		// SVG path set.
+		const iconSvg = el!.querySelector('.icon-overlay svg.icon');
+		expect(iconSvg).not.toBeNull();
+		const lines = iconSvg!.querySelectorAll('line');
+		expect(lines.length).toBeGreaterThanOrEqual(2);
 		// Muted -> ring fills 0%, so dashoffset == circumference.
 		const fill = el!.querySelector('svg.ring .ring-fill');
 		const circ = Number(fill!.getAttribute('stroke-dasharray'));

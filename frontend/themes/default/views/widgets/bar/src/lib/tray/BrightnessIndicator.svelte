@@ -3,7 +3,7 @@
     import type { BrightnessState } from '../types';
     import { BRIGHTNESS_CHANNEL } from '../channels';
     import { gradientColor } from '../gradient';
-    import { Icons } from '../icons';
+
     import { onScroll } from './interaction';
     import Ring from '../Ring.svelte';
 
@@ -81,8 +81,7 @@
             percent={brightnessPercent(state)}
             color={gradientColor(brightnessPercent(state))}
             kind="icon"
-            label={Icons.brightness}
-            labelSize={14}
+            iconName="sun"
         />
     </div>
 {/if}

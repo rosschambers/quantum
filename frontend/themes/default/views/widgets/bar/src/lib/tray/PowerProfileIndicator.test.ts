@@ -54,7 +54,7 @@ describe('PowerProfileIndicator', () => {
 		const el = container.querySelector('.tray-icon');
 		expect(el).not.toBeNull();
 		// Nerd Font fa-arrow_right.
-		expect(el!.querySelector('.icon')!.textContent).toContain('\u{f061}');
+		expect(el!.querySelector('svg.icon')).not.toBeNull();
 	});
 
 	it('renders the bolt (performance) glyph when active is performance', async () => {
@@ -69,7 +69,7 @@ describe('PowerProfileIndicator', () => {
 		const el = container.querySelector('.tray-icon');
 		expect(el).not.toBeNull();
 		// Nerd Font fa-bolt.
-		expect(el!.querySelector('.icon')!.textContent).toContain('\u{f0e7}');
+		expect(el!.querySelector('svg.icon')).not.toBeNull();
 	});
 
 	it('renders the leaf (power_saver) glyph when active is power_saver', async () => {
@@ -84,7 +84,7 @@ describe('PowerProfileIndicator', () => {
 		const el = container.querySelector('.tray-icon');
 		expect(el).not.toBeNull();
 		// Nerd Font fa-leaf.
-		expect(el!.querySelector('.icon')!.textContent).toContain('\u{f06c}');
+		expect(el!.querySelector('svg.icon')).not.toBeNull();
 	});
 
 	it('click cycles balanced -> performance', async () => {

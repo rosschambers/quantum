@@ -90,7 +90,7 @@
             percent={ringPercent(state)}
             color={gradientColor(ringPercent(state))}
             kind="icon"
-            label={networkIcon(state.primary?.kind ?? null, state.primary !== null)}
+            iconName={networkIcon(state.primary?.kind ?? null, state.primary !== null)}
         />
     </div>
 {/if}

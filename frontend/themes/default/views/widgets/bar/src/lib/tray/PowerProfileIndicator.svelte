@@ -2,7 +2,8 @@
     import type { Client } from '@quantum/client';
     import type { PowerProfile, PowerProfileState } from '../types';
     import { POWER_PROFILE_CHANNEL } from '../channels';
-    import { Icons, powerProfileIcon } from '../icons';
+    import Icon from '../Icon.svelte';
+    import { powerProfileIcon } from '../icons';
     import { onClick } from './interaction';
 
     interface Props {
@@ -85,18 +86,14 @@
         return t;
     }
 
-    function iconFor(s: PowerProfileState): string {
+    function iconFor(s: PowerProfileState) {
         return powerProfileIcon(s.active);
     }
-
-    // Suppress unused-import warning while keeping the namespace
-    // imported for future per-profile customisation.
-    Icons;
 </script>
 
 {#if state.available && state.active !== null}
     <div bind:this={root} class="tray-icon power-profile" title={tooltipFor(state)}>
-        <span class="icon" aria-hidden="true">{iconFor(state)}</span>
+        <Icon name={iconFor(state)} size={14} />
     </div>
 {/if}
 
@@ -107,15 +104,6 @@
         color: var(--color-fg-alt, #a6adc8);
         user-select: none;
         cursor: pointer;
-        line-height: 1;
-    }
-    .icon {
-        font-family:
-            'JetBrainsMono Nerd Font',
-            'Symbols Nerd Font',
-            'FontAwesome',
-            var(--font-mono, ui-monospace, monospace);
-        font-size: var(--tray-icon-size, 14px);
         line-height: 1;
     }
 </style>

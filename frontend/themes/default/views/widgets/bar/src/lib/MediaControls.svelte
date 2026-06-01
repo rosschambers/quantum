@@ -1,6 +1,7 @@
 <script lang="ts">
     import type { Client } from '@quantum/client';
     import type { MprisState } from '../lib/types';
+    import Icon from './Icon.svelte';
 
     interface Props {
         client: Client;
@@ -47,17 +48,13 @@
 
 <div class="media-controls" class:disabled={isDisabled(state)}>
     <button type="button" aria-label="Previous track" onclick={() => invokeCommand('previous')} disabled={isDisabled(state)}>
-        &#9198;
+        <Icon name="prev" size={14} />
     </button>
     <button type="button" aria-label={isPlaying(state) ? 'Pause' : 'Play'} onclick={() => invokeCommand('play-pause')} disabled={isDisabled(state)}>
-        {#if isPlaying(state)}
-            &#9208;
-        {:else}
-            &#9654;
-        {/if}
+        <Icon name={isPlaying(state) ? 'pause' : 'play'} size={14} />
     </button>
     <button type="button" aria-label="Next track" onclick={() => invokeCommand('next')} disabled={isDisabled(state)}>
-        &#9197;
+        <Icon name="next" size={14} />
     </button>
 </div>
 
