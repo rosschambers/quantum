@@ -8,10 +8,10 @@
 //! shape for `SystemTime`, which is `{secs_since_epoch: u64, nanos_since_epoch: u32}`.
 //! This avoids adding chrono as a dependency.
 
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 use std::collections::HashMap;
 use std::sync::Arc;
-use std::time::{Duration, SystemTime};
+use std::time::SystemTime;
 use tokio::sync::Mutex;
 use tokio::task::AbortHandle;
 
@@ -46,5 +46,23 @@ mod tests {
     }
 }
 
-// Stub for re-export in use_cases/mod.rs; will be fleshed out in Task 1.2.
-pub struct ScheduleActionUseCase;
+struct ScheduledJobInternal {
+    id: ScheduleId,
+    fires_at: SystemTime,
+    label: String,
+    abort: AbortHandle,
+}
+
+pub struct ScheduleActionUseCase {
+    dispatcher: std::sync::Weak<crate::Dispatcher>,
+    jobs: Arc<Mutex<HashMap<ScheduleId, ScheduledJobInternal>>>,
+}
+
+impl ScheduleActionUseCase {
+    pub fn new(dispatcher: std::sync::Weak<crate::Dispatcher>) -> Self {
+        Self {
+            dispatcher,
+            jobs: Arc::new(Mutex::new(HashMap::new())),
+        }
+    }
+}
