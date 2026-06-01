@@ -22,6 +22,7 @@ unsafe impl Send for Dispatcher {}
 unsafe impl Sync for Dispatcher {}
 
 impl Dispatcher {
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         search: Arc<SearchUseCase>,
         launch_action: Arc<LaunchActionUseCase>,
