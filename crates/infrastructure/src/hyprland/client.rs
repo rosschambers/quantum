@@ -45,6 +45,8 @@ pub fn parse_hypr_event_line(line: &str) -> Option<HyprlandEvent> {
             monitor: args.to_string(),
         }),
         "monitorremovedv2" => {
+            // Hyprland >= 0.41 emits "<name>,<id>"; we key on name only,
+            // so drop the id.
             let monitor = args.split_once(',').map(|(m, _)| m).unwrap_or(args);
             Some(HyprlandEvent::MonitorRemoved {
                 monitor: monitor.to_string(),
