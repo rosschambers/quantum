@@ -22,7 +22,10 @@
         percent: number | null;
         /** Outer diameter in px. Default 22. */
         size?: number;
-        /** Stroke width. Default 2. */
+        /** Stroke width. Default 2.5 to visually match the inline-SVG icon
+         * stroke weight (those use stroke-width=2 on a 24x24 viewBox,
+         * roughly equivalent to ~2.5px on the 22px ring at the same
+         * scale). */
         stroke?: number;
         /** Numeric/text label for `kind="number"` mode. */
         label?: string;
@@ -39,7 +42,7 @@
     let {
         percent,
         size = 22,
-        stroke = 2,
+        stroke = 2.5,
         label,
         iconName,
         kind = 'number',

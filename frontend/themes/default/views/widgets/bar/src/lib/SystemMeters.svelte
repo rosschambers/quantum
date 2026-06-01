@@ -80,7 +80,10 @@
 
     // Ring geometry.
     const RING_SIZE = 22;
-    const STROKE = 2;
+    // 2.5 matches the inline-SVG icon stroke weight used elsewhere on
+    // the bar; without this the CPU/MEM rings appear visually thinner
+    // than the tray indicator rings.
+    const STROKE = 2.5;
     const RADIUS = (RING_SIZE - STROKE) / 2;
     const CIRC = 2 * Math.PI * RADIUS;
 
