@@ -40,12 +40,11 @@ export const Icons = {
     volumeLow: '\u{f027}',
     volumeHigh: '\u{f028}',
 
-    // Brightness. The obvious candidates all have problems in
-    // JetBrainsMono Nerd Font: fa-sun (f185) renders as a gear, and
-    // md-weather_sunny (f0599) renders as a dotted-outline circle.
-    // md-brightness_5 (f00de) is the right glyph — a sun with rays
-    // explicitly labelled "brightness" in the Material Design set.
-    brightness: '\u{f00de}',
+    // Brightness. fa-sun (f185), md-weather_sunny (f0599), and
+    // md-brightness_5 (f00de) all render as gear/dotted-circle
+    // glyphs in JetBrainsMono Nerd Font. oct-sun (f522) is the only
+    // codepoint that ships an actual sun-with-rays shape in this font.
+    brightness: '\u{f522}',
 
     // Network
     wifi: '\u{f1eb}', // fa-wifi

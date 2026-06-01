@@ -42,7 +42,7 @@
 
     let {
         percent,
-        size = 20,
+        size = 22,
         stroke = 2,
         label,
         kind = 'number',
@@ -58,11 +58,10 @@
 
     // Default label size scales with the ring. Numeric labels sit at
     // ~42% of the ring diameter (room for 2-3 digits). Icons sit at
-    // ~70% so the glyph fills the ring properly — Nerd Font icons
-    // ship inside a fairly small em-square, so a higher coefficient
-    // gets them visually centered without crowding the stroke.
+    // ~55% so the glyph reads clearly while still leaving breathing
+    // room around the stroke.
     const resolvedLabelSize = $derived(
-        labelSize ?? (kind === 'icon' ? Math.round(size * 0.7) : Math.round(size * 0.42)),
+        labelSize ?? (kind === 'icon' ? Math.round(size * 0.55) : Math.round(size * 0.42)),
     );
 
     const TRACK_COLOR = 'rgba(255, 255, 255, 0.12)';
@@ -102,8 +101,8 @@
             class="ring-label"
             x={size / 2}
             y={size / 2}
-            dy={kind === 'icon' ? '0.18em' : '0.35em'}
             text-anchor="middle"
+            dominant-baseline="central"
             font-size={resolvedLabelSize}
         >{label}</text>
     {/if}

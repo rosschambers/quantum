@@ -82,6 +82,7 @@
             color={gradientColor(brightnessPercent(state))}
             kind="icon"
             label={Icons.brightness}
+            labelSize={14}
         />
     </div>
 {/if}
