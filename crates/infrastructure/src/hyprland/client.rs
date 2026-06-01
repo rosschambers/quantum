@@ -13,6 +13,9 @@ use crate::InfrastructureError;
 pub enum HyprlandEvent {
     ActiveWindow { class: String, title: String },
     Workspace { name: String },
+    FocusedMon { monitor: String, workspace: String },
+    MonitorAdded { monitor: String },
+    MonitorRemoved { monitor: String },
     Unknown(String),
 }
 
@@ -30,6 +33,25 @@ pub fn parse_hypr_event_line(line: &str) -> Option<HyprlandEvent> {
         }
         "workspace" => Some(HyprlandEvent::Workspace {
             name: args.to_string(),
+        }),
+        "focusedmon" => {
+            let (monitor, workspace) = args.split_once(',')?;
+            Some(HyprlandEvent::FocusedMon {
+                monitor: monitor.to_string(),
+                workspace: workspace.to_string(),
+            })
+        }
+        "monitoradded" => Some(HyprlandEvent::MonitorAdded {
+            monitor: args.to_string(),
+        }),
+        "monitorremovedv2" => {
+            let monitor = args.split_once(',').map(|(m, _)| m).unwrap_or(args);
+            Some(HyprlandEvent::MonitorRemoved {
+                monitor: monitor.to_string(),
+            })
+        }
+        "monitorremoved" => Some(HyprlandEvent::MonitorRemoved {
+            monitor: args.to_string(),
         }),
         _ => Some(HyprlandEvent::Unknown(line.to_string())),
     }
@@ -260,5 +282,35 @@ mod event_tests {
     #[test]
     fn parse_garbage_returns_none() {
         assert!(parse_hypr_event_line("not an event").is_none());
+    }
+
+    #[test]
+    fn parses_focusedmon() {
+        let e = parse_hypr_event_line("focusedmon>>DP-1,2").expect("Some");
+        assert!(
+            matches!(e, HyprlandEvent::FocusedMon { ref monitor, ref workspace }
+            if monitor == "DP-1" && workspace == "2")
+        );
+    }
+
+    #[test]
+    fn parses_monitoradded() {
+        let e = parse_hypr_event_line("monitoradded>>HDMI-A-1").expect("Some");
+        assert!(matches!(e, HyprlandEvent::MonitorAdded { ref monitor }
+            if monitor == "HDMI-A-1"));
+    }
+
+    #[test]
+    fn parses_monitorremovedv2() {
+        let e = parse_hypr_event_line("monitorremovedv2>>HDMI-A-1,3").expect("Some");
+        assert!(matches!(e, HyprlandEvent::MonitorRemoved { ref monitor }
+            if monitor == "HDMI-A-1"));
+    }
+
+    #[test]
+    fn parses_legacy_monitorremoved() {
+        let e = parse_hypr_event_line("monitorremoved>>HDMI-A-1").expect("Some");
+        assert!(matches!(e, HyprlandEvent::MonitorRemoved { ref monitor }
+            if monitor == "HDMI-A-1"));
     }
 }

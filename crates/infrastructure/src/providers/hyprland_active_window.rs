@@ -56,7 +56,10 @@ impl HyprlandActiveWindowProvider {
                             guard.workspace_name = name.clone();
                             guard.workspace_id = name.parse().unwrap_or(0);
                         }
-                        HyprlandEvent::Unknown(_) => continue,
+                        HyprlandEvent::FocusedMon { .. }
+                        | HyprlandEvent::MonitorAdded { .. }
+                        | HyprlandEvent::MonitorRemoved { .. }
+                        | HyprlandEvent::Unknown(_) => continue,
                     }
                     let payload = serde_json::to_value(&*guard).unwrap_or(serde_json::Value::Null);
                     drop(guard);
