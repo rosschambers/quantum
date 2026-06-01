@@ -37,13 +37,13 @@ pub struct ActiveWindowState {
 }
 
 /// Per-monitor focused-window snapshot. Keyed by Hyprland monitor
-/// connector name (e.g. "DP-1", "eDP-1"). Single-monitor systems
-/// have exactly one entry; multi-monitor systems have one entry per
-/// connected output.
+/// connector name (for example "DP-1", "eDP-1"). Single-monitor
+/// systems have exactly one entry; multi-monitor systems have one
+/// entry per connected output.
 ///
-/// UIs that don't know their own monitor (e.g. single-monitor
-/// systems, or a custom widget without `__quantum_monitor` set)
-/// read the entry under `focused_monitor`.
+/// UIs that don't know their own monitor (single-monitor systems,
+/// or a custom widget without `__quantum_monitor` set) read the
+/// entry under `focused_monitor`.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct MonitorActiveWindowState {
     pub monitors: HashMap<String, ActiveWindowState>,
