@@ -81,21 +81,30 @@ describe('PowerMenu App', () => {
         expect(subscribed).toBe(true);
     });
 
-    it('renders a row only for each capability that is true', async () => {
+    it('renders an action row only for each capability that is true', async () => {
         const { container } = render(App);
-        // Wait for the provider.query promise + a tick or two for $effect.
         await new Promise((r) => setTimeout(r, 10));
         await tick();
         await tick();
-        const rows = Array.from(container.querySelectorAll('.row')).map(
+        const rows = Array.from(container.querySelectorAll('.action-row')).map(
             (r) => r.textContent?.trim() ?? '',
         );
-        expect(rows).toContain('Shutdown');
-        expect(rows).toContain('Restart');
-        expect(rows).toContain('Suspend');
-        expect(rows).toContain('Lock');
+        // Each row's textContent is the label (e.g. "Suspend") when not armed.
+        const labels = rows.join(' ');
+        expect(labels).toContain('Shutdown');
+        expect(labels).toContain('Restart');
+        expect(labels).toContain('Suspend');
+        expect(labels).toContain('Lock');
         // can_hibernate is false in the mocked capabilities.
-        expect(rows).not.toContain('Hibernate');
+        expect(labels).not.toContain('Hibernate');
+    });
+
+    it('fetches the scheduled jobs list on mount', async () => {
+        render(App);
+        await new Promise((r) => setTimeout(r, 10));
+        await tick();
+        const queried = mockCallSpy.mock.calls.some(([method]) => method === 'action.scheduled');
+        expect(queried).toBe(true);
     });
 
     it('backdrop click calls view.hide', async () => {
