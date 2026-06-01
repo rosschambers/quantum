@@ -90,21 +90,21 @@
         <line x1="12" y1="20" x2="12" y2="23" />
         <line x1="17" y1="20" x2="17" y2="23" />
     {:else if name === 'battery_full' || name === 'battery_high' || name === 'battery_mid' || name === 'battery_low' || name === 'battery_empty'}
-        <rect x="5" y="5" width="14" height="16" rx="1.5" />
-        <rect x="9" y="3" width="6" height="2" rx="0.5" fill={color} stroke="none" />
+        <rect x="7" y="5" width="10" height="16" rx="1.5" />
+        <rect x="10" y="3" width="4" height="2" rx="0.5" fill={color} stroke="none" />
         {#if name === 'battery_full'}
-            <rect x="7" y="7" width="10" height="12" rx="0.5" fill={color} stroke="none" />
+            <rect x="9" y="7" width="6" height="12" rx="0.5" fill={color} stroke="none" />
         {:else if name === 'battery_high'}
-            <rect x="7" y="10" width="10" height="9" rx="0.5" fill={color} stroke="none" />
+            <rect x="9" y="10" width="6" height="9" rx="0.5" fill={color} stroke="none" />
         {:else if name === 'battery_mid'}
-            <rect x="7" y="13" width="10" height="6" rx="0.5" fill={color} stroke="none" />
+            <rect x="9" y="13" width="6" height="6" rx="0.5" fill={color} stroke="none" />
         {:else if name === 'battery_low'}
-            <rect x="7" y="16" width="10" height="3" rx="0.5" fill={color} stroke="none" />
+            <rect x="9" y="16" width="6" height="3" rx="0.5" fill={color} stroke="none" />
         {/if}
     {:else if name === 'battery_charging'}
-        <rect x="5" y="5" width="14" height="16" rx="1.5" />
-        <rect x="9" y="3" width="6" height="2" rx="0.5" fill={color} stroke="none" />
-        <polygon points="13,7 9,14 12,14 10,19 16,11 13,11" fill={color} stroke="none" />
+        <rect x="7" y="5" width="10" height="16" rx="1.5" />
+        <rect x="10" y="3" width="4" height="2" rx="0.5" fill={color} stroke="none" />
+        <polygon points="12.5,7 10,13.5 12,13.5 11,18 14.5,12 12.5,12" fill={color} stroke="none" />
     {:else if name === 'volume_high'}
         <polygon points="4,9 8,9 13,5 13,19 8,15 4,15" fill={color} stroke="none" />
         <path d="M16 8.5 Q18 12 16 15.5" />
