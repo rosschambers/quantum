@@ -9,18 +9,38 @@
     let { client }: Props = $props();
     let stats: SystemStats | null = $state(null);
 
+    /**
+     * Rolling history of CPU% and MEM% samples used to draw the inline
+     * sparkline. Stats arrive at roughly 1 Hz; HISTORY_LENGTH samples
+     * therefore covers about half a minute of history. Each new sample
+     * pushes; old samples drop off the left.
+     */
+    const HISTORY_LENGTH = 32;
+    let cpuHistory: number[] = $state([]);
+    let memHistory: number[] = $state([]);
+
     $effect(() => {
         client
             .call('provider.query', { id: 'system.stats' })
             .then((r: unknown) => {
-                if (r) stats = r as SystemStats;
+                if (r) pushStats(r as SystemStats);
             })
             .catch(() => {});
         const unsubscribe = client.subscribe('system.stats.event', (payload: unknown) => {
-            stats = payload as SystemStats;
+            pushStats(payload as SystemStats);
         });
         return () => unsubscribe?.();
     });
+
+    function pushStats(s: SystemStats): void {
+        stats = s;
+        const cpu = clampPercent(s.cpu_percent);
+        const mem = s.mem_total_bytes === 0
+            ? 0
+            : clampPercent((s.mem_used_bytes / s.mem_total_bytes) * 100);
+        cpuHistory = [...cpuHistory, cpu].slice(-HISTORY_LENGTH);
+        memHistory = [...memHistory, mem].slice(-HISTORY_LENGTH);
+    }
 
     function clampPercent(v: number): number {
         if (!Number.isFinite(v) || v < 0) return 0;
@@ -45,9 +65,10 @@
 
     /**
      * Smooth cool-to-hot gradient. 0% maps to a cool blue, 100% maps to
-     * a hot red. Linearly interpolated through a medium-saturation
-     * yellow-ish midpoint. Used both for the active ring stroke and any
-     * downstream styling that wants to color by load.
+     * a hot red, with a yellow-ish midpoint coming naturally from
+     * linear interpolation across all three channels. Shared between
+     * the active ring stroke and the sparkline stroke so the two read
+     * as the same metric.
      */
     function gradientColor(pct: number | null): string {
         const p = pct === null ? 0 : pct;
@@ -57,9 +78,7 @@
         return `rgb(${r}, ${g}, ${b})`;
     }
 
-    // Ring geometry. Diameter, stroke width, and computed radius +
-    // circumference. The stroke is positioned with a half-pixel inset so
-    // it doesn't get clipped by the SVG viewBox.
+    // Ring geometry.
     const RING_SIZE = 22;
     const STROKE = 2;
     const RADIUS = (RING_SIZE - STROKE) / 2;
@@ -71,10 +90,60 @@
     }
 
     function ringLabel(pct: number | null): string {
-        // No percent sign: the ring is the percent indicator. `--` while
-        // we wait for the first sample, otherwise a 0-100 integer.
         if (pct === null) return '--';
         return `${Math.round(pct)}`;
+    }
+
+    // Sparkline geometry. Sized to sit flush against the ring at
+    // ~22px tall so the meter as a whole reads as a unit.
+    const SPARK_W = 40;
+    const SPARK_H = 18;
+    const SPARK_PAD = 2; // top/bottom pad so the stroke doesn't clip
+
+    /**
+     * Build a smoothed SVG `d` attribute from a samples array using a
+     * Catmull-Rom-to-Bezier conversion (tension 0.5, the standard
+     * "uniform" Catmull-Rom). Two control points per segment make the
+     * line continuously differentiable and visibly softer than the raw
+     * polyline. Returns an empty string when there are fewer than two
+     * samples (no curve to draw).
+     *
+     * Spline math:
+     *   For each pair (p1, p2) we look at the surrounding points
+     *   (p0, p1, p2, p3) and produce two cubic bezier control points:
+     *     cp1 = p1 + (p2 - p0) / 6
+     *     cp2 = p2 - (p3 - p1) / 6
+     *   At the endpoints we duplicate p0=p1 or p3=p2 to avoid running
+     *   off the array.
+     */
+    function smoothPath(samples: number[], width: number, height: number): string {
+        if (samples.length < 2) return '';
+        const n = samples.length;
+        const padTop = SPARK_PAD;
+        const padBot = SPARK_PAD;
+        const drawableHeight = height - padTop - padBot;
+        const stepX = n > 1 ? width / (n - 1) : 0;
+        const points: Array<[number, number]> = samples.map((v, i) => {
+            const x = i * stepX;
+            const y = padTop + (1 - v / 100) * drawableHeight;
+            return [x, y];
+        });
+        const segments: string[] = [];
+        segments.push(`M${points[0][0].toFixed(2)},${points[0][1].toFixed(2)}`);
+        for (let i = 0; i < points.length - 1; i += 1) {
+            const p0 = points[i - 1] ?? points[i];
+            const p1 = points[i];
+            const p2 = points[i + 1];
+            const p3 = points[i + 2] ?? p2;
+            const cp1x = p1[0] + (p2[0] - p0[0]) / 6;
+            const cp1y = p1[1] + (p2[1] - p0[1]) / 6;
+            const cp2x = p2[0] - (p3[0] - p1[0]) / 6;
+            const cp2y = p2[1] - (p3[1] - p1[1]) / 6;
+            segments.push(
+                `C${cp1x.toFixed(2)},${cp1y.toFixed(2)} ${cp2x.toFixed(2)},${cp2y.toFixed(2)} ${p2[0].toFixed(2)},${p2[1].toFixed(2)}`,
+            );
+        }
+        return segments.join(' ');
     }
 
     const TRACK_COLOR = 'rgba(255, 255, 255, 0.12)';
@@ -83,6 +152,7 @@
 <div class="meters">
     <div class="meter cpu" title={tooltipFor('CPU', cpuPercent(stats))}>
         <svg
+            class="ring"
             width={RING_SIZE}
             height={RING_SIZE}
             viewBox="0 0 {RING_SIZE} {RING_SIZE}"
@@ -118,9 +188,29 @@
                 dominant-baseline="central"
             >{ringLabel(cpuPercent(stats))}</text>
         </svg>
+        <svg
+            class="sparkline"
+            width={SPARK_W}
+            height={SPARK_H}
+            viewBox="0 0 {SPARK_W} {SPARK_H}"
+            preserveAspectRatio="none"
+            aria-hidden="true"
+        >
+            {#if cpuHistory.length > 1}
+                <path
+                    d={smoothPath(cpuHistory, SPARK_W, SPARK_H)}
+                    fill="none"
+                    stroke={gradientColor(cpuPercent(stats))}
+                    stroke-width="1.2"
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                />
+            {/if}
+        </svg>
     </div>
     <div class="meter mem" title={tooltipFor('MEM', memPercent(stats))}>
         <svg
+            class="ring"
             width={RING_SIZE}
             height={RING_SIZE}
             viewBox="0 0 {RING_SIZE} {RING_SIZE}"
@@ -156,6 +246,25 @@
                 dominant-baseline="central"
             >{ringLabel(memPercent(stats))}</text>
         </svg>
+        <svg
+            class="sparkline"
+            width={SPARK_W}
+            height={SPARK_H}
+            viewBox="0 0 {SPARK_W} {SPARK_H}"
+            preserveAspectRatio="none"
+            aria-hidden="true"
+        >
+            {#if memHistory.length > 1}
+                <path
+                    d={smoothPath(memHistory, SPARK_W, SPARK_H)}
+                    fill="none"
+                    stroke={gradientColor(memPercent(stats))}
+                    stroke-width="1.2"
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                />
+            {/if}
+        </svg>
     </div>
 </div>
 
@@ -168,10 +277,12 @@
     .meter {
         display: inline-flex;
         align-items: center;
+        gap: 2px;
         cursor: default;
         line-height: 0;
     }
-    .meter svg {
+    .meter svg.ring,
+    .meter svg.sparkline {
         display: block;
     }
     .ring-fill {
@@ -183,8 +294,9 @@
         font-weight: 600;
         fill: var(--color-fg, #cdd6f4);
         font-variant-numeric: tabular-nums;
-        /* pointer-events off so the parent .meter title tooltip still
-         * fires when hovering over the number itself */
         pointer-events: none;
+    }
+    .sparkline path {
+        transition: stroke 0.4s ease;
     }
 </style>

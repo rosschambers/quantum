@@ -1,0 +1,1572 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>Quantum Bar Design Playground</title>
+<style>
+:root {
+    --pg-bg: #1e1e2e;
+    --pg-bg-alt: #313244;
+    --pg-border: #45475a;
+    --pg-fg: #cdd6f4;
+    --pg-fg-alt: #a6adc8;
+    --pg-muted: #6c7086;
+    --pg-accent: #89b4fa;
+    --pg-good: #a6e3a1;
+    --pg-warn: #f9e2af;
+    --pg-crit: #f38ba8;
+    --pg-font-sans: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    --pg-font-mono: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+* { box-sizing: border-box; }
+html, body {
+    margin: 0; padding: 0;
+    background: var(--pg-bg);
+    color: var(--pg-fg);
+    font-family: var(--pg-font-sans);
+    font-size: 14px;
+    height: 100vh;
+    overflow: hidden;
+}
+.layout {
+    display: grid;
+    grid-template-columns: 340px 1fr;
+    grid-template-rows: 1fr auto;
+    height: 100vh;
+}
+.controls {
+    grid-row: 1 / 3;
+    border-right: 1px solid var(--pg-border);
+    overflow-y: auto;
+    padding: 16px;
+}
+.preview {
+    grid-row: 1;
+    overflow-y: auto;
+    padding: 16px;
+}
+.prompt-box {
+    grid-row: 2;
+    border-top: 1px solid var(--pg-border);
+    padding: 12px 16px;
+    background: var(--pg-bg-alt);
+    display: flex;
+    gap: 12px;
+    align-items: flex-start;
+}
+h1 { font-size: 16px; margin: 0 0 16px 0; }
+h2 { font-size: 11px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--pg-fg-alt); margin: 16px 0 8px 0; }
+.group { margin-bottom: 16px; padding-bottom: 16px; border-bottom: 1px solid var(--pg-border); }
+.group:last-child { border-bottom: none; }
+label { display: block; font-size: 12px; color: var(--pg-fg-alt); margin-bottom: 4px; }
+.row { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
+.row label { flex: 1; margin: 0; }
+input[type="range"] { width: 100%; }
+input[type="number"], input[type="text"], input[type="color"] {
+    background: var(--pg-bg); color: var(--pg-fg);
+    border: 1px solid var(--pg-border); border-radius: 4px;
+    padding: 4px 6px; font-size: 12px;
+}
+input[type="number"] { width: 64px; }
+input[type="color"] { padding: 0; width: 36px; height: 24px; }
+select {
+    background: var(--pg-bg); color: var(--pg-fg);
+    border: 1px solid var(--pg-border); border-radius: 4px;
+    padding: 4px; width: 100%; font-size: 12px;
+}
+.presets { display: flex; flex-wrap: wrap; gap: 6px; }
+button.preset {
+    background: var(--pg-bg-alt); color: var(--pg-fg);
+    border: 1px solid var(--pg-border);
+    border-radius: 4px; padding: 6px 10px;
+    cursor: pointer; font-size: 12px;
+}
+button.preset:hover { background: var(--pg-border); }
+button.preset.active { background: var(--pg-accent); color: var(--pg-bg); border-color: var(--pg-accent); }
+
+/* ============ BAR PREVIEW (REAL BAR LOOK) ============ */
+.bar-preview-wrap {
+    border-radius: 8px;
+    overflow: hidden;
+    margin-bottom: 24px;
+    background:
+        linear-gradient(135deg, #16161e 0%, #2a2a3a 100%);
+    padding: 24px;
+    border: 1px solid var(--pg-border);
+}
+.bar-preview-wrap > .label-row {
+    color: var(--pg-fg-alt);
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    margin-bottom: 8px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+/* The bar surface itself. Mimics the actual layer-shell surface
+ * styling, controlled by --bar-* tokens that the playground state
+ * mutates live. */
+.bar-surface {
+    /* User-controllable tokens */
+    --bar-height: 32px;
+    --bar-radius: 0px;
+    --bar-padding-x: 8px;
+    --bar-gap: 12px;
+    --bar-bg: rgba(30, 30, 46, 0.95);
+    --bar-fg: #cdd6f4;
+    --bar-fg-alt: #a6adc8;
+    --bar-border-color: #45475a;
+    --bar-border-bottom: 1px;
+    --bar-icon-size: 14px;
+    --bar-shadow: none;
+    --bar-divider: solid;
+    --bar-margin: 0px;
+    --bar-blur: 0px;
+
+    height: var(--bar-height);
+    background: var(--bar-bg);
+    color: var(--bar-fg);
+    display: flex;
+    align-items: center;
+    gap: var(--bar-gap);
+    padding: 0 var(--bar-padding-x);
+    border-radius: var(--bar-radius);
+    margin: var(--bar-margin);
+    border-bottom: var(--bar-border-bottom) solid var(--bar-border-color);
+    box-shadow: var(--bar-shadow);
+    backdrop-filter: blur(var(--bar-blur));
+    font-family: var(--pg-font-sans);
+    font-size: var(--bar-icon-size);
+}
+.bar-region-left { flex: 1; min-width: 0; display: flex; align-items: center; gap: 8px; }
+.bar-region-center, .bar-region-right { display: flex; align-items: center; gap: var(--bar-gap); }
+
+/* In-bar divider when used between regions */
+.bar-divider {
+    width: 1px;
+    align-self: stretch;
+    background: var(--bar-border-color);
+    margin: 6px 0;
+    opacity: 0.5;
+}
+
+/* Generic meter-style indicator slot */
+.indicator {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    line-height: 1;
+    color: var(--bar-fg-alt);
+    cursor: default;
+    font-size: var(--bar-icon-size);
+}
+.indicator .num {
+    font-variant-numeric: tabular-nums;
+    font-size: calc(var(--bar-icon-size) - 2px);
+    font-family: var(--pg-font-mono);
+}
+.indicator svg { display: block; }
+
+/* ============ VARIANT GRID ============ */
+.section { margin-bottom: 24px; }
+.section h3 {
+    font-size: 12px;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--pg-fg-alt);
+    margin: 0 0 8px 0;
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+}
+.section h3 .current {
+    color: var(--pg-accent);
+    font-size: 11px;
+    text-transform: none;
+    letter-spacing: 0;
+    font-weight: normal;
+}
+.variant-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+    gap: 8px;
+}
+.variant-card {
+    background: var(--pg-bg-alt);
+    border: 1px solid var(--pg-border);
+    border-radius: 6px;
+    padding: 10px;
+    cursor: pointer;
+    transition: border-color 0.1s, transform 0.1s;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+.variant-card:hover { border-color: var(--pg-accent); transform: translateY(-1px); }
+.variant-card.selected { border-color: var(--pg-accent); box-shadow: inset 0 0 0 1px var(--pg-accent); }
+.variant-card .vc-label {
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--pg-fg-alt);
+}
+.variant-card .vc-preview {
+    background: var(--pg-bg);
+    border-radius: 4px;
+    padding: 6px 8px;
+    min-height: 32px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    color: var(--pg-fg-alt);
+}
+
+/* Prompt area */
+#prompt {
+    flex: 1;
+    background: var(--pg-bg);
+    border: 1px solid var(--pg-border);
+    border-radius: 4px;
+    padding: 8px 10px;
+    font-family: var(--pg-font-mono);
+    font-size: 11px;
+    color: var(--pg-fg);
+    white-space: pre-wrap;
+    max-height: 220px;
+    overflow-y: auto;
+    line-height: 1.5;
+}
+#copy {
+    background: var(--pg-accent);
+    color: var(--pg-bg);
+    border: none;
+    border-radius: 4px;
+    padding: 8px 14px;
+    cursor: pointer;
+    font-weight: 600;
+    align-self: flex-start;
+}
+#copy.copied { background: var(--pg-good); }
+
+/* Wallpaper / background swatches for preview backdrop */
+.backdrop-row { display: flex; gap: 6px; margin-bottom: 8px; }
+.backdrop-row button {
+    width: 32px; height: 24px;
+    border: 1px solid var(--pg-border);
+    border-radius: 4px;
+    cursor: pointer;
+}
+.backdrop-row button.active { border-color: var(--pg-accent); box-shadow: 0 0 0 1px var(--pg-accent); }
+
+</style>
+</head>
+<body>
+<div class="layout">
+<aside class="controls">
+    <h1>Quantum Bar Playground</h1>
+
+    <div class="group">
+        <h2>Presets</h2>
+        <div class="presets" id="presets"></div>
+    </div>
+
+    <div class="group">
+        <h2>Bar chrome</h2>
+        <div class="row">
+            <label>Height (px)</label>
+            <input type="number" id="barHeight" min="24" max="64" />
+        </div>
+        <div class="row">
+            <label>Padding X (px)</label>
+            <input type="number" id="barPaddingX" min="0" max="32" />
+        </div>
+        <div class="row">
+            <label>Gap between regions (px)</label>
+            <input type="number" id="barGap" min="0" max="32" />
+        </div>
+        <div class="row">
+            <label>Corner radius (px)</label>
+            <input type="number" id="barRadius" min="0" max="24" />
+        </div>
+        <div class="row">
+            <label>Outer margin (px)</label>
+            <input type="number" id="barMargin" min="0" max="16" />
+        </div>
+        <div class="row">
+            <label>Background opacity (0\u20131)</label>
+            <input type="range" id="barOpacity" min="0.3" max="1" step="0.05" />
+        </div>
+        <div class="row">
+            <label>Backdrop blur (px)</label>
+            <input type="number" id="barBlur" min="0" max="30" />
+        </div>
+        <div class="row">
+            <label>Bottom border (px)</label>
+            <input type="number" id="barBorder" min="0" max="3" />
+        </div>
+        <div class="row">
+            <label>Drop shadow</label>
+            <select id="barShadow">
+                <option value="none">none</option>
+                <option value="soft">soft</option>
+                <option value="strong">strong</option>
+            </select>
+        </div>
+        <div class="row">
+            <label>Region divider</label>
+            <select id="barRegionDivider">
+                <option value="none">none</option>
+                <option value="line">vertical line</option>
+                <option value="dot">dot</option>
+            </select>
+        </div>
+    </div>
+
+    <div class="group">
+        <h2>Icons + colors</h2>
+        <div class="row">
+            <label>Icon size (px)</label>
+            <input type="number" id="iconSize" min="8" max="24" />
+        </div>
+        <div class="row">
+            <label>Icon style</label>
+            <select id="iconStyle">
+                <option value="unicode">unicode glyphs (\u2699 \u25a3 \u23ef)</option>
+                <option value="vector">vector SVG (geometric)</option>
+                <option value="lucide">SVG \u2014 Lucide-like (outlined)</option>
+            </select>
+        </div>
+        <div class="row">
+            <label>Foreground</label>
+            <input type="color" id="colorFg" />
+        </div>
+        <div class="row">
+            <label>Muted foreground</label>
+            <input type="color" id="colorFgAlt" />
+        </div>
+        <div class="row">
+            <label>Accent</label>
+            <input type="color" id="colorAccent" />
+        </div>
+        <div class="row">
+            <label>Gradient stops</label>
+            <select id="gradient">
+                <option value="cool-hot">blue \u2192 red (current)</option>
+                <option value="green-amber-red">green \u2192 amber \u2192 red</option>
+                <option value="mauve-pink">mauve \u2192 pink (catppuccin)</option>
+                <option value="single">single accent color</option>
+            </select>
+        </div>
+    </div>
+
+    <div class="group">
+        <h2>Active window</h2>
+        <div class="row">
+            <label>Style</label>
+            <select id="activeStyle">
+                <option value="ws-and-title">workspace badge + title</option>
+                <option value="title-only">title only</option>
+                <option value="ws-pill">workspace pill (no title)</option>
+                <option value="ws-and-app">workspace + app class (compact)</option>
+            </select>
+        </div>
+        <div class="row">
+            <label>Workspace shape</label>
+            <select id="wsShape">
+                <option value="pill">rounded pill</option>
+                <option value="square">square chip</option>
+                <option value="number-only">bare number</option>
+                <option value="hash">leading \u201c#\u201d</option>
+            </select>
+        </div>
+    </div>
+
+    <div class="group">
+        <h2>System meters (CPU/MEM)</h2>
+        <div class="row">
+            <label>Style</label>
+            <select id="meterStyle">
+                <option value="ring">ring with inline number</option>
+                <option value="ring-spark">ring + sparkline</option>
+                <option value="bar-spark">horizontal bar + sparkline</option>
+                <option value="bucket-spark">bucket bar + sparkline (old)</option>
+                <option value="spark-only">sparkline only</option>
+                <option value="numeric">plain numeric</option>
+            </select>
+        </div>
+        <div class="row">
+            <label>Ring inline label</label>
+            <select id="ringLabel">
+                <option value="yes">show integer inside ring</option>
+                <option value="no">no inline label</option>
+            </select>
+        </div>
+        <div class="row">
+            <label>Sparkline render</label>
+            <select id="sparkType">
+                <option value="polyline">smooth polyline</option>
+                <option value="area">filled area</option>
+                <option value="histogram">histogram bars</option>
+            </select>
+        </div>
+        <div class="row">
+            <label>Sparkline width</label>
+            <input type="number" id="sparkW" min="16" max="100" />
+        </div>
+    </div>
+
+    <div class="group">
+        <h2>Media controls</h2>
+        <div class="row">
+            <label>Style</label>
+            <select id="mediaStyle">
+                <option value="text">plain text buttons (\u23ee \u23f8 \u23ed)</option>
+                <option value="icons">SVG icons</option>
+                <option value="compact-icons">SVG icons w/ no padding</option>
+                <option value="title-and-play">song title + play/pause</option>
+                <option value="hidden-when-idle">hidden when no player</option>
+            </select>
+        </div>
+        <div class="row">
+            <label>Mock state</label>
+            <select id="mediaMock">
+                <option value="playing">playing</option>
+                <option value="paused">paused</option>
+                <option value="stopped">stopped (no metadata)</option>
+                <option value="none">no player available</option>
+            </select>
+        </div>
+    </div>
+
+    <div class="group">
+        <h2>Indicator language (Volume / Brightness / Battery / WiFi)</h2>
+        <div class="row">
+            <label>Percentage shape</label>
+            <select id="pctStyle">
+                <option value="bucket">3-cell bucket (\u25ae\u25ae\u25af)</option>
+                <option value="bars-4">4-cell bars</option>
+                <option value="ring">small ring</option>
+                <option value="arc">half-arc</option>
+                <option value="dot">colored dot</option>
+                <option value="vbar">vertical mini bar</option>
+                <option value="numeric">numeric only</option>
+                <option value="icon-only">icon only (color-coded)</option>
+            </select>
+        </div>
+        <div class="row">
+            <label>Always show number?</label>
+            <select id="pctShowNum">
+                <option value="never">tooltip only</option>
+                <option value="warn">when warn+ threshold</option>
+                <option value="always">always</option>
+            </select>
+        </div>
+    </div>
+
+    <div class="group">
+        <h2>Connectivity (Bluetooth / Network)</h2>
+        <div class="row">
+            <label>Bluetooth style</label>
+            <select id="btStyle">
+                <option value="glyph">unicode glyph</option>
+                <option value="svg">bluetooth SVG icon</option>
+                <option value="icon-count">icon + connected count</option>
+            </select>
+        </div>
+        <div class="row">
+            <label>Network style</label>
+            <select id="netStyle">
+                <option value="wifi-bars">SVG wifi triangle bars</option>
+                <option value="bucket">bucket bar (current)</option>
+                <option value="dot-color">color dot by connectivity</option>
+                <option value="ssid-text">SSID text (compact)</option>
+            </select>
+        </div>
+    </div>
+
+    <div class="group">
+        <h2>Discrete state (PowerProfile / PowerMenu)</h2>
+        <div class="row">
+            <label>PowerProfile style</label>
+            <select id="ppStyle">
+                <option value="glyph">single glyph (\u25ef \u25d0 \u25cf)</option>
+                <option value="pills">three small pills (active highlighted)</option>
+                <option value="dot-color">colored dot</option>
+                <option value="leaf-arrow-bolt">leaf / arrow / bolt SVG</option>
+            </select>
+        </div>
+        <div class="row">
+            <label>PowerMenu style</label>
+            <select id="pmStyle">
+                <option value="circle">circle-with-dot (\u23fb)</option>
+                <option value="caret">chevron-down</option>
+                <option value="ellipsis">3-dot menu</option>
+                <option value="svg-power">SVG power icon</option>
+            </select>
+        </div>
+    </div>
+
+    <div class="group">
+        <h2>Hover / focus</h2>
+        <div class="row">
+            <label>Hover style</label>
+            <select id="hoverStyle">
+                <option value="bg">background fill</option>
+                <option value="underline">underline</option>
+                <option value="brighten">brighten color</option>
+                <option value="ring">subtle ring</option>
+                <option value="none">no hover effect</option>
+            </select>
+        </div>
+    </div>
+
+    <div class="group">
+        <h2>Preview backdrop</h2>
+        <div class="backdrop-row" id="backdrop-row"></div>
+    </div>
+</aside>
+
+<section class="preview">
+    <div class="bar-preview-wrap" id="bar-preview-wrap">
+        <div class="label-row">
+            <span>LIVE BAR PREVIEW</span>
+            <span style="color: var(--pg-muted); font-size: 10px;">Hover indicators for tooltips. Drag controls on the left.</span>
+        </div>
+        <div class="bar-surface" id="bar-surface">
+            <!-- Populated by JS -->
+        </div>
+    </div>
+
+    <div class="section">
+        <h3>System meters <span class="current" id="meter-current"></span></h3>
+        <div class="variant-grid" data-section="meterStyle"></div>
+    </div>
+
+    <div class="section">
+        <h3>Active window <span class="current" id="active-current"></span></h3>
+        <div class="variant-grid" data-section="activeStyle"></div>
+    </div>
+
+    <div class="section">
+        <h3>Media controls <span class="current" id="media-current"></span></h3>
+        <div class="variant-grid" data-section="mediaStyle"></div>
+    </div>
+
+    <div class="section">
+        <h3>Percentage indicators <span class="current" id="pct-current"></span></h3>
+        <div class="variant-grid" data-section="pctStyle"></div>
+    </div>
+
+    <div class="section">
+        <h3>Network <span class="current" id="net-current"></span></h3>
+        <div class="variant-grid" data-section="netStyle"></div>
+    </div>
+
+    <div class="section">
+        <h3>Bluetooth <span class="current" id="bt-current"></span></h3>
+        <div class="variant-grid" data-section="btStyle"></div>
+    </div>
+
+    <div class="section">
+        <h3>Power profile <span class="current" id="pp-current"></span></h3>
+        <div class="variant-grid" data-section="ppStyle"></div>
+    </div>
+
+    <div class="section">
+        <h3>Power menu <span class="current" id="pm-current"></span></h3>
+        <div class="variant-grid" data-section="pmStyle"></div>
+    </div>
+
+    <div class="section">
+        <h3>Workspace badge <span class="current" id="ws-current"></span></h3>
+        <div class="variant-grid" data-section="wsShape"></div>
+    </div>
+</section>
+
+<div class="prompt-box">
+    <pre id="prompt"></pre>
+    <button id="copy">Copy prompt</button>
+</div>
+</div>
+
+<script>
+// ============================================================
+// State + presets
+// ============================================================
+
+const DEFAULTS = {
+    barHeight: 32, barPaddingX: 12, barGap: 12, barRadius: 0, barMargin: 0,
+    barOpacity: 0.95, barBlur: 0, barBorder: 1, barShadow: 'none', barRegionDivider: 'none',
+    iconSize: 14, iconStyle: 'unicode',
+    colorFg: '#cdd6f4', colorFgAlt: '#a6adc8', colorAccent: '#89b4fa',
+    gradient: 'cool-hot',
+    activeStyle: 'ws-and-title', wsShape: 'pill',
+    meterStyle: 'ring-spark', ringLabel: 'yes', sparkType: 'polyline', sparkW: 36,
+    mediaStyle: 'text', mediaMock: 'playing',
+    pctStyle: 'bucket', pctShowNum: 'never',
+    btStyle: 'svg', netStyle: 'wifi-bars',
+    ppStyle: 'glyph', pmStyle: 'circle',
+    hoverStyle: 'bg',
+    backdrop: 'dark',
+};
+
+const PRESETS = {
+    'Current': { ...DEFAULTS, meterStyle: 'ring', mediaStyle: 'text', pctStyle: 'bucket', btStyle: 'glyph', netStyle: 'bucket', ppStyle: 'glyph', pmStyle: 'circle', iconStyle: 'unicode' },
+    'Vector unified': { ...DEFAULTS, meterStyle: 'ring-spark', mediaStyle: 'icons', pctStyle: 'ring', btStyle: 'svg', netStyle: 'wifi-bars', ppStyle: 'leaf-arrow-bolt', pmStyle: 'svg-power', iconStyle: 'lucide' },
+    'Geometric (rings everywhere)': { ...DEFAULTS, meterStyle: 'ring', pctStyle: 'ring', btStyle: 'svg', netStyle: 'wifi-bars', ppStyle: 'dot-color', pmStyle: 'circle', iconStyle: 'vector', gradient: 'green-amber-red' },
+    'Minimal monochrome': { ...DEFAULTS, meterStyle: 'spark-only', pctStyle: 'icon-only', btStyle: 'svg', netStyle: 'dot-color', ppStyle: 'dot-color', pmStyle: 'ellipsis', iconStyle: 'lucide', gradient: 'single' },
+    'Floating with shadow': { ...DEFAULTS, barRadius: 8, barMargin: 6, barOpacity: 0.85, barBlur: 16, barBorder: 0, barShadow: 'strong', meterStyle: 'ring-spark', pctStyle: 'ring', iconStyle: 'lucide', btStyle: 'svg', netStyle: 'wifi-bars', ppStyle: 'leaf-arrow-bolt', pmStyle: 'svg-power' },
+    'Dense data': { ...DEFAULTS, barGap: 8, iconSize: 12, meterStyle: 'bar-spark', pctStyle: 'bars-4', btStyle: 'icon-count', netStyle: 'ssid-text', ppStyle: 'glyph', pmStyle: 'caret', iconStyle: 'unicode', pctShowNum: 'always' },
+};
+
+const state = { ...DEFAULTS };
+
+// Random walk for live mocks
+const mock = {
+    cpu: 47, mem: 62,
+    cpuHist: [], memHist: [],
+    volume: 65, brightness: 70, battery: 80, wifiSignal: 78,
+    powerProfile: 'balanced',
+    btDevices: [{ name: 'Pebble', battery: 100 }],
+    activeWindow: { title: 'firefox \u2014 mozilla.org', class: 'firefox', workspaceId: 2, workspaceName: '2' },
+    media: { title: 'Sample Track', artist: 'Some Artist', playing: true, hasPlayer: true },
+};
+
+const BACKDROPS = {
+    'dark': 'linear-gradient(135deg, #16161e 0%, #2a2a3a 100%)',
+    'plum': 'linear-gradient(135deg, #2b1f3a 0%, #46365a 100%)',
+    'forest': 'linear-gradient(135deg, #1a2e23 0%, #2f4f3c 100%)',
+    'beige': 'linear-gradient(135deg, #c4a682 0%, #d8c4a4 100%)',
+};
+
+// ============================================================
+// Color helpers
+// ============================================================
+
+function gradientStops() {
+    if (state.gradient === 'green-amber-red') return [[0, '#a6e3a1'], [60, '#f9e2af'], [100, '#f38ba8']];
+    if (state.gradient === 'mauve-pink') return [[0, '#cba6f7'], [100, '#f5c2e7']];
+    if (state.gradient === 'single') return [[0, state.colorAccent], [100, state.colorAccent]];
+    return [[0, 'rgb(80,180,250)'], [100, 'rgb(255,50,50)']];
+}
+
+function gradientColor(pct) {
+    const stops = gradientStops();
+    if (pct <= stops[0][0]) return stops[0][1];
+    if (pct >= stops[stops.length - 1][0]) return stops[stops.length - 1][1];
+    for (let i = 0; i < stops.length - 1; i += 1) {
+        const [a, ca] = stops[i];
+        const [b, cb] = stops[i + 1];
+        if (pct >= a && pct <= b) {
+            const t = (pct - a) / (b - a);
+            return lerpColor(ca, cb, t);
+        }
+    }
+    return stops[stops.length - 1][1];
+}
+
+function parseColor(c) {
+    if (c.startsWith('#')) {
+        return [parseInt(c.slice(1, 3), 16), parseInt(c.slice(3, 5), 16), parseInt(c.slice(5, 7), 16)];
+    }
+    const m = c.match(/rgb\((\d+),\s*(\d+),\s*(\d+)\)/);
+    if (m) return [Number(m[1]), Number(m[2]), Number(m[3])];
+    return [200, 200, 200];
+}
+
+function lerpColor(a, b, t) {
+    const [ar, ag, ab] = parseColor(a);
+    const [br, bg, bb] = parseColor(b);
+    return `rgb(${Math.round(ar + (br - ar) * t)}, ${Math.round(ag + (bg - ag) * t)}, ${Math.round(ab + (bb - ab) * t)})`;
+}
+
+// ============================================================
+// SVG helpers
+// ============================================================
+
+function svgEl(tag, attrs) {
+    const e = document.createElementNS('http://www.w3.org/2000/svg', tag);
+    for (const [k, v] of Object.entries(attrs)) e.setAttribute(k, v);
+    return e;
+}
+
+function el(tag, props = {}, ...children) {
+    const e = document.createElement(tag);
+    for (const [k, v] of Object.entries(props)) {
+        if (k === 'class') e.className = v;
+        else if (k === 'style') Object.assign(e.style, v);
+        else if (k === 'title') e.setAttribute('title', v);
+        else if (k === 'on') for (const [ev, h] of Object.entries(v)) e.addEventListener(ev, h);
+        else e.setAttribute(k, v);
+    }
+    for (const c of children) {
+        if (c == null) continue;
+        e.appendChild(typeof c === 'string' ? document.createTextNode(c) : c);
+    }
+    return e;
+}
+
+// ============================================================
+// Icon library
+// ============================================================
+
+const UNICODE_ICONS = {
+    cpu: '\u2699', mem: '\u25a3',
+    play: '\u23f5', pause: '\u23f8', prev: '\u23ee', next: '\u23ed', stop: '\u23f9',
+    volume: '\ud83d\udd0a', volumeMute: '\ud83d\udd07',
+    brightness: '\u263c', battery: '\ud83d\udd0b',
+    wifi: '\ud83d\udcf6', wifiOff: '\ud83d\udcf5',
+    bluetooth: '\u2734',
+    powerSaver: '\u25ef', balanced: '\u25d0', performance: '\u25cf',
+    powerMenu: '\u23fb',
+};
+
+function svgIcon(name, size = 14, color = 'currentColor') {
+    const s = size;
+    const stroke = 1.5;
+    const attrs = { width: s, height: s, viewBox: '0 0 24 24', fill: 'none', stroke: color, 'stroke-width': stroke, 'stroke-linecap': 'round', 'stroke-linejoin': 'round' };
+    const svg = svgEl('svg', attrs);
+    switch (name) {
+        case 'cpu': {
+            svg.appendChild(svgEl('rect', { x: 6, y: 6, width: 12, height: 12, rx: 2 }));
+            svg.appendChild(svgEl('rect', { x: 9, y: 9, width: 6, height: 6, rx: 1, fill: color, stroke: 'none' }));
+            for (const [x1, y1, x2, y2] of [[12, 2, 12, 6], [12, 18, 12, 22], [2, 12, 6, 12], [18, 12, 22, 12], [5, 5, 7, 7], [17, 17, 19, 19], [5, 19, 7, 17], [17, 7, 19, 5]]) {
+                svg.appendChild(svgEl('line', { x1, y1, x2, y2 }));
+            }
+            break;
+        }
+        case 'mem': {
+            for (const x of [4, 11, 18]) {
+                svg.appendChild(svgEl('rect', { x: x - 1, y: 6, width: 4, height: 12, rx: 1 }));
+                for (const y of [8, 11, 14]) svg.appendChild(svgEl('line', { x1: x - 1, y1: y, x2: x + 3, y2: y, 'stroke-width': 0.5 }));
+            }
+            break;
+        }
+        case 'play': {
+            svg.appendChild(svgEl('polygon', { points: '7,5 19,12 7,19', fill: color, stroke: 'none' }));
+            break;
+        }
+        case 'pause': {
+            svg.appendChild(svgEl('rect', { x: 6, y: 5, width: 4, height: 14, rx: 1, fill: color, stroke: 'none' }));
+            svg.appendChild(svgEl('rect', { x: 14, y: 5, width: 4, height: 14, rx: 1, fill: color, stroke: 'none' }));
+            break;
+        }
+        case 'prev': {
+            svg.appendChild(svgEl('polygon', { points: '17,5 7,12 17,19', fill: color, stroke: 'none' }));
+            svg.appendChild(svgEl('rect', { x: 4, y: 5, width: 2, height: 14, fill: color, stroke: 'none' }));
+            break;
+        }
+        case 'next': {
+            svg.appendChild(svgEl('polygon', { points: '7,5 17,12 7,19', fill: color, stroke: 'none' }));
+            svg.appendChild(svgEl('rect', { x: 18, y: 5, width: 2, height: 14, fill: color, stroke: 'none' }));
+            break;
+        }
+        case 'volume': {
+            svg.appendChild(svgEl('polygon', { points: '4,9 8,9 12,5 12,19 8,15 4,15', fill: color, stroke: 'none' }));
+            svg.appendChild(svgEl('path', { d: 'M15 8 Q18 12 15 16' }));
+            svg.appendChild(svgEl('path', { d: 'M18 5 Q23 12 18 19' }));
+            break;
+        }
+        case 'volumeMute': {
+            svg.appendChild(svgEl('polygon', { points: '4,9 8,9 12,5 12,19 8,15 4,15', fill: color, stroke: 'none' }));
+            svg.appendChild(svgEl('line', { x1: 16, y1: 8, x2: 22, y2: 16 }));
+            svg.appendChild(svgEl('line', { x1: 22, y1: 8, x2: 16, y2: 16 }));
+            break;
+        }
+        case 'brightness': {
+            svg.appendChild(svgEl('circle', { cx: 12, cy: 12, r: 4, fill: color, stroke: 'none' }));
+            for (let i = 0; i < 8; i += 1) {
+                const a = (i / 8) * Math.PI * 2;
+                const x1 = 12 + Math.cos(a) * 7; const y1 = 12 + Math.sin(a) * 7;
+                const x2 = 12 + Math.cos(a) * 10; const y2 = 12 + Math.sin(a) * 10;
+                svg.appendChild(svgEl('line', { x1, y1, x2, y2 }));
+            }
+            break;
+        }
+        case 'battery': {
+            svg.appendChild(svgEl('rect', { x: 2, y: 8, width: 18, height: 8, rx: 1.5 }));
+            svg.appendChild(svgEl('rect', { x: 20, y: 10, width: 2, height: 4, rx: 0.5, fill: color, stroke: 'none' }));
+            break;
+        }
+        case 'wifi': {
+            svg.appendChild(svgEl('path', { d: 'M2 9 Q12 1 22 9' }));
+            svg.appendChild(svgEl('path', { d: 'M5 13 Q12 7 19 13' }));
+            svg.appendChild(svgEl('path', { d: 'M8 17 Q12 14 16 17' }));
+            svg.appendChild(svgEl('circle', { cx: 12, cy: 20, r: 1, fill: color, stroke: 'none' }));
+            break;
+        }
+        case 'wifiOff': {
+            svg.appendChild(svgEl('path', { d: 'M2 9 Q12 1 22 9' }));
+            svg.appendChild(svgEl('line', { x1: 3, y1: 3, x2: 21, y2: 21 }));
+            break;
+        }
+        case 'bluetooth': {
+            svg.appendChild(svgEl('polyline', { points: '7,7 17,17 12,21 12,3 17,7 7,17' }));
+            break;
+        }
+        case 'powerMenu': case 'power': {
+            svg.appendChild(svgEl('path', { d: 'M12 3 V12' }));
+            svg.appendChild(svgEl('path', { d: 'M6 6 Q2 11 4 16 Q8 22 12 21 Q16 22 20 16 Q22 11 18 6' }));
+            break;
+        }
+        case 'powerSaver': {
+            svg.appendChild(svgEl('path', { d: 'M12 3 Q4 12 12 21 Q20 12 12 3 Z', fill: color, 'fill-opacity': '0.3' }));
+            svg.appendChild(svgEl('path', { d: 'M12 21 V11' }));
+            break;
+        }
+        case 'balanced': {
+            svg.appendChild(svgEl('polyline', { points: '4,12 10,8 14,16 20,12' }));
+            break;
+        }
+        case 'performance': {
+            svg.appendChild(svgEl('polygon', { points: '12,3 7,13 11,13 9,21 17,11 13,11 15,3', fill: color, stroke: 'none' }));
+            break;
+        }
+        case 'ellipsis': {
+            for (const cx of [6, 12, 18]) svg.appendChild(svgEl('circle', { cx, cy: 12, r: 1.5, fill: color, stroke: 'none' }));
+            break;
+        }
+        case 'caret': {
+            svg.appendChild(svgEl('polyline', { points: '6,9 12,15 18,9' }));
+            break;
+        }
+        case 'circleDot': {
+            svg.appendChild(svgEl('circle', { cx: 12, cy: 12, r: 8 }));
+            svg.appendChild(svgEl('circle', { cx: 12, cy: 12, r: 2, fill: color, stroke: 'none' }));
+            break;
+        }
+        case 'speaker-medium': {
+            svg.appendChild(svgEl('polygon', { points: '4,9 8,9 12,5 12,19 8,15 4,15', fill: color, stroke: 'none' }));
+            svg.appendChild(svgEl('path', { d: 'M15 9 Q17 12 15 15' }));
+            break;
+        }
+    }
+    return svg;
+}
+
+function pickIcon(name, size = 14, color = 'currentColor') {
+    if (state.iconStyle === 'unicode') {
+        const e = document.createElement('span');
+        e.textContent = UNICODE_ICONS[name] ?? '?';
+        e.style.fontSize = `${size}px`;
+        e.style.color = color === 'currentColor' ? 'inherit' : color;
+        e.style.lineHeight = '1';
+        return e;
+    }
+    return svgIcon(name, size, color);
+}
+
+// ============================================================
+// Renderers for each indicator (used both in live bar + variant cards)
+// ============================================================
+
+function renderRing(pct, opts = {}) {
+    const size = opts.size ?? state.iconSize + 6;
+    const stroke = opts.stroke ?? 2;
+    const radius = (size - stroke) / 2;
+    const circ = 2 * Math.PI * radius;
+    const off = circ * (1 - pct / 100);
+    const color = gradientColor(pct);
+    const svg = svgEl('svg', { width: size, height: size, viewBox: `0 0 ${size} ${size}` });
+    svg.appendChild(svgEl('circle', { cx: size / 2, cy: size / 2, r: radius, fill: 'none', stroke: 'rgba(255,255,255,0.12)', 'stroke-width': stroke }));
+    svg.appendChild(svgEl('circle', { cx: size / 2, cy: size / 2, r: radius, fill: 'none', stroke: color, 'stroke-width': stroke, 'stroke-linecap': 'round', 'stroke-dasharray': circ, 'stroke-dashoffset': off, transform: `rotate(-90 ${size / 2} ${size / 2})` }));
+    if (opts.label !== false) {
+        const t = svgEl('text', { x: size / 2, y: size / 2 + 0.5, 'text-anchor': 'middle', 'dominant-baseline': 'central', 'font-family': 'var(--pg-font-mono)', 'font-size': Math.max(7, size * 0.4), 'font-weight': '600', fill: 'var(--bar-fg, #cdd6f4)' });
+        t.textContent = pct === null ? '--' : `${Math.round(pct)}`;
+        svg.appendChild(t);
+    }
+    return svg;
+}
+
+function renderArc(pct, opts = {}) {
+    const size = opts.size ?? state.iconSize + 4;
+    const stroke = 2;
+    const radius = size / 2 - stroke;
+    const cx = size / 2; const cy = size - stroke;
+    const svg = svgEl('svg', { width: size, height: cy + stroke, viewBox: `0 0 ${size} ${cy + stroke}` });
+    svg.appendChild(svgEl('path', { d: `M${cx - radius},${cy} A${radius},${radius} 0 0 1 ${cx + radius},${cy}`, fill: 'none', stroke: 'rgba(255,255,255,0.12)', 'stroke-width': stroke }));
+    const angle = Math.PI * (pct / 100);
+    const x = cx - radius * Math.cos(angle); const y = cy - radius * Math.sin(angle);
+    svg.appendChild(svgEl('path', { d: `M${cx - radius},${cy} A${radius},${radius} 0 0 1 ${x},${y}`, fill: 'none', stroke: gradientColor(pct), 'stroke-width': stroke, 'stroke-linecap': 'round' }));
+    return svg;
+}
+
+function renderSparkline(history, pct, opts = {}) {
+    const w = opts.w ?? state.sparkW; const h = opts.h ?? state.iconSize + 4;
+    const svg = svgEl('svg', { width: w, height: h, viewBox: `0 0 ${w} ${h}`, preserveAspectRatio: 'none' });
+    if (history.length < 2) return svg;
+    const color = gradientColor(pct);
+    if (state.sparkType === 'histogram') {
+        const barW = w / history.length;
+        for (let i = 0; i < history.length; i += 1) {
+            const v = history[i];
+            const bh = (v / 100) * (h - 1);
+            svg.appendChild(svgEl('rect', { x: i * barW, y: h - bh, width: Math.max(1, barW - 0.5), height: bh, fill: gradientColor(v) }));
+        }
+        return svg;
+    }
+    const stepX = w / (history.length - 1);
+    const pts = history.map((v, i) => `${(i * stepX).toFixed(1)},${(h - 1 - (v / 100) * (h - 2)).toFixed(1)}`).join(' ');
+    if (state.sparkType === 'area') {
+        const polyPoints = `0,${h} ${pts} ${w},${h}`;
+        const fillC = color.replace('rgb(', 'rgba(').replace(')', ',0.3)');
+        svg.appendChild(svgEl('polygon', { points: polyPoints, fill: fillC, stroke: color, 'stroke-width': 1, 'stroke-linejoin': 'round' }));
+    } else {
+        svg.appendChild(svgEl('polyline', { points: pts, fill: 'none', stroke: color, 'stroke-width': 1, 'stroke-linecap': 'round', 'stroke-linejoin': 'round' }));
+    }
+    return svg;
+}
+
+function renderBucket(pct, opts = {}) {
+    const e = document.createElement('span');
+    e.style.fontFamily = 'var(--pg-font-mono)';
+    e.style.fontSize = `${state.iconSize}px`;
+    e.style.letterSpacing = '1px';
+    e.style.lineHeight = '1';
+    e.style.color = gradientColor(pct);
+    let g = '\u25af\u25af\u25af';
+    if (pct >= 67) g = '\u25ae\u25ae\u25ae';
+    else if (pct >= 33) g = '\u25ae\u25ae\u25af';
+    else if (pct > 0) g = '\u25ae\u25af\u25af';
+    e.textContent = g;
+    return e;
+}
+
+function renderBars4(pct) {
+    const wrap = el('span', { style: { display: 'inline-flex', gap: '1px', alignItems: 'flex-end', height: `${state.iconSize}px` } });
+    for (let i = 0; i < 4; i += 1) {
+        const filled = (i + 1) * 25 <= pct;
+        const bar = el('span', { style: {
+            width: '3px',
+            height: `${(i + 1) * 25}%`,
+            background: filled ? gradientColor(pct) : 'rgba(255,255,255,0.18)',
+            borderRadius: '1px',
+        } });
+        wrap.appendChild(bar);
+    }
+    return wrap;
+}
+
+function renderDot(pct) {
+    return el('span', { style: { width: '8px', height: '8px', borderRadius: '50%', background: gradientColor(pct), boxShadow: `0 0 4px ${gradientColor(pct)}` } });
+}
+
+function renderVbar(pct) {
+    const wrap = el('span', { style: { width: '4px', height: `${state.iconSize}px`, background: 'rgba(255,255,255,0.12)', borderRadius: '1px', display: 'inline-flex', alignItems: 'flex-end' } });
+    wrap.appendChild(el('span', { style: { width: '100%', background: gradientColor(pct), borderRadius: '1px', height: `${pct}%` } }));
+    return wrap;
+}
+
+function renderNumeric(pct, showText = true) {
+    const e = el('span', { class: 'num', style: { color: 'var(--bar-fg)' } }, `${Math.round(pct)}%`);
+    return e;
+}
+
+function renderPctIndicator(iconName, pct, opts = {}) {
+    const wrap = el('span', { class: 'indicator', title: `${opts.label ?? ''}: ${Math.round(pct)}%` });
+    const ind = state.pctStyle;
+    const showNum = opts.forceShowNum ?? state.pctShowNum;
+
+    // Icon (always, except for icon-only / dot / vbar etc which embed)
+    let needsIcon = true;
+    let needsNum = showNum === 'always' || (showNum === 'warn' && pct >= 70);
+
+    switch (ind) {
+        case 'bucket': wrap.appendChild(pickIcon(iconName, state.iconSize)); wrap.appendChild(renderBucket(pct)); break;
+        case 'bars-4': wrap.appendChild(pickIcon(iconName, state.iconSize)); wrap.appendChild(renderBars4(pct)); break;
+        case 'ring': wrap.appendChild(renderRing(pct, { size: state.iconSize + 4, label: false })); break;
+        case 'arc': wrap.appendChild(pickIcon(iconName, state.iconSize)); wrap.appendChild(renderArc(pct)); break;
+        case 'dot': wrap.appendChild(pickIcon(iconName, state.iconSize)); wrap.appendChild(renderDot(pct)); break;
+        case 'vbar': wrap.appendChild(pickIcon(iconName, state.iconSize)); wrap.appendChild(renderVbar(pct)); break;
+        case 'numeric': wrap.appendChild(pickIcon(iconName, state.iconSize)); needsNum = true; break;
+        case 'icon-only': {
+            const ic = pickIcon(iconName, state.iconSize, gradientColor(pct));
+            if (ic.tagName === 'svg') ic.setAttribute('stroke', gradientColor(pct));
+            wrap.appendChild(ic);
+            break;
+        }
+    }
+    if (needsNum) wrap.appendChild(renderNumeric(pct));
+    return wrap;
+}
+
+function renderMeter(label, pct, history, opts = {}) {
+    const wrap = el('span', { class: 'indicator', title: `${label}: ${Math.round(pct)}%` });
+    switch (state.meterStyle) {
+        case 'ring': wrap.appendChild(renderRing(pct, { size: state.iconSize + 8, label: state.ringLabel === 'yes' })); break;
+        case 'ring-spark':
+            wrap.appendChild(renderRing(pct, { size: state.iconSize + 8, label: state.ringLabel === 'yes' }));
+            wrap.appendChild(renderSparkline(history, pct));
+            break;
+        case 'bar-spark':
+            wrap.appendChild(pickIcon(label.toLowerCase(), state.iconSize));
+            wrap.appendChild(el('span', { style: { width: `${state.iconSize + 14}px`, height: '4px', background: 'rgba(255,255,255,0.15)', borderRadius: '2px', overflow: 'hidden' } },
+                el('span', { style: { display: 'block', width: `${pct}%`, height: '100%', background: gradientColor(pct) } })));
+            wrap.appendChild(renderSparkline(history, pct));
+            break;
+        case 'bucket-spark':
+            wrap.appendChild(pickIcon(label.toLowerCase(), state.iconSize));
+            wrap.appendChild(renderBucket(pct));
+            wrap.appendChild(renderSparkline(history, pct));
+            break;
+        case 'spark-only':
+            wrap.appendChild(pickIcon(label.toLowerCase(), state.iconSize));
+            wrap.appendChild(renderSparkline(history, pct, { w: state.sparkW + 12 }));
+            break;
+        case 'numeric':
+            wrap.appendChild(pickIcon(label.toLowerCase(), state.iconSize));
+            wrap.appendChild(el('span', { class: 'num', style: { color: gradientColor(pct) } }, `${Math.round(pct)}%`));
+            break;
+    }
+    return wrap;
+}
+
+function renderActiveWindow() {
+    const wrap = el('span', { class: 'indicator', style: { color: 'var(--bar-fg)' } });
+    const aw = mock.activeWindow;
+    const wsBadge = (text) => {
+        const e = el('span', { style: {
+            background: 'rgba(255,255,255,0.08)',
+            color: 'var(--bar-fg-alt)',
+            fontSize: `${state.iconSize - 2}px`,
+            padding: state.wsShape === 'square' ? '1px 5px' : '1px 8px',
+            borderRadius: state.wsShape === 'square' ? '2px' : '999px',
+            border: state.wsShape === 'square' ? '1px solid var(--bar-border-color)' : 'none',
+            lineHeight: '1.4',
+        } }, text);
+        return e;
+    };
+    const title = el('span', { style: { whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: '320px', fontSize: `${state.iconSize}px` } }, aw.title);
+
+    if (state.activeStyle === 'title-only') { wrap.appendChild(title); return wrap; }
+    if (state.activeStyle === 'ws-pill') { wrap.appendChild(wsBadge(`${aw.workspaceName}`)); return wrap; }
+    if (state.activeStyle === 'ws-and-app') {
+        wrap.appendChild(wsBadge(aw.workspaceName));
+        wrap.appendChild(el('span', { style: { fontSize: `${state.iconSize}px`, color: 'var(--bar-fg)' } }, aw.class));
+        return wrap;
+    }
+    const wsText = state.wsShape === 'hash' ? `#${aw.workspaceName}` : (state.wsShape === 'number-only' ? aw.workspaceName : aw.workspaceName);
+    if (state.wsShape === 'number-only') {
+        wrap.appendChild(el('span', { style: { color: 'var(--bar-fg-alt)', fontSize: `${state.iconSize - 1}px` } }, wsText));
+    } else {
+        wrap.appendChild(wsBadge(wsText));
+    }
+    wrap.appendChild(title);
+    return wrap;
+}
+
+function renderMedia() {
+    const wrap = el('span', { class: 'indicator media-controls', style: { display: 'inline-flex', alignItems: 'center', gap: '4px' } });
+    if (state.mediaMock === 'none' && state.mediaStyle === 'hidden-when-idle') return wrap;
+    const isPlaying = state.mediaMock === 'playing';
+    const noPlayer = state.mediaMock === 'none';
+
+    const btn = (content, label) => el('span', { class: 'mc-btn', title: label, style: { display: 'inline-flex', padding: state.mediaStyle === 'compact-icons' ? '0' : '2px 6px', borderRadius: '3px', cursor: noPlayer ? 'not-allowed' : 'pointer', opacity: noPlayer ? '0.4' : '1', alignItems: 'center', justifyContent: 'center', minWidth: '20px' } }, content);
+
+    if (state.mediaStyle === 'text') {
+        wrap.appendChild(btn(UNICODE_ICONS.prev, 'prev'));
+        wrap.appendChild(btn(isPlaying ? UNICODE_ICONS.pause : UNICODE_ICONS.play, isPlaying ? 'pause' : 'play'));
+        wrap.appendChild(btn(UNICODE_ICONS.next, 'next'));
+    } else if (state.mediaStyle === 'icons' || state.mediaStyle === 'compact-icons') {
+        wrap.appendChild(btn(svgIcon('prev', state.iconSize), 'prev'));
+        wrap.appendChild(btn(svgIcon(isPlaying ? 'pause' : 'play', state.iconSize), isPlaying ? 'pause' : 'play'));
+        wrap.appendChild(btn(svgIcon('next', state.iconSize), 'next'));
+    } else if (state.mediaStyle === 'title-and-play') {
+        if (!noPlayer) {
+            wrap.appendChild(el('span', { style: { fontSize: `${state.iconSize - 1}px`, color: 'var(--bar-fg-alt)', maxWidth: '160px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' } }, `${mock.media.title} \u2014 ${mock.media.artist}`));
+            wrap.appendChild(btn(svgIcon(isPlaying ? 'pause' : 'play', state.iconSize), 'toggle'));
+        }
+    } else if (state.mediaStyle === 'hidden-when-idle') {
+        // visible when player exists
+        wrap.appendChild(btn(svgIcon('prev', state.iconSize), 'prev'));
+        wrap.appendChild(btn(svgIcon(isPlaying ? 'pause' : 'play', state.iconSize), 'toggle'));
+        wrap.appendChild(btn(svgIcon('next', state.iconSize), 'next'));
+    }
+    return wrap;
+}
+
+function renderBluetooth() {
+    const wrap = el('span', { class: 'indicator', title: `Bluetooth: ${mock.btDevices.length} connected` });
+    const color = mock.btDevices.length > 0 ? state.colorAccent : 'var(--bar-fg-alt)';
+    if (state.btStyle === 'glyph') {
+        const e = pickIcon('bluetooth', state.iconSize, color);
+        wrap.appendChild(e);
+    } else if (state.btStyle === 'svg') {
+        wrap.appendChild(svgIcon('bluetooth', state.iconSize, color));
+    } else if (state.btStyle === 'icon-count') {
+        wrap.appendChild(svgIcon('bluetooth', state.iconSize, color));
+        wrap.appendChild(el('span', { style: { fontSize: `${state.iconSize - 3}px`, color: 'var(--bar-fg-alt)' } }, `${mock.btDevices.length}`));
+    }
+    return wrap;
+}
+
+function renderNetwork() {
+    const wrap = el('span', { class: 'indicator', title: `WiFi: DoodNet \u00b7 ${mock.wifiSignal}%` });
+    if (state.netStyle === 'wifi-bars') {
+        const sig = mock.wifiSignal;
+        const size = state.iconSize + 2;
+        const svg = svgEl('svg', { width: size, height: size, viewBox: '0 0 24 24', fill: 'none' });
+        const arcs = [
+            { d: 'M2 9 Q12 1 22 9', threshold: 25 },
+            { d: 'M5 13 Q12 7 19 13', threshold: 50 },
+            { d: 'M8 17 Q12 14 16 17', threshold: 75 },
+        ];
+        for (const a of arcs) {
+            const lit = sig >= a.threshold;
+            svg.appendChild(svgEl('path', { d: a.d, stroke: lit ? state.colorAccent : 'rgba(255,255,255,0.2)', 'stroke-width': 1.5, 'stroke-linecap': 'round' }));
+        }
+        svg.appendChild(svgEl('circle', { cx: 12, cy: 20, r: 1, fill: state.colorAccent }));
+        wrap.appendChild(svg);
+    } else if (state.netStyle === 'bucket') {
+        wrap.appendChild(pickIcon('wifi', state.iconSize));
+        wrap.appendChild(renderBucket(mock.wifiSignal));
+    } else if (state.netStyle === 'dot-color') {
+        wrap.appendChild(renderDot(mock.wifiSignal));
+    } else if (state.netStyle === 'ssid-text') {
+        wrap.appendChild(svgIcon('wifi', state.iconSize, state.colorAccent));
+        wrap.appendChild(el('span', { style: { fontSize: `${state.iconSize - 2}px`, color: 'var(--bar-fg-alt)' } }, 'DoodNet'));
+    }
+    return wrap;
+}
+
+function renderPowerProfile() {
+    const profile = mock.powerProfile;
+    const wrap = el('span', { class: 'indicator', title: `Power: ${profile}` });
+    if (state.ppStyle === 'glyph') {
+        const g = profile === 'power_saver' ? UNICODE_ICONS.powerSaver : profile === 'performance' ? UNICODE_ICONS.performance : UNICODE_ICONS.balanced;
+        const e = el('span', { style: { fontSize: `${state.iconSize}px` } }, g);
+        wrap.appendChild(e);
+    } else if (state.ppStyle === 'pills') {
+        const order = ['power_saver', 'balanced', 'performance'];
+        for (const p of order) {
+            const active = p === profile;
+            wrap.appendChild(el('span', { style: { padding: '1px 5px', borderRadius: '999px', fontSize: '9px', background: active ? state.colorAccent : 'rgba(255,255,255,0.08)', color: active ? '#000' : 'var(--bar-fg-alt)' } }, p === 'power_saver' ? 'sav' : p === 'balanced' ? 'bal' : 'perf'));
+        }
+    } else if (state.ppStyle === 'dot-color') {
+        const c = profile === 'power_saver' ? state.colorAccent : profile === 'performance' ? '#f38ba8' : '#f9e2af';
+        wrap.appendChild(el('span', { style: { width: '8px', height: '8px', borderRadius: '50%', background: c } }));
+    } else if (state.ppStyle === 'leaf-arrow-bolt') {
+        const name = profile === 'power_saver' ? 'powerSaver' : profile === 'performance' ? 'performance' : 'balanced';
+        wrap.appendChild(svgIcon(name, state.iconSize, state.colorAccent));
+    }
+    return wrap;
+}
+
+function renderPowerMenu() {
+    const wrap = el('span', { class: 'indicator', style: { cursor: 'pointer' }, title: 'Power menu' });
+    if (state.pmStyle === 'circle') wrap.appendChild(pickIcon('powerMenu', state.iconSize));
+    else if (state.pmStyle === 'caret') wrap.appendChild(svgIcon('caret', state.iconSize));
+    else if (state.pmStyle === 'ellipsis') wrap.appendChild(svgIcon('ellipsis', state.iconSize));
+    else if (state.pmStyle === 'svg-power') wrap.appendChild(svgIcon('power', state.iconSize));
+    return wrap;
+}
+
+// ============================================================
+// Tray composition for live bar
+// ============================================================
+
+function divider() {
+    if (state.barRegionDivider === 'none') return null;
+    if (state.barRegionDivider === 'line') return el('span', { class: 'bar-divider' });
+    if (state.barRegionDivider === 'dot') return el('span', { style: { color: 'var(--bar-fg-alt)', opacity: '0.4', fontSize: '8px' } }, '\u2022');
+    return null;
+}
+
+function applyBarTokens() {
+    const surface = document.getElementById('bar-surface');
+    surface.style.setProperty('--bar-height', `${state.barHeight}px`);
+    surface.style.setProperty('--bar-radius', `${state.barRadius}px`);
+    surface.style.setProperty('--bar-padding-x', `${state.barPaddingX}px`);
+    surface.style.setProperty('--bar-gap', `${state.barGap}px`);
+    surface.style.setProperty('--bar-margin', `${state.barMargin}px`);
+    surface.style.setProperty('--bar-blur', `${state.barBlur}px`);
+    surface.style.setProperty('--bar-icon-size', `${state.iconSize}px`);
+    surface.style.setProperty('--bar-border-bottom', `${state.barBorder}px`);
+    surface.style.setProperty('--bar-fg', state.colorFg);
+    surface.style.setProperty('--bar-fg-alt', state.colorFgAlt);
+    const bgRgb = parseColor(state.colorFg).map(v => Math.round(v * 0.13)).join(',');
+    surface.style.setProperty('--bar-bg', `rgba(30, 30, 46, ${state.barOpacity})`);
+    if (state.barShadow === 'none') surface.style.setProperty('--bar-shadow', 'none');
+    else if (state.barShadow === 'soft') surface.style.setProperty('--bar-shadow', '0 4px 12px rgba(0,0,0,0.25)');
+    else surface.style.setProperty('--bar-shadow', '0 6px 20px rgba(0,0,0,0.5)');
+}
+
+function buildLiveBar() {
+    const surface = document.getElementById('bar-surface');
+    surface.innerHTML = '';
+    applyBarTokens();
+    const left = el('span', { class: 'bar-region-left' }, renderActiveWindow());
+    const right = el('span', { class: 'bar-region-right' });
+    right.appendChild(renderMeter('CPU', mock.cpu, mock.cpuHist));
+    right.appendChild(renderMeter('MEM', mock.mem, mock.memHist));
+    const d1 = divider(); if (d1) right.appendChild(d1);
+    right.appendChild(renderMedia());
+    const d2 = divider(); if (d2) right.appendChild(d2);
+    right.appendChild(renderNetwork());
+    right.appendChild(renderBluetooth());
+    right.appendChild(renderPctIndicator('volume', mock.volume, { label: 'Volume' }));
+    right.appendChild(renderPctIndicator('brightness', mock.brightness, { label: 'Brightness' }));
+    right.appendChild(renderPctIndicator('battery', mock.battery, { label: 'Battery' }));
+    right.appendChild(renderPowerProfile());
+    right.appendChild(renderPowerMenu());
+    surface.appendChild(left);
+    surface.appendChild(right);
+}
+
+// ============================================================
+// Variant cards
+// ============================================================
+
+const VARIANTS = {
+    meterStyle: [
+        { key: 'ring', label: 'Ring + inline number' },
+        { key: 'ring-spark', label: 'Ring + sparkline' },
+        { key: 'bar-spark', label: 'H-bar + sparkline' },
+        { key: 'bucket-spark', label: 'Bucket + sparkline (old)' },
+        { key: 'spark-only', label: 'Icon + sparkline' },
+        { key: 'numeric', label: 'Plain numeric' },
+    ],
+    activeStyle: [
+        { key: 'ws-and-title', label: 'Workspace + title' },
+        { key: 'title-only', label: 'Title only' },
+        { key: 'ws-pill', label: 'Workspace pill only' },
+        { key: 'ws-and-app', label: 'Workspace + app class' },
+    ],
+    mediaStyle: [
+        { key: 'text', label: 'Text glyphs (current)' },
+        { key: 'icons', label: 'SVG icons' },
+        { key: 'compact-icons', label: 'SVG icons, tight' },
+        { key: 'title-and-play', label: 'Track name + play' },
+        { key: 'hidden-when-idle', label: 'Hidden when no player' },
+    ],
+    pctStyle: [
+        { key: 'bucket', label: '3-cell bucket' },
+        { key: 'bars-4', label: '4 vertical bars' },
+        { key: 'ring', label: 'Tiny ring' },
+        { key: 'arc', label: 'Half arc' },
+        { key: 'dot', label: 'Color dot' },
+        { key: 'vbar', label: 'Vertical mini-bar' },
+        { key: 'numeric', label: 'Numeric only' },
+        { key: 'icon-only', label: 'Icon (color-coded)' },
+    ],
+    btStyle: [
+        { key: 'glyph', label: 'Unicode glyph' },
+        { key: 'svg', label: 'SVG icon' },
+        { key: 'icon-count', label: 'Icon + count' },
+    ],
+    netStyle: [
+        { key: 'wifi-bars', label: 'Wifi triangle bars' },
+        { key: 'bucket', label: 'Bucket bar' },
+        { key: 'dot-color', label: 'Color dot' },
+        { key: 'ssid-text', label: 'SSID text' },
+    ],
+    ppStyle: [
+        { key: 'glyph', label: 'Glyph' },
+        { key: 'pills', label: 'Three pills' },
+        { key: 'dot-color', label: 'Color dot' },
+        { key: 'leaf-arrow-bolt', label: 'Leaf/arrow/bolt' },
+    ],
+    pmStyle: [
+        { key: 'circle', label: 'Power-button circle' },
+        { key: 'caret', label: 'Chevron down' },
+        { key: 'ellipsis', label: 'Three dots' },
+        { key: 'svg-power', label: 'SVG power' },
+    ],
+    wsShape: [
+        { key: 'pill', label: 'Rounded pill' },
+        { key: 'square', label: 'Square chip' },
+        { key: 'number-only', label: 'Bare number' },
+        { key: 'hash', label: '#1 with hash' },
+    ],
+};
+
+const RENDERERS = {
+    meterStyle: () => {
+        const wrap = el('span', { class: 'indicator' });
+        wrap.appendChild(renderMeter('CPU', 47, mock.cpuHist));
+        wrap.appendChild(renderMeter('MEM', 62, mock.memHist));
+        return wrap;
+    },
+    activeStyle: () => renderActiveWindow(),
+    mediaStyle: () => renderMedia(),
+    pctStyle: () => {
+        const w = el('span', { class: 'indicator', style: { gap: '8px' } });
+        w.appendChild(renderPctIndicator('volume', 75, { label: 'Vol' }));
+        w.appendChild(renderPctIndicator('battery', 35, { label: 'Bat' }));
+        return w;
+    },
+    btStyle: () => renderBluetooth(),
+    netStyle: () => renderNetwork(),
+    ppStyle: () => renderPowerProfile(),
+    pmStyle: () => renderPowerMenu(),
+    wsShape: () => renderActiveWindow(),
+};
+
+function buildVariantGrid(stateKey, gridEl) {
+    gridEl.innerHTML = '';
+    for (const v of VARIANTS[stateKey]) {
+        const isSel = state[stateKey] === v.key;
+        const card = el('div', { class: 'variant-card' + (isSel ? ' selected' : ''),
+            on: { click: () => { state[stateKey] = v.key; updateAll(); } },
+        });
+        card.appendChild(el('div', { class: 'vc-label' }, v.label));
+        const prev = el('div', { class: 'vc-preview' });
+        const prevState = { ...state }; state[stateKey] = v.key;
+        prev.appendChild(RENDERERS[stateKey]());
+        Object.assign(state, prevState);
+        card.appendChild(prev);
+        gridEl.appendChild(card);
+    }
+}
+
+function buildAllVariantGrids() {
+    document.querySelectorAll('.variant-grid[data-section]').forEach(g => {
+        buildVariantGrid(g.dataset.section, g);
+    });
+    document.getElementById('meter-current').textContent = state.meterStyle;
+    document.getElementById('active-current').textContent = state.activeStyle;
+    document.getElementById('media-current').textContent = state.mediaStyle;
+    document.getElementById('pct-current').textContent = state.pctStyle;
+    document.getElementById('net-current').textContent = state.netStyle;
+    document.getElementById('bt-current').textContent = state.btStyle;
+    document.getElementById('pp-current').textContent = state.ppStyle;
+    document.getElementById('pm-current').textContent = state.pmStyle;
+    document.getElementById('ws-current').textContent = state.wsShape;
+}
+
+// ============================================================
+// Prompt generation
+// ============================================================
+
+function updatePrompt() {
+    const lines = [];
+    lines.push('Restyle the Quantum status bar in `frontend/themes/default/views/widgets/bar/` to the following design. Update the affected Svelte components and their Vitest specs. Match the size of the tray indicators (var(--tray-icon-size, 14px)) across the whole bar.');
+    lines.push('');
+    lines.push(`**Bar chrome (set in \`crates/ui/src/windows/widget.rs\` and \`frontend/themes/default/views/widgets/bar/src/styles.css\`)**:`);
+    lines.push(`- height ${state.barHeight}px, padding ${state.barPaddingX}px, gap between indicators ${state.barGap}px`);
+    if (state.barRadius > 0) lines.push(`- corner radius ${state.barRadius}px (treat the bar as a floating element)`);
+    if (state.barMargin > 0) lines.push(`- outer margin ${state.barMargin}px`);
+    lines.push(`- background opacity ${state.barOpacity}, backdrop-blur ${state.barBlur}px`);
+    lines.push(`- bottom border ${state.barBorder}px solid var(--color-border)`);
+    if (state.barShadow !== 'none') lines.push(`- drop shadow: ${state.barShadow}`);
+    if (state.barRegionDivider !== 'none') lines.push(`- between region groups insert a ${state.barRegionDivider} divider`);
+    lines.push('');
+    lines.push(`**Icon language**: ${state.iconStyle === 'unicode' ? 'unicode glyphs' : state.iconStyle === 'vector' ? 'custom geometric SVG icons' : 'Lucide-style outlined SVG icons (1.5px stroke, 24x24 viewBox)'}, ${state.iconSize}px nominal size.`);
+    lines.push(`**Color tokens**: foreground ${state.colorFg}, muted-fg ${state.colorFgAlt}, accent ${state.colorAccent}. Percentage gradient: ${state.gradient === 'cool-hot' ? 'cool blue (0%) -> hot red (100%)' : state.gradient === 'green-amber-red' ? 'green -> amber -> red' : state.gradient === 'mauve-pink' ? 'catppuccin mauve -> pink' : `solid accent color (${state.colorAccent})`}.`);
+    lines.push('');
+    lines.push(`**Active window**: ${describeActive()}`);
+    lines.push(`**Workspace badge**: ${describeWs()}`);
+    lines.push(`**System meters (CPU/MEM)**: ${describeMeters()}`);
+    lines.push(`**Media controls**: ${describeMedia()}`);
+    lines.push(`**Percentage indicators (Volume / Brightness / Battery)**: ${describePct()}`);
+    lines.push(`**Network**: ${describeNet()}`);
+    lines.push(`**Bluetooth**: ${describeBt()}`);
+    lines.push(`**Power profile**: ${describePp()}`);
+    lines.push(`**Power menu**: ${describePm()}`);
+    lines.push(`**Hover style**: ${describeHover()}`);
+    lines.push('');
+    lines.push('Keep all behavior intact: subscribe + provider.query on mount, $effect lifecycle, tooltips show exact percent / SSID / device names, two-click confirm on power menu actions. No regressions in Vitest suite \u2014 update selectors/assertions to reflect the new DOM where needed.');
+    document.getElementById('prompt').textContent = lines.join('\n');
+}
+
+function describeActive() {
+    switch (state.activeStyle) {
+        case 'title-only': return 'window title text only, no workspace badge';
+        case 'ws-pill': return 'workspace pill, no title';
+        case 'ws-and-app': return 'workspace badge + window class (app name) instead of full title';
+        default: return 'workspace badge followed by window title (current shape)';
+    }
+}
+function describeWs() {
+    switch (state.wsShape) {
+        case 'square': return 'square chip with thin border';
+        case 'number-only': return 'bare number, no background';
+        case 'hash': return '#-prefixed number in pill';
+        default: return 'rounded pill background';
+    }
+}
+function describeMeters() {
+    const ring = state.ringLabel === 'yes' ? 'with integer label inside the ring' : 'no inline label';
+    switch (state.meterStyle) {
+        case 'ring': return `${state.iconSize + 8}px SVG donut ring ${ring}, color-coded by load gradient. Percent in tooltip only.`;
+        case 'ring-spark': return `${state.iconSize + 8}px ring ${ring} followed by a ${state.sparkW}x${state.iconSize + 4} ${state.sparkType} sparkline. Gradient stroke. Percent in tooltip.`;
+        case 'bar-spark': return `Icon + thin horizontal progress bar + ${state.sparkType} sparkline. Gradient fill.`;
+        case 'bucket-spark': return `Icon + 3-cell bucket bar + ${state.sparkType} sparkline (the old style).`;
+        case 'spark-only': return `Icon followed only by the sparkline. No bucket or numeric.`;
+        case 'numeric': return 'Plain icon + colored numeric percent.';
+    }
+}
+function describeMedia() {
+    switch (state.mediaStyle) {
+        case 'icons': return 'SVG prev/play|pause/next icons with hover background';
+        case 'compact-icons': return 'SVG icons, zero padding (tight)';
+        case 'title-and-play': return 'now-playing track + artist text + single play/pause icon';
+        case 'hidden-when-idle': return 'SVG icons, hidden entirely when no MPRIS player owns the session';
+        default: return 'unicode \u23ee \u23f8 \u23ed text buttons (current)';
+    }
+}
+function describePct() {
+    const num = state.pctShowNum === 'never' ? 'percent in tooltip only' : state.pctShowNum === 'warn' ? 'percent visible only when >= warn threshold' : 'percent always visible';
+    switch (state.pctStyle) {
+        case 'bucket': return `icon + 3-cell bucket bar (gradient), ${num}`;
+        case 'bars-4': return `icon + 4 vertical equalizer-style bars, ${num}`;
+        case 'ring': return `tiny ${state.iconSize + 4}px gradient ring (no inline icon), ${num}`;
+        case 'arc': return `icon + half-arc gauge, ${num}`;
+        case 'dot': return `icon + glowing color-coded dot, ${num}`;
+        case 'vbar': return `icon + vertical mini-bar, ${num}`;
+        case 'numeric': return `icon + numeric, ${num}`;
+        case 'icon-only': return `icon only, color shifts on gradient (most minimal), ${num}`;
+    }
+}
+function describeNet() {
+    switch (state.netStyle) {
+        case 'wifi-bars': return 'three SVG triangle bars filled according to signal strength';
+        case 'bucket': return 'wifi glyph + 3-cell bucket bar';
+        case 'dot-color': return 'colored dot only';
+        case 'ssid-text': return 'wifi icon + SSID text';
+    }
+}
+function describeBt() {
+    switch (state.btStyle) {
+        case 'glyph': return 'unicode \u2734 glyph';
+        case 'svg': return 'custom SVG bluetooth icon';
+        case 'icon-count': return 'SVG icon + connected device count number';
+    }
+}
+function describePp() {
+    switch (state.ppStyle) {
+        case 'glyph': return 'single unicode glyph per profile (\u25ef / \u25d0 / \u25cf)';
+        case 'pills': return 'three small pills (sav/bal/perf) with active highlighted';
+        case 'dot-color': return 'colored dot only (green=saver, yellow=balanced, red=performance)';
+        case 'leaf-arrow-bolt': return 'leaf / chevron / lightning-bolt SVG per profile';
+    }
+}
+function describePm() {
+    switch (state.pmStyle) {
+        case 'circle': return 'circle-with-dot unicode (\u23fb)';
+        case 'caret': return 'SVG chevron-down';
+        case 'ellipsis': return 'three-dot menu icon';
+        case 'svg-power': return 'standard SVG power icon (circle break + vertical line)';
+    }
+}
+function describeHover() {
+    switch (state.hoverStyle) {
+        case 'underline': return 'underline on hover';
+        case 'brighten': return 'brighten color on hover';
+        case 'ring': return 'subtle 1px focus ring on hover';
+        case 'none': return 'no hover affordance';
+        default: return 'soft background fill on hover (rounded 3px)';
+    }
+}
+
+// ============================================================
+// Wiring
+// ============================================================
+
+function updateAll() {
+    buildLiveBar();
+    buildAllVariantGrids();
+    updatePrompt();
+}
+
+function buildBackdrops() {
+    const row = document.getElementById('backdrop-row');
+    for (const [name, css] of Object.entries(BACKDROPS)) {
+        const b = el('button', { style: { background: css }, title: name,
+            on: { click: () => {
+                state.backdrop = name;
+                document.getElementById('bar-preview-wrap').style.background = css;
+                document.querySelectorAll('#backdrop-row button').forEach(x => x.classList.remove('active'));
+                b.classList.add('active');
+            } },
+        });
+        if (name === state.backdrop) b.classList.add('active');
+        row.appendChild(b);
+    }
+}
+
+function buildControls() {
+    const bind = (id, key, parser = (v) => v) => {
+        const e = document.getElementById(id);
+        e.value = state[key];
+        const update = () => { state[key] = parser(e.value); updateAll(); };
+        e.addEventListener('input', update);
+        e.addEventListener('change', update);
+    };
+    [
+        ['barHeight', Number], ['barPaddingX', Number], ['barGap', Number], ['barRadius', Number],
+        ['barMargin', Number], ['barOpacity', Number], ['barBlur', Number], ['barBorder', Number],
+        ['barShadow'], ['barRegionDivider'],
+        ['iconSize', Number], ['iconStyle'],
+        ['colorFg'], ['colorFgAlt'], ['colorAccent'],
+        ['gradient'],
+        ['activeStyle'], ['wsShape'],
+        ['meterStyle'], ['ringLabel'], ['sparkType'], ['sparkW', Number],
+        ['mediaStyle'], ['mediaMock'],
+        ['pctStyle'], ['pctShowNum'],
+        ['btStyle'], ['netStyle'],
+        ['ppStyle'], ['pmStyle'],
+        ['hoverStyle'],
+    ].forEach(([id, parser]) => bind(id, id, parser ?? ((v) => v)));
+
+    const ps = document.getElementById('presets');
+    for (const [name, preset] of Object.entries(PRESETS)) {
+        const b = el('button', { class: 'preset',
+            on: { click: () => {
+                Object.assign(state, preset);
+                for (const [k, v] of Object.entries(preset)) {
+                    const el = document.getElementById(k);
+                    if (el) el.value = v;
+                }
+                document.querySelectorAll('.preset').forEach(x => x.classList.remove('active'));
+                b.classList.add('active');
+                updateAll();
+            } },
+        }, name);
+        ps.appendChild(b);
+    }
+}
+
+document.getElementById('copy').addEventListener('click', async () => {
+    const text = document.getElementById('prompt').textContent;
+    await navigator.clipboard.writeText(text);
+    const btn = document.getElementById('copy');
+    btn.classList.add('copied');
+    const orig = btn.textContent;
+    btn.textContent = 'Copied!';
+    setTimeout(() => { btn.classList.remove('copied'); btn.textContent = orig; }, 1200);
+});
+
+// Seed history for sparkline
+function seedHistory() {
+    mock.cpuHist = Array.from({ length: 24 }, (_, i) => 40 + Math.sin(i / 3) * 25);
+    mock.memHist = Array.from({ length: 24 }, (_, i) => 55 + Math.sin(i / 5 + 1) * 8);
+}
+
+// Animate
+let lastTick = 0;
+function tick(ts) {
+    if (!lastTick) lastTick = ts;
+    if (ts - lastTick > 1000) {
+        lastTick = ts;
+        mock.cpu = clamp(mock.cpu + (Math.random() - 0.5) * 18, 0, 100);
+        mock.mem = clamp(mock.mem + (Math.random() - 0.5) * 4, 0, 100);
+        mock.cpuHist.push(mock.cpu); if (mock.cpuHist.length > 32) mock.cpuHist.shift();
+        mock.memHist.push(mock.mem); if (mock.memHist.length > 32) mock.memHist.shift();
+        buildLiveBar();
+    }
+    requestAnimationFrame(tick);
+}
+function clamp(v, lo, hi) { return Math.max(lo, Math.min(hi, v)); }
+
+seedHistory();
+buildControls();
+buildBackdrops();
+updateAll();
+document.querySelector('.preset')?.classList.add('active');
+requestAnimationFrame(tick);
+</script>
+</body>
+</html>

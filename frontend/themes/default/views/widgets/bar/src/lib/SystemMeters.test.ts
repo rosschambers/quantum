@@ -123,4 +123,58 @@ describe('SystemMeters', () => {
         expect(Number(hr)).toBeGreaterThan(200);
         expect(Number(hb)).toBeLessThan(120);
     });
+
+    it('renders an empty sparkline before two samples have arrived', async () => {
+        const { client, emit } = mockClient();
+        const { container } = render(SystemMeters, { props: { client } });
+        // 0 samples
+        expect(container.querySelector('.meter.cpu .sparkline path')).toBeNull();
+        await emit({
+            cpu_percent: 30,
+            mem_used_bytes: 1_000_000_000,
+            mem_total_bytes: 10_000_000_000,
+        });
+        // 1 sample
+        expect(container.querySelector('.meter.cpu .sparkline path')).toBeNull();
+        await emit({
+            cpu_percent: 70,
+            mem_used_bytes: 5_000_000_000,
+            mem_total_bytes: 10_000_000_000,
+        });
+        // 2 samples — path should now appear
+        const cpuPath = container.querySelector('.meter.cpu .sparkline path');
+        const memPath = container.querySelector('.meter.mem .sparkline path');
+        expect(cpuPath).not.toBeNull();
+        expect(memPath).not.toBeNull();
+    });
+
+    it('draws the sparkline as a smoothed Bezier path (uses C commands)', async () => {
+        const { client, emit } = mockClient();
+        const { container } = render(SystemMeters, { props: { client } });
+        await emit({ cpu_percent: 10, mem_used_bytes: 1e9, mem_total_bytes: 1e10 });
+        await emit({ cpu_percent: 80, mem_used_bytes: 5e9, mem_total_bytes: 1e10 });
+        await emit({ cpu_percent: 40, mem_used_bytes: 3e9, mem_total_bytes: 1e10 });
+        const cpuPath = container.querySelector('.meter.cpu .sparkline path');
+        const d = cpuPath!.getAttribute('d') ?? '';
+        // Should start with a Move and contain Cubic Bezier segments.
+        expect(d.startsWith('M')).toBe(true);
+        expect(d).toContain('C');
+        // Two segments expected for three samples: one C per pair.
+        const cubicCount = (d.match(/C/g) ?? []).length;
+        expect(cubicCount).toBe(2);
+    });
+
+    it('sparkline stroke uses the same gradient color as the ring', async () => {
+        const { client, emit } = mockClient();
+        const { container } = render(SystemMeters, { props: { client } });
+        await emit({ cpu_percent: 50, mem_used_bytes: 1e9, mem_total_bytes: 1e10 });
+        await emit({ cpu_percent: 50, mem_used_bytes: 1e9, mem_total_bytes: 1e10 });
+        const ringStroke = container
+            .querySelector('.meter.cpu .ring-fill')!
+            .getAttribute('stroke');
+        const sparkStroke = container
+            .querySelector('.meter.cpu .sparkline path')!
+            .getAttribute('stroke');
+        expect(sparkStroke).toBe(ringStroke);
+    });
 });
