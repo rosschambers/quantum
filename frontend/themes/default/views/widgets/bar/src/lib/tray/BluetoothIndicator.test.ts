@@ -42,7 +42,8 @@ describe('BluetoothIndicator', () => {
 		const el = container.querySelector('.tray-icon');
 		expect(el).not.toBeNull();
 		expect(el!.classList.contains('powered')).toBe(false);
-		expect(el!.querySelector('.icon')!.textContent).toBe('BT');
+		// Nerd Font fa-bluetooth glyph (PUA codepoint).
+		expect(el!.querySelector('.icon')!.textContent).toContain('\u{f293}');
 		expect(el!.querySelector('.badge')).toBeNull();
 	});
 

@@ -35,7 +35,7 @@
 
 <div class="active-window">
     {#if displayWorkspace(state)}
-        <span class="workspace">{displayWorkspace(state)}:</span>
+        <span class="workspace">{displayWorkspace(state)}</span>
     {/if}
     <span class="title">{displayTitle(state)}</span>
 </div>
@@ -43,25 +43,21 @@
 <style>
     .active-window {
         display: flex;
-        align-items: baseline;
-        gap: 6px;
+        align-items: center;
+        gap: var(--space-2, 0.5rem);
         min-width: 0;
         overflow: hidden;
     }
-    /*
-     * Workspace number is shown as plain muted text — no pill, no
-     * border. Sits inline with the title so the whole left region
-     * reads as a single label like "1: firefox — mozilla.org".
-     */
     .workspace {
         font-size: var(--font-size-sm, 12px);
+        background: var(--color-bg-alt, #313244);
         color: var(--color-fg-alt, #a6adc8);
-        font-variant-numeric: tabular-nums;
+        padding: 2px 8px;
+        border-radius: var(--radius-sm, 2px);
     }
     .title {
         white-space: nowrap;
         overflow: hidden;
         text-overflow: ellipsis;
-        color: var(--color-fg, #cdd6f4);
     }
 </style>

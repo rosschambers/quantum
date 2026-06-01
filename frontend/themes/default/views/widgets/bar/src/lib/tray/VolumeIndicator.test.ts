@@ -72,8 +72,8 @@ describe('VolumeIndicator', () => {
 		});
 		const el = container.querySelector('.tray-icon');
 		expect(el).not.toBeNull();
-		// Muted speaker codepoint U+1F507.
-		expect(el!.querySelector('.icon')!.textContent).toContain('\ud83d\udd07');
+		// Nerd Font fa-volume_off glyph.
+		expect(el!.querySelector('.icon')!.textContent).toContain('\u{f026}');
 		// Muted -> ring fills 0%, so dashoffset == circumference.
 		const fill = el!.querySelector('svg.ring .ring-fill');
 		const circ = Number(fill!.getAttribute('stroke-dasharray'));

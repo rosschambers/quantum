@@ -42,7 +42,7 @@ describe('PowerProfileIndicator', () => {
 		expect(container.querySelector('.tray-icon')).toBeNull();
 	});
 
-	it('renders balanced glyph when active is balanced', async () => {
+	it('renders the arrow (balanced) glyph when active is balanced', async () => {
 		const { client, emit } = mockClient();
 		const { container } = render(PowerProfileIndicator, { props: { client } });
 		await emit({
@@ -53,10 +53,11 @@ describe('PowerProfileIndicator', () => {
 		});
 		const el = container.querySelector('.tray-icon');
 		expect(el).not.toBeNull();
-		expect(el!.textContent).toContain('◐');
+		// Nerd Font fa-arrow_right.
+		expect(el!.querySelector('.icon')!.textContent).toContain('\u{f061}');
 	});
 
-	it('renders performance glyph when active is performance', async () => {
+	it('renders the bolt (performance) glyph when active is performance', async () => {
 		const { client, emit } = mockClient();
 		const { container } = render(PowerProfileIndicator, { props: { client } });
 		await emit({
@@ -67,10 +68,11 @@ describe('PowerProfileIndicator', () => {
 		});
 		const el = container.querySelector('.tray-icon');
 		expect(el).not.toBeNull();
-		expect(el!.textContent).toContain('●');
+		// Nerd Font fa-bolt.
+		expect(el!.querySelector('.icon')!.textContent).toContain('\u{f0e7}');
 	});
 
-	it('renders power_saver glyph when active is power_saver', async () => {
+	it('renders the leaf (power_saver) glyph when active is power_saver', async () => {
 		const { client, emit } = mockClient();
 		const { container } = render(PowerProfileIndicator, { props: { client } });
 		await emit({
@@ -81,7 +83,8 @@ describe('PowerProfileIndicator', () => {
 		});
 		const el = container.querySelector('.tray-icon');
 		expect(el).not.toBeNull();
-		expect(el!.textContent).toContain('◯');
+		// Nerd Font fa-leaf.
+		expect(el!.querySelector('.icon')!.textContent).toContain('\u{f06c}');
 	});
 
 	it('click cycles balanced -> performance', async () => {

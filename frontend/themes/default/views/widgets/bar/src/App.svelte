@@ -23,13 +23,13 @@
 <div class="bar">
     <div class="region region-left">
         <ActiveWindow {client} />
-        <SystemMeters {client} />
     </div>
     <div class="region region-center">
         <MediaControls {client} />
         <VolumeIndicator {client} />
     </div>
     <div class="region region-right">
+        <SystemMeters {client} />
         <BrightnessIndicator {client} />
         <NetworkIndicator {client} />
         <BluetoothIndicator {client} />

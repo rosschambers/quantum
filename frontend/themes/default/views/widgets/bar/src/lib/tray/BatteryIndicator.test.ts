@@ -42,14 +42,14 @@ describe('BatteryIndicator', () => {
         const icon = el!.querySelector('.icon');
         expect(icon).not.toBeNull();
         expect(icon!.textContent).not.toBe('');
-        // Battery icon while discharging is the plain battery glyph (no
-        // lightning prefix). Tooltip carries the percentage.
-        expect(icon!.textContent).not.toContain('\u26a1');
+        // Battery icon while discharging is one of the bucketed
+        // battery glyphs, not the charging glyph.
+        expect(icon!.textContent).not.toContain('\u{f0084}');
         expect(el!.querySelector('svg.ring')).not.toBeNull();
         expect(el!.getAttribute('title')).toContain('50%');
     });
 
-    it('uses the lightning icon when charging', async () => {
+    it('uses the charging icon when charging', async () => {
         const { client, emit } = mockClient();
         const { container } = render(BatteryIndicator, { props: { client } });
         await emit({
@@ -61,7 +61,8 @@ describe('BatteryIndicator', () => {
             time_to_full_secs: 1200,
         });
         const icon = container.querySelector('.tray-icon .icon');
-        expect(icon!.textContent).toContain('\u26a1');
+        // Nerd Font md-battery_charging glyph in the PUA.
+        expect(icon!.textContent).toContain('\u{f0084}');
         expect(container.querySelector('.tray-icon')!.getAttribute('title')).toContain('80%');
     });
 

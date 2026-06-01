@@ -2,6 +2,7 @@
 	import type { Client } from '@quantum/client';
 	import type { SystemPowerState } from '../types';
 	import { SYSTEM_POWER_CHANNEL } from '../channels';
+	import { Icons } from '../icons';
 
 	interface Props {
 		client: Client;
@@ -156,7 +157,7 @@
 			bind:this={trigger}
 			onclick={toggleMenu}
 		>
-			⏻
+			<span class="icon" aria-hidden="true">{Icons.powerMenu}</span>
 		</button>
 		{#if open}
 			<div class="power-menu-popover" bind:this={popover} role="menu">
@@ -218,6 +219,18 @@
 		padding: 0 4px;
 		cursor: pointer;
 		user-select: none;
+		display: inline-flex;
+		align-items: center;
+		line-height: 1;
+	}
+	.icon {
+		font-family:
+			'JetBrainsMono Nerd Font',
+			'Symbols Nerd Font',
+			'FontAwesome',
+			var(--font-mono, ui-monospace, monospace);
+		font-size: var(--tray-icon-size, 14px);
+		line-height: 1;
 	}
 	.power-menu-popover {
 		position: absolute;

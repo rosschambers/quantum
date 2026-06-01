@@ -3,6 +3,7 @@
     import type { BrightnessState } from '../types';
     import { BRIGHTNESS_CHANNEL } from '../channels';
     import { gradientColor } from '../gradient';
+    import { Icons } from '../icons';
     import { onScroll } from './interaction';
     import Ring from '../Ring.svelte';
 
@@ -72,15 +73,11 @@
         if (pct === null) return `${d.subsystem}/${d.name}`;
         return `${d.subsystem}/${d.name} \u00b7 ${Math.round(pct)}%`;
     }
-
-    // U+FE0E forces monochrome text rendering on the sun glyph; without
-    // it some fonts paint it in full-color emoji style.
-    const ICON = '\u{2600}\u{fe0e}';
 </script>
 
 {#if state.available && state.displays.length > 0}
     <div bind:this={root} class="tray-icon brightness" title={tooltipFor(state)}>
-        <span class="icon" aria-hidden="true">{ICON}</span>
+        <span class="icon" aria-hidden="true">{Icons.brightness}</span>
         <Ring
             percent={brightnessPercent(state)}
             color={gradientColor(brightnessPercent(state))}
@@ -101,8 +98,12 @@
         line-height: 1;
     }
     .icon {
+        font-family:
+            'JetBrainsMono Nerd Font',
+            'Symbols Nerd Font',
+            'FontAwesome',
+            var(--font-mono, ui-monospace, monospace);
         font-size: var(--tray-icon-size, 14px);
         line-height: 1;
-        font-variant-emoji: text;
     }
 </style>

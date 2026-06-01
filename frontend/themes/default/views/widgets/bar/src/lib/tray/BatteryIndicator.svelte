@@ -3,6 +3,7 @@
     import type { PowerState } from '../types';
     import { POWER_CHANNEL } from '../channels';
     import { gradientColor } from '../gradient';
+    import { batteryIcon } from '../icons';
     import Ring from '../Ring.svelte';
 
     interface Props {
@@ -32,18 +33,6 @@
         return () => unsubscribe?.();
     });
 
-    /**
-     * Codepoints get a trailing U+FE0E variation selector (TEXT STYLE)
-     * to force monochrome text rendering. Without it, emoji-presentation
-     * characters like the battery glyph render in full color from the
-     * system emoji font, clashing with the rest of the bar's monochrome
-     * icons.
-     */
-    function iconFor(s: PowerState): string {
-        if (s.state === 'charging') return '\u26a1\ufe0e';
-        return '\u{1f50b}\ufe0e';
-    }
-
     function tooltipFor(s: PowerState): string {
         if (!s.available) return 'battery unavailable';
         const parts: string[] = [];
@@ -59,7 +48,9 @@
 
 {#if state.available}
     <div class="tray-icon battery" title={tooltipFor(state)}>
-        <span class="icon" aria-hidden="true">{iconFor(state)}</span>
+        <span class="icon" aria-hidden="true"
+            >{batteryIcon(state.percentage, state.state === 'charging')}</span
+        >
         <Ring percent={state.percentage} color={gradientColor(state.percentage)} />
     </div>
 {/if}
@@ -77,13 +68,18 @@
         line-height: 1;
     }
     .icon {
+        /*
+         * Nerd Font glyph. JetBrains Mono Nerd Font (and most other
+         * Nerd Font variants) provide the icons in the private-use
+         * area; we list it first so the icon renders properly while
+         * the rest of the bar still uses the sans-serif body font.
+         */
+        font-family:
+            'JetBrainsMono Nerd Font',
+            'Symbols Nerd Font',
+            'FontAwesome',
+            var(--font-mono, ui-monospace, monospace);
         font-size: var(--tray-icon-size, 14px);
         line-height: 1;
-        /*
-         * Force monochrome text rendering on emoji-presentation
-         * codepoints. Paired with U+FE0E in the glyph itself for
-         * fonts that don't honor the CSS property.
-         */
-        font-variant-emoji: text;
     }
 </style>

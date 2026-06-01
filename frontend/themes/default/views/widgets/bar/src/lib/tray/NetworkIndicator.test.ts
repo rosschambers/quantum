@@ -46,8 +46,8 @@ describe('NetworkIndicator', () => {
 		});
 		const el = container.querySelector('.tray-icon');
 		expect(el).not.toBeNull();
-		// Ethernet uses the plug glyph U+1F50C and renders a full ring.
-		expect(el!.querySelector('.icon')!.textContent).toContain('\ud83d\udd0c');
+		// Ethernet uses the Nerd Font fa-plug glyph and renders a full ring.
+		expect(el!.querySelector('.icon')!.textContent).toContain('\u{f0e8}');
 		const fill = el!.querySelector('svg.ring .ring-fill');
 		const off = Number(fill!.getAttribute('stroke-dashoffset'));
 		expect(off).toBeCloseTo(0, 1);

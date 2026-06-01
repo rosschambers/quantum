@@ -2,6 +2,7 @@
     import type { Client } from '@quantum/client';
     import type { BluetoothState } from '../types';
     import { BLUETOOTH_CHANNEL } from '../channels';
+    import { Icons } from '../icons';
     import { onClick } from './interaction';
 
     interface Props {
@@ -63,21 +64,12 @@
     }
 
     /**
-     * Unicode bluetooth symbol U+1F542 isn't actually a thing; the
-     * de-facto standard for "looks like bluetooth" is U+1F4F6 (signal
-     * bars) is for wifi. The bluetooth glyph is U+1F4F1? No \u2014
-     * the actual codepoint is U+1F4F6/U+1F4F1 for signals/phone.
-     * The closest plain-text bluetooth symbol is U+1F4DC? No.
-     * The standard is U+2733 ('EIGHT POINTED PINWHEEL STAR') doesn't
-     * look right either. Best universally-rendered approximation is
-     * the chain link U+1F517 or simply the letter B in a circle.
-     * We use 'BT' as a compact textual indicator and rely on color +
-     * the device count for state.
+     * Use the Nerd Font bluetooth glyph (private-use area, monochrome
+     * and color-inheriting). All other state lives in the `powered`
+     * CSS class and the device-count badge.
      */
-    function iconFor(s: BluetoothState): string {
-        if (!s.powered) return 'BT';
-        if (s.discovering) return 'BT\u2026';
-        return 'BT';
+    function iconFor(_s: BluetoothState): string {
+        return Icons.bluetooth;
     }
 
     function tooltipFor(s: BluetoothState): string {
@@ -122,9 +114,13 @@
     }
     .tray-icon.powered { color: var(--tray-icon-color-active, var(--color-accent, #89b4fa)); }
     .icon {
-        font-family: var(--font-mono, ui-monospace, monospace);
-        font-size: calc(var(--tray-icon-size, 14px) - 2px);
-        font-weight: 600;
+        font-family:
+            'JetBrainsMono Nerd Font',
+            'Symbols Nerd Font',
+            'FontAwesome',
+            var(--font-mono, ui-monospace, monospace);
+        font-size: var(--tray-icon-size, 14px);
+        line-height: 1;
     }
     .badge {
         font-family: var(--font-mono, ui-monospace, monospace);

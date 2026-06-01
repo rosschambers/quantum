@@ -3,6 +3,7 @@
     import type { NetworkState } from '../types';
     import { NETWORK_CHANNEL } from '../channels';
     import { gradientColor } from '../gradient';
+    import { networkIcon } from '../icons';
     import { onClick } from './interaction';
     import Ring from '../Ring.svelte';
 
@@ -66,24 +67,6 @@
     }
 
     /**
-     * Choose a glyph for the active connection type. Wifi/cellular get
-     * the wireless signal glyph; ethernet gets a plug glyph; vpn gets a
-     * shield. Each ends with U+FE0E so emoji-presentation codepoints
-     * render in the bar's text color rather than full-color emoji.
-     */
-    function iconFor(s: NetworkState): string {
-        if (!s.available) return '\u{1f6c8}\u{fe0e}';
-        if (!s.primary) return s.wifi_enabled ? '\u{1f4f6}\u{fe0e}' : '\u2715\u{fe0e}';
-        switch (s.primary.kind) {
-            case 'ethernet': return '\u{1f50c}\u{fe0e}';
-            case 'wifi': return '\u{1f4f6}\u{fe0e}';
-            case 'cellular': return '\u{1f4f6}\u{fe0e}';
-            case 'vpn': return '\u{1f512}\u{fe0e}';
-            default: return '\u{1f310}\u{fe0e}';
-        }
-    }
-
-    /**
      * Percentage that drives the ring. Wifi/cellular use signal
      * strength. Ethernet uses 100 when connected (the ring is just a
      * visual confirmation of an active link). No primary connection
@@ -109,7 +92,9 @@
 
 {#if state.available}
     <div bind:this={root} class="tray-icon network" title={tooltipFor(state)}>
-        <span class="icon" aria-hidden="true">{iconFor(state)}</span>
+        <span class="icon" aria-hidden="true"
+            >{networkIcon(state.primary?.kind ?? null, state.primary !== null)}</span
+        >
         <Ring percent={ringPercent(state)} color={gradientColor(ringPercent(state))} />
     </div>
 {/if}
@@ -127,8 +112,12 @@
         line-height: 1;
     }
     .icon {
+        font-family:
+            'JetBrainsMono Nerd Font',
+            'Symbols Nerd Font',
+            'FontAwesome',
+            var(--font-mono, ui-monospace, monospace);
         font-size: var(--tray-icon-size, 14px);
         line-height: 1;
-        font-variant-emoji: text;
     }
 </style>

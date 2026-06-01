@@ -3,6 +3,7 @@
     import type { AudioState } from '../types';
     import { AUDIO_CHANNEL } from '../channels';
     import { gradientColor } from '../gradient';
+    import { volumeIcon } from '../icons';
     import { onClick, onScroll } from './interaction';
     import Ring from '../Ring.svelte';
 
@@ -71,21 +72,6 @@
         }
     }
 
-    /**
-     * Each glyph gets a trailing U+FE0E (TEXT STYLE) variation
-     * selector so emoji-class codepoints render in the current text
-     * color, matching the other bar indicators.
-     */
-    function iconFor(s: AudioState): string {
-        if (!s.default_sink) return '';
-        if (s.default_sink.muted) return '\u{1f507}\ufe0e';
-        const v = s.default_sink.volume_percent;
-        if (v === 0) return '\u{1f507}\ufe0e';
-        if (v < 33) return '\u{1f508}\ufe0e';
-        if (v < 67) return '\u{1f509}\ufe0e';
-        return '\u{1f50a}\ufe0e';
-    }
-
     function tooltipFor(s: AudioState): string {
         if (!s.default_sink) return 'audio unavailable';
         const muted = s.default_sink.muted ? ' (muted)' : '';
@@ -95,7 +81,9 @@
 
 {#if state.available && state.default_sink !== null}
     <div bind:this={root} class="tray-icon volume" title={tooltipFor(state)}>
-        <span class="icon" aria-hidden="true">{iconFor(state)}</span>
+        <span class="icon" aria-hidden="true"
+            >{volumeIcon(state.default_sink.volume_percent, state.default_sink.muted)}</span
+        >
         <Ring
             percent={state.default_sink.muted ? 0 : state.default_sink.volume_percent}
             color={gradientColor(state.default_sink.volume_percent)}
@@ -116,8 +104,12 @@
         line-height: 1;
     }
     .icon {
+        font-family:
+            'JetBrainsMono Nerd Font',
+            'Symbols Nerd Font',
+            'FontAwesome',
+            var(--font-mono, ui-monospace, monospace);
         font-size: var(--tray-icon-size, 14px);
         line-height: 1;
-        font-variant-emoji: text;
     }
 </style>
