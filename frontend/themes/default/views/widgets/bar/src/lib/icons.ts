@@ -32,8 +32,10 @@ export const Icons = {
     volumeLow: '\u{f027}',
     volumeHigh: '\u{f028}',
 
-    // Brightness
-    brightness: '\u{f185}', // fa-sun
+    // Brightness — md-weather_sunny renders as a clear sun across all
+    // Nerd Font variants. fa-sun (f185) maps to a gear-shaped glyph in
+    // JetBrains Mono Nerd Font, which read wrong as "brightness".
+    brightness: '\u{f0599}',
 
     // Network
     wifi: '\u{f1eb}', // fa-wifi

@@ -29,13 +29,21 @@
         <VolumeIndicator {client} />
     </div>
     <div class="region region-right">
-        <SystemMeters {client} />
-        <BrightnessIndicator {client} />
-        <NetworkIndicator {client} />
-        <BluetoothIndicator {client} />
-        <BatteryIndicator {client} />
-        <PowerProfileIndicator {client} />
-        <PowerMenuIndicator {client} />
+        <div class="group">
+            <SystemMeters {client} />
+        </div>
+        <div class="divider" aria-hidden="true"></div>
+        <div class="group">
+            <BrightnessIndicator {client} />
+            <NetworkIndicator {client} />
+            <BluetoothIndicator {client} />
+            <BatteryIndicator {client} />
+        </div>
+        <div class="divider" aria-hidden="true"></div>
+        <div class="group">
+            <PowerProfileIndicator {client} />
+            <PowerMenuIndicator {client} />
+        </div>
     </div>
 </div>
 
@@ -58,5 +66,24 @@
     .region-right {
         flex: 1;
         justify-content: flex-end;
+        gap: 8px;
+    }
+    /*
+     * Right-region grouping. Each `.group` is a flex row of related
+     * indicators (meters, status, power). The `.divider` between
+     * groups is a thin vertical line that sits at the bar row's
+     * baseline; opacity and color are tuned so it reads as a soft
+     * separator rather than competing with the indicators.
+     */
+    .group {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+    }
+    .divider {
+        width: 1px;
+        height: 18px;
+        background: var(--color-fg-alt, #a6adc8);
+        opacity: 0.35;
     }
 </style>

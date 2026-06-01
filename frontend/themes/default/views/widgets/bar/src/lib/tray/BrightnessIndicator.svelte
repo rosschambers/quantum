@@ -89,7 +89,7 @@
     .tray-icon {
         display: inline-flex;
         align-items: center;
-        gap: 3px;
+        gap: 6px;
         font-size: var(--tray-icon-size, 14px);
         color: var(--tray-icon-color, var(--color-fg, #cdd6f4));
         padding: 0 4px;
