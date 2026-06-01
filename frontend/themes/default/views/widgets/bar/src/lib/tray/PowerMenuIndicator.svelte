@@ -24,6 +24,13 @@
 	let trigger: HTMLElement | undefined = $state(undefined);
 
 	const CONFIRM_WINDOW_MS = 3000;
+	/**
+	 * Bar surface height while the popover is closed. Must match the
+	 * BAR_HEIGHT constant set in `crates/ui/src/windows/widget.rs`. The
+	 * surface stays this tall by default so it does not intercept
+	 * clicks on apps below.
+	 */
+	const BAR_HEIGHT = 32;
 
 	$effect(() => {
 		client.call('provider.query', { id: 'system_power' })
@@ -46,6 +53,34 @@
 		};
 		document.addEventListener('mousedown', onDocumentMousedown);
 		return () => document.removeEventListener('mousedown', onDocumentMousedown);
+	});
+
+	/**
+	 * Tell the Rust side to grow / shrink the bar's layer-shell surface
+	 * around the popover. The surface is normally as tall as the bar
+	 * row so clicks pass through to apps below; we need to extend it
+	 * while the popover is visible so the popover's buttons receive
+	 * input. We measure the popover after Svelte renders it and add a
+	 * small margin; on close we revert to BAR_HEIGHT.
+	 *
+	 * Sent fire-and-forget: the failure mode is "popover renders but
+	 * is clipped/click-through", which is no worse than today's bug.
+	 */
+	$effect(() => {
+		if (open && popover) {
+			// Wait one frame for layout so offsetHeight is the real value.
+			requestAnimationFrame(() => {
+				const popoverHeight = popover?.offsetHeight ?? 200;
+				const target = BAR_HEIGHT + popoverHeight + 8; // 8px breathing room
+				client
+					.call('view.set_height', { name: 'widgets/bar', height: target })
+					.catch(() => {});
+			});
+		} else {
+			client
+				.call('view.set_height', { name: 'widgets/bar', height: BAR_HEIGHT })
+				.catch(() => {});
+		}
 	});
 
 	function anyCapable(s: SystemPowerState): boolean {

@@ -3,6 +3,7 @@ pub use quantum_domain::WindowMode;
 #[derive(Debug, Clone)]
 pub enum WindowRequest {
     Open { view: String, mode: WindowMode },
+    SetHeight { view: String, height: u32 },
 }
 
 #[cfg(test)]

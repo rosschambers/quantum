@@ -47,6 +47,7 @@ impl Dispatcher {
             "view.toggle" => self.handle_view_toggle(params).await,
             "view.show" => self.handle_view_show(params).await,
             "view.hide" => self.handle_view_hide(params).await,
+            "view.set_height" => self.handle_view_set_height(params).await,
             "theme.reload" => self.handle_theme_reload(params).await,
             "system.status" => self.handle_system_status(params).await,
             _ => Err(ApplicationError::Domain(DomainError::Unsupported(
@@ -133,6 +134,21 @@ impl Dispatcher {
             .execute(params.name, WindowMode::Hide)
             .await?;
 
+        Ok(json!({}))
+    }
+
+    async fn handle_view_set_height(&self, params: Value) -> Result<Value> {
+        #[derive(serde::Deserialize)]
+        struct SetHeightParams {
+            name: String,
+            height: u32,
+        }
+        let params: SetHeightParams = serde_json::from_value(params).map_err(|e| {
+            ApplicationError::Unknown(format!("invalid view.set_height params: {}", e))
+        })?;
+        self.open_view
+            .set_height(params.name, params.height)
+            .await?;
         Ok(json!({}))
     }
 

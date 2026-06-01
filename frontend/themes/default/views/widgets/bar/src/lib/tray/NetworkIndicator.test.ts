@@ -30,7 +30,7 @@ describe('NetworkIndicator', () => {
 		expect(container.querySelector('.tray-icon')).toBeNull();
 	});
 
-	it('renders ethernet icon when connected via ethernet', async () => {
+	it('renders ethernet icon with a fully-filled ring when connected via ethernet', async () => {
 		const { client, emit } = mockClient();
 		const { container } = render(NetworkIndicator, { props: { client } });
 		await emit({
@@ -46,10 +46,14 @@ describe('NetworkIndicator', () => {
 		});
 		const el = container.querySelector('.tray-icon');
 		expect(el).not.toBeNull();
-		expect(el!.textContent).toContain('⊞');
+		// Ethernet uses the plug glyph U+1F50C and renders a full ring.
+		expect(el!.querySelector('.icon')!.textContent).toContain('\ud83d\udd0c');
+		const fill = el!.querySelector('svg.ring .ring-fill');
+		const off = Number(fill!.getAttribute('stroke-dashoffset'));
+		expect(off).toBeCloseTo(0, 1);
 	});
 
-	it('renders 3-bar wifi when signal >= 75', async () => {
+	it('drives the ring fill by signal strength on wifi', async () => {
 		const { client, emit } = mockClient();
 		const { container } = render(NetworkIndicator, { props: { client } });
 		await emit({
@@ -63,12 +67,14 @@ describe('NetworkIndicator', () => {
 			wifi_enabled: true,
 			wifi_signal_percent: 90,
 		});
-		const el = container.querySelector('.tray-icon');
-		expect(el).not.toBeNull();
-		expect(el!.textContent).toContain('▮▮▮');
+		const fill = container.querySelector('.tray-icon svg.ring .ring-fill');
+		const circ = Number(fill!.getAttribute('stroke-dasharray'));
+		const off = Number(fill!.getAttribute('stroke-dashoffset'));
+		// 90% -> dashoffset is 10% of the circumference.
+		expect(off).toBeCloseTo(circ * 0.1, 1);
 	});
 
-	it('renders 1-bar wifi when signal 25-49', async () => {
+	it('drives the ring fill by signal strength when wifi is weak', async () => {
 		const { client, emit } = mockClient();
 		const { container } = render(NetworkIndicator, { props: { client } });
 		await emit({
@@ -82,9 +88,11 @@ describe('NetworkIndicator', () => {
 			wifi_enabled: true,
 			wifi_signal_percent: 30,
 		});
-		const el = container.querySelector('.tray-icon');
-		expect(el).not.toBeNull();
-		expect(el!.textContent).toContain('▮▯▯');
+		const fill = container.querySelector('.tray-icon svg.ring .ring-fill');
+		const circ = Number(fill!.getAttribute('stroke-dasharray'));
+		const off = Number(fill!.getAttribute('stroke-dashoffset'));
+		// 30% -> dashoffset is 70% of the circumference.
+		expect(off).toBeCloseTo(circ * 0.7, 1);
 	});
 
 	it('left click invokes set_wifi_enabled with toggled value', async () => {

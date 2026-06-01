@@ -18,6 +18,11 @@ pub trait WindowOps {
     fn show(&mut self);
     fn hide(&mut self);
     fn toggle(&mut self);
+    /// Resize the window to the given pixel height. The bar uses this
+    /// when a popover opens so the popover has room to render below the
+    /// visible row. Default no-op for windows that don't care about
+    /// runtime resizing.
+    fn set_height(&mut self, _height: u32) {}
 }
 
 /// Abstraction for constructing windows, allowing test injection.
@@ -110,6 +115,13 @@ impl WindowOps for ManagedWindow {
             ManagedWindow::Widget(w) => w.toggle(),
         }
     }
+
+    fn set_height(&mut self, height: u32) {
+        match self {
+            ManagedWindow::Launcher(w) => w.set_height(height),
+            ManagedWindow::Widget(w) => w.set_height(height),
+        }
+    }
 }
 
 /// Registry for managing all windows on the GTK main thread.
@@ -132,23 +144,37 @@ impl<C: WindowConstructor> WindowRegistry<C> {
     where
         C::Window: WindowOps,
     {
-        let WindowRequest::Open { view, mode } = req;
-        tracing::debug!("WindowRegistry::handle view={} mode={:?}", view, mode);
-        let window = match self.windows.entry(view.clone()) {
-            std::collections::hash_map::Entry::Occupied(e) => e.into_mut(),
-            std::collections::hash_map::Entry::Vacant(v) => {
-                let Some(w) = self.constructor.construct(&view) else {
-                    warn!("Unknown view: {}", view);
-                    return;
+        match req {
+            WindowRequest::Open { view, mode } => {
+                tracing::debug!("WindowRegistry::handle view={} mode={:?}", view, mode);
+                let window = match self.windows.entry(view.clone()) {
+                    std::collections::hash_map::Entry::Occupied(e) => e.into_mut(),
+                    std::collections::hash_map::Entry::Vacant(v) => {
+                        let Some(w) = self.constructor.construct(&view) else {
+                            warn!("Unknown view: {}", view);
+                            return;
+                        };
+                        v.insert(w)
+                    }
                 };
-                v.insert(w)
+                match mode {
+                    WindowMode::Toggle => window.toggle(),
+                    WindowMode::Show => window.show(),
+                    WindowMode::Hide => window.hide(),
+                }
             }
-        };
-
-        match mode {
-            WindowMode::Toggle => window.toggle(),
-            WindowMode::Show => window.show(),
-            WindowMode::Hide => window.hide(),
+            WindowRequest::SetHeight { view, height } => {
+                tracing::debug!(
+                    "WindowRegistry::handle set_height view={} h={}",
+                    view,
+                    height
+                );
+                if let Some(window) = self.windows.get_mut(&view) {
+                    window.set_height(height);
+                } else {
+                    warn!("set_height: view {} not open", view);
+                }
+            }
         }
     }
 }

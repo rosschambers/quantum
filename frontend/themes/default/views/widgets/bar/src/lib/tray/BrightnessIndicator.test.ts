@@ -40,7 +40,7 @@ describe('BrightnessIndicator', () => {
 		expect(container.querySelector('.tray-icon')).toBeNull();
 	});
 
-	it('renders mid glyph at 50% brightness', async () => {
+	it('renders an icon + ring at 50% brightness', async () => {
 		const { client, emit } = mockClient();
 		const { container } = render(BrightnessIndicator, { props: { client } });
 		await emit({
@@ -56,10 +56,15 @@ describe('BrightnessIndicator', () => {
 		});
 		const el = container.querySelector('.tray-icon');
 		expect(el).not.toBeNull();
-		expect(el!.textContent).toContain('▮▮▯');
+		expect(el!.querySelector('.icon')!.textContent).not.toBe('');
+		const fill = el!.querySelector('svg.ring .ring-fill');
+		const circ = Number(fill!.getAttribute('stroke-dasharray'));
+		const off = Number(fill!.getAttribute('stroke-dashoffset'));
+		// 50% -> dashoffset is half the circumference.
+		expect(off).toBeCloseTo(circ * 0.5, 1);
 	});
 
-	it('renders high glyph at 100% brightness', async () => {
+	it('renders a fully-filled ring at 100% brightness', async () => {
 		const { client, emit } = mockClient();
 		const { container } = render(BrightnessIndicator, { props: { client } });
 		await emit({
@@ -73,9 +78,9 @@ describe('BrightnessIndicator', () => {
 				},
 			],
 		});
-		const el = container.querySelector('.tray-icon');
-		expect(el).not.toBeNull();
-		expect(el!.textContent).toContain('▮▮▮');
+		const fill = container.querySelector('svg.ring .ring-fill');
+		const off = Number(fill!.getAttribute('stroke-dashoffset'));
+		expect(off).toBeCloseTo(0, 1);
 	});
 
 	it('scroll up invokes adjust with delta_percent 5 and first-display fields', async () => {

@@ -25,6 +25,15 @@ impl WindowHost for GtkWindowHost {
             })
             .map_err(|_| DomainError::Unsupported("window host receiver dropped".into()))
     }
+
+    async fn set_view_height(&self, view: &str, height: u32) -> Result<(), DomainError> {
+        self.tx
+            .send(WindowRequest::SetHeight {
+                view: view.to_string(),
+                height,
+            })
+            .map_err(|_| DomainError::Unsupported("window host receiver dropped".into()))
+    }
 }
 
 /// Dummy window host for headless mode.
@@ -76,6 +85,21 @@ mod tests {
                 assert_eq!(view, "launcher");
                 assert!(matches!(mode, WindowMode::Toggle));
             }
+            other => panic!("expected Open, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn sends_set_height_request_on_channel() {
+        let (host, mut rx) = GtkWindowHost::new();
+        host.set_view_height("widgets/bar", 200).await.unwrap();
+        let msg = rx.recv().await.expect("message");
+        match msg {
+            WindowRequest::SetHeight { view, height } => {
+                assert_eq!(view, "widgets/bar");
+                assert_eq!(height, 200);
+            }
+            other => panic!("expected SetHeight, got {other:?}"),
         }
     }
 

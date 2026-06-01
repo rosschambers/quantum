@@ -140,8 +140,9 @@ button.preset.active { background: var(--pg-accent); color: var(--pg-bg); border
     font-family: var(--pg-font-sans);
     font-size: var(--bar-icon-size);
 }
-.bar-region-left { flex: 1; min-width: 0; display: flex; align-items: center; gap: 8px; }
-.bar-region-center, .bar-region-right { display: flex; align-items: center; gap: var(--bar-gap); }
+.bar-region-left { flex: 1; min-width: 0; display: flex; align-items: center; gap: var(--bar-gap); }
+.bar-region-center { flex: 0 1 auto; display: flex; align-items: center; gap: var(--bar-gap); justify-content: center; }
+.bar-region-right { flex: 1; min-width: 0; display: flex; align-items: center; justify-content: flex-end; gap: var(--bar-gap); }
 
 /* In-bar divider when used between regions */
 .bar-divider {
@@ -325,6 +326,103 @@ button.preset.active { background: var(--pg-accent); color: var(--pg-bg); border
     </div>
 
     <div class="group">
+        <h2>Component layout</h2>
+        <p style="font-size: 11px; color: var(--pg-fg-alt); margin: 0 0 8px 0;">
+            Pick which region each component belongs to. Order within a region follows the order shown here.
+        </p>
+        <div class="row">
+            <label>Active window</label>
+            <select id="regionActive">
+                <option value="left">left</option>
+                <option value="center">center</option>
+                <option value="right">right</option>
+                <option value="hidden">hidden</option>
+            </select>
+        </div>
+        <div class="row">
+            <label>System meters (CPU/MEM)</label>
+            <select id="regionMeters">
+                <option value="left">left</option>
+                <option value="center">center</option>
+                <option value="right">right</option>
+                <option value="hidden">hidden</option>
+            </select>
+        </div>
+        <div class="row">
+            <label>Media controls</label>
+            <select id="regionMedia">
+                <option value="left">left</option>
+                <option value="center">center</option>
+                <option value="right">right</option>
+                <option value="hidden">hidden</option>
+            </select>
+        </div>
+        <div class="row">
+            <label>Network</label>
+            <select id="regionNet">
+                <option value="left">left</option>
+                <option value="center">center</option>
+                <option value="right">right</option>
+                <option value="hidden">hidden</option>
+            </select>
+        </div>
+        <div class="row">
+            <label>Bluetooth</label>
+            <select id="regionBt">
+                <option value="left">left</option>
+                <option value="center">center</option>
+                <option value="right">right</option>
+                <option value="hidden">hidden</option>
+            </select>
+        </div>
+        <div class="row">
+            <label>Volume</label>
+            <select id="regionVolume">
+                <option value="left">left</option>
+                <option value="center">center</option>
+                <option value="right">right</option>
+                <option value="hidden">hidden</option>
+            </select>
+        </div>
+        <div class="row">
+            <label>Brightness</label>
+            <select id="regionBrightness">
+                <option value="left">left</option>
+                <option value="center">center</option>
+                <option value="right">right</option>
+                <option value="hidden">hidden</option>
+            </select>
+        </div>
+        <div class="row">
+            <label>Battery</label>
+            <select id="regionBattery">
+                <option value="left">left</option>
+                <option value="center">center</option>
+                <option value="right">right</option>
+                <option value="hidden">hidden</option>
+            </select>
+        </div>
+        <div class="row">
+            <label>Power profile</label>
+            <select id="regionPp">
+                <option value="left">left</option>
+                <option value="center">center</option>
+                <option value="right">right</option>
+                <option value="hidden">hidden</option>
+            </select>
+        </div>
+        <div class="row">
+            <label>Power menu</label>
+            <select id="regionPm">
+                <option value="left">left</option>
+                <option value="center">center</option>
+                <option value="right">right</option>
+                <option value="hidden">hidden</option>
+            </select>
+        </div>
+    </div>
+
+    <div class="group">
         <h2>Icons + colors</h2>
         <div class="row">
             <label>Icon size (px)</label>
@@ -445,9 +543,10 @@ button.preset.active { background: var(--pg-accent); color: var(--pg-bg); border
         <div class="row">
             <label>Percentage shape</label>
             <select id="pctStyle">
+                <option value="icon-ring">icon + tiny ring</option>
                 <option value="bucket">3-cell bucket (\u25ae\u25ae\u25af)</option>
                 <option value="bars-4">4-cell bars</option>
-                <option value="ring">small ring</option>
+                <option value="ring">small ring (no icon)</option>
                 <option value="arc">half-arc</option>
                 <option value="dot">colored dot</option>
                 <option value="vbar">vertical mini bar</option>
@@ -610,14 +709,44 @@ const DEFAULTS = {
     ppStyle: 'glyph', pmStyle: 'circle',
     hoverStyle: 'bg',
     backdrop: 'dark',
+    // Region assignment per component. Determines which of left /
+    // center / right (or hidden) each renders into in the live bar.
+    regionActive: 'left',
+    regionMeters: 'right',
+    regionMedia: 'center',
+    regionNet: 'right',
+    regionBt: 'right',
+    regionVolume: 'center',
+    regionBrightness: 'right',
+    regionBattery: 'right',
+    regionPp: 'right',
+    regionPm: 'right',
 };
 
 const PRESETS = {
+    'Balanced (your draft)': {
+        ...DEFAULTS,
+        barOpacity: 0.85, barRegionDivider: 'line',
+        meterStyle: 'ring-spark', pctStyle: 'icon-ring',
+        mediaStyle: 'icons', btStyle: 'svg', netStyle: 'wifi-bars',
+        ppStyle: 'leaf-arrow-bolt', pmStyle: 'svg-power',
+        hoverStyle: 'ring',
+        regionActive: 'left',
+        regionMeters: 'left',
+        regionMedia: 'center',
+        regionVolume: 'center',
+        regionBrightness: 'right',
+        regionNet: 'right',
+        regionBt: 'right',
+        regionBattery: 'right',
+        regionPp: 'right',
+        regionPm: 'right',
+    },
     'Current': { ...DEFAULTS, meterStyle: 'ring', mediaStyle: 'text', pctStyle: 'bucket', btStyle: 'glyph', netStyle: 'bucket', ppStyle: 'glyph', pmStyle: 'circle', iconStyle: 'unicode' },
-    'Vector unified': { ...DEFAULTS, meterStyle: 'ring-spark', mediaStyle: 'icons', pctStyle: 'ring', btStyle: 'svg', netStyle: 'wifi-bars', ppStyle: 'leaf-arrow-bolt', pmStyle: 'svg-power', iconStyle: 'lucide' },
+    'Vector unified': { ...DEFAULTS, meterStyle: 'ring-spark', mediaStyle: 'icons', pctStyle: 'icon-ring', btStyle: 'svg', netStyle: 'wifi-bars', ppStyle: 'leaf-arrow-bolt', pmStyle: 'svg-power', iconStyle: 'lucide' },
     'Geometric (rings everywhere)': { ...DEFAULTS, meterStyle: 'ring', pctStyle: 'ring', btStyle: 'svg', netStyle: 'wifi-bars', ppStyle: 'dot-color', pmStyle: 'circle', iconStyle: 'vector', gradient: 'green-amber-red' },
     'Minimal monochrome': { ...DEFAULTS, meterStyle: 'spark-only', pctStyle: 'icon-only', btStyle: 'svg', netStyle: 'dot-color', ppStyle: 'dot-color', pmStyle: 'ellipsis', iconStyle: 'lucide', gradient: 'single' },
-    'Floating with shadow': { ...DEFAULTS, barRadius: 8, barMargin: 6, barOpacity: 0.85, barBlur: 16, barBorder: 0, barShadow: 'strong', meterStyle: 'ring-spark', pctStyle: 'ring', iconStyle: 'lucide', btStyle: 'svg', netStyle: 'wifi-bars', ppStyle: 'leaf-arrow-bolt', pmStyle: 'svg-power' },
+    'Floating with shadow': { ...DEFAULTS, barRadius: 8, barMargin: 6, barOpacity: 0.85, barBlur: 16, barBorder: 0, barShadow: 'strong', meterStyle: 'ring-spark', pctStyle: 'icon-ring', iconStyle: 'lucide', btStyle: 'svg', netStyle: 'wifi-bars', ppStyle: 'leaf-arrow-bolt', pmStyle: 'svg-power' },
     'Dense data': { ...DEFAULTS, barGap: 8, iconSize: 12, meterStyle: 'bar-spark', pctStyle: 'bars-4', btStyle: 'icon-count', netStyle: 'ssid-text', ppStyle: 'glyph', pmStyle: 'caret', iconStyle: 'unicode', pctShowNum: 'always' },
 };
 
@@ -974,6 +1103,10 @@ function renderPctIndicator(iconName, pct, opts = {}) {
     let needsNum = showNum === 'always' || (showNum === 'warn' && pct >= 70);
 
     switch (ind) {
+        case 'icon-ring':
+            wrap.appendChild(pickIcon(iconName, state.iconSize));
+            wrap.appendChild(renderRing(pct, { size: state.iconSize + 4, label: false }));
+            break;
         case 'bucket': wrap.appendChild(pickIcon(iconName, state.iconSize)); wrap.appendChild(renderBucket(pct)); break;
         case 'bars-4': wrap.appendChild(pickIcon(iconName, state.iconSize)); wrap.appendChild(renderBars4(pct)); break;
         case 'ring': wrap.appendChild(renderRing(pct, { size: state.iconSize + 4, label: false })); break;
@@ -1193,25 +1326,52 @@ function applyBarTokens() {
     else surface.style.setProperty('--bar-shadow', '0 6px 20px rgba(0,0,0,0.5)');
 }
 
+/**
+ * Build the live bar by visiting each component in a fixed declaration
+ * order, asking what region it has been assigned to, and dropping the
+ * rendered element into that region's container. Hidden components are
+ * skipped. Region dividers (if enabled) are inserted between groups of
+ * indicators within the same region for visual rhythm.
+ */
 function buildLiveBar() {
     const surface = document.getElementById('bar-surface');
     surface.innerHTML = '';
     applyBarTokens();
-    const left = el('span', { class: 'bar-region-left' }, renderActiveWindow());
+
+    const left = el('span', { class: 'bar-region-left' });
+    const center = el('span', { class: 'bar-region-center' });
     const right = el('span', { class: 'bar-region-right' });
-    right.appendChild(renderMeter('CPU', mock.cpu, mock.cpuHist));
-    right.appendChild(renderMeter('MEM', mock.mem, mock.memHist));
-    const d1 = divider(); if (d1) right.appendChild(d1);
-    right.appendChild(renderMedia());
-    const d2 = divider(); if (d2) right.appendChild(d2);
-    right.appendChild(renderNetwork());
-    right.appendChild(renderBluetooth());
-    right.appendChild(renderPctIndicator('volume', mock.volume, { label: 'Volume' }));
-    right.appendChild(renderPctIndicator('brightness', mock.brightness, { label: 'Brightness' }));
-    right.appendChild(renderPctIndicator('battery', mock.battery, { label: 'Battery' }));
-    right.appendChild(renderPowerProfile());
-    right.appendChild(renderPowerMenu());
+    const regions = { left, center, right, hidden: null };
+
+    // Each entry: [region-state-key, render-fn]. Order matters: this is
+    // the in-region order they render in.
+    const components = [
+        ['regionActive', renderActiveWindow],
+        ['regionMeters', () => {
+            const w = el('span', { style: { display: 'inline-flex', gap: '6px' } });
+            w.appendChild(renderMeter('CPU', mock.cpu, mock.cpuHist));
+            w.appendChild(renderMeter('MEM', mock.mem, mock.memHist));
+            return w;
+        }],
+        ['regionMedia', renderMedia],
+        ['regionNet', renderNetwork],
+        ['regionBt', renderBluetooth],
+        ['regionVolume', () => renderPctIndicator('volume', mock.volume, { label: 'Volume' })],
+        ['regionBrightness', () => renderPctIndicator('brightness', mock.brightness, { label: 'Brightness' })],
+        ['regionBattery', () => renderPctIndicator('battery', mock.battery, { label: 'Battery' })],
+        ['regionPp', renderPowerProfile],
+        ['regionPm', renderPowerMenu],
+    ];
+
+    for (const [regionKey, fn] of components) {
+        const region = state[regionKey];
+        const target = regions[region];
+        if (!target) continue;
+        target.appendChild(fn());
+    }
+
     surface.appendChild(left);
+    surface.appendChild(center);
     surface.appendChild(right);
 }
 
@@ -1242,9 +1402,10 @@ const VARIANTS = {
         { key: 'hidden-when-idle', label: 'Hidden when no player' },
     ],
     pctStyle: [
+        { key: 'icon-ring', label: 'Icon + tiny ring' },
         { key: 'bucket', label: '3-cell bucket' },
         { key: 'bars-4', label: '4 vertical bars' },
-        { key: 'ring', label: 'Tiny ring' },
+        { key: 'ring', label: 'Tiny ring (no icon)' },
         { key: 'arc', label: 'Half arc' },
         { key: 'dot', label: 'Color dot' },
         { key: 'vbar', label: 'Vertical mini-bar' },
@@ -1355,6 +1516,25 @@ function updatePrompt() {
     lines.push('');
     lines.push(`**Icon language**: ${state.iconStyle === 'unicode' ? 'unicode glyphs' : state.iconStyle === 'vector' ? 'custom geometric SVG icons' : 'Lucide-style outlined SVG icons (1.5px stroke, 24x24 viewBox)'}, ${state.iconSize}px nominal size.`);
     lines.push(`**Color tokens**: foreground ${state.colorFg}, muted-fg ${state.colorFgAlt}, accent ${state.colorAccent}. Percentage gradient: ${state.gradient === 'cool-hot' ? 'cool blue (0%) -> hot red (100%)' : state.gradient === 'green-amber-red' ? 'green -> amber -> red' : state.gradient === 'mauve-pink' ? 'catppuccin mauve -> pink' : `solid accent color (${state.colorAccent})`}.`);
+    lines.push('');
+    // Component layout (left / center / right / hidden).
+    const layoutRows = [
+        ['Active window', state.regionActive],
+        ['System meters (CPU/MEM)', state.regionMeters],
+        ['Media controls', state.regionMedia],
+        ['Network', state.regionNet],
+        ['Bluetooth', state.regionBt],
+        ['Volume', state.regionVolume],
+        ['Brightness', state.regionBrightness],
+        ['Battery', state.regionBattery],
+        ['Power profile', state.regionPp],
+        ['Power menu', state.regionPm],
+    ];
+    lines.push('**Component layout (left | center | right region)**:');
+    for (const [label, region] of layoutRows) {
+        if (region === 'hidden') lines.push(`- ${label}: HIDDEN`);
+        else lines.push(`- ${label}: ${region}`);
+    }
     lines.push('');
     lines.push(`**Active window**: ${describeActive()}`);
     lines.push(`**Workspace badge**: ${describeWs()}`);
@@ -1509,6 +1689,10 @@ function buildControls() {
         ['btStyle'], ['netStyle'],
         ['ppStyle'], ['pmStyle'],
         ['hoverStyle'],
+        // Per-component region assignments.
+        ['regionActive'], ['regionMeters'], ['regionMedia'], ['regionNet'],
+        ['regionBt'], ['regionVolume'], ['regionBrightness'], ['regionBattery'],
+        ['regionPp'], ['regionPm'],
     ].forEach(([id, parser]) => bind(id, id, parser ?? ((v) => v)));
 
     const ps = document.getElementById('presets');

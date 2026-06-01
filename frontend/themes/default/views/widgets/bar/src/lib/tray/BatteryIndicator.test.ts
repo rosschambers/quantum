@@ -26,7 +26,7 @@ describe('BatteryIndicator', () => {
         expect(container.querySelector('.tray-icon')).toBeNull();
     });
 
-    it('renders the percentage glyph when available and discharging', async () => {
+    it('renders an icon and a ring when available and discharging', async () => {
         const { client, emit } = mockClient();
         const { container } = render(BatteryIndicator, { props: { client } });
         await emit({
@@ -39,11 +39,17 @@ describe('BatteryIndicator', () => {
         });
         const el = container.querySelector('.tray-icon');
         expect(el).not.toBeNull();
-        expect(el!.textContent).toContain('50%');
-        expect(el!.textContent).not.toContain('⚡');
+        const icon = el!.querySelector('.icon');
+        expect(icon).not.toBeNull();
+        expect(icon!.textContent).not.toBe('');
+        // Battery icon while discharging is the plain battery glyph (no
+        // lightning prefix). Tooltip carries the percentage.
+        expect(icon!.textContent).not.toContain('\u26a1');
+        expect(el!.querySelector('svg.ring')).not.toBeNull();
+        expect(el!.getAttribute('title')).toContain('50%');
     });
 
-    it('shows charging glyph when state is charging', async () => {
+    it('uses the lightning icon when charging', async () => {
         const { client, emit } = mockClient();
         const { container } = render(BatteryIndicator, { props: { client } });
         await emit({
@@ -54,9 +60,28 @@ describe('BatteryIndicator', () => {
             time_to_empty_secs: null,
             time_to_full_secs: 1200,
         });
-        const el = container.querySelector('.tray-icon');
-        expect(el!.textContent).toContain('⚡');
-        expect(el!.textContent).toContain('80%');
+        const icon = container.querySelector('.tray-icon .icon');
+        expect(icon!.textContent).toContain('\u26a1');
+        expect(container.querySelector('.tray-icon')!.getAttribute('title')).toContain('80%');
+    });
+
+    it('drives the ring fill by the current percentage', async () => {
+        const { client, emit } = mockClient();
+        const { container } = render(BatteryIndicator, { props: { client } });
+        await emit({
+            available: true,
+            on_battery: true,
+            percentage: 100,
+            state: 'full',
+            time_to_empty_secs: null,
+            time_to_full_secs: null,
+        });
+        const fill = container.querySelector('.tray-icon svg.ring .ring-fill');
+        const circ = Number(fill!.getAttribute('stroke-dasharray'));
+        const off = Number(fill!.getAttribute('stroke-dashoffset'));
+        // At 100% the dashoffset is 0 (ring fully drawn).
+        expect(off).toBeCloseTo(0, 1);
+        expect(circ).toBeGreaterThan(0);
     });
 
     it('tooltip includes time remaining when discharging', async () => {

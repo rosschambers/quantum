@@ -100,6 +100,18 @@ pub trait HyprlandClient: Send + Sync {
 #[async_trait]
 pub trait WindowHost: Send + Sync {
     async fn open(&self, view: &str, mode: crate::WindowMode) -> Result<(), DomainError>;
+
+    /// Resize an already-open window to the given pixel height. Used by
+    /// the bar to grow its surface when a popover opens so the popover
+    /// has room to render below the visible bar row, then shrink back
+    /// when the popover closes. The exclusive zone (the area apps must
+    /// avoid) is independent of this height and remains constant.
+    ///
+    /// Default impl is a no-op so non-GTK hosts (tests, headless mode)
+    /// don't need to care.
+    async fn set_view_height(&self, _view: &str, _height: u32) -> Result<(), DomainError> {
+        Ok(())
+    }
 }
 
 #[cfg(test)]

@@ -17,6 +17,16 @@ impl OpenViewUseCase {
             .await
             .map_err(crate::ApplicationError::Domain)
     }
+
+    /// Forward a runtime resize request to the window host. Used by the
+    /// `view.set_height` IPC method so the bar can grow when a popover
+    /// opens.
+    pub async fn set_height(&self, view_name: String, height: u32) -> Result<()> {
+        self.window_host
+            .set_view_height(&view_name, height)
+            .await
+            .map_err(crate::ApplicationError::Domain)
+    }
 }
 
 #[cfg(test)]

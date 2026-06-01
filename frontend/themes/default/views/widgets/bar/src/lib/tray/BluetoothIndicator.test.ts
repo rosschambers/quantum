@@ -30,7 +30,7 @@ describe('BluetoothIndicator', () => {
 		expect(container.querySelector('.tray-icon')).toBeNull();
 	});
 
-	it('renders off-glyph when powered is false', async () => {
+	it('renders the BT icon dimmed when powered is false', async () => {
 		const { client, emit } = mockClient();
 		const { container } = render(BluetoothIndicator, { props: { client } });
 		await emit({
@@ -41,10 +41,12 @@ describe('BluetoothIndicator', () => {
 		});
 		const el = container.querySelector('.tray-icon');
 		expect(el).not.toBeNull();
-		expect(el!.textContent).toContain('⊘');
+		expect(el!.classList.contains('powered')).toBe(false);
+		expect(el!.querySelector('.icon')!.textContent).toBe('BT');
+		expect(el!.querySelector('.badge')).toBeNull();
 	});
 
-	it('renders connected-with-count when powered and devices', async () => {
+	it('renders the BT icon highlighted with a device count badge when devices connected', async () => {
 		const { client, emit } = mockClient();
 		const { container } = render(BluetoothIndicator, { props: { client } });
 		await emit({
@@ -58,7 +60,11 @@ describe('BluetoothIndicator', () => {
 		});
 		const el = container.querySelector('.tray-icon');
 		expect(el).not.toBeNull();
-		expect(el!.textContent).toContain('⊕2');
+		expect(el!.classList.contains('powered')).toBe(true);
+		expect(el!.classList.contains('has-devices')).toBe(true);
+		const badge = el!.querySelector('.badge');
+		expect(badge).not.toBeNull();
+		expect(badge!.textContent).toBe('2');
 	});
 
 	it('tooltip lists connected device names', async () => {

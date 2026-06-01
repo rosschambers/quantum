@@ -40,7 +40,7 @@ describe('VolumeIndicator', () => {
 		expect(container.querySelector('.tray-icon')).toBeNull();
 	});
 
-	it('renders mid-volume glyph at 50%', async () => {
+	it('renders an icon and ring at 50%', async () => {
 		const { client, emit } = mockClient();
 		const { container } = render(VolumeIndicator, { props: { client } });
 		await emit({
@@ -54,10 +54,11 @@ describe('VolumeIndicator', () => {
 		});
 		const el = container.querySelector('.tray-icon');
 		expect(el).not.toBeNull();
-		expect(el!.textContent).toContain('▮▮▯');
+		expect(el!.querySelector('.icon')!.textContent).not.toBe('');
+		expect(el!.querySelector('svg.ring')).not.toBeNull();
 	});
 
-	it('renders muted glyph when muted', async () => {
+	it('renders the muted icon and an empty ring when muted', async () => {
 		const { client, emit } = mockClient();
 		const { container } = render(VolumeIndicator, { props: { client } });
 		await emit({
@@ -71,7 +72,13 @@ describe('VolumeIndicator', () => {
 		});
 		const el = container.querySelector('.tray-icon');
 		expect(el).not.toBeNull();
-		expect(el!.textContent).toContain('⊘');
+		// Muted speaker codepoint U+1F507.
+		expect(el!.querySelector('.icon')!.textContent).toContain('\ud83d\udd07');
+		// Muted -> ring fills 0%, so dashoffset == circumference.
+		const fill = el!.querySelector('svg.ring .ring-fill');
+		const circ = Number(fill!.getAttribute('stroke-dasharray'));
+		const off = Number(fill!.getAttribute('stroke-dashoffset'));
+		expect(off).toBeCloseTo(circ, 1);
 	});
 
 	it('left click invokes toggle_mute', async () => {

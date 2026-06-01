@@ -4,6 +4,7 @@ use crate::bridge::json_to_js_expression;
 use crate::dispatcher::IpcDispatcher;
 use gtk4::gdk;
 use gtk4::gio;
+use gtk4::glib;
 use gtk4::prelude::*;
 use gtk4_layer_shell::{Edge, KeyboardMode, Layer, LayerShell};
 use quantum_domain::ports::ThemeStore;
@@ -13,11 +14,19 @@ use tokio::runtime::Handle;
 use tokio::sync::broadcast;
 use webkit6::{prelude::*, WebView};
 
+/// Default bar height in CSS pixels. Matches the value in
+/// `frontend/themes/default/views/widgets/bar/src/styles.css`. The
+/// exclusive-zone reserved for window layout always equals this; the
+/// surface itself may grow taller when a popover is open so its
+/// children have room to render without being clipped by Wayland.
+pub const BAR_HEIGHT: i32 = 32;
+
 /// A widget window - positioned on-screen as a background-layer widget.
 pub struct WidgetWindow {
     window: gtk4::ApplicationWindow,
     #[allow(dead_code)]
     webview: WebView,
+    is_bar: bool,
 }
 
 impl WidgetWindow {
@@ -57,22 +66,22 @@ impl WidgetWindow {
         let is_bar = view_name == "widgets/bar" || view_name.starts_with("widgets/bar/");
 
         if is_bar {
-            // Bar widget: top layer, full width with exclusive zone.
+            // Bar widget: top layer, full width.
             //
-            // The surface is intentionally taller than the visible bar
-            // (300px vs the 32px exclusive zone). Popovers like the
-            // PowerMenuIndicator render below the bar row and would be
-            // clipped by a 32px surface. The extra 268px is transparent
-            // overflow space; only the top 32px is opaque, and the
-            // exclusive zone tells Hyprland to reserve only those 32px
-            // for window layout.
+            // Surface starts the same height as the visible bar
+            // (BAR_HEIGHT) so the unused area below cannot intercept
+            // input. Apps cover that area normally and remain clickable.
+            // When the frontend opens a popover it calls the
+            // `view.set_height` IPC method to grow the surface; the
+            // exclusive zone stays at BAR_HEIGHT so other windows do
+            // not reflow.
             window.set_layer(Layer::Top);
             window.set_anchor(Edge::Top, true);
             window.set_anchor(Edge::Left, true);
             window.set_anchor(Edge::Right, true);
             window.set_keyboard_mode(KeyboardMode::None);
-            window.set_exclusive_zone(32);
-            window.set_default_height(300);
+            window.set_exclusive_zone(BAR_HEIGHT);
+            window.set_default_height(BAR_HEIGHT);
         } else {
             // Other widgets (clock, etc.): background layer, top-right.
             window.set_layer(Layer::Background);
@@ -173,7 +182,11 @@ impl WidgetWindow {
 
         window.set_visible(true);
 
-        Self { window, webview }
+        Self {
+            window,
+            webview,
+            is_bar,
+        }
     }
 }
 
@@ -189,5 +202,21 @@ impl crate::registry::WindowOps for WidgetWindow {
     fn toggle(&mut self) {
         let v = self.window.is_visible();
         self.window.set_visible(!v);
+    }
+
+    fn set_height(&mut self, height: u32) {
+        // Only the bar widget is meant to resize at runtime. Other
+        // widgets ignore the request to avoid accidental geometry
+        // changes from misuse of the IPC method.
+        if !self.is_bar {
+            tracing::debug!("set_height ignored for non-bar widget");
+            return;
+        }
+        let h = height.max(BAR_HEIGHT as u32) as i32;
+        self.window.set_default_height(h);
+        // Force a re-layout so the layer-shell surface picks up the new
+        // height immediately; without this the change waits until the
+        // next GTK redraw cycle, which can lag visibly.
+        gtk4::prelude::WidgetExt::queue_resize(&self.window);
     }
 }

@@ -6,11 +6,14 @@ html, body {
     margin: 0;
     padding: 0;
     /*
-     * The layer-shell surface is taller than the visible bar (300px vs
-     * 32px) so popovers like the PowerMenuIndicator can render below
-     * the bar row. The body fills the surface; overflow stays visible
-     * so popovers escape the .bar row. Background is transparent so
-     * the overflow region passes through to whatever is beneath.
+     * The layer-shell surface is normally only as tall as the visible
+     * bar (32px), keeping it from intercepting clicks on apps below.
+     * When a popover wants to render it sends `view.set_height` IPC
+     * which grows the GTK surface so the popover has room. Body fills
+     * the surface; overflow stays visible so popovers can render
+     * outside the .bar row but inside the surface. Background is
+     * transparent so the area outside the bar row doesn't paint over
+     * apps beneath.
      */
     height: 100%;
     overflow: visible;
@@ -21,6 +24,13 @@ html, body {
 }
 
 .bar {
+    /*
+     * Three-region flex layout: left (active window + meters), center
+     * (media + volume), right (other indicators). Only the bar row
+     * itself paints opaque; the surface around it remains transparent
+     * so apps below are visible and (when the surface is the bar's
+     * default 32px height) clickable.
+     */
     height: var(--bar-height);
     width: 100%;
     display: flex;
@@ -29,10 +39,5 @@ html, body {
     padding: 0 var(--space-2, 0.5rem);
     border-bottom: 1px solid var(--color-border, #313244);
     box-sizing: border-box;
-    background: var(--color-bg, #1e1e2e);
-}
-
-.bar > :first-child {
-    flex: 1;
-    min-width: 0;
+    background: rgba(30, 30, 46, 0.85);
 }
