@@ -80,6 +80,14 @@ impl WindowConstructor for ManagedWindowConstructor {
                 self.runtime.clone(),
                 self.event_tx.clone(),
             ))),
+            "widgets/power-menu" => Some(ManagedWindow::Panel(PanelWindow::new(
+                &self.app,
+                "widgets/power-menu",
+                self.dispatcher.clone(),
+                self.theme_store.clone(),
+                self.runtime.clone(),
+                self.event_tx.clone(),
+            ))),
             other if other.starts_with("widgets/") => {
                 Some(ManagedWindow::Widget(WidgetWindow::new(
                     &self.app,
