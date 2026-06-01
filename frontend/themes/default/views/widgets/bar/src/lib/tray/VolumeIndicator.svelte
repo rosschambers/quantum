@@ -71,14 +71,19 @@
         }
     }
 
+    /**
+     * Each glyph gets a trailing U+FE0E (TEXT STYLE) variation
+     * selector so emoji-class codepoints render in the current text
+     * color, matching the other bar indicators.
+     */
     function iconFor(s: AudioState): string {
         if (!s.default_sink) return '';
-        if (s.default_sink.muted) return '\ud83d\udd07'; // muted
+        if (s.default_sink.muted) return '\u{1f507}\ufe0e';
         const v = s.default_sink.volume_percent;
-        if (v === 0) return '\ud83d\udd07';
-        if (v < 33) return '\ud83d\udd08'; // low
-        if (v < 67) return '\ud83d\udd09'; // medium
-        return '\ud83d\udd0a'; // high
+        if (v === 0) return '\u{1f507}\ufe0e';
+        if (v < 33) return '\u{1f508}\ufe0e';
+        if (v < 67) return '\u{1f509}\ufe0e';
+        return '\u{1f50a}\ufe0e';
     }
 
     function tooltipFor(s: AudioState): string {
@@ -110,5 +115,9 @@
         cursor: pointer;
         line-height: 1;
     }
-    .icon { font-size: var(--tray-icon-size, 14px); line-height: 1; }
+    .icon {
+        font-size: var(--tray-icon-size, 14px);
+        line-height: 1;
+        font-variant-emoji: text;
+    }
 </style>

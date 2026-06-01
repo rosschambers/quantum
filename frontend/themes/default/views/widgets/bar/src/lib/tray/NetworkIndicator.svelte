@@ -68,17 +68,18 @@
     /**
      * Choose a glyph for the active connection type. Wifi/cellular get
      * the wireless signal glyph; ethernet gets a plug glyph; vpn gets a
-     * shield. Unknown falls back to a generic globe.
+     * shield. Each ends with U+FE0E so emoji-presentation codepoints
+     * render in the bar's text color rather than full-color emoji.
      */
     function iconFor(s: NetworkState): string {
-        if (!s.available) return '\u{1f6c8}'; // info circle
-        if (!s.primary) return s.wifi_enabled ? '\ud83d\udcf6' : '\u2715';
+        if (!s.available) return '\u{1f6c8}\u{fe0e}';
+        if (!s.primary) return s.wifi_enabled ? '\u{1f4f6}\u{fe0e}' : '\u2715\u{fe0e}';
         switch (s.primary.kind) {
-            case 'ethernet': return '\u{1f50c}';
-            case 'wifi': return '\ud83d\udcf6';
-            case 'cellular': return '\ud83d\udcf6';
-            case 'vpn': return '\ud83d\udd12';
-            default: return '\ud83c\udf10';
+            case 'ethernet': return '\u{1f50c}\u{fe0e}';
+            case 'wifi': return '\u{1f4f6}\u{fe0e}';
+            case 'cellular': return '\u{1f4f6}\u{fe0e}';
+            case 'vpn': return '\u{1f512}\u{fe0e}';
+            default: return '\u{1f310}\u{fe0e}';
         }
     }
 
@@ -125,5 +126,9 @@
         cursor: pointer;
         line-height: 1;
     }
-    .icon { font-size: var(--tray-icon-size, 14px); line-height: 1; }
+    .icon {
+        font-size: var(--tray-icon-size, 14px);
+        line-height: 1;
+        font-variant-emoji: text;
+    }
 </style>

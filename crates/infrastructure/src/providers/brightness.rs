@@ -206,6 +206,18 @@ impl LogindBrightnessProvider {
             DomainError::Unsupported("brightness writes require logind session".to_string())
         })?;
 
+        // Floor the requested value so we never drive a backlight to
+        // zero. Look up the device's max to derive the floor; if the
+        // device is unknown, fall through with the raw value (it will
+        // fail downstream).
+        let value = if let Some(spec) =
+            self.specs.iter().find(|s| s.subsystem == subsystem && s.name == name)
+        {
+            value.max(min_brightness(spec.max)).min(spec.max)
+        } else {
+            value
+        };
+
         let proxy = zbus::Proxy::new(
             conn,
             "org.freedesktop.login1",
@@ -399,10 +411,24 @@ pub(crate) fn parse_brightness_action(
 
 /// Compute adjusted brightness with clamping.
 ///
-/// `step = (delta_percent * max / 100)`, then clamp to [0, max].
+/// `step = (delta_percent * max / 100)`, then clamp to
+/// `[min_brightness(max), max]`. The lower bound is the higher of 1
+/// raw unit or 1% of max so the screen never goes fully dark by
+/// accident — backlights at 0 are essentially "off" and you can't
+/// see anything to dial them back up.
 pub(crate) fn compute_adjusted(current: u32, max: u32, delta_percent: i32) -> u32 {
     let step = delta_percent as i64 * max as i64 / 100;
-    (current as i64 + step).max(0).min(max as i64) as u32
+    let target = (current as i64 + step).clamp(0, max as i64) as u32;
+    target.max(min_brightness(max))
+}
+
+/// Minimum allowed brightness for a device whose `max_brightness` is
+/// `max`. Floors at 1% of max but never below 1 raw unit so devices
+/// with very small max values (e.g. keyboard backlights at max=3)
+/// still get a usable lower bound.
+pub(crate) fn min_brightness(max: u32) -> u32 {
+    let one_percent = max / 100;
+    one_percent.max(1)
 }
 
 pub(crate) enum BrightnessAction {
@@ -623,10 +649,12 @@ mod tests {
     }
 
     #[test]
-    fn compute_adjusted_clamps_to_zero() {
-        // current=100, max=10000, delta_percent=-50 → step=-5000 → 100-5000=-4900 → clamp to 0
+    fn compute_adjusted_clamps_to_minimum_floor() {
+        // current=100, max=10000, delta_percent=-50 → step=-5000 →
+        // 100-5000=-4900 → clamped first to 0 but then floored at
+        // min_brightness(10000) = 100 (1% of max).
         let result = compute_adjusted(100, 10000, -50);
-        assert_eq!(result, 0);
+        assert_eq!(result, 100);
     }
 
     #[test]
@@ -641,6 +669,29 @@ mod tests {
         // current=5000, max=10000, delta_percent=5 → step=500 → 5000+500=5500
         let result = compute_adjusted(5000, 10000, 5);
         assert_eq!(result, 5500);
+    }
+
+    #[test]
+    fn compute_adjusted_floors_at_one_raw_unit_for_tiny_max() {
+        // Keyboard backlight with max=3. 1% of 3 = 0, so min_brightness
+        // returns 1. Driving it to "off" via a delta therefore lands
+        // at 1, not 0.
+        let result = compute_adjusted(2, 3, -100);
+        assert_eq!(result, 1);
+    }
+
+    #[test]
+    fn min_brightness_one_percent_of_typical_panel() {
+        assert_eq!(min_brightness(10000), 100);
+        assert_eq!(min_brightness(96000), 960);
+    }
+
+    #[test]
+    fn min_brightness_never_zero() {
+        // Tiny / unusual max values still produce a floor of at least 1.
+        assert_eq!(min_brightness(3), 1);
+        assert_eq!(min_brightness(50), 1);
+        assert_eq!(min_brightness(1), 1);
     }
 
     #[tokio::test]

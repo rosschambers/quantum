@@ -32,13 +32,16 @@
         return () => unsubscribe?.();
     });
 
+    /**
+     * Codepoints get a trailing U+FE0E variation selector (TEXT STYLE)
+     * to force monochrome text rendering. Without it, emoji-presentation
+     * characters like the battery glyph render in full color from the
+     * system emoji font, clashing with the rest of the bar's monochrome
+     * icons.
+     */
     function iconFor(s: PowerState): string {
-        // Charging gets a small lightning prefix; otherwise just the
-        // generic battery glyph. Both renderers paint at the standard
-        // tray-icon-size and color so the indicator aligns with its
-        // neighbours.
-        if (s.state === 'charging') return '\u26a1';
-        return '\u{1f50b}';
+        if (s.state === 'charging') return '\u26a1\ufe0e';
+        return '\u{1f50b}\ufe0e';
     }
 
     function tooltipFor(s: PowerState): string {
@@ -73,5 +76,14 @@
         cursor: default;
         line-height: 1;
     }
-    .icon { font-size: var(--tray-icon-size, 14px); line-height: 1; }
+    .icon {
+        font-size: var(--tray-icon-size, 14px);
+        line-height: 1;
+        /*
+         * Force monochrome text rendering on emoji-presentation
+         * codepoints. Paired with U+FE0E in the glyph itself for
+         * fonts that don't honor the CSS property.
+         */
+        font-variant-emoji: text;
+    }
 </style>

@@ -21,6 +21,14 @@ html, body {
     font-family: var(--font-sans, -apple-system, BlinkMacSystemFont, sans-serif);
     font-size: var(--font-size-base, 14px);
     color: var(--color-fg, #cdd6f4);
+    /*
+     * Force all emoji-presentation codepoints to render in monochrome
+     * text style so battery / speaker / signal / sun all read in the
+     * bar's foreground color instead of as full-color emoji.
+     * Combined with U+FE0E variation selectors on individual glyphs
+     * for browsers that ignore this property.
+     */
+    font-variant-emoji: text;
 }
 
 .bar {

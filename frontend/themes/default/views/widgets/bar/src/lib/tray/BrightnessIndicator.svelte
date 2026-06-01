@@ -73,7 +73,9 @@
         return `${d.subsystem}/${d.name} \u00b7 ${Math.round(pct)}%`;
     }
 
-    const ICON = '\u{2600}'; // sun
+    // U+FE0E forces monochrome text rendering on the sun glyph; without
+    // it some fonts paint it in full-color emoji style.
+    const ICON = '\u{2600}\u{fe0e}';
 </script>
 
 {#if state.available && state.displays.length > 0}
@@ -98,5 +100,9 @@
         cursor: pointer;
         line-height: 1;
     }
-    .icon { font-size: var(--tray-icon-size, 14px); line-height: 1; }
+    .icon {
+        font-size: var(--tray-icon-size, 14px);
+        line-height: 1;
+        font-variant-emoji: text;
+    }
 </style>
