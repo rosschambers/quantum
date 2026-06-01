@@ -475,7 +475,7 @@ tooltip otherwise, dispatch `action.invoke` on user interaction.
 | `VolumeIndicator`      | `audio.event`        | Left click toggles mute; scroll = +/-5%    |
 | `BrightnessIndicator`  | `brightness.event`   | Scroll = +/-5% on the first display        |
 | `PowerProfileIndicator`| `power_profile.event`| Left click cycles to the next available    |
-| `PowerMenuIndicator`   | `system_power.event` | Click opens menu; two-click confirms       |
+| `PowerMenuIndicator`   | `system_power.event` | Click opens the centered `widgets/power-menu` view |
 
 ### Custom indicator skeleton
 
@@ -560,6 +560,75 @@ when the flag is false returns an error. The first four go through
 `org.freedesktop.login1.Manager.{PowerOff,Reboot,Suspend,Hibernate}(false)`
 (with auth prompts disabled — polkit rules either allow it or fail
 fast). `lock` spawns the resolved lock command detached.
+
+---
+
+## Power menu
+
+The default theme ships a centered modal view at
+`frontend/themes/default/views/widgets/power-menu/` that the bar's
+`PowerMenuIndicator` opens via `view.show widgets/power-menu`. Themes
+override the look by providing the same path.
+
+The view fetches `SystemPowerState` from the `system_power` provider
+on mount and renders one row per available action. Each row uses a
+two-click confirmation pattern (first click arms, second click within
+3 seconds fires). A hidden-by-default "Schedule…" toggle next to each
+row reveals preset pills (`Now`, `5m`, `15m`, `30m`, `1h`) and a
+custom-minutes input (clamped 1–1440 minutes = 24 hours).
+
+The view loads in a `PanelWindow` (the same window type as the
+launcher), centered on screen with `KeyboardMode::Exclusive` while
+visible. Escape, backdrop click, and the close button all dispatch
+`view.hide widgets/power-menu`.
+
+### Scheduled actions
+
+Three IPC methods support the timer feature; all live on the
+dispatcher and are reusable for any provider that exposes
+`action.invoke`.
+
+**`action.schedule`** — queue a delayed invocation.
+
+```js
+await client.call('action.schedule', {
+    delay_secs: 1800,          // 30 minutes; must be > 0, <= 86400
+    label: 'Suspend',          // displayed in the scheduled-jobs list
+    action: {                  // the same { provider, action } envelope
+        provider: 'system_power',
+        action: {
+            kind: 'custom',
+            data: {
+                kind: 'system_power',
+                payload: { command: 'suspend' },
+            },
+        },
+    },
+});
+// → { id: 'a3f7d2c1' }  — 8-char hex opaque id
+```
+
+**`action.cancel`** — abort a scheduled job by id.
+
+```js
+await client.call('action.cancel', { id: 'a3f7d2c1' });
+// → {}
+```
+
+**`action.scheduled`** — list currently scheduled jobs.
+
+```js
+await client.call('action.scheduled', {});
+// → { jobs: [{ id, fires_at, label }, ...] }
+```
+
+`fires_at` uses the default serde serialization of `SystemTime`:
+`{ secs_since_epoch: u64, nanos_since_epoch: u32 }`. The frontend
+computes "in N min" client-side from this.
+
+**Persistence**: scheduled jobs are in-memory only. Daemon restart
+drops the queue. The daemon logs each pending job at WARN on
+shutdown so a user inspecting the log knows what was lost.
 
 ---
 
