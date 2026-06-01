@@ -102,8 +102,8 @@
             class="ring-label"
             x={size / 2}
             y={size / 2}
+            dy={kind === 'icon' ? '0.18em' : '0.35em'}
             text-anchor="middle"
-            dominant-baseline="central"
             font-size={resolvedLabelSize}
         >{label}</text>
     {/if}
