@@ -323,6 +323,7 @@ async fn publish_state(
     players: &HashMap<String, MprisState>,
     active_player: &Arc<tokio::sync::Mutex<Option<String>>>,
     tx: &broadcast::Sender<serde_json::Value>,
+    last_published: &mut Option<serde_json::Value>,
 ) {
     let active = pick_active_player(players);
 
@@ -347,12 +348,28 @@ async fn publish_state(
 
     match serde_json::to_value(&state) {
         Ok(value) => {
-            let _ = tx.send(value);
+            send_state_if_changed(tx, last_published, value);
         }
         Err(err) => {
             tracing::warn!("mpris: failed to serialize state: {err}");
         }
     }
+}
+
+/// Forward `candidate` on `tx` only when it differs from `last`. Keeps the
+/// broadcast channel quiet while the player state is steady, which matters
+/// most when no players are running — otherwise the 1Hz tick would publish
+/// the same "no player" envelope every second, waking every subscriber.
+pub(crate) fn send_state_if_changed(
+    tx: &broadcast::Sender<serde_json::Value>,
+    last: &mut Option<serde_json::Value>,
+    candidate: serde_json::Value,
+) {
+    if last.as_ref() == Some(&candidate) {
+        return;
+    }
+    let _ = tx.send(candidate.clone());
+    *last = Some(candidate);
 }
 
 async fn mpris_task(
@@ -379,7 +396,12 @@ async fn mpris_task(
         }
     }
 
-    publish_state(&conn, &players, &active_player, &tx).await;
+    // `last_published` lives across the whole task: every publish path
+    // routes through it, so transient state that round-trips back to the
+    // same value (very common when no players are running) only emits a
+    // single broadcast.
+    let mut last_published: Option<serde_json::Value> = None;
+    publish_state(&conn, &players, &active_player, &tx, &mut last_published).await;
 
     let mut name_owner_changed = dbus_proxy.receive_name_owner_changed().await?;
     let mut tick = tokio::time::interval(Duration::from_secs(1));
@@ -428,17 +450,25 @@ async fn mpris_task(
                     }
                 }
 
-                publish_state(&conn, &players, &active_player, &tx).await;
+                publish_state(&conn, &players, &active_player, &tx, &mut last_published).await;
             }
 
             _ = tick.tick() => {
+                // No known players means there is nothing to refresh and the
+                // empty state was already published on the previous transition
+                // into emptiness. Skipping the entire branch keeps the daemon
+                // idle until NameOwnerChanged fires for a new player. The
+                // tick keeps running so we resume immediately on that signal.
+                if players.is_empty() {
+                    continue;
+                }
                 // Refresh all known players. This both updates position for
                 // playing tracks and picks up property changes without an
                 // explicit PropertiesChanged subscription.
                 if let Err(err) = refresh_all_players(&conn, &mut players).await {
                     tracing::warn!("mpris: refresh error: {err}");
                 }
-                publish_state(&conn, &players, &active_player, &tx).await;
+                publish_state(&conn, &players, &active_player, &tx, &mut last_published).await;
             }
         }
     }
@@ -552,5 +582,57 @@ mod tests {
     fn returns_none_when_empty() {
         let players: HashMap<String, MprisState> = HashMap::new();
         assert_eq!(pick_active_player(&players), None);
+    }
+
+    #[tokio::test]
+    async fn send_state_if_changed_suppresses_duplicate() {
+        let (tx, mut rx) = tokio::sync::broadcast::channel::<serde_json::Value>(16);
+        let mut last: Option<serde_json::Value> = None;
+        let payload = serde_json::json!({"player_id": null, "playback_status": "Stopped"});
+
+        send_state_if_changed(&tx, &mut last, payload.clone());
+        send_state_if_changed(&tx, &mut last, payload.clone());
+
+        assert_eq!(rx.try_recv().expect("first send"), payload);
+        assert!(matches!(
+            rx.try_recv(),
+            Err(tokio::sync::broadcast::error::TryRecvError::Empty)
+        ));
+    }
+
+    #[tokio::test]
+    async fn send_state_if_changed_forwards_distinct_payload() {
+        let (tx, mut rx) = tokio::sync::broadcast::channel::<serde_json::Value>(16);
+        let mut last: Option<serde_json::Value> = None;
+        let a = serde_json::json!({"player_id": null});
+        let b = serde_json::json!({"player_id": "spotify"});
+
+        send_state_if_changed(&tx, &mut last, a.clone());
+        send_state_if_changed(&tx, &mut last, b.clone());
+
+        assert_eq!(rx.try_recv().expect("first"), a);
+        assert_eq!(rx.try_recv().expect("second"), b);
+    }
+
+    #[tokio::test]
+    async fn no_players_steady_state_yields_zero_broadcasts_after_first() {
+        // Simulates three consecutive empty-state ticks: the first
+        // publishes the empty state, the next two are deduped. This is
+        // the steady-state battery saver: while no player is around,
+        // the tick loop must NOT keep emitting the same empty payload.
+        let (tx, mut rx) = tokio::sync::broadcast::channel::<serde_json::Value>(16);
+        let mut last: Option<serde_json::Value> = None;
+        let empty = serde_json::to_value(empty_mpris_state()).expect("serialize empty");
+
+        for _ in 0..3 {
+            send_state_if_changed(&tx, &mut last, empty.clone());
+        }
+
+        // Exactly one broadcast total (the very first one).
+        assert_eq!(rx.try_recv().expect("first publish"), empty);
+        assert!(matches!(
+            rx.try_recv(),
+            Err(tokio::sync::broadcast::error::TryRecvError::Empty)
+        ));
     }
 }
