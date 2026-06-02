@@ -153,15 +153,24 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             .application_id("dev.quantum.daemon")
             .build();
 
-        // Spawn a task to auto-show widgets after a brief delay for GTK to activate
+        // Spawn a task to auto-show widgets after a brief delay for GTK to activate.
+        // `widgets/bar` is excluded here: bars are spawned per-monitor on the GTK
+        // thread (see `gtk_loop::run`'s `auto_show_bar` path), because monitor
+        // enumeration requires `gdk::Display::default()` which is GTK-thread-only.
         let dispatcher_for_autoshow = setup.ipc_dispatcher.clone();
         let widgets_to_show: Vec<String> = setup
             .config
             .widget
             .iter()
-            .filter(|w| w.auto_show)
+            .filter(|w| w.auto_show && w.view != "widgets/bar")
             .map(|w| w.view.clone())
             .collect();
+        // Track whether widgets/bar should be auto-shown per-monitor on the GTK thread.
+        let auto_show_bar = setup
+            .config
+            .widget
+            .iter()
+            .any(|w| w.auto_show && w.view == "widgets/bar");
         if !widgets_to_show.is_empty() {
             worker.handle.spawn(async move {
                 tokio::time::sleep(std::time::Duration::from_millis(500)).await;
@@ -181,6 +190,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             setup.theme_store,
             worker.handle.clone(),
             setup.event_tx.clone(),
+            auto_show_bar,
         );
         // After GTK exits, clean up socket.
         let _ = std::fs::remove_file(&setup.socket_path);

@@ -30,16 +30,27 @@ use std::cell::RefCell;
 use std::rc::Rc;
 use std::sync::Arc;
 
+use gtk4::gdk;
 use gtk4::gio;
 use gtk4::prelude::*;
 use quantum_domain::ports::ThemeStore;
-use quantum_domain::EventEnvelope;
-use quantum_ui::{IpcDispatcher, ManagedWindowConstructor, WindowRegistry, WindowRequest};
+use quantum_domain::{EventEnvelope, WindowMode};
+use quantum_ui::registry::WindowConstructor;
+use quantum_ui::{
+    IpcDispatcher, ManagedWindow, ManagedWindowConstructor, WindowRegistry, WindowRequest,
+};
 use tokio::runtime::Handle;
 use tokio::sync::broadcast;
 use tokio::sync::mpsc::UnboundedReceiver;
 
 /// Run the GTK main loop with window registry.
+///
+/// `auto_show_bar` enables the per-monitor bar spawn. When true, after the
+/// registry is wired up the activate handler schedules a glib task that, after
+/// a 500 ms delay (matching the Tokio auto-show pattern in `main.rs`), enumerates
+/// all connected monitors via `gdk::Display::default()` and dispatches one
+/// `widgets/bar@<connector>` Open request per monitor. Monitor enumeration
+/// must happen here because `gdk::Display::default()` is GTK-thread-only.
 pub fn run(
     app: &gtk4::Application,
     rx: UnboundedReceiver<WindowRequest>,
@@ -47,6 +58,7 @@ pub fn run(
     theme_store: Arc<dyn ThemeStore>,
     runtime: Handle,
     event_tx: broadcast::Sender<EventEnvelope>,
+    auto_show_bar: bool,
 ) -> i32 {
     let rx = Rc::new(RefCell::new(Some(rx)));
 
@@ -89,6 +101,16 @@ pub fn run(
                 registry_for_loop.borrow_mut().handle(req);
             }
         });
+
+        if auto_show_bar {
+            let registry_for_seed = registry.clone();
+            glib::MainContext::default().spawn_local(async move {
+                // Brief delay so monitors are fully enumerated; matches the
+                // 500 ms wait in main.rs's Tokio auto-show loop.
+                glib::timeout_future(std::time::Duration::from_millis(500)).await;
+                spawn_bar_per_monitor(&mut registry_for_seed.borrow_mut());
+            });
+        }
     });
 
     // Pass an empty argv to GTK so it doesn't try to parse the daemon's own
@@ -98,4 +120,36 @@ pub fn run(
     // hold_guard drops on function return.
     drop(hold_guard);
     i32::from(exit_code)
+}
+
+/// Enumerate all currently-connected monitors and dispatch an Open
+/// request for `widgets/bar@<connector>` per monitor. Skips monitors
+/// without a connector name (virtual outputs, headless) with a warn
+/// log so the operator can see them in the journal.
+///
+/// Must be called on the GTK main thread because `gdk::Display::default()`
+/// is GTK-thread-only.
+fn spawn_bar_per_monitor<C>(registry: &mut WindowRegistry<C>)
+where
+    C: WindowConstructor<Window = ManagedWindow>,
+{
+    let Some(display) = gdk::Display::default() else {
+        tracing::warn!("no gdk::Display available; widgets/bar not auto-shown");
+        return;
+    };
+    for monitor in display
+        .monitors()
+        .iter::<gdk::Monitor>()
+        .filter_map(Result::ok)
+    {
+        match quantum_ui::windows::widget::monitor_name(&monitor) {
+            Some(name) => {
+                registry.handle(WindowRequest::Open {
+                    view: format!("widgets/bar@{name}"),
+                    mode: WindowMode::Show,
+                });
+            }
+            None => tracing::warn!("skipping monitor without connector name"),
+        }
+    }
 }
