@@ -6,8 +6,8 @@ rust-version.workspace = true
 license.workspace = true
 
 [dependencies]
-quantum-application = { path = "../../src/application" }
-quantum-domain = { path = "../../src/domain" }
+quantum-application = { path = "../../application" }
+quantum-domain = { path = "../../domain" }
 tokio = { workspace = true, features = ["sync"] }
 serde = { workspace = true, features = ["derive"] }
 serde_json.workspace = true

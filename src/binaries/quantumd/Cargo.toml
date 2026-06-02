@@ -6,7 +6,7 @@ rust-version.workspace = true
 license.workspace = true
 
 [dependencies]
-quantum-ui = { path = "../../../crates/ui" }
+quantum-ui = { path = "../../ui/host" }
 quantum-application = { path = "../../application" }
 quantum-infrastructure = { path = "../../infrastructure" }
 quantum-domain = { path = "../../domain" }

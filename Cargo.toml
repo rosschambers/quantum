@@ -4,7 +4,7 @@ members = [
     "src/domain",
     "src/application",
     "src/infrastructure",
-    "crates/ui",
+    "src/ui/host",
     "src/binaries/quantumd",
     "src/binaries/quantumctl",
     "src/binaries/quantum-dev",

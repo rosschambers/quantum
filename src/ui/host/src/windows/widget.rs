@@ -15,7 +15,7 @@ use tokio::sync::broadcast;
 use webkit6::{prelude::*, WebView};
 
 /// Default bar height in CSS pixels. Matches the value in
-/// `frontend/themes/default/views/widgets/bar/src/styles.css`. The
+/// `src/ui/themes/default/views/widgets/bar/src/styles.css`. The
 /// exclusive-zone reserved for window layout always equals this; the
 /// surface itself may grow taller when a popover is open so its
 /// children have room to render without being clipped by Wayland.
