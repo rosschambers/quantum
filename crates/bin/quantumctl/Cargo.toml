@@ -6,7 +6,7 @@ rust-version.workspace = true
 license.workspace = true
 
 [dependencies]
-quantum-domain = { path = "../../domain" }
+quantum-domain = { path = "../../../src/domain" }
 quantum-infrastructure = { path = "../../infrastructure" }
 tokio.workspace = true
 clap = { version = "4", features = ["derive"] }
