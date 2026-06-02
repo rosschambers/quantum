@@ -112,50 +112,6 @@ impl EventBus for BroadcastingEventBus {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    /// Round-trip a payload through `BroadcastingEventBus::publish` and make
-    /// sure subscribers receive JSON that parses back to the original value.
-    /// This is the public contract we care about: structure preserved,
-    /// regardless of whether the bus parses to `Value` or forwards raw text.
-    #[tokio::test]
-    async fn publish_preserves_payload_structure_for_subscribers() {
-        let (tx, mut rx) = tokio::sync::broadcast::channel::<EventEnvelope>(16);
-        let bus = BroadcastingEventBus::new(tx);
-
-        let original = serde_json::json!({"a": 1, "nested": {"b": [1, 2, 3]}});
-        let payload_str = original.to_string();
-        bus.publish("test.channel", &payload_str)
-            .await
-            .expect("publish");
-
-        let env = rx.recv().await.expect("subscriber receives envelope");
-        assert_eq!(env.channel, "test.channel");
-
-        let parsed: Value =
-            serde_json::from_str(env.payload.get()).expect("payload is valid JSON");
-        assert_eq!(parsed, original);
-    }
-
-    #[tokio::test]
-    async fn publish_with_invalid_json_falls_back_to_null() {
-        // Garbage in -> the bus must still emit a valid envelope so the
-        // broadcast channel doesn't accumulate half-formed messages.
-        let (tx, mut rx) = tokio::sync::broadcast::channel::<EventEnvelope>(16);
-        let bus = BroadcastingEventBus::new(tx);
-
-        bus.publish("garbage.channel", "this is not json")
-            .await
-            .expect("publish");
-
-        let env = rx.recv().await.expect("subscriber receives envelope");
-        assert_eq!(env.channel, "garbage.channel");
-        assert_eq!(env.payload.get(), "null");
-    }
-}
-
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     tracing_subscriber::fmt()
         .with_env_filter(EnvFilter::from_default_env())
@@ -653,4 +609,48 @@ fn parse_socket_override(args: &[String]) -> Option<String> {
         }
     }
     None
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Round-trip a payload through `BroadcastingEventBus::publish` and make
+    /// sure subscribers receive JSON that parses back to the original value.
+    /// This is the public contract we care about: structure preserved,
+    /// regardless of whether the bus parses to `Value` or forwards raw text.
+    #[tokio::test]
+    async fn publish_preserves_payload_structure_for_subscribers() {
+        let (tx, mut rx) = tokio::sync::broadcast::channel::<EventEnvelope>(16);
+        let bus = BroadcastingEventBus::new(tx);
+
+        let original = serde_json::json!({"a": 1, "nested": {"b": [1, 2, 3]}});
+        let payload_str = original.to_string();
+        bus.publish("test.channel", &payload_str)
+            .await
+            .expect("publish");
+
+        let env = rx.recv().await.expect("subscriber receives envelope");
+        assert_eq!(env.channel, "test.channel");
+
+        let parsed: Value =
+            serde_json::from_str(env.payload.get()).expect("payload is valid JSON");
+        assert_eq!(parsed, original);
+    }
+
+    #[tokio::test]
+    async fn publish_with_invalid_json_falls_back_to_null() {
+        // Garbage in -> the bus must still emit a valid envelope so the
+        // broadcast channel doesn't accumulate half-formed messages.
+        let (tx, mut rx) = tokio::sync::broadcast::channel::<EventEnvelope>(16);
+        let bus = BroadcastingEventBus::new(tx);
+
+        bus.publish("garbage.channel", "this is not json")
+            .await
+            .expect("publish");
+
+        let env = rx.recv().await.expect("subscriber receives envelope");
+        assert_eq!(env.channel, "garbage.channel");
+        assert_eq!(env.payload.get(), "null");
+    }
 }
