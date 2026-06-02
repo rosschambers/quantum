@@ -36,8 +36,8 @@ just build
 Then install:
 
 ```bash
-cargo install --path crates/bin/quantumd
-cargo install --path crates/bin/quantumctl
+cargo install --path src/binaries/quantumd
+cargo install --path src/binaries/quantumctl
 ```
 
 ## Quick Start

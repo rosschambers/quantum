@@ -136,8 +136,8 @@ impl ThemeStore {
 
     /// Get the themes directory.
     fn themes_dir() -> PathBuf {
-        // For now, use a standard location
-        // In Phase 6, frontend themes will be at frontend/themes/
+        // For now, use a standard location.
+        // Bundled themes ship under src/ui/themes/ in the repository.
         let config_home = std::env::var("XDG_CONFIG_HOME")
             .unwrap_or_else(|_| format!("{}/.config", std::env::var("HOME").unwrap_or_default()));
 

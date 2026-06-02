@@ -15,13 +15,13 @@ Crates and their allowed dependencies:
 
 | Crate                          | May depend on                              |
 | ------------------------------ | ------------------------------------------ |
-| `crates/domain`                | nothing (only `thiserror`, `serde`, `serde_json`, `async-trait`)        |
-| `crates/application`           | `domain`                                   |
-| `crates/infrastructure`        | `domain`                                   |
-| `crates/ui`                    | `application` (and through it, `domain`)   |
-| `crates/bin/quantumd`          | `ui`, `application`, `infrastructure`      |
-| `crates/bin/quantumctl`        | `domain`, `infrastructure` (ipc client)    |
-| `crates/bin/quantum-dev`       | `domain`, `infrastructure`                 |
+| `src/domain`                   | nothing (only `thiserror`, `serde`, `serde_json`, `async-trait`)        |
+| `src/application`              | `domain`                                   |
+| `src/infrastructure`           | `domain`                                   |
+| `src/ui/host`                  | `application` (and through it, `domain`)   |
+| `src/binaries/quantumd`        | `ui`, `application`, `infrastructure`      |
+| `src/binaries/quantumctl`      | `domain`, `infrastructure` (ipc client)    |
+| `src/binaries/quantum-dev`     | `domain`, `infrastructure`                 |
 
 **Forbidden:**
 - `domain` importing any other workspace crate or any async/IO crate.
@@ -29,8 +29,8 @@ Crates and their allowed dependencies:
 - `infrastructure` importing `application` or `ui`.
 - `ui` importing `infrastructure` directly (must go through `application`).
 
-A CI test in `tests/architecture.rs` enforces these rules by parsing Cargo
-metadata. Do not weaken it.
+A CI test in `src/architecture-test/src/lib.rs` enforces these rules by parsing
+Cargo metadata. Do not weaken it.
 
 ## Commit Style
 
@@ -71,7 +71,7 @@ Commit per task in the implementation plan. Small commits beat big ones.
 
 ## Provider and Event Conventions
 
-- `ProviderSource` trait (in `crates/domain/src/ports.rs`) has an optional
+- `ProviderSource` trait (in `src/domain/src/ports.rs`) has an optional
   `fn subscribe(&self) -> Option<BoxStream<'static, serde_json::Value>>`.
   Streaming providers override it; one-shot query providers do not.
 - `EventBus::publish` takes `(channel: &str, payload: &str)`, not an
@@ -83,7 +83,7 @@ Commit per task in the implementation plan. Small commits beat big ones.
 - `Action::Custom { kind, payload }`: outer dispatcher envelope is
   `{"kind": "custom", "data": {"kind": "<provider>", "payload": {...}}}`.
   The inner `payload` (not `data`) carries provider-specific command fields.
-- Register streaming providers in `crates/bin/quantumd/src/main.rs` AND
+- Register streaming providers in `src/binaries/quantumd/src/main.rs` AND
   pre-subscribe them at startup via `SubscribeProviderUseCase` so events
   start flowing before any frontend connects.
 
@@ -97,7 +97,7 @@ Commit per task in the implementation plan. Small commits beat big ones.
   `quantum://` custom URI scheme breaks absolute URL normalization.
 - Widget URLs are `quantum://theme/<theme>/views/widgets/<name>/index.html`.
   The `views/` prefix is required and is handled by `candidate_paths` in
-  `crates/infrastructure/src/theme/store.rs`.
+  `src/infrastructure/src/theme/store.rs`.
 - Always wrap window notify calls in
   `if (typeof window.__quantum_notify === 'function') { ... }` — events can
   arrive before the JS client has loaded.

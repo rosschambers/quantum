@@ -63,7 +63,7 @@ impl ProcStatsProvider {
 /// the DTO requires). Rounding is what makes the per-second dedup pay off:
 /// without it sub-percent jitter in the deltas would flip the payload every
 /// tick and the change-gate would never fire. The bar's CPU meter renders at
-/// integer precision (see `frontend/.../SystemMeters.svelte`), so one-decimal
+/// integer precision (see `src/ui/themes/.../SystemMeters.svelte`), so one-decimal
 /// rounding would only chase float noise that nobody can see.
 pub(crate) fn build_payload(
     busy_delta: u64,

@@ -4,10 +4,10 @@ Quantum themes are a collection of TOML configuration files and Svelte 5 view bu
 
 ## Theme Structure
 
-A minimal theme lives in `frontend/themes/<name>/`:
+A minimal theme lives in `src/ui/themes/<name>/`:
 
 ```
-frontend/themes/my-theme/
+src/ui/themes/my-theme/
 ├── theme.toml                      # manifest
 ├── tokens.toml                     # design token definitions
 └── views/
@@ -276,7 +276,7 @@ The `<style id="quantum-tokens"></style>` element is populated by the daemon wit
 ## Building a View Bundle
 
 ```bash
-cd frontend/themes/my-theme/views/launcher
+cd src/ui/themes/my-theme/views/launcher
 pnpm build
 ```
 
@@ -292,7 +292,7 @@ While developing, use `quantum-dev watch`:
 quantum-dev watch
 ```
 
-This watches `frontend/themes/` and pushes `theme.reload` to the running daemon whenever files change. The frontend reloads the view.
+This watches `src/ui/themes/` and pushes `theme.reload` to the running daemon whenever files change. The frontend reloads the view.
 
 ---
 
@@ -301,7 +301,7 @@ This watches `frontend/themes/` and pushes `theme.reload` to the running daemon 
 The `default` theme is embedded in the binary via `include_dir!`. Its structure:
 
 ```
-frontend/themes/default/
+src/ui/themes/default/
 ├── theme.toml              (name="default", no extends)
 ├── tokens.toml             (standard Quantum design tokens)
 └── views/launcher/
@@ -311,8 +311,8 @@ frontend/themes/default/
 Builds happen at daemon compile time:
 
 ```bash
-# In crates/infrastructure/build.rs
-cargo run -C ../../frontend/themes/default/views/launcher build
+# In src/infrastructure/build.rs
+cargo run -C ../../src/ui/themes/default/views/launcher build
 # Then include_dir! packs the `dist/` folder
 ```
 
@@ -323,7 +323,7 @@ cargo run -C ../../frontend/themes/default/views/launcher build
 Create a new theme that inherits from default and overrides tokens:
 
 ```toml
-# frontend/themes/dark/theme.toml
+# src/ui/themes/dark/theme.toml
 [theme]
 name = "dark"
 extends = "default"
@@ -333,7 +333,7 @@ source = "file"
 ```
 
 ```toml
-# frontend/themes/dark/tokens.toml
+# src/ui/themes/dark/tokens.toml
 # Only override what you need
 color-bg = "#0a0a0a"
 color-fg = "#ffffff"
@@ -354,11 +354,11 @@ name = "widgets"
 description = "Floating widgets"
 ```
 
-Then implement `frontend/themes/<name>/views/widgets/`:
+Then implement `src/ui/themes/<name>/views/widgets/`:
 
 ```bash
-mkdir -p frontend/themes/my-theme/views/widgets
-cd frontend/themes/my-theme/views/widgets
+mkdir -p src/ui/themes/my-theme/views/widgets
+cd src/ui/themes/my-theme/views/widgets
 
 # Copy structure from launcher
 cp -r ../launcher/* .
@@ -450,7 +450,7 @@ and `window.__quantum_reject(id, error)`.
 
 For TypeScript widgets with bundling (Vite, etc.), use the
 `@quantum/client` package which provides a typed API around the bridge.
-See `frontend/themes/default/views/widgets/bar/` for a Svelte 5
+See `src/ui/themes/default/views/widgets/bar/` for a Svelte 5
 example.
 
 ---
@@ -460,7 +460,7 @@ example.
 The default `widgets/bar` view ships with a `Tray` region containing six
 indicators driven by the providers listed above. Each indicator is a
 self-contained Svelte 5 component under
-`frontend/themes/default/views/widgets/bar/src/lib/tray/`. They are a
+`src/ui/themes/default/views/widgets/bar/src/lib/tray/`. They are a
 useful reference for building custom indicators in your own theme.
 
 Each indicator follows the same pattern: subscribe to the channel,
@@ -566,7 +566,7 @@ fast). `lock` spawns the resolved lock command detached.
 ## Power menu
 
 The default theme ships a centered modal view at
-`frontend/themes/default/views/widgets/power-menu/` that the bar's
+`src/ui/themes/default/views/widgets/power-menu/` that the bar's
 `PowerMenuIndicator` opens via `view.show widgets/power-menu`. Themes
 override the look by providing the same path.
 

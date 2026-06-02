@@ -223,7 +223,7 @@ cargo test -p quantum-infrastructure config
 
 ### [MET] Default theme renders with CSS tokens injected
 
-**Supported:** Built-in default theme in `frontend/themes/default/` served via `quantum://` URI scheme
+**Supported:** Built-in default theme in `src/ui/themes/default/` served via `quantum://` URI scheme
 
 **Evidence:**
 - Theme manifest and tokens defined
@@ -251,7 +251,7 @@ cargo test -p quantum-ui tokens
 **Supported:** `ThemeStore` with file watcher and `theme.reloaded` notifications
 
 **Behavior:**
-1. Daemon file watcher detects changes to `frontend/themes/default/tokens.toml`
+1. Daemon file watcher detects changes to `src/ui/themes/default/tokens.toml`
 2. `ThemeStore` re-resolves tokens and publishes `theme.reloaded` event
 3. Bridge delivers notification to frontend via `window.__quantum_notify`
 4. Launcher subscribes and swaps CSS in `<style id="quantum-tokens">` without reload
@@ -259,7 +259,7 @@ cargo test -p quantum-ui tokens
 **Manual verification:**
 1. Start daemon: `RUST_LOG=info nix-shell --run ./target/debug/quantumd`
 2. Show launcher: `quantumctl show launcher`
-3. Edit token: change `color-bg` in `frontend/themes/default/tokens.toml`
+3. Edit token: change `color-bg` in `src/ui/themes/default/tokens.toml`
 4. Save file — launcher background updates within ~500ms
 5. Repeat with other colors (e.g., `color-text`)
 
@@ -267,7 +267,7 @@ cargo test -p quantum-ui tokens
 ```bash
 ./scripts/manual-smoke-launcher.sh
 # After launcher appears, open another terminal and:
-# sed -i 's/color-bg = .*/color-bg = "#FF0000"/' frontend/themes/default/tokens.toml
+# sed -i 's/color-bg = .*/color-bg = "#FF0000"/' src/ui/themes/default/tokens.toml
 # Save — launcher background turns red instantly
 ```
 

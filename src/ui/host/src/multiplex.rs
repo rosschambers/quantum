@@ -30,7 +30,7 @@ pub struct BarMultiplexer {
     /// signal handler.
     active_bars: HashSet<String>,
     /// Channel back to the `GtkWindowHost` receiver in
-    /// `crates/bin/quantumd/src/main.rs`.
+    /// `src/binaries/quantumd/src/main.rs`.
     window_request_tx: UnboundedSender<WindowRequest>,
 }
 

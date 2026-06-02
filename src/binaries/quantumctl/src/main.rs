@@ -175,7 +175,7 @@ async fn call_daemon(
     write_half.flush().await?;
 
     // Read exactly one newline-delimited response line. The daemon's IPC
-    // server (see crates/infrastructure/src/ipc/server.rs) writes each
+    // server (see src/infrastructure/src/ipc/server.rs) writes each
     // response as JSON followed by `\n`, so `read_line` consumes the
     // entire response regardless of its size. The previous fixed 4 KB
     // read truncated large responses such as search results containing

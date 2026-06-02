@@ -6,7 +6,7 @@ Quantum follows a strict onion architecture enforced at the Cargo crate level. E
 
 ### Layers (inner to outer)
 
-#### Domain Layer (`crates/domain`)
+#### Domain Layer (`src/domain`)
 
 Pure business logic with no I/O, no async runtime, no external frameworks. Contains:
 
@@ -17,7 +17,7 @@ Pure business logic with no I/O, no async runtime, no external frameworks. Conta
 
 **Dependencies:** Only `serde`, `serde_json`, `thiserror`, `async-trait`
 
-#### Application Layer (`crates/application`)
+#### Application Layer (`src/application`)
 
 Use cases and business logic orchestration. Contains:
 
@@ -27,7 +27,7 @@ Use cases and business logic orchestration. Contains:
 
 **Dependencies:** `domain` (path)
 
-#### Infrastructure Layer (`crates/infrastructure`)
+#### Infrastructure Layer (`src/infrastructure`)
 
 Concrete implementations of domain ports and external integrations. Contains:
 
@@ -40,7 +40,7 @@ Concrete implementations of domain ports and external integrations. Contains:
 
 **Dependencies:** `domain` (path)
 
-#### UI Layer (`crates/ui`)
+#### UI Layer (`src/ui/host`)
 
 GTK4 and WebKitGTK windows, Svelte 5 frontends, and browser bridges. Contains:
 
@@ -63,7 +63,7 @@ GTK4 and WebKitGTK windows, Svelte 5 frontends, and browser bridges. Contains:
 
 #### Testing Crate
 
-- **`crates/architecture-test`** — Enforces dependency rules via `cargo_metadata`
+- **`src/architecture-test`** — Enforces dependency rules via `cargo_metadata`
 
 ---
 
@@ -92,7 +92,7 @@ This constraint is enforced by an automated test: `cargo test -p quantum-archite
 ## Module Organization
 
 ```
-crates/
+src/
 ├── domain/
 │   ├── ids.rs (ProviderId, WindowId)
 │   ├── score.rs (MatchScore)
@@ -124,13 +124,16 @@ crates/
 │       ├── hyprland_windows.rs
 │       └── declarative_shell.rs
 ├── ui/
-│   ├── app.rs (QuantumApp)
-│   ├── bridge.rs (WebKit ↔ Dispatcher)
-│   ├── scheme.rs (quantum:// handler)
-│   ├── window_host.rs (GtkWindowHost)
-│   └── windows/
-│       └── launcher.rs (LauncherWindow)
-└── bin/
+│   ├── host/
+│   │   ├── app.rs (QuantumApp)
+│   │   ├── bridge.rs (WebKit ↔ Dispatcher)
+│   │   ├── scheme.rs (quantum:// handler)
+│   │   ├── window_host.rs (GtkWindowHost)
+│   │   └── windows/
+│   │       └── launcher.rs (LauncherWindow)
+│   ├── themes/ (Svelte 5 theme bundles)
+│   └── packages/ (shared TS packages like @quantum/client)
+└── binaries/
     ├── quantumd/ (daemon main)
     ├── quantumctl/ (CLI client)
     └── quantum-dev/ (dev tools)
