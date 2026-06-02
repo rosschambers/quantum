@@ -81,7 +81,13 @@ impl LogindBrightnessProvider {
 
         let specs_task = specs.clone();
         runtime.spawn(async move {
-            let mut interval = tokio::time::interval(std::time::Duration::from_secs(1));
+            // 5s is far slower than the human response time for a brightness
+            // keypress, but the brightness value only changes on a keypress or
+            // an explicit `SetBrightness` action — so 5s of latency on a value
+            // that was already updated synchronously by the writer is a
+            // non-issue, and saves four wakeups per second on idle.
+            let mut interval = tokio::time::interval(std::time::Duration::from_secs(5));
+            interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
             // Skip the immediate first tick — we already sampled before spawn.
             interval.tick().await;
             loop {
