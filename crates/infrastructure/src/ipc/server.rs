@@ -105,12 +105,23 @@ async fn handle_connection<D: Dispatcher + 'static>(
         loop {
             match event_rx.recv().await {
                 Ok(env) => {
-                    let notification = json!({
-                        "jsonrpc": "2.0",
-                        "method": env.channel,
-                        "params": env.payload,
-                    });
-                    let line = format!("{}\n", notification);
+                    // `env.payload` is `Box<RawValue>` carrying raw JSON text
+                    // straight from the publisher. We inline it verbatim into
+                    // the JSON-RPC notification — no `to_value` round trip,
+                    // and the channel name still needs proper escaping so we
+                    // serialize that one field with `serde_json::to_string`.
+                    let channel_json = match serde_json::to_string(&env.channel) {
+                        Ok(s) => s,
+                        Err(err) => {
+                            tracing::warn!("ipc: failed to serialize channel: {err}");
+                            continue;
+                        }
+                    };
+                    let line = format!(
+                        "{{\"jsonrpc\":\"2.0\",\"method\":{},\"params\":{}}}\n",
+                        channel_json,
+                        env.payload.get()
+                    );
                     let mut w = writer_for_events.lock().await;
                     if w.write_all(line.as_bytes()).await.is_err() {
                         break;
@@ -286,10 +297,14 @@ mod tests {
         tokio::time::sleep(Duration::from_millis(100)).await;
 
         // Send an event through the broadcast channel
+        let payload = serde_json::value::RawValue::from_string(
+            json!({"css": ":root {}"}).to_string(),
+        )
+        .expect("valid JSON");
         broadcast_tx
             .send(EventEnvelope {
                 channel: "theme.reloaded".to_string(),
-                payload: json!({"css": ":root {}"}),
+                payload,
             })
             .ok();
 

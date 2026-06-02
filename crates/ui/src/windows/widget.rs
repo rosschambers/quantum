@@ -191,8 +191,11 @@ impl WidgetWindow {
                     Ok(env) => {
                         let channel =
                             serde_json::to_string(&env.channel).unwrap_or_else(|_| "\"\"".into());
-                        let payload =
-                            serde_json::to_string(&env.payload).unwrap_or_else(|_| "null".into());
+                        // `env.payload` is `Box<RawValue>` carrying raw JSON
+                        // text. `.get()` returns that text without any
+                        // re-serialization, which is exactly what we need to
+                        // inline into the `window.__quantum_notify` call.
+                        let payload = env.payload.get();
                         // Guard against notifications arriving before the JS
                         // client has installed `window.__quantum_notify`. This
                         // happens at daemon startup because providers begin
