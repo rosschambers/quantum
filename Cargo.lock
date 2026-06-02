@@ -1860,17 +1860,14 @@ version = "0.1.0"
 dependencies = [
  "async-stream",
  "async-trait",
- "dirs 5.0.1",
  "freedesktop-desktop-entry",
  "futures",
- "include_dir",
- "notify",
- "notify-debouncer-mini",
  "nucleo-matcher",
  "quantum-config",
  "quantum-dbus",
  "quantum-domain",
  "quantum-hyprland",
+ "quantum-theme",
  "serde",
  "serde_json",
  "shell-words",
@@ -1878,10 +1875,29 @@ dependencies = [
  "thiserror",
  "tokio",
  "tokio-stream",
- "toml 0.8.23",
  "tracing",
  "which",
  "zbus",
+]
+
+[[package]]
+name = "quantum-theme"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "dirs 5.0.1",
+ "futures",
+ "include_dir",
+ "notify",
+ "notify-debouncer-mini",
+ "quantum-domain",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror",
+ "tokio",
+ "toml 0.8.23",
+ "tracing",
 ]
 
 [[package]]
@@ -1932,6 +1948,7 @@ dependencies = [
  "quantum-config",
  "quantum-domain",
  "quantum-infrastructure",
+ "quantum-theme",
  "quantum-ui",
  "serde",
  "serde_json",

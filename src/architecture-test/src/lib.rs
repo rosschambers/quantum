@@ -9,6 +9,7 @@ mod tests {
         m.insert("quantum-dbus", ["quantum-domain"].into_iter().collect());
         m.insert("quantum-hyprland", ["quantum-domain"].into_iter().collect());
         m.insert("quantum-config", ["quantum-domain"].into_iter().collect());
+        m.insert("quantum-theme", ["quantum-domain"].into_iter().collect());
         m.insert(
             "quantum-application",
             ["quantum-domain"].into_iter().collect(),
@@ -20,6 +21,7 @@ mod tests {
                 "quantum-dbus",
                 "quantum-hyprland",
                 "quantum-config",
+                "quantum-theme",
             ]
             .into_iter()
             .collect(),
@@ -37,6 +39,7 @@ mod tests {
                 "quantum-application",
                 "quantum-infrastructure",
                 "quantum-config",
+                "quantum-theme",
                 "quantum-domain",
             ]
             .into_iter()

@@ -28,10 +28,10 @@ use quantum_infrastructure::{
     },
     registry::InMemoryProviderRegistry,
     shell::TokioShellExecutor,
-    theme::ThemeStore,
     EventEnvelope, HyprlandActiveWindowProvider, HyprlandSocketClient, MprisProvider,
     ProcStatsProvider, ShellCommandProvider, UnixSocketServer,
 };
+use quantum_theme::ThemeStore;
 use quantum_ui::{DummyWindowHost, IpcDispatcher as UiIpcDispatcher};
 
 /// Adapter that lets the infrastructure IPC server route requests into the

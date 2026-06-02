@@ -10,6 +10,7 @@ quantum-domain = { path = "../../src/domain" }
 quantum-dbus = { path = "../dbus" }
 quantum-hyprland = { path = "../hyprland" }
 quantum-config = { path = "../config" }
+quantum-theme = { path = "../theme-store" }
 tokio.workspace = true
 async-trait.workspace = true
 serde.workspace = true
@@ -18,12 +19,7 @@ thiserror.workspace = true
 tracing.workspace = true
 freedesktop-desktop-entry = "0.4"
 nucleo-matcher = "0.3"
-notify = "6"
-notify-debouncer-mini = "0.4"
-toml = "0.8"
-include_dir = "0.7"
 futures = "0.3"
-dirs = "5.0"
 async-stream = "0.3"
 tokio-stream = { version = "0.1", features = ["sync"] }
 zbus = { version = "4", default-features = false, features = ["tokio"] }

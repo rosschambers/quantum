@@ -65,6 +65,16 @@ impl From<quantum_config::ConfigError> for InfrastructureError {
     }
 }
 
+impl From<quantum_theme::ThemeError> for InfrastructureError {
+    fn from(e: quantum_theme::ThemeError) -> Self {
+        use quantum_theme::ThemeError as T;
+        match e {
+            T::Io(s) => InfrastructureError::Io(s),
+            T::Parse(s) => InfrastructureError::ConfigParse(s),
+        }
+    }
+}
+
 impl From<quantum_hyprland::HyprlandError> for InfrastructureError {
     fn from(e: quantum_hyprland::HyprlandError) -> Self {
         use quantum_hyprland::HyprlandError as H;

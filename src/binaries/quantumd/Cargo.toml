@@ -9,6 +9,7 @@ license.workspace = true
 quantum-ui = { path = "../../ui/host" }
 quantum-application = { path = "../../application" }
 quantum-infrastructure = { path = "../../infrastructure" }
+quantum-theme = { path = "../../theme-store" }
 quantum-config = { path = "../../config" }
 quantum-domain = { path = "../../domain" }
 tokio.workspace = true
