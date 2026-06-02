@@ -112,8 +112,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let headless = args.iter().any(|a| a == "--headless");
     let socket_override = parse_socket_override(&args);
 
+    // 4 workers cover IPC accept + per-connection handlers + provider tasks;
+    // the default `num_cpus()` is wasteful for a daemon mostly waiting on
+    // sockets and timers, and on machines with many cores it burns idle
+    // wakeups for no throughput benefit.
     let tokio_runtime = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
+        .worker_threads(4)
         .thread_name("quantum-worker")
         .build()?;
     let worker = runtime::spawn_worker(tokio_runtime)?;
