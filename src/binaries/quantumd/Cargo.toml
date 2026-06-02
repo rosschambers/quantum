@@ -12,6 +12,7 @@ quantum-infrastructure = { path = "../../infrastructure" }
 quantum-theme = { path = "../../theme-store" }
 quantum-config = { path = "../../config" }
 quantum-domain = { path = "../../domain" }
+quantum-ipc = { path = "../../ipc" }
 tokio.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true

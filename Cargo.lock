@@ -1867,6 +1867,7 @@ dependencies = [
  "quantum-dbus",
  "quantum-domain",
  "quantum-hyprland",
+ "quantum-ipc",
  "quantum-theme",
  "serde",
  "serde_json",
@@ -1878,6 +1879,20 @@ dependencies = [
  "tracing",
  "which",
  "zbus",
+]
+
+[[package]]
+name = "quantum-ipc"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "quantum-domain",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror",
+ "tokio",
+ "tracing",
 ]
 
 [[package]]
@@ -1948,6 +1963,7 @@ dependencies = [
  "quantum-config",
  "quantum-domain",
  "quantum-infrastructure",
+ "quantum-ipc",
  "quantum-theme",
  "quantum-ui",
  "serde",

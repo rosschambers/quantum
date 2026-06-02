@@ -75,6 +75,16 @@ impl From<quantum_theme::ThemeError> for InfrastructureError {
     }
 }
 
+impl From<quantum_ipc::IpcError> for InfrastructureError {
+    fn from(e: quantum_ipc::IpcError) -> Self {
+        use quantum_ipc::IpcError as I;
+        match e {
+            I::Io(s) => InfrastructureError::Io(s),
+            I::Serde(s) => InfrastructureError::Serde(s),
+        }
+    }
+}
+
 impl From<quantum_hyprland::HyprlandError> for InfrastructureError {
     fn from(e: quantum_hyprland::HyprlandError) -> Self {
         use quantum_hyprland::HyprlandError as H;

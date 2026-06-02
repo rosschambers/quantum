@@ -16,9 +16,6 @@ use quantum_application::{
 };
 use quantum_config::{Config, ConfigStore};
 use quantum_domain::{DomainError, EventBus, ProviderId, ProviderSource};
-use quantum_infrastructure::ipc::server::{
-    DispatchError, DispatchResult, Dispatcher as IpcDispatcher,
-};
 use quantum_infrastructure::{
     providers::DesktopAppsProvider,
     providers::{
@@ -28,8 +25,11 @@ use quantum_infrastructure::{
     },
     registry::InMemoryProviderRegistry,
     shell::TokioShellExecutor,
-    EventEnvelope, HyprlandActiveWindowProvider, HyprlandSocketClient, MprisProvider,
-    ProcStatsProvider, ShellCommandProvider, UnixSocketServer,
+    HyprlandActiveWindowProvider, HyprlandSocketClient, MprisProvider, ProcStatsProvider,
+    ShellCommandProvider,
+};
+use quantum_ipc::{
+    DispatchError, DispatchResult, Dispatcher as IpcDispatcher, EventEnvelope, UnixSocketServer,
 };
 use quantum_theme::ThemeStore;
 use quantum_ui::{DummyWindowHost, IpcDispatcher as UiIpcDispatcher};

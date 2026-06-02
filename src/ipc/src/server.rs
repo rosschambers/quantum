@@ -7,9 +7,9 @@ use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::{UnixListener, UnixStream};
 use tokio::sync::broadcast;
 
-use super::protocol::{JsonRpcError, JsonRpcRequest, JsonRpcResponse};
-use super::EventEnvelope;
-use crate::InfrastructureError;
+use crate::error::IpcError;
+use crate::protocol::{JsonRpcError, JsonRpcRequest, JsonRpcResponse};
+use quantum_domain::EventEnvelope;
 
 /// Result type for dispatch operations.
 pub type DispatchResult = Result<Value, DispatchError>;
@@ -60,21 +60,20 @@ impl UnixSocketServer {
         &self,
         dispatcher: Arc<D>,
         broadcast_tx: broadcast::Sender<EventEnvelope>,
-    ) -> Result<(), InfrastructureError> {
+    ) -> Result<(), IpcError> {
         // Remove stale socket
         if self.socket_path.exists() {
-            std::fs::remove_file(&self.socket_path)
-                .map_err(|e| InfrastructureError::Io(e.to_string()))?;
+            std::fs::remove_file(&self.socket_path).map_err(|e| IpcError::Io(e.to_string()))?;
         }
 
-        let listener = UnixListener::bind(&self.socket_path)
-            .map_err(|e| InfrastructureError::Io(e.to_string()))?;
+        let listener =
+            UnixListener::bind(&self.socket_path).map_err(|e| IpcError::Io(e.to_string()))?;
 
         loop {
             let (stream, _) = listener
                 .accept()
                 .await
-                .map_err(|e| InfrastructureError::Io(e.to_string()))?;
+                .map_err(|e| IpcError::Io(e.to_string()))?;
 
             let dispatcher = dispatcher.clone();
             let broadcast_tx = broadcast_tx.clone();

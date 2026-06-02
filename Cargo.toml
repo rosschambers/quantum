@@ -8,6 +8,7 @@ members = [
     "src/infrastructure",
     "src/config",
     "src/theme-store",
+    "src/ipc",
     "src/ui/host",
     "src/binaries/quantumd",
     "src/binaries/quantumctl",
