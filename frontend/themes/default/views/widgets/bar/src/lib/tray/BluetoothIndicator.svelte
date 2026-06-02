@@ -86,9 +86,6 @@
         title={tooltipFor(state)}
     >
         <Icon name="bluetooth" size={14} />
-        {#if state.connected_devices.length > 0}
-            <span class="badge">{state.connected_devices.length}</span>
-        {/if}
     </div>
 {/if}
 
@@ -110,15 +107,5 @@
      */
     .tray-icon.powered.has-devices {
         color: var(--color-accent, #89b4fa);
-    }
-
-    .badge {
-        font-family: var(--font-mono, ui-monospace, monospace);
-        font-size: 9px;
-        background: var(--color-bg-alt, #313244);
-        padding: 1px 3px;
-        border-radius: 999px;
-        line-height: 1;
-        color: var(--color-fg, #cdd6f4);
     }
 </style>

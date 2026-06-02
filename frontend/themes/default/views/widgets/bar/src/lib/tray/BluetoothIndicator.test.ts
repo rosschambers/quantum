@@ -44,10 +44,9 @@ describe('BluetoothIndicator', () => {
 		expect(el!.classList.contains('powered')).toBe(false);
 		// SVG bluetooth icon (always present, color shifts when powered).
 		expect(el!.querySelector('svg.icon')).not.toBeNull();
-		expect(el!.querySelector('.badge')).toBeNull();
 	});
 
-	it('renders the BT icon highlighted with a device count badge when devices connected', async () => {
+	it('renders the BT icon highlighted when devices are connected', async () => {
 		const { client, emit } = mockClient();
 		const { container } = render(BluetoothIndicator, { props: { client } });
 		await emit({
@@ -63,9 +62,9 @@ describe('BluetoothIndicator', () => {
 		expect(el).not.toBeNull();
 		expect(el!.classList.contains('powered')).toBe(true);
 		expect(el!.classList.contains('has-devices')).toBe(true);
-		const badge = el!.querySelector('.badge');
-		expect(badge).not.toBeNull();
-		expect(badge!.textContent).toBe('2');
+		// Connected state shows through the accent color on the icon
+		// itself; the device-count badge was removed since the names
+		// are already in the tooltip.
 	});
 
 	it('tooltip lists connected device names', async () => {
