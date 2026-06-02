@@ -1,0 +1,1206 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>Quantum Architecture Refactor Playground</title>
+<style>
+:root {
+    --pg-bg: #1e1e2e;
+    --pg-bg-alt: #313244;
+    --pg-bg-card: #181825;
+    --pg-border: #45475a;
+    --pg-fg: #cdd6f4;
+    --pg-fg-alt: #a6adc8;
+    --pg-muted: #6c7086;
+    --pg-accent: #89b4fa;
+    --pg-good: #a6e3a1;
+    --pg-warn: #f9e2af;
+    --pg-crit: #f38ba8;
+    --pg-pink: #f5c2e7;
+    --pg-mauve: #cba6f7;
+    --pg-teal: #94e2d5;
+    --pg-font-sans: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    --pg-font-mono: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+* { box-sizing: border-box; }
+html, body {
+    margin: 0;
+    padding: 0;
+    background: var(--pg-bg);
+    color: var(--pg-fg);
+    font-family: var(--pg-font-sans);
+    font-size: 13px;
+    height: 100vh;
+    overflow: hidden;
+}
+.shell {
+    display: grid;
+    grid-template-columns: 1fr 380px;
+    grid-template-rows: 48px 1fr auto;
+    grid-template-areas:
+        "header header"
+        "main details"
+        "prompt prompt";
+    height: 100vh;
+}
+.header {
+    grid-area: header;
+    background: var(--pg-bg-card);
+    border-bottom: 1px solid var(--pg-border);
+    display: flex;
+    align-items: center;
+    padding: 0 16px;
+    gap: 16px;
+}
+.header h1 {
+    margin: 0;
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--pg-fg);
+}
+.tabs {
+    display: flex;
+    gap: 0;
+    margin-left: auto;
+    border: 1px solid var(--pg-border);
+    border-radius: 6px;
+    padding: 2px;
+}
+.tab {
+    background: transparent;
+    color: var(--pg-fg-alt);
+    border: none;
+    padding: 4px 14px;
+    font-size: 12px;
+    cursor: pointer;
+    border-radius: 4px;
+    font-family: inherit;
+}
+.tab.active {
+    background: var(--pg-accent);
+    color: var(--pg-bg);
+    font-weight: 600;
+}
+
+.main {
+    grid-area: main;
+    overflow: auto;
+    padding: 20px;
+    position: relative;
+}
+.details {
+    grid-area: details;
+    background: var(--pg-bg-card);
+    border-left: 1px solid var(--pg-border);
+    overflow-y: auto;
+    padding: 16px;
+}
+.prompt-pane {
+    grid-area: prompt;
+    background: #11111b;
+    border-top: 1px solid var(--pg-border);
+    padding: 12px 16px;
+    display: flex;
+    gap: 12px;
+    align-items: flex-start;
+    max-height: 240px;
+}
+.prompt-text {
+    flex: 1;
+    font-family: var(--pg-font-mono);
+    font-size: 11.5px;
+    line-height: 1.55;
+    color: var(--pg-fg);
+    white-space: pre-wrap;
+    overflow-y: auto;
+    max-height: 220px;
+}
+.copy-btn {
+    background: var(--pg-accent);
+    color: var(--pg-bg);
+    border: none;
+    padding: 8px 14px;
+    border-radius: 6px;
+    font-weight: 600;
+    font-size: 12px;
+    cursor: pointer;
+    white-space: nowrap;
+    font-family: inherit;
+}
+.copy-btn:hover { opacity: 0.9; }
+.copy-btn.copied { background: var(--pg-good); }
+
+/* --- Crate graph --- */
+.graph-container {
+    display: flex;
+    flex-direction: column;
+    gap: 20px;
+}
+.layer {
+    background: var(--pg-bg-alt);
+    border: 1px solid var(--pg-border);
+    border-radius: 10px;
+    padding: 12px;
+}
+.layer h3 {
+    margin: 0 0 10px;
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    color: var(--pg-fg-alt);
+    font-weight: 600;
+}
+.crate-row {
+    display: flex;
+    gap: 10px;
+    flex-wrap: wrap;
+}
+.crate {
+    background: var(--pg-bg);
+    border: 1.5px solid var(--pg-border);
+    border-radius: 8px;
+    padding: 10px 14px;
+    cursor: pointer;
+    min-width: 150px;
+    transition: all 0.15s ease;
+    position: relative;
+}
+.crate.new {
+    border-style: dashed;
+    border-color: var(--pg-mauve);
+}
+.crate.kept {
+    border-color: var(--pg-teal);
+}
+.crate.binary {
+    border-color: var(--pg-warn);
+}
+.crate:hover {
+    transform: translateY(-1px);
+    box-shadow: 0 6px 16px rgba(0, 0, 0, 0.3);
+}
+.crate.selected {
+    border-color: var(--pg-accent);
+    background: rgba(137, 180, 250, 0.08);
+    box-shadow: 0 0 0 2px rgba(137, 180, 250, 0.3);
+}
+.crate.dimmed {
+    opacity: 0.25;
+}
+.crate.depended-on {
+    border-color: var(--pg-good);
+    background: rgba(166, 227, 161, 0.08);
+}
+.crate-name {
+    font-family: var(--pg-font-mono);
+    font-size: 12.5px;
+    font-weight: 600;
+    color: var(--pg-fg);
+}
+.crate-desc {
+    font-size: 10.5px;
+    color: var(--pg-muted);
+    margin-top: 3px;
+    line-height: 1.3;
+}
+.crate-tag {
+    display: inline-block;
+    font-size: 9px;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    padding: 1px 6px;
+    border-radius: 3px;
+    margin-top: 5px;
+    font-weight: 600;
+}
+.tag-new {
+    background: rgba(203, 166, 247, 0.18);
+    color: var(--pg-mauve);
+}
+.tag-kept {
+    background: rgba(148, 226, 213, 0.15);
+    color: var(--pg-teal);
+}
+.tag-binary {
+    background: rgba(249, 226, 175, 0.15);
+    color: var(--pg-warn);
+}
+.legend {
+    margin-top: 16px;
+    padding: 10px 12px;
+    background: var(--pg-bg-card);
+    border: 1px solid var(--pg-border);
+    border-radius: 8px;
+    font-size: 11px;
+    color: var(--pg-fg-alt);
+    display: flex;
+    gap: 16px;
+    flex-wrap: wrap;
+}
+.legend-swatch {
+    display: inline-block;
+    width: 12px;
+    height: 12px;
+    border-radius: 3px;
+    vertical-align: middle;
+    margin-right: 4px;
+    border: 1.5px solid;
+}
+
+/* --- Plugin folder view --- */
+.plugin-view {
+    display: grid;
+    grid-template-columns: 320px 1fr;
+    gap: 20px;
+    height: 100%;
+}
+.tree {
+    background: var(--pg-bg-alt);
+    border: 1px solid var(--pg-border);
+    border-radius: 8px;
+    padding: 12px;
+    overflow-y: auto;
+    font-family: var(--pg-font-mono);
+    font-size: 12px;
+}
+.tree-item {
+    padding: 4px 6px;
+    border-radius: 4px;
+    cursor: pointer;
+    user-select: none;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+.tree-item:hover { background: var(--pg-bg); }
+.tree-item.selected { background: rgba(137, 180, 250, 0.15); color: var(--pg-accent); }
+.tree-indent { color: var(--pg-muted); }
+.tree-folder { color: var(--pg-warn); }
+.tree-file { color: var(--pg-fg-alt); }
+.file-content {
+    background: var(--pg-bg-alt);
+    border: 1px solid var(--pg-border);
+    border-radius: 8px;
+    padding: 16px;
+    overflow-y: auto;
+    font-family: var(--pg-font-mono);
+    font-size: 12px;
+    white-space: pre;
+    line-height: 1.5;
+}
+
+/* --- Manifest builder --- */
+.builder-view {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 20px;
+    height: 100%;
+}
+.builder-panel {
+    background: var(--pg-bg-alt);
+    border: 1px solid var(--pg-border);
+    border-radius: 8px;
+    padding: 14px;
+    overflow-y: auto;
+}
+.builder-panel h3 {
+    margin: 0 0 12px;
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--pg-fg-alt);
+    font-weight: 600;
+}
+.builder-section {
+    margin-bottom: 16px;
+    padding-bottom: 14px;
+    border-bottom: 1px solid var(--pg-border);
+}
+.builder-section:last-child { border-bottom: none; }
+.builder-section h4 {
+    margin: 0 0 8px;
+    font-size: 12px;
+    color: var(--pg-fg);
+    font-weight: 600;
+}
+.row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 6px;
+}
+.row label {
+    flex: 0 0 100px;
+    font-size: 11px;
+    color: var(--pg-fg-alt);
+}
+.row input[type="text"],
+.row select {
+    flex: 1;
+    background: var(--pg-bg);
+    color: var(--pg-fg);
+    border: 1px solid var(--pg-border);
+    border-radius: 4px;
+    padding: 4px 8px;
+    font-size: 11px;
+    font-family: var(--pg-font-mono);
+}
+.row input[type="text"]:focus,
+.row select:focus {
+    outline: none;
+    border-color: var(--pg-accent);
+}
+.entry {
+    background: var(--pg-bg);
+    border: 1px solid var(--pg-border);
+    border-radius: 6px;
+    padding: 10px;
+    margin-bottom: 8px;
+}
+.entry-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 8px;
+}
+.entry-header strong {
+    font-family: var(--pg-font-mono);
+    font-size: 12px;
+    color: var(--pg-accent);
+}
+.entry .remove {
+    background: transparent;
+    color: var(--pg-crit);
+    border: none;
+    font-size: 14px;
+    cursor: pointer;
+    padding: 0 4px;
+    line-height: 1;
+    font-family: inherit;
+}
+.add-btn {
+    background: transparent;
+    color: var(--pg-accent);
+    border: 1px dashed var(--pg-accent);
+    border-radius: 6px;
+    padding: 6px 12px;
+    font-size: 11px;
+    cursor: pointer;
+    width: 100%;
+    margin-top: 4px;
+    font-family: inherit;
+}
+.add-btn:hover { background: rgba(137, 180, 250, 0.1); }
+.toml-output {
+    font-family: var(--pg-font-mono);
+    font-size: 11px;
+    line-height: 1.55;
+    color: var(--pg-fg);
+    white-space: pre;
+    overflow-x: auto;
+}
+.toml-section { color: var(--pg-pink); font-weight: 600; }
+.toml-key { color: var(--pg-accent); }
+.toml-string { color: var(--pg-good); }
+.toml-number { color: var(--pg-warn); }
+.toml-comment { color: var(--pg-muted); }
+
+/* --- Details panel --- */
+.details h2 {
+    margin: 0 0 12px;
+    font-size: 14px;
+    font-family: var(--pg-font-mono);
+    color: var(--pg-accent);
+}
+.details-section {
+    margin-bottom: 16px;
+}
+.details-section h3 {
+    margin: 0 0 6px;
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--pg-fg-alt);
+    font-weight: 600;
+}
+.details ul {
+    margin: 0;
+    padding-left: 18px;
+    list-style: none;
+}
+.details li {
+    font-size: 12px;
+    line-height: 1.6;
+    color: var(--pg-fg);
+    position: relative;
+}
+.details li::before {
+    content: '\2022';
+    color: var(--pg-muted);
+    position: absolute;
+    left: -12px;
+}
+.details code {
+    font-family: var(--pg-font-mono);
+    font-size: 11.5px;
+    background: var(--pg-bg);
+    color: var(--pg-accent);
+    padding: 1px 5px;
+    border-radius: 3px;
+}
+.details .dep-list {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin-top: 4px;
+}
+.dep-pill {
+    font-family: var(--pg-font-mono);
+    font-size: 11px;
+    background: var(--pg-bg);
+    border: 1px solid var(--pg-border);
+    color: var(--pg-fg-alt);
+    padding: 2px 8px;
+    border-radius: 999px;
+}
+.dep-pill.depended-on {
+    border-color: var(--pg-good);
+    color: var(--pg-good);
+}
+</style>
+</head>
+<body>
+<div class="shell">
+    <div class="header">
+        <h1>Quantum Architecture Refactor</h1>
+        <span style="font-size: 11px; color: var(--pg-fg-alt);">Full crate split + declarative plugin system</span>
+        <div class="tabs">
+            <button class="tab active" data-tab="graph">Crate graph</button>
+            <button class="tab" data-tab="layout">Repo layout</button>
+            <button class="tab" data-tab="plugin">Plugin folder</button>
+        </div>
+    </div>
+
+    <div class="main">
+        <div id="view-graph"></div>
+        <div id="view-layout" style="display:none;"></div>
+        <div id="view-plugin" style="display:none;"></div>
+    </div>
+
+    <div class="details" id="details">
+        <p style="color: var(--pg-muted); font-size: 12px;">Click a crate in the graph to see its details.</p>
+    </div>
+
+    <div class="prompt-pane">
+        <div class="prompt-text" id="prompt"></div>
+        <button class="copy-btn" id="copy">Copy prompt</button>
+    </div>
+</div>
+
+<script>
+// =====================================================================
+// CRATE GRAPH MODEL
+// =====================================================================
+
+const CRATES = [
+    // --- Layer 1: Pure domain ---
+    {
+        id: 'quantum-domain',
+        layer: 'domain',
+        kind: 'kept',
+        desc: 'Pure types, traits (ports), errors',
+        contains: ['action.rs', 'bar_state.rs', 'event_bus.rs', 'ids.rs', 'match_result.rs', 'ports.rs', 'query.rs', 'score.rs', 'tokens.rs', 'window_mode.rs', 'plugin.rs (NEW)'],
+        publicApi: 'Pure data types, the ProviderSource / WindowHost / ThemeStore / EventBus / PluginCatalog ports, DomainError. Zero I/O, zero workspace deps.',
+        deps: [],
+    },
+    // --- Layer 2: Application (business rules / use cases) ---
+    {
+        id: 'quantum-application',
+        layer: 'application',
+        kind: 'kept',
+        desc: 'Use cases, IPC dispatcher',
+        contains: ['dispatcher.rs', 'use_cases/launch_action.rs', 'use_cases/query_provider.rs', 'use_cases/search.rs', 'use_cases/schedule_action.rs', 'use_cases/subscribe_provider.rs', 'use_cases/open_view.rs', 'use_cases/list_providers.rs', 'use_cases/reload_theme.rs', 'use_cases/load_plugins.rs (NEW)'],
+        publicApi: 'IpcDispatcher trait + use cases. All business rules. No I/O directly \u2014 everything goes through ports declared in quantum-domain.',
+        deps: ['quantum-domain'],
+    },
+    // --- Layer 3: Infrastructure-side crates ---
+    {
+        id: 'quantum-providers',
+        layer: 'infrastructure',
+        kind: 'new',
+        desc: 'All ProviderSource implementations',
+        contains: ['desktop_apps.rs', 'shell_command.rs', 'hyprland_windows.rs', 'hyprland_active_window.rs', 'mpris.rs', 'proc_stats.rs', 'audio.rs', 'battery.rs', 'network.rs', 'bluetooth.rs', 'power_profile.rs', 'brightness.rs', 'system_power/', 'declarative_shell.rs', 'declarative/shell_poll.rs (NEW)', 'declarative/shell_watch.rs (NEW)', 'declarative/dbus_signal.rs (NEW)', 'declarative/dbus_property.rs (NEW)', 'declarative/http_poll.rs (NEW)', 'declarative/file_watch.rs (NEW)', 'declarative/file_poll.rs (NEW)'],
+        publicApi: 'Concrete providers. Each implements quantum-domain::ports::ProviderSource. quantum-providers exposes a ProviderRegistry helper that quantumd uses to wire them.',
+        deps: ['quantum-domain', 'quantum-hyprland', 'quantum-dbus'],
+    },
+    {
+        id: 'quantum-theme',
+        layer: 'infrastructure',
+        kind: 'new',
+        desc: 'Theme store, scheme handler material',
+        contains: ['theme/store.rs', 'theme/watcher.rs', 'theme/tokens.rs', 'theme/plugin_overlay.rs (NEW)'],
+        publicApi: 'ThemeStore implementation. Loads embedded default theme, user override at ~/.config/quantum/themes/default/, AND any theme overlay shipped by an enabled plugin. ui crate consumes this via the ThemeStore port.',
+        deps: ['quantum-domain', 'quantum-config'],
+    },
+    {
+        id: 'quantum-ipc',
+        layer: 'infrastructure',
+        kind: 'new',
+        desc: 'IPC server, EventBus broadcast adapter',
+        contains: ['ipc/server.rs', 'ipc/connection.rs', 'ipc/event_envelope.rs', 'ipc/broadcasting_bus.rs'],
+        publicApi: 'IPC unix-socket server that accepts JSON-RPC messages and routes them through an IpcDispatcher. Provides the BroadcastingEventBus adapter so providers + use cases can publish to subscribers.',
+        deps: ['quantum-domain', 'quantum-application'],
+    },
+    {
+        id: 'quantum-hyprland',
+        layer: 'infrastructure',
+        kind: 'new',
+        desc: 'hyprctl + hyprland event socket client',
+        contains: ['hyprland/client.rs', 'hyprland/event_parser.rs'],
+        publicApi: 'HyprlandClient: hyprctl command runner, event socket reader, JSON parsing. quantum-providers depends on this so the hyprland_* providers don\'t link DBus etc.',
+        deps: ['quantum-domain'],
+    },
+    {
+        id: 'quantum-dbus',
+        layer: 'infrastructure',
+        kind: 'new',
+        desc: 'DBus connection plumbing + shared helpers',
+        contains: ['dbus_common.rs', 'connection.rs (split out of dbus_common)'],
+        publicApi: 'Shared DBus session/system bus connections, prop-watching helpers, retry/backoff for transient bus errors.',
+        deps: ['quantum-domain'],
+    },
+    {
+        id: 'quantum-config',
+        layer: 'infrastructure',
+        kind: 'new',
+        desc: 'config.toml loader, XDG paths',
+        contains: ['config/loader.rs', 'config/paths.rs', 'config/widget.rs'],
+        publicApi: 'ConfigStore: parses ~/.config/quantum/config.toml. Knows the XDG paths so other crates can ask "where is the plugins dir" without re-deriving the answer.',
+        deps: ['quantum-domain'],
+    },
+    {
+        id: 'quantum-plugins',
+        layer: 'infrastructure',
+        kind: 'new',
+        desc: 'Plugin manifest catalog + loader',
+        contains: ['catalog.rs', 'manifest.rs', 'loader.rs', 'validation.rs'],
+        publicApi: 'FilesystemPluginCatalog: walks ~/.config/quantum/plugins/<name>/plugin.toml, parses, validates. Returns a list of declared ProviderRecipes / ActionRecipes / ViewBundles that quantumd hands to the existing registries. Pure plumbing: it doesn\'t RUN providers, it produces recipes for quantum-providers to instantiate.',
+        deps: ['quantum-domain', 'quantum-config'],
+    },
+    // --- Layer 4: UI ---
+    {
+        id: 'quantum-ui',
+        layer: 'ui',
+        kind: 'kept',
+        desc: 'GTK4/WebKit window host',
+        contains: ['windows/widget.rs', 'windows/panel.rs', 'window_host.rs', 'registry.rs', 'multiplex.rs', 'scheme.rs', 'bridge.rs', 'messages.rs', 'dispatcher.rs'],
+        publicApi: 'GtkWindowHost, WindowRegistry, BarMultiplexer, the quantum:// scheme handler. UI never reaches into providers / IPC / theme directly \u2014 it consumes ports through quantum-application.',
+        deps: ['quantum-application', 'quantum-domain'],
+    },
+    // --- Layer 5: Binaries ---
+    {
+        id: 'quantumd',
+        layer: 'binary',
+        kind: 'binary',
+        desc: 'Daemon binary (composition root)',
+        contains: ['main.rs', 'gtk_loop.rs'],
+        publicApi: 'Wires every concrete crate into the use cases. The ONLY crate allowed to depend on all eight infrastructure-side crates.',
+        deps: ['quantum-domain', 'quantum-application', 'quantum-ui', 'quantum-providers', 'quantum-theme', 'quantum-ipc', 'quantum-hyprland', 'quantum-dbus', 'quantum-config', 'quantum-plugins'],
+    },
+    {
+        id: 'quantumctl',
+        layer: 'binary',
+        kind: 'binary',
+        desc: 'CLI client',
+        contains: ['main.rs'],
+        publicApi: 'Talks to quantumd over the IPC socket. Needs the IPC client types from quantum-ipc; depends on quantum-config so it can find the socket.',
+        deps: ['quantum-domain', 'quantum-ipc', 'quantum-config'],
+    },
+    {
+        id: 'quantum-dev',
+        layer: 'binary',
+        kind: 'binary',
+        desc: 'Dev tools (theme.reload watcher)',
+        contains: ['main.rs'],
+        publicApi: 'File-watcher CLI that triggers theme.reload via IPC. Same deps as quantumctl.',
+        deps: ['quantum-domain', 'quantum-ipc', 'quantum-config'],
+    },
+];
+
+const LAYERS = [
+    { id: 'domain', label: 'Layer 1 \u2014 Domain (pure types, traits, errors)' },
+    { id: 'application', label: 'Layer 2 \u2014 Application (use cases, business rules)' },
+    { id: 'infrastructure', label: 'Layer 3 \u2014 Infrastructure (concrete adapters)' },
+    { id: 'ui', label: 'Layer 4 \u2014 UI (GTK4/WebKit host)' },
+    { id: 'binary', label: 'Layer 5 \u2014 Binaries (composition roots)' },
+];
+
+let selectedCrate = null;
+
+function renderGraph() {
+    const container = document.getElementById('view-graph');
+    container.innerHTML = '';
+    const wrap = document.createElement('div');
+    wrap.className = 'graph-container';
+
+    LAYERS.forEach((layer) => {
+        const layerDiv = document.createElement('div');
+        layerDiv.className = 'layer';
+        layerDiv.innerHTML = `<h3>${layer.label}</h3>`;
+        const row = document.createElement('div');
+        row.className = 'crate-row';
+        CRATES.filter((c) => c.layer === layer.id).forEach((crate) => {
+            const card = document.createElement('div');
+            card.className = `crate ${crate.kind}`;
+            card.dataset.id = crate.id;
+            card.innerHTML = `
+                <div class="crate-name">${crate.id}</div>
+                <div class="crate-desc">${crate.desc}</div>
+                <span class="crate-tag tag-${crate.kind}">${crate.kind === 'new' ? 'NEW' : crate.kind === 'kept' ? 'EXISTING' : 'BINARY'}</span>
+            `;
+            card.onclick = () => selectCrate(crate.id);
+            row.appendChild(card);
+        });
+        layerDiv.appendChild(row);
+        wrap.appendChild(layerDiv);
+    });
+
+    const legend = document.createElement('div');
+    legend.className = 'legend';
+    legend.innerHTML = `
+        <span><span class="legend-swatch" style="border-color: var(--pg-teal);"></span>Existing crate</span>
+        <span><span class="legend-swatch" style="border-color: var(--pg-mauve); border-style: dashed;"></span>New crate</span>
+        <span><span class="legend-swatch" style="border-color: var(--pg-warn);"></span>Binary</span>
+        <span><span class="legend-swatch" style="border-color: var(--pg-good); background: rgba(166, 227, 161, 0.08);"></span>Can be depended on by selected</span>
+    `;
+    wrap.appendChild(legend);
+
+    container.appendChild(wrap);
+    refreshSelection();
+}
+
+function selectCrate(id) {
+    selectedCrate = id;
+    refreshSelection();
+    renderDetails();
+}
+
+function refreshSelection() {
+    document.querySelectorAll('.crate').forEach((el) => {
+        el.classList.remove('selected', 'dimmed', 'depended-on');
+    });
+    if (!selectedCrate) return;
+    const crate = CRATES.find((c) => c.id === selectedCrate);
+    if (!crate) return;
+    const allowed = new Set(crate.deps);
+    document.querySelectorAll('.crate').forEach((el) => {
+        const id = el.dataset.id;
+        if (id === selectedCrate) {
+            el.classList.add('selected');
+        } else if (allowed.has(id)) {
+            el.classList.add('depended-on');
+        } else {
+            el.classList.add('dimmed');
+        }
+    });
+}
+
+function renderDetails() {
+    const detailsEl = document.getElementById('details');
+    if (!selectedCrate) {
+        detailsEl.innerHTML = '<p style="color: var(--pg-muted); font-size: 12px;">Click a crate in the graph to see its details.</p>';
+        return;
+    }
+    const crate = CRATES.find((c) => c.id === selectedCrate);
+
+    const filesHtml = crate.contains.map((f) => `<li><code>${f}</code></li>`).join('');
+    const depsHtml = crate.deps.length === 0
+        ? '<em style="color: var(--pg-muted); font-size: 12px;">nothing (pure crate)</em>'
+        : `<div class="dep-list">${crate.deps.map((d) => `<span class="dep-pill depended-on">${d}</span>`).join('')}</div>`;
+
+    const dependents = CRATES.filter((c) => c.deps.includes(crate.id)).map((c) => c.id);
+    const dependentsHtml = dependents.length === 0
+        ? '<em style="color: var(--pg-muted); font-size: 12px;">nothing depends on this</em>'
+        : `<div class="dep-list">${dependents.map((d) => `<span class="dep-pill">${d}</span>`).join('')}</div>`;
+
+    detailsEl.innerHTML = `
+        <h2>${crate.id}</h2>
+        <div class="details-section">
+            <h3>Purpose</h3>
+            <p style="font-size: 12px; line-height: 1.5;">${crate.publicApi}</p>
+        </div>
+        <div class="details-section">
+            <h3>May depend on</h3>
+            ${depsHtml}
+        </div>
+        <div class="details-section">
+            <h3>Depended on by</h3>
+            ${dependentsHtml}
+        </div>
+        <div class="details-section">
+            <h3>Files / modules (${crate.contains.length})</h3>
+            <ul>${filesHtml}</ul>
+        </div>
+    `;
+}
+
+// =====================================================================
+// PLUGIN FOLDER VIEW
+// =====================================================================
+
+const PLUGIN_FILES = {
+    'config.toml': `# OPTIONAL. Without this file, every file under scripts/ is idle
+# (never polled, only runnable by an explicit action.invoke).
+# Add an entry here to turn a script into a recurring poller.
+#
+# Defaults if you list a script:
+#   channel = "<plugin-name>.<script-basename-without-extension>"
+#
+# Anything in actions/ is NEVER scheduled. Those are explicit-only,
+# triggered by the frontend calling action.invoke.
+
+[scripts.moon-distance]
+interval = 3600                       # poll this script once an hour
+# channel = "moon_distance.event"       # uncomment to override the default channel
+`,
+    'scripts/moon-distance.sh': `#!/usr/bin/env bash
+# Stdout becomes the event payload. If it parses as JSON, subscribers
+# receive a JSON object. Otherwise it is delivered as a raw string.
+
+set -euo pipefail
+
+# Fetch live distance from a free ephemeris API.
+distance_km=\$(curl -s 'https://api.lunarsoft.example/distance' | jq -r '.km')
+printf '{"distance_km": %s}\\n' "$distance_km"
+`,
+    'actions/open-calendar.sh': `#!/usr/bin/env bash
+# Anything in actions/ is invokable from a frontend view via:
+#   quantum.call('action.invoke', { provider: 'moon-distance', action: 'open-calendar' })
+#
+# The action's command-line arguments come from the IPC call's params.
+# Stdout is returned to the caller (if it parses as JSON it is a
+# structured response, otherwise a raw string).
+
+set -euo pipefail
+exec xdg-open https://www.timeanddate.com/moon/phases/
+`,
+    'views/moon-widget/index.html': '<!doctype html>\n' +
+'<html>\n' +
+'<head>\n' +
+'    <meta charset="utf-8" />\n' +
+'    <link rel="stylesheet" href="style.css" />\n' +
+'</head>\n' +
+'<body>\n' +
+'    <button id="moon-btn">Moon: \u2026 km</button>\n' +
+'    <' + 'script src="script.js"><' + '/script>\n' +
+'</body>\n' +
+'</html>\n',
+    'views/moon-widget/style.css': `body {
+    margin: 0;
+    background: transparent;
+    font-family: system-ui, sans-serif;
+    color: #cdd6f4;
+}
+
+#moon-btn {
+    background: #313244;
+    color: #cdd6f4;
+    border: 1px solid #45475a;
+    border-radius: 6px;
+    padding: 6px 12px;
+    cursor: pointer;
+    font: inherit;
+}
+
+#moon-btn:hover {
+    border-color: #89b4fa;
+}
+`,
+    'views/moon-widget/script.js': `// Plain ES module. Quantum exposes its IPC client as a global
+// window.quantum on every plugin view. No build step, no bundling,
+// no node_modules. Just call methods directly.
+
+const client = quantum.createClient();
+const btn = document.getElementById('moon-btn');
+
+function render(state) {
+    if (!state) return;
+    const thousands = (state.distance_km / 1000).toFixed(0);
+    btn.textContent = 'Moon: ' + thousands + ' thousand km';
+}
+
+// Initial pull. Channel name is '<plugin-name>.<script-name>' by
+// default; the user can override in config.toml.
+client.call('provider.query', { id: 'moon-distance.moon-distance' })
+    .then(render)
+    .catch((err) => console.error('initial query failed', err));
+
+// Live updates whenever the polled script re-runs and publishes.
+client.subscribe('moon-distance.moon-distance', render);
+
+// Invoke an action defined as an executable in the plugin's actions/.
+btn.addEventListener('click', () => {
+    client.call('action.invoke', {
+        provider: 'moon-distance',
+        action: 'open-calendar',
+    });
+});
+`,
+};
+
+const TREE = [
+    { name: '~/.config/quantum/plugins/moon-distance/', depth: 0, type: 'folder' },
+    { name: 'config.toml', depth: 1, type: 'file', key: 'config.toml' },
+    { name: 'scripts/', depth: 1, type: 'folder' },
+    { name: 'moon-distance.sh', depth: 2, type: 'file', key: 'scripts/moon-distance.sh' },
+    { name: 'actions/', depth: 1, type: 'folder' },
+    { name: 'open-calendar.sh', depth: 2, type: 'file', key: 'actions/open-calendar.sh' },
+    { name: 'views/', depth: 1, type: 'folder' },
+    { name: 'moon-widget/', depth: 2, type: 'folder' },
+    { name: 'index.html', depth: 3, type: 'file', key: 'views/moon-widget/index.html' },
+    { name: 'style.css', depth: 3, type: 'file', key: 'views/moon-widget/style.css' },
+    { name: 'script.js', depth: 3, type: 'file', key: 'views/moon-widget/script.js' },
+];
+
+let selectedFile = 'config.toml';
+
+function renderPluginView() {
+    const view = document.getElementById('view-plugin');
+    view.innerHTML = `
+        <div class="plugin-view">
+            <div class="tree" id="tree"></div>
+            <div class="file-content" id="file-content"></div>
+        </div>
+    `;
+    const tree = document.getElementById('tree');
+    TREE.forEach((node) => {
+        const item = document.createElement('div');
+        item.className = `tree-item ${node.type === 'folder' ? 'tree-folder' : 'tree-file'}`;
+        if (node.key === selectedFile) item.classList.add('selected');
+        const indent = '  '.repeat(node.depth);
+        const icon = node.type === 'folder' ? '\u25b8' : '\u2022';
+        item.innerHTML = `<span class="tree-indent">${indent}</span>${icon} ${node.name}`;
+        if (node.key) {
+            item.onclick = () => { selectedFile = node.key; renderPluginView(); };
+        }
+        tree.appendChild(item);
+    });
+    document.getElementById('file-content').textContent = PLUGIN_FILES[selectedFile] ?? '';
+}
+
+
+// =====================================================================
+// REPO LAYOUT VIEW
+// =====================================================================
+
+const REPO_BEFORE = [
+    'quantum/',
+    '  crates/',
+    '    architecture-test/',
+    '    application/',
+    '    domain/',
+    '    infrastructure/         \u2190 14 providers + ipc + theme + hyprland + config + dbus, all in one crate',
+    '    ui/',
+    '    bin/',
+    '      quantum-dev/',
+    '      quantumctl/',
+    '      quantumd/',
+    '  frontend/                \u2190 the "frontend" vs "backend" split you want gone',
+    '    themes/',
+    '      default/',
+    '        views/',
+    '          launcher/',
+    '          widgets/',
+    '            bar/',
+    '            power-menu/',
+    '  docs/',
+    '  scripts/',
+    '  tests/',
+    '  AGENTS.md',
+    '  Cargo.toml',
+    '  shell.nix',
+];
+
+const LAYOUT_VARIANTS = {
+    nested: {
+        label: 'A. Nested by layer',
+        summary: 'Layer-named folders group their crates. Easiest to see the layering in the tree. Asymmetry: UI is grouped, infrastructure is grouped, but domain/application/ui/binaries are still distinct top-level entries under src/.',
+        lines: [
+            'quantum/',
+            '  src/                            \u2190 ALL source organized by onion layer',
+            '    domain/                       \u2190 quantum-domain crate',
+            '    application/                  \u2190 quantum-application crate',
+            '    infrastructure/               \u2190 layer folder; 7 crates inside',
+            '      providers/                  \u2190 quantum-providers',
+            '      theme/                      \u2190 quantum-theme',
+            '      ipc/                        \u2190 quantum-ipc',
+            '      hyprland/                   \u2190 quantum-hyprland',
+            '      dbus/                       \u2190 quantum-dbus',
+            '      config/                     \u2190 quantum-config',
+            '      plugins/                    \u2190 quantum-plugins',
+            '    ui/                           \u2190 layer folder; Rust host + theme bundles',
+            '      host/                       \u2190 quantum-ui (GTK4/WebKit Rust host)',
+            '      themes/                     \u2190 was frontend/themes/',
+            '        default/',
+            '          views/',
+            '            launcher/',
+            '            widgets/',
+            '              bar/',
+            '              power-menu/',
+            '    binaries/                     \u2190 composition roots',
+            '      quantumd/',
+            '      quantumctl/',
+            '      quantum-dev/',
+        ],
+    },
+    flat: {
+        label: 'B. Flat under src/',
+        summary: 'Every crate at one level. No infrastructure/ or ui/ grouping folders. UI is a single crate "src/ui/". Themes live at "src/themes/". Symmetric, very easy to navigate; loses the visible layer grouping but the architecture test still enforces it.',
+        lines: [
+            'quantum/',
+            '  src/                            \u2190 every crate at one level',
+            '    domain/                       \u2190 quantum-domain',
+            '    application/                  \u2190 quantum-application',
+            '    providers/                    \u2190 quantum-providers',
+            '    theme-store/                  \u2190 quantum-theme (renamed to avoid clash with src/themes/)',
+            '    ipc/                          \u2190 quantum-ipc',
+            '    hyprland/                     \u2190 quantum-hyprland',
+            '    dbus/                         \u2190 quantum-dbus',
+            '    config/                       \u2190 quantum-config',
+            '    plugins/                      \u2190 quantum-plugins',
+            '    ui/                           \u2190 quantum-ui (GTK4/WebKit Rust host)',
+            '    themes/                       \u2190 was frontend/themes/ (theme bundles, HTML/CSS/JS)',
+            '      default/',
+            '        views/',
+            '          launcher/',
+            '          widgets/',
+            '            bar/',
+            '            power-menu/',
+            '    binaries/                     \u2190 composition roots, grouped because there are 3 of them',
+            '      quantumd/',
+            '      quantumctl/',
+            '      quantum-dev/',
+        ],
+    },
+    hybrid: {
+        label: 'C. Flat crates, UI nested',
+        summary: 'Infrastructure crates flat at src/<crate>/. UI keeps its own folder because it has TWO related things (the Rust host crate AND the theme bundles). Compromise between A and B.',
+        lines: [
+            'quantum/',
+            '  src/                            \u2190 mostly flat; ui is the only nested folder',
+            '    domain/                       \u2190 quantum-domain',
+            '    application/                  \u2190 quantum-application',
+            '    providers/                    \u2190 quantum-providers',
+            '    theme-store/                  \u2190 quantum-theme',
+            '    ipc/                          \u2190 quantum-ipc',
+            '    hyprland/                     \u2190 quantum-hyprland',
+            '    dbus/                         \u2190 quantum-dbus',
+            '    config/                       \u2190 quantum-config',
+            '    plugins/                      \u2190 quantum-plugins',
+            '    ui/                           \u2190 grouped: Rust host crate + theme bundles',
+            '      host/                       \u2190 quantum-ui (GTK4/WebKit Rust host)',
+            '      themes/                     \u2190 was frontend/themes/',
+            '        default/',
+            '          views/',
+            '            launcher/',
+            '            widgets/',
+            '              bar/',
+            '              power-menu/',
+            '    binaries/                     \u2190 composition roots',
+            '      quantumd/',
+            '      quantumctl/',
+            '      quantum-dev/',
+        ],
+    },
+};
+
+const SHARED_TAIL = [
+    '  docs/                           \u2190 unchanged',
+    '  scripts/                        \u2190 unchanged',
+    '  tests/                          \u2190 e2e + architecture-test live here',
+    '  AGENTS.md',
+    '  Cargo.toml                      \u2190 workspace, members point at src/**',
+    '  shell.nix',
+    '',
+    '~/.config/quantum/plugins/        \u2190 user-side plugins, NOT in this repo',
+    '  moon-distance/',
+    '    plugin.toml',
+    '    scripts/moon-distance.sh',
+    '    views/moon-widget/{index.html, style.css, script.js}',
+];
+
+let activeLayout = 'hybrid';
+
+function renderLayoutView() {
+    const view = document.getElementById('view-layout');
+    const variant = LAYOUT_VARIANTS[activeLayout];
+    const afterLines = variant.lines.concat(SHARED_TAIL);
+    const formatLine = (line) => {
+        const escaped = escapeToml(line);
+        if (line.includes('\u2190')) {
+            const idx = escaped.indexOf('\u2190');
+            return '<span style="color: var(--pg-fg);">' + escaped.slice(0, idx) + '</span><span style="color: var(--pg-muted);">' + escaped.slice(idx) + '</span>';
+        }
+        return escaped;
+    };
+    const variantButtons = Object.entries(LAYOUT_VARIANTS).map(([id, v]) =>
+        '<button class="option-btn" data-variant="' + id + '" style="' + (id === activeLayout ? 'background: rgba(137, 180, 250, 0.15); border-color: var(--pg-accent); color: var(--pg-fg);' : '') + '">' + v.label + '</button>'
+    ).join('');
+
+    view.innerHTML = '' +
+        '<div style="display: flex; flex-direction: column; gap: 12px; height: 100%;">' +
+            '<div style="display: flex; gap: 8px; flex-wrap: wrap; align-items: center;">' +
+                '<span style="font-size: 11px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--pg-fg-alt); font-weight: 600; margin-right: 8px;">Variant</span>' +
+                variantButtons +
+            '</div>' +
+            '<div style="padding: 10px 12px; background: var(--pg-bg-card); border: 1px solid var(--pg-border); border-radius: 8px; font-size: 12px; color: var(--pg-fg-alt); line-height: 1.5;">' +
+                escapeToml(variant.summary) +
+            '</div>' +
+            '<div style="display: grid; grid-template-columns: 1fr 1fr; gap: 20px; flex: 1; min-height: 0;">' +
+                '<div class="builder-panel">' +
+                    '<h3>Before (today)</h3>' +
+                    '<pre style="font-family: var(--pg-font-mono); font-size: 11.5px; line-height: 1.6; color: var(--pg-fg); white-space: pre; margin: 0; overflow: auto;">' +
+                    REPO_BEFORE.map(formatLine).join('\n') +
+                    '</pre>' +
+                '</div>' +
+                '<div class="builder-panel">' +
+                    '<h3>After (' + variant.label + ')</h3>' +
+                    '<pre style="font-family: var(--pg-font-mono); font-size: 11.5px; line-height: 1.6; color: var(--pg-fg); white-space: pre; margin: 0; overflow: auto;">' +
+                    afterLines.map(formatLine).join('\n') +
+                    '</pre>' +
+                '</div>' +
+            '</div>' +
+        '</div>';
+
+    // Wire up variant switching.
+    view.querySelectorAll('[data-variant]').forEach((btn) => {
+        btn.onclick = () => {
+            activeLayout = btn.dataset.variant;
+            renderLayoutView();
+            updatePrompt();
+        };
+    });
+}
+
+// =====================================================================
+// TAB SWITCHING
+// =====================================================================
+
+const VIEW_IDS = { graph: 'view-graph', layout: 'view-layout', plugin: 'view-plugin' };
+let activeTab = 'graph';
+
+document.querySelectorAll('.tab').forEach((tab) => {
+    tab.onclick = () => {
+        activeTab = tab.dataset.tab;
+        document.querySelectorAll('.tab').forEach((t) => t.classList.toggle('active', t === tab));
+        Object.entries(VIEW_IDS).forEach(([key, id]) => {
+            document.getElementById(id).style.display = key === activeTab ? '' : 'none';
+        });
+        if (activeTab === 'graph') { renderGraph(); }
+        if (activeTab === 'layout') { renderLayoutView(); }
+        if (activeTab === 'plugin') { renderPluginView(); }
+        updatePrompt();
+    };
+});
+
+// =====================================================================
+// PROMPT OUTPUT
+// =====================================================================
+
+function updatePrompt() {
+    const newCrates = CRATES.filter((c) => c.kind === 'new').map((c) => c.id);
+    const variant = LAYOUT_VARIANTS[activeLayout];
+    const prompt = [
+        'Refactor the Quantum Rust workspace: full crate split, layer-named directory structure, and a declarative plugin system that lets users ship widgets without writing Rust.',
+        '',
+        'REPO LAYOUT (' + variant.label + '):',
+        '  ' + variant.summary,
+        '',
+        ...variant.lines.concat(SHARED_TAIL).map((line) => '  ' + line),
+        '',
+        'NEW CRATES (' + newCrates.length + ' added):',
+        ...newCrates.map((c) => {
+            const crate = CRATES.find((x) => x.id === c);
+            return '  - ' + c + ' \u2014 ' + crate.desc;
+        }),
+        '',
+        'EXISTING CRATES (keep, but move into src/<layer>/):',
+        ...CRATES.filter((c) => c.kind === 'kept').map((c) => '  - ' + c.id),
+        '',
+        'BINARIES (update dependency lists, move into src/binaries/):',
+        ...CRATES.filter((c) => c.kind === 'binary').map((c) => '  - ' + c.id + ' \u2014 depends on: ' + c.deps.join(', ')),
+        '',
+        'ARCHITECTURE RULES (the architecture-test crate enforces these):',
+        ...CRATES.filter((c) => c.kind !== 'binary').map((c) => '  - ' + c.id + ' may depend on: ' + (c.deps.length === 0 ? '(nothing)' : c.deps.join(', '))),
+        '',
+        'PLUGIN SYSTEM (user-side, lives at ~/.config/quantum/plugins/<plugin-name>/):',
+        '  Convention-over-configuration. There is NO manifest. The daemon auto-discovers',
+        '  based on folder layout:',
+        '    views/<view-name>/{index.html, style.css, script.js}',
+        '        Served at quantum://plugin/<plugin-name>/views/<view-name>/...',
+        '        index.html is required; style.css and script.js are loaded if present.',
+        '        Plain HTML/CSS/JS. No package.json, no Vite, no build step.',
+        '    scripts/<script-name>.<ext>',
+        '        Read-side. IDLE BY DEFAULT \u2014 only runs if the user adds an [scripts.<name>]',
+        '        section to config.toml with an interval. Stdout becomes the event payload',
+        '        on channel "<plugin-name>.<script-name>" (overridable in config.toml).',
+        '        JSON-parsed if it parses; raw string otherwise.',
+        '    actions/<action-name>.<ext>',
+        '        Write-side. Triggered explicitly by frontends calling action.invoke with',
+        '        provider=<plugin-name>, action=<action-name>. IPC params become argv; stdout',
+        '        is returned to the caller.',
+        '    config.toml (optional)',
+        '        ONLY for tuning scripts/ that should poll: [scripts.<name>] interval = <secs>,',
+        '        optional channel override. Nothing else. NOT a full manifest.',
+        '',
+        '  The IPC client is exposed on every plugin view as the global `quantum` object',
+        '  (window.quantum.createClient()), so plain script.js can call provider.query /',
+        '  subscribe / action.invoke without any imports.',
+        '',
+        '  quantum-plugins crate walks the plugins/ directory, applies the conventions,',
+        '  parses the (optional) config.toml, and hands quantum-providers a set of recipes',
+        '  for declarative shell-script runners. quantum-theme serves the plugin view',
+        '  files. No arbitrary code execution at load time \u2014 plugins cannot ship native code.',
+        '',
+        '  v1 only ships shell-script primitives. Native primitives (DBus / HTTP / file.watch)',
+        '  may be added later as additional convention-based file kinds; the door is open.',
+        '',
+        'EXPECTED OUTCOMES:',
+        '  - File tree organized by onion layer; no more "backend/frontend" implication.',
+        '  - Bluetooth provider authors only touch quantum-providers + quantum-dbus.',
+        '  - Theme authors only touch src/ui/themes/.',
+        '  - Plugin authors create a folder under ~/.config/quantum/plugins/<name>/ and',
+        '    drop in HTML / scripts. Optionally add config.toml to enable polling.',
+        '    Never touch Rust, never run a build tool.',
+        '  - Architecture test grows from 7 entries to ' + CRATES.length + '; rules listed above are the source of truth.',
+        '  - All existing Rust + frontend tests must stay green after the refactor.',
+        '',
+        'NEXT STEP: Take this description into the brainstorming \u2192 writing-plans flow and produce docs/plans/YYYY-MM-DD-quantum-architecture-refactor-design.md. The implementation plan should land the refactor in phases:',
+        '  Phase 1: move the directory tree (src/ + layer folders) keeping all tests green. No new crates yet.',
+        '  Phase 2: split infrastructure into the 7 new crates one at a time, in dependency order (start with the leaf-most crates: dbus, hyprland, config). Tests stay green between every commit.',
+        '  Phase 3: add quantum-plugins crate. Implement the auto-discovery walker, the optional config.toml parser, and the shell-script polling + action runners.',
+        '  Phase 4: wire plugin discovery into quantumd. Plugin views served over quantum://plugin/<name>/...',
+    ];
+    document.getElementById('prompt').textContent = prompt.join('\n');
+}
+
+document.getElementById('copy').onclick = async () => {
+    const text = document.getElementById('prompt').textContent;
+    try {
+        await navigator.clipboard.writeText(text);
+        const btn = document.getElementById('copy');
+        const orig = btn.textContent;
+        btn.textContent = 'Copied!';
+        btn.classList.add('copied');
+        setTimeout(() => { btn.textContent = orig; btn.classList.remove('copied'); }, 1500);
+    } catch (e) {
+        console.error('clipboard copy failed:', e);
+    }
+};
+
+// Initial render
+renderGraph();
+updatePrompt();
+</script>
+</body>
+</html>
