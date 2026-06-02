@@ -17,19 +17,15 @@ use quantum_application::{
 use quantum_config::{Config, ConfigStore};
 use quantum_domain::{DomainError, EventBus, ProviderId, ProviderSource};
 use quantum_infrastructure::{
-    providers::DesktopAppsProvider,
-    providers::{
-        BluezProvider, LogindBrightnessProvider, NetworkManagerProvider,
-        PowerProfilesDaemonProvider, PulseAudioProvider, SystemPowerProvider,
-        UpowerBatteryProvider,
-    },
-    registry::InMemoryProviderRegistry,
-    shell::TokioShellExecutor,
-    HyprlandActiveWindowProvider, HyprlandSocketClient, MprisProvider, ProcStatsProvider,
-    ShellCommandProvider,
+    registry::InMemoryProviderRegistry, shell::TokioShellExecutor, HyprlandSocketClient,
 };
 use quantum_ipc::{
     DispatchError, DispatchResult, Dispatcher as IpcDispatcher, EventEnvelope, UnixSocketServer,
+};
+use quantum_providers::{
+    BluezProvider, DesktopAppsProvider, HyprlandActiveWindowProvider, LogindBrightnessProvider,
+    MprisProvider, NetworkManagerProvider, PowerProfilesDaemonProvider, ProcStatsProvider,
+    PulseAudioProvider, ShellCommandProvider, SystemPowerProvider, UpowerBatteryProvider,
 };
 use quantum_theme::ThemeStore;
 use quantum_ui::{DummyWindowHost, IpcDispatcher as UiIpcDispatcher};

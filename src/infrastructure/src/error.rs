@@ -143,6 +143,20 @@ impl InfrastructureError {
     }
 }
 
+impl From<quantum_providers::ProvidersError> for InfrastructureError {
+    fn from(e: quantum_providers::ProvidersError) -> Self {
+        use quantum_providers::ProvidersError as P;
+        match e {
+            P::Io(s) => InfrastructureError::Io(s),
+            P::Serde(s) => InfrastructureError::Serde(s),
+            P::ConfigParse(s) => InfrastructureError::ConfigParse(s),
+            P::ServiceUnavailable(s) => InfrastructureError::ServiceUnavailable(s),
+            P::DbusTransport(s) => InfrastructureError::DbusTransport(s),
+            P::Spawn(s) => InfrastructureError::Spawn(s),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

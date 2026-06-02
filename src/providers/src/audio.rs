@@ -18,7 +18,7 @@ use quantum_domain::{
     ProviderId, ProviderSource, Query,
 };
 
-use crate::error::InfrastructureError;
+use crate::error::ProvidersError;
 
 /// PulseAudio/PipeWire provider using `pactl` shell commands.
 pub struct PulseAudioProvider {
@@ -37,7 +37,7 @@ impl PulseAudioProvider {
     /// Attempt to connect to PulseAudio via `pactl`.
     ///
     /// If `pactl` is not found in PATH, returns `Ok(Self { available: false })`.
-    pub async fn connect(_runtime: tokio::runtime::Handle) -> Result<Self, InfrastructureError> {
+    pub async fn connect(_runtime: tokio::runtime::Handle) -> Result<Self, ProvidersError> {
         let available = which::which("pactl").is_ok();
         Ok(Self {
             id: ProviderId::from("audio"),
@@ -174,9 +174,9 @@ pub(crate) fn parse_pactl_mute(stdout: &str) -> Option<bool> {
 }
 
 /// Execute an audio command via pactl.
-async fn execute_audio_command(command: &AudioCommand) -> Result<(), InfrastructureError> {
+async fn execute_audio_command(command: &AudioCommand) -> Result<(), ProvidersError> {
     let sink = get_default_sink().await.ok_or_else(|| {
-        InfrastructureError::ServiceUnavailable("no default sink available".to_string())
+        ProvidersError::ServiceUnavailable("no default sink available".to_string())
     })?;
 
     match command {
@@ -187,7 +187,7 @@ async fn execute_audio_command(command: &AudioCommand) -> Result<(), Infrastruct
                 .stderr(Stdio::null())
                 .output()
                 .await
-                .map_err(|e| InfrastructureError::Spawn(e.to_string()))?;
+                .map_err(|e| ProvidersError::Spawn(e.to_string()))?;
             Ok(())
         }
         AudioCommand::ToggleMute => {
@@ -197,7 +197,7 @@ async fn execute_audio_command(command: &AudioCommand) -> Result<(), Infrastruct
                 .stderr(Stdio::null())
                 .output()
                 .await
-                .map_err(|e| InfrastructureError::Spawn(e.to_string()))?;
+                .map_err(|e| ProvidersError::Spawn(e.to_string()))?;
             Ok(())
         }
         AudioCommand::AdjustVolume(delta) => {
@@ -209,7 +209,7 @@ async fn execute_audio_command(command: &AudioCommand) -> Result<(), Infrastruct
                 .stderr(Stdio::null())
                 .output()
                 .await
-                .map_err(|e| InfrastructureError::Spawn(e.to_string()))?;
+                .map_err(|e| ProvidersError::Spawn(e.to_string()))?;
             Ok(())
         }
     }

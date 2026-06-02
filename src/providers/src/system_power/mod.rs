@@ -13,7 +13,7 @@ use quantum_domain::{
 };
 use std::process::Stdio;
 
-use crate::error::InfrastructureError;
+use crate::error::ProvidersError;
 
 mod action;
 mod lock;
@@ -36,7 +36,7 @@ pub struct SystemPowerProvider {
 }
 
 impl SystemPowerProvider {
-    pub async fn connect(lock_command_config: Option<String>) -> Result<Self, InfrastructureError> {
+    pub async fn connect(lock_command_config: Option<String>) -> Result<Self, ProvidersError> {
         let id = ProviderId::from("system_power");
 
         let lock_argv = resolve_lock_command(lock_command_config.as_deref(), |name| {

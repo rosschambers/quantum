@@ -5,7 +5,7 @@ use futures::stream::{self, BoxStream, StreamExt};
 use tokio::sync::broadcast;
 use tokio_stream::wrappers::BroadcastStream;
 
-use crate::error::InfrastructureError;
+use crate::error::ProvidersError;
 
 use quantum_domain::{
     Action, ActionOutcome, DomainError, Match, MonitorActiveWindowState, ProviderCapabilities,
@@ -64,16 +64,16 @@ pub(crate) fn apply_event(state: &mut MonitorActiveWindowState, ev: HyprlandEven
 /// log a single warning if it fails. If hyprctl is missing or returns
 /// malformed JSON we return an error and let the caller fall back to the
 /// event stream to populate the map.
-async fn fetch_initial_monitors() -> Result<Vec<MonitorSeed>, InfrastructureError> {
+async fn fetch_initial_monitors() -> Result<Vec<MonitorSeed>, ProvidersError> {
     let output = tokio::process::Command::new("hyprctl")
         .args(["monitors", "-j"])
         .output()
         .await
-        .map_err(|e| InfrastructureError::Spawn(e.to_string()))?;
+        .map_err(|e| ProvidersError::Spawn(e.to_string()))?;
     let json: serde_json::Value = serde_json::from_slice(&output.stdout)?;
     let arr = json
         .as_array()
-        .ok_or_else(|| InfrastructureError::Serde("hyprctl monitors -j: expected array".into()))?;
+        .ok_or_else(|| ProvidersError::Serde("hyprctl monitors -j: expected array".into()))?;
     Ok(arr
         .iter()
         .filter_map(|v| {

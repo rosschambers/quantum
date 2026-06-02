@@ -1220,6 +1220,22 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7f24254aa9a54b5c858eaee2f5bccdb46aaf0e486a595ed5fd8f86ba55232a70"
 
 [[package]]
+name = "humantime"
+version = "2.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "135b12329e5e3ce057a9f972339ea52bc954fe1e9358ef27f95e89716fbc5424"
+
+[[package]]
+name = "humantime-serde"
+version = "1.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "57a3db5ea5923d99402c94e9feb261dc5ee9b4efa158b0315f788cf549cc200c"
+dependencies = [
+ "humantime",
+ "serde",
+]
+
+[[package]]
 name = "id-arena"
 version = "2.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1858,27 +1874,20 @@ dependencies = [
 name = "quantum-infrastructure"
 version = "0.1.0"
 dependencies = [
- "async-stream",
  "async-trait",
- "freedesktop-desktop-entry",
- "futures",
- "nucleo-matcher",
  "quantum-config",
  "quantum-dbus",
  "quantum-domain",
  "quantum-hyprland",
  "quantum-ipc",
+ "quantum-providers",
  "quantum-theme",
  "serde",
  "serde_json",
- "shell-words",
  "tempfile",
  "thiserror",
  "tokio",
- "tokio-stream",
  "tracing",
- "which",
- "zbus",
 ]
 
 [[package]]
@@ -1893,6 +1902,33 @@ dependencies = [
  "thiserror",
  "tokio",
  "tracing",
+]
+
+[[package]]
+name = "quantum-providers"
+version = "0.1.0"
+dependencies = [
+ "async-stream",
+ "async-trait",
+ "freedesktop-desktop-entry",
+ "futures",
+ "humantime-serde",
+ "libc",
+ "nucleo-matcher",
+ "quantum-config",
+ "quantum-dbus",
+ "quantum-domain",
+ "quantum-hyprland",
+ "serde",
+ "serde_json",
+ "shell-words",
+ "tempfile",
+ "thiserror",
+ "tokio",
+ "tokio-stream",
+ "tracing",
+ "which",
+ "zbus",
 ]
 
 [[package]]
@@ -1964,6 +2000,7 @@ dependencies = [
  "quantum-domain",
  "quantum-infrastructure",
  "quantum-ipc",
+ "quantum-providers",
  "quantum-theme",
  "quantum-ui",
  "serde",

@@ -1,24 +1,31 @@
 [package]
-name = "quantum-infrastructure"
+name = "quantum-providers"
 version = "0.1.0"
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 
 [dependencies]
-quantum-domain = { path = "../../src/domain" }
+quantum-domain = { path = "../domain" }
 quantum-dbus = { path = "../dbus" }
 quantum-hyprland = { path = "../hyprland" }
 quantum-config = { path = "../config" }
-quantum-theme = { path = "../theme-store" }
-quantum-ipc = { path = "../ipc" }
-quantum-providers = { path = "../providers" }
 tokio.workspace = true
 async-trait.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
 tracing.workspace = true
+futures.workspace = true
+async-stream = "0.3"
+tokio-stream = { version = "0.1", features = ["sync"] }
+freedesktop-desktop-entry = "0.4"
+nucleo-matcher = "0.3"
+libc = "0.2"
+which = "8"
+shell-words = "1"
+humantime-serde = "1"
+zbus = { version = "4", default-features = false, features = ["tokio"] }
 
 [dev-dependencies]
 tempfile = "3"

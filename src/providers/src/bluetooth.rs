@@ -16,7 +16,7 @@ use quantum_domain::{
     ProviderCapabilities, ProviderId, ProviderSource, Query,
 };
 
-use crate::error::InfrastructureError;
+use crate::error::ProvidersError;
 
 pub struct BluezProvider {
     id: ProviderId,
@@ -30,7 +30,7 @@ impl BluezProvider {
     /// If the system bus is unavailable, returns `Ok(Self { ... available: false })`
     /// with no error — the provider degrades gracefully. If the bus is available
     /// but BlueZ is not, marks `available: false` and continues.
-    pub async fn connect() -> Result<Self, InfrastructureError> {
+    pub async fn connect() -> Result<Self, ProvidersError> {
         let conn = match Connection::system().await {
             Ok(c) => c,
             Err(_e) => {

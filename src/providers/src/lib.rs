@@ -1,3 +1,7 @@
+//! quantum-providers: ProviderSource implementations.
+
+pub mod error;
+
 pub mod audio;
 pub mod battery;
 pub mod bluetooth;
@@ -12,6 +16,8 @@ pub mod power_profile;
 pub mod proc_stats;
 pub mod shell_command;
 pub mod system_power;
+
+pub use error::ProvidersError;
 
 pub use audio::PulseAudioProvider;
 pub use battery::UpowerBatteryProvider;

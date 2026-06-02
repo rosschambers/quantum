@@ -17,7 +17,7 @@ use quantum_domain::{
     ProviderCapabilities, ProviderId, ProviderSource, Query,
 };
 
-use crate::error::InfrastructureError;
+use crate::error::ProvidersError;
 
 pub struct LogindBrightnessProvider {
     id: ProviderId,
@@ -41,7 +41,7 @@ impl LogindBrightnessProvider {
     /// Polls `/sys/class/backlight` and `/sys/class/leds/*::kbd_backlight` to find
     /// max_brightness. Attempts logind connection for write support. Spawns a 1Hz
     /// polling task on the provided runtime.
-    pub async fn connect(runtime: tokio::runtime::Handle) -> Result<Self, InfrastructureError> {
+    pub async fn connect(runtime: tokio::runtime::Handle) -> Result<Self, ProvidersError> {
         let id = ProviderId::from("brightness");
 
         // Enumerate specs from standard sysfs locations.
@@ -453,7 +453,7 @@ pub(crate) enum BrightnessAction {
 /// Get the active session path via logind.
 async fn get_session_path(
     conn: &Connection,
-) -> Result<zbus::zvariant::OwnedObjectPath, InfrastructureError> {
+) -> Result<zbus::zvariant::OwnedObjectPath, ProvidersError> {
     let proxy = zbus::Proxy::new(
         conn,
         "org.freedesktop.login1",
@@ -461,17 +461,15 @@ async fn get_session_path(
         "org.freedesktop.login1.Manager",
     )
     .await
-    .map_err(|e| InfrastructureError::DbusTransport(e.to_string()))?;
+    .map_err(|e| ProvidersError::DbusTransport(e.to_string()))?;
 
     let session_path: zbus::zvariant::OwnedObjectPath = proxy
         .call_method("GetSession", &("auto",))
         .await
-        .map_err(|e| InfrastructureError::DbusTransport(e.to_string()))?
+        .map_err(|e| ProvidersError::DbusTransport(e.to_string()))?
         .body()
         .deserialize()
-        .map_err(|e| {
-            InfrastructureError::DbusTransport(format!("deserialize session path: {e}"))
-        })?;
+        .map_err(|e| ProvidersError::DbusTransport(format!("deserialize session path: {e}")))?;
 
     Ok(session_path)
 }

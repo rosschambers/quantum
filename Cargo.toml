@@ -6,6 +6,7 @@ members = [
     "src/hyprland",
     "src/application",
     "src/infrastructure",
+    "src/providers",
     "src/config",
     "src/theme-store",
     "src/ipc",
