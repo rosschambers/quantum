@@ -24,12 +24,14 @@ use quantum_domain::WindowMode;
 /// list. The diff is intentionally pure (`diff_emit`) so the bulk of
 /// the logic can be tested without a real `gdk::Display`.
 pub struct BarMultiplexer {
-    /// Monitor connector names (e.g. `"DP-1"`) that currently have a
-    /// `widgets/bar@<name>` window open.
-    pub active_bars: HashSet<String>,
+    /// Monitor connector names (for example `"DP-1"`) that currently
+    /// have a `widgets/bar@<name>` window open. Private so external
+    /// code cannot mutate it out from under the `items-changed`
+    /// signal handler.
+    active_bars: HashSet<String>,
     /// Channel back to the `GtkWindowHost` receiver in
     /// `crates/bin/quantumd/src/main.rs`.
-    pub window_request_tx: UnboundedSender<WindowRequest>,
+    window_request_tx: UnboundedSender<WindowRequest>,
 }
 
 impl BarMultiplexer {
@@ -75,13 +77,17 @@ impl BarMultiplexer {
     /// sync against `display.monitors()` and connects to its
     /// `items-changed` signal. Returns a handle that owns the signal
     /// connection — drop the handle to disconnect.
+    ///
+    /// Calling this more than once on the same `Display` will produce
+    /// duplicate `WindowRequest`s and is not supported. The daemon
+    /// installs exactly one multiplexer for its entire lifetime.
     pub fn install(
         display: &gdk::Display,
-        tx: UnboundedSender<WindowRequest>,
+        window_request_tx: UnboundedSender<WindowRequest>,
     ) -> BarMultiplexerHandle {
         let multiplexer = Rc::new(RefCell::new(BarMultiplexer {
             active_bars: HashSet::new(),
-            window_request_tx: tx,
+            window_request_tx,
         }));
 
         let monitors = display.monitors();
