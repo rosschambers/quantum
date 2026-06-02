@@ -119,16 +119,25 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let worker = runtime::spawn_worker(tokio_runtime)?;
 
     // Set up window host (GTK or dummy).
-    let (window_host, window_rx) = if headless {
+    //
+    // For GTK we also grab a clone of the underlying sender via
+    // `GtkWindowHost::sender()` before the host is type-erased into an
+    // `Arc<dyn WindowHost>`. The GTK loop needs it to install the
+    // `BarMultiplexer`, which pushes `WindowRequest`s on the same channel
+    // that `GtkWindowHost::open` uses. In headless mode we keep the sender
+    // around so the tuple shape stays uniform; it is never used because the
+    // GTK loop never runs.
+    let (window_host, window_rx, window_request_tx) = if headless {
         let dummy = Arc::new(DummyWindowHost::new()) as Arc<dyn quantum_domain::ports::WindowHost>;
-        // No channel in headless; use a never-receiving fake.
-        let (_unused_tx, rx) = tokio::sync::mpsc::unbounded_channel::<quantum_ui::WindowRequest>();
-        (dummy, rx)
+        let (tx, rx) = tokio::sync::mpsc::unbounded_channel::<quantum_ui::WindowRequest>();
+        (dummy, rx, tx)
     } else {
         let (host, rx) = quantum_ui::GtkWindowHost::new();
+        let tx = host.sender();
         (
             Arc::new(host) as Arc<dyn quantum_domain::ports::WindowHost>,
             rx,
+            tx,
         )
     };
 
@@ -190,6 +199,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             setup.theme_store,
             worker.handle.clone(),
             setup.event_tx.clone(),
+            window_request_tx,
             auto_show_bar,
         );
         // After GTK exits, clean up socket.

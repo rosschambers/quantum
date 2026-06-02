@@ -34,23 +34,22 @@ use gtk4::gdk;
 use gtk4::gio;
 use gtk4::prelude::*;
 use quantum_domain::ports::ThemeStore;
-use quantum_domain::{EventEnvelope, WindowMode};
-use quantum_ui::registry::WindowConstructor;
-use quantum_ui::{
-    IpcDispatcher, ManagedWindow, ManagedWindowConstructor, WindowRegistry, WindowRequest,
-};
+use quantum_domain::EventEnvelope;
+use quantum_ui::{IpcDispatcher, ManagedWindowConstructor, WindowRegistry, WindowRequest};
 use tokio::runtime::Handle;
 use tokio::sync::broadcast;
-use tokio::sync::mpsc::UnboundedReceiver;
+use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
 
 /// Run the GTK main loop with window registry.
 ///
-/// `auto_show_bar` enables the per-monitor bar spawn. When true, after the
-/// registry is wired up the activate handler schedules a glib task that, after
-/// a 500 ms delay (matching the Tokio auto-show pattern in `main.rs`), enumerates
-/// all connected monitors via `gdk::Display::default()` and dispatches one
-/// `widgets/bar@<connector>` Open request per monitor. Monitor enumeration
-/// must happen here because `gdk::Display::default()` is GTK-thread-only.
+/// `auto_show_bar` enables per-monitor bar windows. When true, after the
+/// registry is wired up the activate handler installs a `BarMultiplexer` on
+/// `gdk::Display::default()`. The multiplexer performs an initial sync against
+/// the currently-connected monitors and stays subscribed to the display's
+/// `items-changed` signal so hot-plugged monitors get a bar window and removed
+/// monitors have theirs closed. The returned handle is stashed for the
+/// lifetime of the application so the signal stays connected.
+#[allow(clippy::too_many_arguments)]
 pub fn run(
     app: &gtk4::Application,
     rx: UnboundedReceiver<WindowRequest>,
@@ -58,6 +57,7 @@ pub fn run(
     theme_store: Arc<dyn ThemeStore>,
     runtime: Handle,
     event_tx: broadcast::Sender<EventEnvelope>,
+    window_request_tx: UnboundedSender<WindowRequest>,
     auto_show_bar: bool,
 ) -> i32 {
     let rx = Rc::new(RefCell::new(Some(rx)));
@@ -67,6 +67,7 @@ pub fn run(
     let theme_store_for_scheme = theme_store.clone();
     let rx_for_activate = rx.clone();
     let event_tx_for_activate = event_tx.clone();
+    let window_request_tx_for_activate = window_request_tx.clone();
 
     // Hold a strong reference to keep the application alive even when there
     // are no open windows. `ApplicationHoldGuard` is RAII — dropping it
@@ -74,6 +75,13 @@ pub fn run(
     // so we keep the guard alive for the entire run.
     let hold_guard = Rc::new(RefCell::new(None::<gio::ApplicationHoldGuard>));
     let hold_for_activate = hold_guard.clone();
+
+    // Owns the `BarMultiplexer` handle for the lifetime of the application.
+    // Dropping the handle disconnects the monitor `items-changed` signal,
+    // so we keep it alive until after `app.run_with_args` returns.
+    let bar_multiplexer_handle: Rc<RefCell<Option<quantum_ui::BarMultiplexerHandle>>> =
+        Rc::new(RefCell::new(None));
+    let bar_multiplexer_handle_for_activate = bar_multiplexer_handle.clone();
 
     app.connect_activate(move |app| {
         *hold_for_activate.borrow_mut() = Some(app.hold());
@@ -103,13 +111,15 @@ pub fn run(
         });
 
         if auto_show_bar {
-            let registry_for_seed = registry.clone();
-            glib::MainContext::default().spawn_local(async move {
-                // Brief delay so monitors are fully enumerated; matches the
-                // 500 ms wait in main.rs's Tokio auto-show loop.
-                glib::timeout_future(std::time::Duration::from_millis(500)).await;
-                spawn_bar_per_monitor(&mut registry_for_seed.borrow_mut());
-            });
+            let Some(display) = gdk::Display::default() else {
+                tracing::warn!("no gdk::Display available; widgets/bar not auto-shown");
+                return;
+            };
+            let handle = quantum_ui::BarMultiplexer::install(
+                &display,
+                window_request_tx_for_activate.clone(),
+            );
+            *bar_multiplexer_handle_for_activate.borrow_mut() = Some(handle);
         }
     });
 
@@ -117,39 +127,9 @@ pub fn run(
     // CLI flags (`--socket`, `--headless`, ...) and exit with "Unknown option".
     // The daemon owns its CLI; GTK only cares about its own loop.
     let exit_code = app.run_with_args::<&str>(&[]);
-    // hold_guard drops on function return.
+    // Disconnect the `items-changed` signal first so the multiplexer
+    // does not fire during teardown, then release the application hold.
+    drop(bar_multiplexer_handle);
     drop(hold_guard);
     i32::from(exit_code)
-}
-
-/// Enumerate all currently-connected monitors and dispatch an Open
-/// request for `widgets/bar@<connector>` per monitor. Skips monitors
-/// without a connector name (virtual outputs, headless) with a warn
-/// log so the operator can see them in the journal.
-///
-/// Must be called on the GTK main thread because `gdk::Display::default()`
-/// is GTK-thread-only.
-fn spawn_bar_per_monitor<C>(registry: &mut WindowRegistry<C>)
-where
-    C: WindowConstructor<Window = ManagedWindow>,
-{
-    let Some(display) = gdk::Display::default() else {
-        tracing::warn!("no gdk::Display available; widgets/bar not auto-shown");
-        return;
-    };
-    for monitor in display
-        .monitors()
-        .iter::<gdk::Monitor>()
-        .filter_map(Result::ok)
-    {
-        match quantum_ui::windows::widget::monitor_name(&monitor) {
-            Some(name) => {
-                registry.handle(WindowRequest::Open {
-                    view: format!("widgets/bar@{name}"),
-                    mode: WindowMode::Show,
-                });
-            }
-            None => tracing::warn!("skipping monitor without connector name"),
-        }
-    }
 }

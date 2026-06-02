@@ -13,6 +13,13 @@ impl GtkWindowHost {
         let (tx, rx) = unbounded_channel();
         (Self { tx }, rx)
     }
+
+    /// Clone of the underlying sender. Used by the GTK loop to install
+    /// the `BarMultiplexer`, which needs to push `WindowRequest`s on
+    /// the same channel that `GtkWindowHost::open` uses.
+    pub fn sender(&self) -> UnboundedSender<WindowRequest> {
+        self.tx.clone()
+    }
 }
 
 #[async_trait]
@@ -109,5 +116,24 @@ mod tests {
         drop(rx);
         let result = host.open("launcher", WindowMode::Show).await;
         assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn sender_clone_delivers_on_original_receiver() {
+        let (host, mut rx) = GtkWindowHost::new();
+        let tx = host.sender();
+        tx.send(WindowRequest::Open {
+            view: "widgets/bar@DP-1".to_string(),
+            mode: WindowMode::Show,
+        })
+        .expect("send via cloned sender");
+        let msg = rx.recv().await.expect("message");
+        match msg {
+            WindowRequest::Open { view, mode } => {
+                assert_eq!(view, "widgets/bar@DP-1");
+                assert!(matches!(mode, WindowMode::Show));
+            }
+            other => panic!("expected Open, got {other:?}"),
+        }
     }
 }
