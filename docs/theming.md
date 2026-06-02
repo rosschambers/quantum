@@ -692,6 +692,49 @@ quantum-dev watch --verbose
 
 ---
 
+## Multi-monitor bars
+
+The default theme's `widgets/bar` view is multi-monitor aware. On
+startup the daemon installs a `BarMultiplexer` on the GTK thread that
+watches `gdk::Display::monitors()` and spawns one bar window per
+connected output. The window-registry key for each per-monitor bar is
+`widgets/bar@<connector-name>`, where the connector name comes from
+the Wayland output (matching what Hyprland reports in `hyprctl
+monitors`). Examples: `widgets/bar@DP-1`, `widgets/bar@HDMI-A-1`,
+`widgets/bar@eDP-1`.
+
+You can target a specific bar through the existing IPC. For example,
+to hide just the bar on `DP-1`:
+
+```bash
+quantumctl call view.hide '{"name":"widgets/bar@DP-1"}'
+```
+
+Each per-monitor bar has its monitor's connector name injected into
+the WebView as a JavaScript global before the page commits its first
+load:
+
+```js
+window.__quantum_monitor; // for example "DP-1"
+```
+
+Custom themes can read this global to scope per-monitor behaviour.
+The default theme's `ActiveWindow.svelte` uses it to render the
+focused window for that monitor specifically — the underlying
+`hyprland.activewindow` payload carries state for every monitor
+keyed by connector name, and the component picks its own.
+
+When a monitor is hot-plugged the multiplexer spawns a new bar within
+about one second (the latency of Hyprland's `monitoradded` event
+followed by GTK's `items-changed` signal). When a monitor is
+disconnected the corresponding bar is torn down and the layer-shell
+surface released. Per-monitor opt-out (a bar-blacklist in
+`config.toml`) is a planned follow-up but not yet implemented; if
+`auto_show = true` is set for `widgets/bar` in config, every
+connected monitor gets a bar.
+
+---
+
 ## See Also
 
 - [docs/protocol.md](protocol.md) — `theme.reload` method
