@@ -127,8 +127,11 @@ pub fn run(
     // CLI flags (`--socket`, `--headless`, ...) and exit with "Unknown option".
     // The daemon owns its CLI; GTK only cares about its own loop.
     let exit_code = app.run_with_args::<&str>(&[]);
-    // Disconnect the `items-changed` signal first so the multiplexer
-    // does not fire during teardown, then release the application hold.
+    // Release our local strong references. By the time GTK has exited
+    // no signals will fire anyway, and the activate closure still
+    // holds clones of both `Rc`s, so the actual handle / hold drop
+    // happens when the `gtk4::Application` is itself dropped at end
+    // of `main`. These calls just shed the local refs eagerly.
     drop(bar_multiplexer_handle);
     drop(hold_guard);
     i32::from(exit_code)
