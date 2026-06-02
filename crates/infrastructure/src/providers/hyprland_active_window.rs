@@ -56,7 +56,6 @@ pub(crate) fn apply_event(state: &mut MonitorActiveWindowState, ev: HyprlandEven
                 entry.workspace_id = name.parse().unwrap_or(0);
             }
         }
-        HyprlandEvent::Unknown(_) => {}
     }
 }
 
@@ -130,6 +129,12 @@ impl HyprlandActiveWindowProvider {
         let state_for_task = state.clone();
         let tx_for_task = tx.clone();
         runtime.spawn(async move {
+            // Last payload pushed onto the broadcast channel for this task.
+            // Hyprland fires a burst of events around any window switch
+            // (focus, title, workspace) and several of them collapse to the
+            // same `MonitorActiveWindowState` once `apply_event` finishes.
+            // The change-gate suppresses the redundant broadcasts.
+            let mut last_published: Option<serde_json::Value> = None;
             let mut backoff_secs = 1u64;
             loop {
                 let stream = match client.subscribe_events() {
@@ -149,7 +154,7 @@ impl HyprlandActiveWindowProvider {
                         apply_event(&mut guard, ev);
                         serde_json::to_value(&*guard).unwrap_or(serde_json::Value::Null)
                     };
-                    let _ = tx_for_task.send(payload);
+                    send_state_if_changed(&tx_for_task, &mut last_published, payload);
                 }
                 tracing::warn!("hyprland event stream ended; reconnecting");
                 tokio::time::sleep(std::time::Duration::from_secs(backoff_secs)).await;
@@ -159,6 +164,24 @@ impl HyprlandActiveWindowProvider {
 
         Self { id, state, tx }
     }
+}
+
+/// Forward `candidate` on `tx` only when it differs from `last`.
+///
+/// Hyprland fires several events per window/workspace transition that may
+/// all serialize to the same payload (for example a `focusedmon` to the
+/// already-focused monitor). Without this filter every one of those events
+/// would wake every subscriber.
+pub(crate) fn send_state_if_changed(
+    tx: &broadcast::Sender<serde_json::Value>,
+    last: &mut Option<serde_json::Value>,
+    candidate: serde_json::Value,
+) {
+    if last.as_ref() == Some(&candidate) {
+        return;
+    }
+    let _ = tx.send(candidate.clone());
+    *last = Some(candidate);
 }
 
 #[async_trait]
@@ -320,5 +343,75 @@ mod tests {
         apply_event(&mut state, HyprlandEvent::Workspace { name: "5".into() });
         assert_eq!(state.monitors["DP-1"].workspace_id, 5);
         assert_eq!(state.monitors["DP-1"].workspace_name, "5");
+    }
+
+    #[tokio::test]
+    async fn send_state_if_changed_suppresses_duplicate() {
+        let (tx, mut rx) = tokio::sync::broadcast::channel::<serde_json::Value>(16);
+        let mut last: Option<serde_json::Value> = None;
+        let value = serde_json::json!({"focused_monitor": "DP-1", "monitors": {}});
+
+        send_state_if_changed(&tx, &mut last, value.clone());
+        send_state_if_changed(&tx, &mut last, value.clone());
+
+        assert_eq!(rx.try_recv().expect("first"), value);
+        assert!(matches!(
+            rx.try_recv(),
+            Err(tokio::sync::broadcast::error::TryRecvError::Empty)
+        ));
+    }
+
+    #[tokio::test]
+    async fn send_state_if_changed_forwards_distinct() {
+        let (tx, mut rx) = tokio::sync::broadcast::channel::<serde_json::Value>(16);
+        let mut last: Option<serde_json::Value> = None;
+        let a = serde_json::json!({"focused_monitor": "DP-1"});
+        let b = serde_json::json!({"focused_monitor": "DP-2"});
+
+        send_state_if_changed(&tx, &mut last, a.clone());
+        send_state_if_changed(&tx, &mut last, b.clone());
+
+        assert_eq!(rx.try_recv().expect("first"), a);
+        assert_eq!(rx.try_recv().expect("second"), b);
+    }
+
+    #[tokio::test]
+    async fn two_events_collapsing_to_same_state_yield_one_broadcast() {
+        // Simulates the situation where two Hyprland events both result in
+        // the same `MonitorActiveWindowState` after `apply_event`. The
+        // provider's change-gate must collapse these into a single
+        // broadcast — that's the whole point of Fix 6.
+        let (tx, mut rx) = tokio::sync::broadcast::channel::<serde_json::Value>(16);
+        let mut last: Option<serde_json::Value> = None;
+
+        let mut state = state_with("DP-1", "firefox");
+        // First event: focused monitor stays DP-1 (no-op for serialization).
+        apply_event(
+            &mut state,
+            HyprlandEvent::FocusedMon {
+                monitor: "DP-1".into(),
+                workspace: "1".into(),
+            },
+        );
+        let payload_a = serde_json::to_value(&state).expect("serialize");
+        send_state_if_changed(&tx, &mut last, payload_a.clone());
+
+        // Second event: another no-op FocusedMon for the same monitor.
+        apply_event(
+            &mut state,
+            HyprlandEvent::FocusedMon {
+                monitor: "DP-1".into(),
+                workspace: "1".into(),
+            },
+        );
+        let payload_b = serde_json::to_value(&state).expect("serialize");
+        send_state_if_changed(&tx, &mut last, payload_b.clone());
+
+        // Exactly one broadcast.
+        assert_eq!(rx.try_recv().expect("first event"), payload_a);
+        assert!(matches!(
+            rx.try_recv(),
+            Err(tokio::sync::broadcast::error::TryRecvError::Empty)
+        ));
     }
 }

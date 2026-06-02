@@ -8,7 +8,9 @@ use quantum_domain::{DomainError, HyprlandClient};
 
 use crate::InfrastructureError;
 
-/// Hyprland event parsed from the event socket.
+/// Hyprland event parsed from the event socket. Only kinds the provider
+/// actually consumes are represented; unrecognised lines are dropped by
+/// `parse_hypr_event_line` before they ever reach the provider task.
 #[derive(Debug, Clone, PartialEq)]
 pub enum HyprlandEvent {
     ActiveWindow { class: String, title: String },
@@ -16,11 +18,17 @@ pub enum HyprlandEvent {
     FocusedMon { monitor: String, workspace: String },
     MonitorAdded { monitor: String },
     MonitorRemoved { monitor: String },
-    Unknown(String),
 }
 
 /// Parse a single Hyprland event line (newline-stripped).
 /// Format: `<event>>><args>` where args are comma-separated.
+///
+/// Returns `None` for any unrecognised event kind. The previous behaviour
+/// was to wrap the raw line in `HyprlandEvent::Unknown(...)` and pass it
+/// through, but no downstream consumer did anything with that variant —
+/// every wake-up cost CPU and (because the provider then re-serialized and
+/// broadcast the active-window state) IPC traffic. Dropping at the parser
+/// gives the same observable behaviour at lower cost.
 pub fn parse_hypr_event_line(line: &str) -> Option<HyprlandEvent> {
     let (kind, args) = line.split_once(">>")?;
     match kind {
@@ -55,7 +63,10 @@ pub fn parse_hypr_event_line(line: &str) -> Option<HyprlandEvent> {
         "monitorremoved" => Some(HyprlandEvent::MonitorRemoved {
             monitor: args.to_string(),
         }),
-        _ => Some(HyprlandEvent::Unknown(line.to_string())),
+        _ => {
+            tracing::trace!("hyprland: ignoring unhandled event line: {line}");
+            None
+        }
     }
 }
 
@@ -276,9 +287,14 @@ mod event_tests {
     }
 
     #[test]
-    fn parse_unknown_event_kind() {
-        let e = parse_hypr_event_line("createworkspace>>foo").unwrap();
-        assert!(matches!(e, HyprlandEvent::Unknown(_)));
+    fn parse_unknown_event_kind_returns_none() {
+        // Unrecognised event kinds (createworkspace, openwindow, ...) are
+        // dropped at the parser. The provider task is never woken for
+        // events it would have ignored anyway, which both saves CPU and
+        // simplifies downstream change-gating.
+        assert!(parse_hypr_event_line("createworkspace>>foo").is_none());
+        assert!(parse_hypr_event_line("openwindow>>0xabc,1,kitty,kitty").is_none());
+        assert!(parse_hypr_event_line("urgent>>0xdef").is_none());
     }
 
     #[test]
