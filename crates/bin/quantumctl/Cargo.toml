@@ -7,7 +7,7 @@ license.workspace = true
 
 [dependencies]
 quantum-domain = { path = "../../../src/domain" }
-quantum-infrastructure = { path = "../../infrastructure" }
+quantum-infrastructure = { path = "../../../src/infrastructure" }
 tokio.workspace = true
 clap = { version = "4", features = ["derive"] }
 serde_json.workspace = true
