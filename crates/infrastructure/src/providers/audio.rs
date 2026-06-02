@@ -3,7 +3,9 @@
 // between the pulse thread event loop and tokio runtime, plus integration with
 // condvars and timer callbacks. Option B's simplicity and reliability (shell commands
 // with explicit error handling) is more pragmatic for our time budget and maintenance
-// surface. Polling every 200ms is acceptable for a tray indicator.
+// surface. Polling once per second is enough for a tray indicator and easy on
+// battery; combined with change-gating in `polling_stream` it produces zero IPC
+// traffic when the volume and mute state are steady.
 
 use async_trait::async_trait;
 use futures::stream::BoxStream;
@@ -279,11 +281,14 @@ async fn get_sink_info(sink_name: &str) -> Option<AudioSink> {
     None
 }
 
-/// Polling stream that queries sink status every 200ms.
+/// Polling stream that queries sink status once per second. `MissedTickBehavior::Skip`
+/// prevents a transient stall (for example a slow `pactl` invocation) from making
+/// the loop fire several catch-up ticks back-to-back.
 fn polling_stream() -> BoxStream<'static, serde_json::Value> {
     Box::pin(async_stream::stream! {
         let mut last_state: Option<serde_json::Value> = None;
-        let mut interval = tokio::time::interval(std::time::Duration::from_millis(200));
+        let mut interval = tokio::time::interval(std::time::Duration::from_secs(1));
+        interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
 
         loop {
             interval.tick().await;
