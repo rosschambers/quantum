@@ -8,7 +8,7 @@ members = [
     "crates/bin/quantumd",
     "crates/bin/quantumctl",
     "crates/bin/quantum-dev",
-    "crates/architecture-test",
+    "src/architecture-test",
     "tests/e2e",
 ]
 
