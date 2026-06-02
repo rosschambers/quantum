@@ -125,7 +125,10 @@
     }
     .ring { display: block; }
     .ring-fill {
-        transition: stroke-dashoffset 0.4s ease, stroke 0.4s ease;
+        /* Short enough that the WebKit compositor returns to idle quickly
+         * between 1Hz updates; long enough that the change still reads
+         * as smooth instead of an abrupt jump. */
+        transition: stroke-dashoffset 0.15s ease, stroke 0.15s ease;
     }
     .number-label {
         font-family: var(--font-mono, ui-monospace, monospace);

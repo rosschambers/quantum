@@ -289,7 +289,9 @@
         display: block;
     }
     .ring-fill {
-        transition: stroke-dashoffset 0.4s ease, stroke 0.4s ease;
+        /* Match Ring.svelte: short enough to let the GPU idle between
+         * 1Hz updates, long enough to still feel smooth. */
+        transition: stroke-dashoffset 0.15s ease, stroke 0.15s ease;
     }
     .ring-label {
         font-family: var(--font-mono, ui-monospace, monospace);
@@ -300,6 +302,6 @@
         pointer-events: none;
     }
     .sparkline path {
-        transition: stroke 0.4s ease;
+        transition: stroke 0.15s ease;
     }
 </style>
