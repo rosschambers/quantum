@@ -3,8 +3,8 @@ use std::path::Path;
 fn main() {
     // Check that the default launcher bundle exists
     let manifest_dir = std::env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR");
-    let bundle_path = Path::new(&manifest_dir)
-        .join("../../frontend/themes/default/views/launcher/dist/index.html");
+    let bundle_path =
+        Path::new(&manifest_dir).join("../ui/themes/default/views/launcher/dist/index.html");
 
     if !bundle_path.exists() {
         eprintln!(
@@ -16,5 +16,5 @@ fn main() {
         std::process::exit(1);
     }
 
-    println!("cargo:rerun-if-changed=../../frontend/themes/default");
+    println!("cargo:rerun-if-changed=../ui/themes/default");
 }

@@ -5,7 +5,7 @@ REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$REPO_DIR"
 
 echo "[1/4] Build clock widget bundle (in container)..."
-./scripts/devsh.sh bash -c "cd frontend/themes/default/views/widgets/clock && pnpm build"
+./scripts/devsh.sh bash -c "cd src/ui/themes/default/views/widgets/clock && pnpm build"
 
 echo "[2/4] Rebuild quantumd + quantumctl (host via nix-shell)..."
 nix-shell --run "cargo build --bin quantumd --bin quantumctl"

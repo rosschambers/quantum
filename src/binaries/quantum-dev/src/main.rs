@@ -96,7 +96,7 @@ export interface SystemStatus {
 // In the future, use specta to auto-generate these types from Rust DTOs.
 "#;
 
-    let output_path = PathBuf::from("frontend/packages/client/src/generated.ts");
+    let output_path = PathBuf::from("src/ui/packages/client/src/generated.ts");
     tokio::fs::write(&output_path, generated_content).await?;
     info!("Generated TypeScript bindings at {}", output_path.display());
 
@@ -106,10 +106,10 @@ export interface SystemStatus {
 async fn watch_themes() -> Result<(), Box<dyn std::error::Error>> {
     info!("Watching theme files for changes...");
 
-    let themes_dir = PathBuf::from("frontend/themes");
+    let themes_dir = PathBuf::from("src/ui/themes");
 
     if !themes_dir.exists() {
-        eprintln!("ERROR: frontend/themes directory not found");
+        eprintln!("ERROR: src/ui/themes directory not found");
         eprintln!("Please run from the project root directory");
         std::process::exit(1);
     }

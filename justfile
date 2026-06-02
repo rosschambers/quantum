@@ -25,13 +25,13 @@ ts-bindgen:
     {{devsh}} cargo run --bin quantum-dev -- generate-ts
 
 frontend-install:
-    {{devsh}} pnpm -C frontend install
+    {{devsh}} pnpm -C src/ui install
 
 frontend-build:
-    {{devsh}} pnpm -C frontend -r build
+    {{devsh}} pnpm -C src/ui -r build
 
 frontend-test:
-    {{devsh}} pnpm -C frontend -r test
+    {{devsh}} pnpm -C src/ui -r test
 
 shell:
     {{devsh}}

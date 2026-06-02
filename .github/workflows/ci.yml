@@ -37,11 +37,11 @@ jobs:
           version: 9
 
       - name: Install frontend dependencies
-        working-directory: frontend
+        working-directory: src/ui
         run: pnpm install --frozen-lockfile
 
       - name: Build frontend
-        working-directory: frontend
+        working-directory: src/ui
         run: pnpm -r build
 
       - name: Check Rust formatting
@@ -54,5 +54,5 @@ jobs:
         run: cargo test --workspace
 
       - name: Run frontend tests
-        working-directory: frontend
+        working-directory: src/ui
         run: pnpm -r test

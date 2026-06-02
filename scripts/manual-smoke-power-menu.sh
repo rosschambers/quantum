@@ -16,8 +16,8 @@ cd "$REPO_DIR"
 
 echo "[1/4] Rebuild power-menu + bar bundles in container..."
 ./scripts/devsh.sh bash -c \
-    "pnpm -C frontend/themes/default/views/widgets/power-menu build && \
-     pnpm -C frontend/themes/default/views/widgets/bar build"
+    "pnpm -C src/ui/themes/default/views/widgets/power-menu build && \
+     pnpm -C src/ui/themes/default/views/widgets/bar build"
 
 echo "[2/4] Rebuild quantumd + quantumctl on host via nix-shell..."
 nix-shell --run "cargo build --bin quantumd --bin quantumctl"
