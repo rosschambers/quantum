@@ -45,6 +45,16 @@ impl From<serde_json::Error> for InfrastructureError {
     }
 }
 
+impl From<quantum_dbus::DbusError> for InfrastructureError {
+    fn from(e: quantum_dbus::DbusError) -> Self {
+        use quantum_dbus::DbusError as D;
+        match e {
+            D::Transport(s) => InfrastructureError::DbusTransport(s),
+            D::ServiceUnavailable(s) => InfrastructureError::ServiceUnavailable(s),
+        }
+    }
+}
+
 impl InfrastructureError {
     /// Lossy conversion to DomainError for IPC boundaries.
     pub fn to_domain(&self) -> DomainError {

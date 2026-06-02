@@ -12,6 +12,8 @@ use quantum_domain::{
     ProviderCapabilities, ProviderId, ProviderSource, Query,
 };
 
+use quantum_dbus::DbusError;
+
 use crate::error::InfrastructureError;
 
 pub struct PowerProfilesDaemonProvider {
@@ -39,8 +41,7 @@ impl PowerProfilesDaemonProvider {
         };
 
         let available =
-            crate::providers::dbus_common::service_available(&conn, "net.hadess.PowerProfiles")
-                .await;
+            quantum_dbus::common::service_available(&conn, "net.hadess.PowerProfiles").await;
 
         Ok(Self {
             id: ProviderId::from("power_profile"),
@@ -115,14 +116,12 @@ impl ProviderSource for PowerProfilesDaemonProvider {
 
     fn subscribe(&self) -> Option<BoxStream<'static, serde_json::Value>> {
         if !self.available || self.conn.is_none() {
-            return Some(crate::providers::dbus_common::unavailable_stream::<
-                PowerProfileState,
-            >());
+            return Some(quantum_dbus::common::unavailable_stream::<PowerProfileState>());
         }
 
         let conn = self.conn.as_ref().unwrap().clone();
 
-        let build: crate::providers::dbus_common::BuildFn<PowerProfileState> =
+        let build: quantum_dbus::common::BuildFn<PowerProfileState> =
             Box::new(|conn: &Connection| {
                 Box::pin(async {
                     let proxy = zbus::Proxy::new(
@@ -132,7 +131,7 @@ impl ProviderSource for PowerProfilesDaemonProvider {
                         "net.hadess.PowerProfiles",
                     )
                     .await
-                    .map_err(|e| InfrastructureError::DbusTransport(e.to_string()))?;
+                    .map_err(|e| DbusError::Transport(e.to_string()))?;
 
                     let active_profile_str: String = proxy
                         .get_property("ActiveProfile")
@@ -175,7 +174,7 @@ impl ProviderSource for PowerProfilesDaemonProvider {
                 })
             });
 
-        Some(crate::providers::dbus_common::property_subscription_stream(
+        Some(quantum_dbus::common::property_subscription_stream(
             conn,
             "net.hadess.PowerProfiles",
             "/net/hadess/PowerProfiles",

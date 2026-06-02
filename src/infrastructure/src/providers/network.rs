@@ -12,6 +12,8 @@ use quantum_domain::{
     NetworkState, ProviderCapabilities, ProviderId, ProviderSource, Query,
 };
 
+use quantum_dbus::DbusError;
+
 use crate::error::InfrastructureError;
 
 pub struct NetworkManagerProvider {
@@ -38,11 +40,8 @@ impl NetworkManagerProvider {
             }
         };
 
-        let available = crate::providers::dbus_common::service_available(
-            &conn,
-            "org.freedesktop.NetworkManager",
-        )
-        .await;
+        let available =
+            quantum_dbus::common::service_available(&conn, "org.freedesktop.NetworkManager").await;
 
         Ok(Self {
             id: ProviderId::from("network"),
@@ -114,57 +113,54 @@ impl ProviderSource for NetworkManagerProvider {
 
     fn subscribe(&self) -> Option<BoxStream<'static, serde_json::Value>> {
         if !self.available || self.conn.is_none() {
-            return Some(crate::providers::dbus_common::unavailable_stream::<
-                NetworkState,
-            >());
+            return Some(quantum_dbus::common::unavailable_stream::<NetworkState>());
         }
 
         let conn = self.conn.as_ref().unwrap().clone();
 
-        let build: crate::providers::dbus_common::BuildFn<NetworkState> =
-            Box::new(|conn: &Connection| {
-                Box::pin(async {
-                    let proxy = zbus::Proxy::new(
-                        conn,
-                        "org.freedesktop.NetworkManager",
-                        "/org/freedesktop/NetworkManager",
-                        "org.freedesktop.NetworkManager",
-                    )
+        let build: quantum_dbus::common::BuildFn<NetworkState> = Box::new(|conn: &Connection| {
+            Box::pin(async {
+                let proxy = zbus::Proxy::new(
+                    conn,
+                    "org.freedesktop.NetworkManager",
+                    "/org/freedesktop/NetworkManager",
+                    "org.freedesktop.NetworkManager",
+                )
+                .await
+                .map_err(|e| DbusError::Transport(e.to_string()))?;
+
+                let connectivity: u32 = proxy.get_property("Connectivity").await.unwrap_or(0);
+                let wifi_enabled: bool =
+                    proxy.get_property("WirelessEnabled").await.unwrap_or(false);
+                let primary_path: zbus::zvariant::OwnedObjectPath = proxy
+                    .get_property("PrimaryConnection")
                     .await
-                    .map_err(|e| InfrastructureError::DbusTransport(e.to_string()))?;
+                    .unwrap_or_else(|_| {
+                        zbus::zvariant::OwnedObjectPath::from(
+                            zbus::zvariant::ObjectPath::try_from("/").unwrap(),
+                        )
+                    });
 
-                    let connectivity: u32 = proxy.get_property("Connectivity").await.unwrap_or(0);
-                    let wifi_enabled: bool =
-                        proxy.get_property("WirelessEnabled").await.unwrap_or(false);
-                    let primary_path: zbus::zvariant::OwnedObjectPath = proxy
-                        .get_property("PrimaryConnection")
-                        .await
-                        .unwrap_or_else(|_| {
-                            zbus::zvariant::OwnedObjectPath::from(
-                                zbus::zvariant::ObjectPath::try_from("/").unwrap(),
-                            )
-                        });
+                let (primary, wifi_signal_percent) = if primary_path.as_str() != "/" {
+                    match build_primary_connection(conn, &primary_path).await {
+                        Ok((conn_info, strength)) => (Some(conn_info), strength),
+                        Err(_) => (None, None),
+                    }
+                } else {
+                    (None, None)
+                };
 
-                    let (primary, wifi_signal_percent) = if primary_path.as_str() != "/" {
-                        match build_primary_connection(conn, &primary_path).await {
-                            Ok((conn_info, strength)) => (Some(conn_info), strength),
-                            Err(_) => (None, None),
-                        }
-                    } else {
-                        (None, None)
-                    };
-
-                    Ok(NetworkState {
-                        available: true,
-                        connectivity: map_connectivity(connectivity),
-                        primary,
-                        wifi_enabled,
-                        wifi_signal_percent,
-                    })
+                Ok(NetworkState {
+                    available: true,
+                    connectivity: map_connectivity(connectivity),
+                    primary,
+                    wifi_enabled,
+                    wifi_signal_percent,
                 })
-            });
+            })
+        });
 
-        Some(crate::providers::dbus_common::property_subscription_stream(
+        Some(quantum_dbus::common::property_subscription_stream(
             conn,
             "org.freedesktop.NetworkManager",
             "/org/freedesktop/NetworkManager",
@@ -179,7 +175,7 @@ impl ProviderSource for NetworkManagerProvider {
 async fn build_primary_connection(
     conn: &Connection,
     primary_path: &zbus::zvariant::OwnedObjectPath,
-) -> Result<(NetworkConnection, Option<u8>), InfrastructureError> {
+) -> Result<(NetworkConnection, Option<u8>), DbusError> {
     let proxy = zbus::Proxy::new(
         conn,
         "org.freedesktop.NetworkManager",
@@ -187,7 +183,7 @@ async fn build_primary_connection(
         "org.freedesktop.NetworkManager.Connection.Active",
     )
     .await
-    .map_err(|e| InfrastructureError::DbusTransport(e.to_string()))?;
+    .map_err(|e| DbusError::Transport(e.to_string()))?;
 
     let connection_type: String = proxy
         .get_property("Type")
@@ -217,14 +213,14 @@ async fn build_primary_connection(
 async fn read_wifi_access_point(
     conn: &Connection,
     active_proxy: &zbus::Proxy<'_>,
-) -> Result<(String, Option<u8>), InfrastructureError> {
+) -> Result<(String, Option<u8>), DbusError> {
     let specific_object: zbus::zvariant::OwnedObjectPath = active_proxy
         .get_property("SpecificObject")
         .await
-        .map_err(|e| InfrastructureError::DbusTransport(e.to_string()))?;
+        .map_err(|e| DbusError::Transport(e.to_string()))?;
 
     if specific_object.as_str() == "/" {
-        return Err(InfrastructureError::DbusTransport(
+        return Err(DbusError::Transport(
             "no specific object for wifi".to_string(),
         ));
     }
@@ -236,15 +232,14 @@ async fn read_wifi_access_point(
         "org.freedesktop.NetworkManager.AccessPoint",
     )
     .await
-    .map_err(|e| InfrastructureError::DbusTransport(e.to_string()))?;
+    .map_err(|e| DbusError::Transport(e.to_string()))?;
 
     let ssid_bytes: Vec<u8> = ap_proxy
         .get_property("Ssid")
         .await
-        .map_err(|e| InfrastructureError::DbusTransport(e.to_string()))?;
+        .map_err(|e| DbusError::Transport(e.to_string()))?;
 
-    let ssid = String::from_utf8(ssid_bytes)
-        .map_err(|e| InfrastructureError::DbusTransport(e.to_string()))?;
+    let ssid = String::from_utf8(ssid_bytes).map_err(|e| DbusError::Transport(e.to_string()))?;
 
     let strength: Option<u8> = ap_proxy.get_property("Strength").await.ok();
 

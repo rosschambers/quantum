@@ -2,6 +2,7 @@
 resolver = "2"
 members = [
     "src/domain",
+    "src/dbus",
     "src/application",
     "src/infrastructure",
     "src/ui/host",

@@ -20,16 +20,15 @@ use futures::stream::{BoxStream, StreamExt};
 use serde::Serialize;
 use zbus::Connection;
 
-use crate::error::InfrastructureError;
+use crate::error::DbusError;
 
 /// Closure type for building a DTO from a live connection.
 ///
 /// Takes a borrowed connection so the builder can hop to other paths on
 /// the same bus (BlueZ's ObjectManager needs this). Returns
-/// `InfrastructureError` so transport errors surface for backoff.
-pub type BuildFn<S> = Box<
-    dyn for<'a> Fn(&'a Connection) -> BoxFuture<'a, Result<S, InfrastructureError>> + Send + Sync,
->;
+/// `DbusError` so transport errors surface for backoff.
+pub type BuildFn<S> =
+    Box<dyn for<'a> Fn(&'a Connection) -> BoxFuture<'a, Result<S, DbusError>> + Send + Sync>;
 
 /// Check whether a DBus service is currently owned on the given bus.
 ///

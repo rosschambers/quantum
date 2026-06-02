@@ -93,9 +93,7 @@ impl ProviderSource for PulseAudioProvider {
 
     fn subscribe(&self) -> Option<BoxStream<'static, serde_json::Value>> {
         if !self.available {
-            return Some(crate::providers::dbus_common::unavailable_stream::<
-                AudioState,
-            >());
+            return Some(quantum_dbus::common::unavailable_stream::<AudioState>());
         }
 
         Some(event_driven_stream())

@@ -2,7 +2,6 @@ pub mod audio;
 pub mod battery;
 pub mod bluetooth;
 pub mod brightness;
-pub mod dbus_common;
 pub mod declarative_shell;
 pub mod desktop_apps;
 pub mod hyprland_active_window;

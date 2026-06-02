@@ -187,9 +187,7 @@ impl ProviderSource for LogindBrightnessProvider {
 
     fn subscribe(&self) -> Option<BoxStream<'static, serde_json::Value>> {
         if self.specs.is_empty() {
-            return Some(crate::providers::dbus_common::unavailable_stream::<
-                BrightnessState,
-            >());
+            return Some(quantum_dbus::common::unavailable_stream::<BrightnessState>());
         }
         // WatchStream yields the current value immediately on subscribe,
         // then every time the watch sender mutates it. Late subscribers

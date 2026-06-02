@@ -6,13 +6,14 @@ mod tests {
     fn allowed_deps() -> HashMap<&'static str, HashSet<&'static str>> {
         let mut m: HashMap<&str, HashSet<&str>> = HashMap::new();
         m.insert("quantum-domain", HashSet::new());
+        m.insert("quantum-dbus", ["quantum-domain"].into_iter().collect());
         m.insert(
             "quantum-application",
             ["quantum-domain"].into_iter().collect(),
         );
         m.insert(
             "quantum-infrastructure",
-            ["quantum-domain"].into_iter().collect(),
+            ["quantum-domain", "quantum-dbus"].into_iter().collect(),
         );
         m.insert(
             "quantum-ui",

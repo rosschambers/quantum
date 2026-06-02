@@ -7,6 +7,7 @@ license.workspace = true
 
 [dependencies]
 quantum-domain = { path = "../../src/domain" }
+quantum-dbus = { path = "../dbus" }
 tokio.workspace = true
 async-trait.workspace = true
 serde.workspace = true

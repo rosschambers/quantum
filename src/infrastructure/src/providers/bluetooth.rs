@@ -42,7 +42,7 @@ impl BluezProvider {
             }
         };
 
-        let available = crate::providers::dbus_common::service_available(&conn, "org.bluez").await;
+        let available = quantum_dbus::common::service_available(&conn, "org.bluez").await;
 
         Ok(Self {
             id: ProviderId::from("bluetooth"),
@@ -140,9 +140,7 @@ impl ProviderSource for BluezProvider {
 
     fn subscribe(&self) -> Option<BoxStream<'static, serde_json::Value>> {
         if !self.available || self.conn.is_none() {
-            return Some(crate::providers::dbus_common::unavailable_stream::<
-                BluetoothState,
-            >());
+            return Some(quantum_dbus::common::unavailable_stream::<BluetoothState>());
         }
 
         let conn = self.conn.as_ref().unwrap().clone();
