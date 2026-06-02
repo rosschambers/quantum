@@ -16,6 +16,17 @@ use crate::windows::{PanelWindow, WidgetWindow};
 
 use tracing::warn;
 
+/// Split a view-name key on the first `@`. Returns `(prefix, suffix)`
+/// where `suffix` is the optional monitor name. Pure function, no GTK
+/// dependency — pulled out so tests can exercise the parsing without
+/// constructing a `gdk::Display`.
+pub(crate) fn split_view_key(view: &str) -> (&str, Option<&str>) {
+    match view.split_once('@') {
+        Some((prefix, suffix)) => (prefix, Some(suffix)),
+        None => (view, None),
+    }
+}
+
 /// Operations that all managed windows must support.
 pub trait WindowOps {
     fn show(&mut self);
@@ -72,8 +83,6 @@ impl ManagedWindowConstructor {
     /// Look up a `gdk::Monitor` by its Wayland connector name (the
     /// suffix in `widgets/bar@<connector>` view keys). Returns
     /// `None` if no currently-connected monitor matches.
-    // Wired into `construct` in Task B.3; kept dead-code-allowed until then.
-    #[allow(dead_code)]
     fn find_monitor(&self, name: &str) -> Option<gdk::Monitor> {
         let display = gdk::Display::default()?;
         display
@@ -88,7 +97,18 @@ impl WindowConstructor for ManagedWindowConstructor {
     type Window = ManagedWindow;
 
     fn construct(&mut self, view: &str) -> Option<Self::Window> {
-        match view {
+        let (view_name, monitor_name_opt) = split_view_key(view);
+        let monitor = monitor_name_opt.and_then(|name| {
+            let resolved = self.find_monitor(name);
+            if resolved.is_none() {
+                tracing::warn!(
+                    "widget {view}: requested monitor {name} not found; using compositor default"
+                );
+            }
+            resolved
+        });
+
+        match view_name {
             "launcher" => Some(ManagedWindow::Panel(PanelWindow::new(
                 &self.app,
                 "launcher",
@@ -108,14 +128,12 @@ impl WindowConstructor for ManagedWindowConstructor {
             other if other.starts_with("widgets/") => {
                 Some(ManagedWindow::Widget(WidgetWindow::new(
                     &self.app,
-                    other.to_string(),
+                    view_name.to_string(),
                     self.dispatcher.clone(),
                     self.theme_store.clone(),
                     self.runtime.clone(),
                     self.event_tx.clone(),
-                    // Task B.3 will resolve the connector suffix into a
-                    // gdk::Monitor and pass it here.
-                    None,
+                    monitor,
                 )))
             }
             _ => None,
@@ -284,6 +302,30 @@ mod tests {
         });
         assert_eq!(count.get(), 1);
         assert!(!shown.get()); // toggled off
+    }
+
+    #[test]
+    fn splits_view_key_with_monitor() {
+        assert_eq!(
+            split_view_key("widgets/bar@DP-1"),
+            ("widgets/bar", Some("DP-1"))
+        );
+    }
+
+    #[test]
+    fn splits_view_key_without_monitor() {
+        assert_eq!(split_view_key("widgets/bar"), ("widgets/bar", None));
+    }
+
+    #[test]
+    fn splits_view_key_with_complex_suffix() {
+        // Hyprland connector names can include slashes in theory; we
+        // only split on the FIRST `@` so a suffix like "DP-1@2" (not a
+        // real Hyprland name, but defensive) parses correctly.
+        assert_eq!(
+            split_view_key("widgets/bar@DP-1@2"),
+            ("widgets/bar", Some("DP-1@2"))
+        );
     }
 
     #[test]
