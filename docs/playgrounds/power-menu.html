@@ -1,0 +1,924 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>Quantum Power Menu UX Playground</title>
+<style>
+:root {
+    --pg-bg: #1e1e2e;
+    --pg-bg-alt: #313244;
+    --pg-border: #45475a;
+    --pg-fg: #cdd6f4;
+    --pg-fg-alt: #a6adc8;
+    --pg-muted: #6c7086;
+    --pg-accent: #89b4fa;
+    --pg-good: #a6e3a1;
+    --pg-warn: #f9e2af;
+    --pg-crit: #f38ba8;
+    --pg-font-sans: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    --pg-font-mono: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+* { box-sizing: border-box; }
+html, body {
+    margin: 0; padding: 0;
+    background: var(--pg-bg);
+    color: var(--pg-fg);
+    font-family: var(--pg-font-sans);
+    font-size: 14px;
+    height: 100vh;
+    overflow: hidden;
+}
+.shell {
+    display: grid;
+    grid-template-columns: 360px 1fr;
+    grid-template-rows: 1fr auto;
+    grid-template-areas:
+        "controls preview"
+        "controls prompt";
+    height: 100vh;
+}
+.controls {
+    grid-area: controls;
+    background: #181825;
+    border-right: 1px solid var(--pg-border);
+    padding: 16px;
+    overflow-y: auto;
+}
+.preview-pane {
+    grid-area: preview;
+    position: relative;
+    overflow: hidden;
+    /* Simulated desktop background so the modal has something to overlay */
+    background-image:
+        linear-gradient(135deg, #1e2030 0%, #2b2840 50%, #3a2e4a 100%);
+    background-size: cover;
+}
+.prompt-pane {
+    grid-area: prompt;
+    background: #11111b;
+    border-top: 1px solid var(--pg-border);
+    padding: 12px 16px;
+    display: flex;
+    gap: 12px;
+    align-items: flex-start;
+}
+.prompt-text {
+    flex: 1;
+    font-family: var(--pg-font-mono);
+    font-size: 12.5px;
+    line-height: 1.55;
+    color: var(--pg-fg);
+    white-space: pre-wrap;
+    max-height: 180px;
+    overflow-y: auto;
+}
+.copy-btn {
+    background: var(--pg-accent);
+    color: var(--pg-bg);
+    border: none;
+    padding: 8px 14px;
+    border-radius: 6px;
+    font-weight: 600;
+    font-size: 12px;
+    cursor: pointer;
+    white-space: nowrap;
+}
+.copy-btn:hover { opacity: 0.9; }
+.copy-btn.copied { background: var(--pg-good); }
+
+/* ---- Controls ---- */
+.section {
+    margin-bottom: 20px;
+    padding-bottom: 16px;
+    border-bottom: 1px solid var(--pg-border);
+}
+.section:last-child { border-bottom: none; }
+.section h3 {
+    margin: 0 0 10px;
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--pg-fg-alt);
+    font-weight: 600;
+}
+.preset-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin-bottom: 12px;
+}
+.preset-btn {
+    background: var(--pg-bg-alt);
+    color: var(--pg-fg);
+    border: 1px solid var(--pg-border);
+    border-radius: 999px;
+    padding: 4px 12px;
+    font-size: 11px;
+    cursor: pointer;
+}
+.preset-btn:hover { border-color: var(--pg-accent); }
+.option-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 6px;
+}
+.option-grid.three { grid-template-columns: 1fr 1fr 1fr; }
+.option-btn {
+    background: transparent;
+    color: var(--pg-fg-alt);
+    border: 1px solid var(--pg-border);
+    border-radius: 6px;
+    padding: 8px 10px;
+    font-size: 12px;
+    cursor: pointer;
+    text-align: left;
+    transition: all 0.12s;
+}
+.option-btn:hover { border-color: var(--pg-fg-alt); color: var(--pg-fg); }
+.option-btn.active {
+    background: rgba(137, 180, 250, 0.15);
+    border-color: var(--pg-accent);
+    color: var(--pg-fg);
+}
+.option-btn small {
+    display: block;
+    margin-top: 3px;
+    color: var(--pg-muted);
+    font-size: 10px;
+    line-height: 1.3;
+}
+.slider-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 8px;
+}
+.slider-row label {
+    flex: 0 0 100px;
+    font-size: 12px;
+    color: var(--pg-fg-alt);
+}
+.slider-row input[type="range"] {
+    flex: 1;
+    accent-color: var(--pg-accent);
+}
+.slider-row .val {
+    flex: 0 0 40px;
+    font-family: var(--pg-font-mono);
+    font-size: 11px;
+    color: var(--pg-fg);
+    text-align: right;
+}
+.toggle-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 6px;
+    font-size: 12px;
+    color: var(--pg-fg-alt);
+}
+.toggle-row input { accent-color: var(--pg-accent); }
+
+/* ---- Preview ---- */
+.backdrop {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    backdrop-filter: blur(4px);
+    -webkit-backdrop-filter: blur(4px);
+}
+.card {
+    background: var(--pg-bg-alt);
+    color: var(--pg-fg);
+    border: 1px solid var(--pg-border);
+    border-radius: 12px;
+    box-shadow: 0 14px 40px rgba(0, 0, 0, 0.55);
+    padding: 18px 20px;
+}
+.card-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 14px;
+}
+.card-header h2 {
+    margin: 0;
+    font-size: 13px;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--pg-fg-alt);
+    font-weight: 600;
+}
+.card-header .close {
+    background: transparent;
+    border: none;
+    color: var(--pg-fg-alt);
+    font-size: 16px;
+    cursor: pointer;
+    padding: 2px 8px;
+    border-radius: 4px;
+}
+.icon-svg {
+    flex-shrink: 0;
+    display: block;
+}
+
+/* Layout: compact list */
+.layout-compact .action {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 10px 12px;
+    border-radius: 6px;
+    margin: 2px 0;
+    cursor: pointer;
+}
+.layout-compact .action:hover { background: var(--pg-bg); }
+.layout-compact .action .lbl { flex: 1; font-size: 14px; }
+
+/* Layout: vertical stack with big icons */
+.layout-vstack .action {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    padding: 14px 16px;
+    border-radius: 10px;
+    margin: 6px 0;
+    cursor: pointer;
+    border: 1px solid transparent;
+}
+.layout-vstack .action:hover {
+    background: var(--pg-bg);
+    border-color: var(--pg-border);
+}
+.layout-vstack .action .lbl {
+    flex: 1;
+    font-size: 16px;
+    font-weight: 500;
+}
+.layout-vstack .action .hint {
+    font-size: 11px;
+    color: var(--pg-muted);
+}
+
+/* Layout: horizontal row of big icons */
+.layout-hrow {
+    display: flex;
+    gap: 10px;
+    justify-content: center;
+}
+.layout-hrow .action {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 8px;
+    padding: 16px 14px;
+    border-radius: 10px;
+    cursor: pointer;
+    min-width: 78px;
+    border: 1px solid transparent;
+}
+.layout-hrow .action:hover {
+    background: var(--pg-bg);
+    border-color: var(--pg-border);
+}
+.layout-hrow .action .lbl {
+    font-size: 11px;
+    color: var(--pg-fg-alt);
+}
+
+/* Layout: grid */
+.layout-grid {
+    display: grid;
+    gap: 10px;
+}
+.layout-grid.cols-3 { grid-template-columns: repeat(3, 1fr); }
+.layout-grid.cols-2 { grid-template-columns: repeat(2, 1fr); }
+.layout-grid .action {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 10px;
+    aspect-ratio: 1;
+    border-radius: 12px;
+    cursor: pointer;
+    border: 1px solid var(--pg-border);
+    background: rgba(0, 0, 0, 0.15);
+}
+.layout-grid .action:hover {
+    border-color: var(--pg-accent);
+    background: rgba(137, 180, 250, 0.1);
+}
+.layout-grid .action .lbl { font-size: 12px; }
+
+/* Layout: radial */
+.layout-radial {
+    position: relative;
+    width: 320px;
+    height: 320px;
+    margin: 10px auto;
+}
+.layout-radial .action {
+    position: absolute;
+    width: 80px;
+    height: 80px;
+    border-radius: 50%;
+    background: rgba(0, 0, 0, 0.2);
+    border: 1px solid var(--pg-border);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 4px;
+    cursor: pointer;
+    transform: translate(-50%, -50%);
+}
+.layout-radial .action:hover {
+    border-color: var(--pg-accent);
+    background: rgba(137, 180, 250, 0.15);
+}
+.layout-radial .action .lbl { font-size: 10px; color: var(--pg-fg-alt); }
+.layout-radial .center-hint {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    font-size: 10px;
+    color: var(--pg-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+}
+
+/* Layout: hero + secondaries */
+.layout-hero .hero {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 12px;
+    padding: 28px;
+    border-radius: 14px;
+    background: rgba(243, 139, 168, 0.08);
+    border: 1px solid rgba(243, 139, 168, 0.3);
+    margin-bottom: 14px;
+    cursor: pointer;
+}
+.layout-hero .hero:hover {
+    background: rgba(243, 139, 168, 0.15);
+}
+.layout-hero .hero .lbl {
+    font-size: 16px;
+    font-weight: 600;
+    color: var(--pg-crit);
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+}
+.layout-hero .secondaries {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 8px;
+}
+.layout-hero .secondaries .action {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 6px;
+    padding: 10px 6px;
+    border-radius: 8px;
+    cursor: pointer;
+    border: 1px solid var(--pg-border);
+    background: rgba(0, 0, 0, 0.1);
+}
+.layout-hero .secondaries .action:hover {
+    border-color: var(--pg-accent);
+    background: rgba(137, 180, 250, 0.08);
+}
+.layout-hero .secondaries .lbl {
+    font-size: 10px;
+    color: var(--pg-fg-alt);
+}
+
+/* Layout: two-tier */
+.layout-tier .tier-primary {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 10px;
+    margin-bottom: 12px;
+}
+.layout-tier .tier-primary .action {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 10px;
+    padding: 20px 14px;
+    border-radius: 12px;
+    cursor: pointer;
+    border: 1px solid var(--pg-border);
+    background: rgba(0, 0, 0, 0.15);
+}
+.layout-tier .tier-primary .action:hover {
+    border-color: var(--pg-crit);
+    background: rgba(243, 139, 168, 0.08);
+}
+.layout-tier .tier-primary .lbl {
+    font-size: 13px;
+    font-weight: 600;
+}
+.layout-tier .tier-secondary {
+    display: flex;
+    gap: 8px;
+    justify-content: space-around;
+    padding-top: 12px;
+    border-top: 1px solid var(--pg-border);
+}
+.layout-tier .tier-secondary .action {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 6px;
+    padding: 8px 12px;
+    border-radius: 8px;
+    cursor: pointer;
+    flex: 1;
+}
+.layout-tier .tier-secondary .action:hover { background: var(--pg-bg); }
+.layout-tier .tier-secondary .lbl {
+    font-size: 10px;
+    color: var(--pg-fg-alt);
+}
+
+/* Scheduling treatments */
+.sched-global {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 10px 12px;
+    margin-bottom: 14px;
+    background: rgba(0, 0, 0, 0.2);
+    border-radius: 8px;
+    font-size: 12px;
+}
+.sched-global label { color: var(--pg-fg-alt); }
+.sched-global select {
+    background: var(--pg-bg);
+    color: var(--pg-fg);
+    border: 1px solid var(--pg-border);
+    border-radius: 4px;
+    padding: 4px 8px;
+    font-size: 12px;
+}
+.sched-mode-toggle {
+    display: flex;
+    gap: 0;
+    border: 1px solid var(--pg-border);
+    border-radius: 999px;
+    padding: 2px;
+    margin-bottom: 14px;
+    font-size: 11px;
+}
+.sched-mode-toggle button {
+    flex: 1;
+    background: transparent;
+    color: var(--pg-fg-alt);
+    border: none;
+    padding: 6px 12px;
+    cursor: pointer;
+    border-radius: 999px;
+}
+.sched-mode-toggle button.active {
+    background: var(--pg-accent);
+    color: var(--pg-bg);
+    font-weight: 600;
+}
+.sched-bottom {
+    margin-top: 14px;
+    padding-top: 12px;
+    border-top: 1px solid var(--pg-border);
+}
+.sched-bottom .header-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 6px;
+}
+.sched-bottom .header-row h4 {
+    margin: 0;
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--pg-fg-alt);
+    font-weight: 600;
+}
+.sched-bottom .add-btn {
+    background: transparent;
+    color: var(--pg-accent);
+    border: 1px dashed var(--pg-accent);
+    padding: 4px 10px;
+    font-size: 10px;
+    border-radius: 6px;
+    cursor: pointer;
+}
+.sched-bottom .job {
+    display: flex;
+    justify-content: space-between;
+    padding: 4px 0;
+    font-size: 12px;
+    color: var(--pg-fg-alt);
+}
+.sched-bottom .job .when { color: var(--pg-muted); font-size: 11px; }
+
+/* Long-press hint */
+.lp-hint {
+    margin-top: 12px;
+    padding: 8px 12px;
+    background: rgba(0, 0, 0, 0.2);
+    border-radius: 6px;
+    font-size: 11px;
+    color: var(--pg-muted);
+    text-align: center;
+}
+
+/* Scaler so the modal sample feels like a real one centered on screen */
+.preview-pane .scaler {
+    width: 100%;
+    height: 100%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+</style>
+</head>
+<body>
+<div class="shell">
+    <div class="controls">
+        <div class="section">
+            <h3>Presets</h3>
+            <div class="preset-row" id="presets"></div>
+        </div>
+
+        <div class="section">
+            <h3>Layout</h3>
+            <div class="option-grid" id="layout-buttons"></div>
+        </div>
+
+        <div class="section">
+            <h3>Scheduling treatment</h3>
+            <div class="option-grid" id="sched-buttons"></div>
+        </div>
+
+        <div class="section">
+            <h3>Visual knobs</h3>
+            <div class="slider-row">
+                <label>Icon size</label>
+                <input type="range" id="iconSize" min="14" max="48" step="2" value="24" />
+                <span class="val" id="iconSize-val">24</span>
+            </div>
+            <div class="slider-row">
+                <label>Card width</label>
+                <input type="range" id="cardWidth" min="240" max="640" step="20" value="380" />
+                <span class="val" id="cardWidth-val">380</span>
+            </div>
+            <div class="slider-row">
+                <label>Backdrop dim</label>
+                <input type="range" id="backdrop" min="0" max="80" step="5" value="50" />
+                <span class="val" id="backdrop-val">50</span>
+            </div>
+            <div class="toggle-row">
+                <input type="checkbox" id="showLabels" checked />
+                <label for="showLabels">Show labels</label>
+            </div>
+            <div class="toggle-row">
+                <input type="checkbox" id="showHeader" checked />
+                <label for="showHeader">Show header bar ("POWER" + X)</label>
+            </div>
+        </div>
+    </div>
+
+    <div class="preview-pane">
+        <div class="scaler">
+            <div class="backdrop" id="backdrop-el">
+                <div class="card" id="card-el"></div>
+            </div>
+        </div>
+    </div>
+
+    <div class="prompt-pane">
+        <div class="prompt-text" id="prompt"></div>
+        <button class="copy-btn" id="copy">Copy prompt</button>
+    </div>
+</div>
+
+<script>
+// --- State ---
+const DEFAULTS = {
+    layout: 'compact',
+    sched: 'none',
+    iconSize: 24,
+    cardWidth: 380,
+    backdrop: 50,
+    showLabels: true,
+    showHeader: true,
+};
+const state = { ...DEFAULTS };
+
+const ACTIONS = [
+    { id: 'shutdown', label: 'Shutdown', icon: 'power' },
+    { id: 'restart', label: 'Restart', icon: 'restart' },
+    { id: 'suspend', label: 'Suspend', icon: 'moon' },
+    { id: 'hibernate', label: 'Hibernate', icon: 'leaf' },
+    { id: 'lock', label: 'Lock', icon: 'lock' },
+];
+
+const LAYOUTS = [
+    { id: 'compact', label: 'Compact list', desc: 'Current style, rows with label + icon' },
+    { id: 'vstack', label: 'Big vertical', desc: 'Same rows but bigger icons & padding' },
+    { id: 'hrow', label: 'Horizontal row', desc: 'All 5 in one row, icon-over-label tiles' },
+    { id: 'grid3', label: 'Grid 3\u00d72', desc: 'Square tiles, 3 columns' },
+    { id: 'grid2', label: 'Grid 2\u00d73', desc: 'Square tiles, 2 columns' },
+    { id: 'radial', label: 'Radial menu', desc: 'Actions arranged in a circle' },
+    { id: 'hero', label: 'Hero + others', desc: 'Big Shutdown, secondaries below' },
+    { id: 'tier', label: 'Two-tier', desc: 'Shutdown/Restart big, others small' },
+];
+
+const SCHEDULES = [
+    { id: 'none', label: 'No scheduling', desc: 'Drop scheduling from the menu' },
+    { id: 'global', label: 'Global picker', desc: 'One delay picker at top applies to next click' },
+    { id: 'mode', label: 'Now / Schedule toggle', desc: 'Mode switch flips behavior of all actions' },
+    { id: 'longpress', label: 'Long-press to schedule', desc: 'Default click fires now; hold to pick delay' },
+    { id: 'bottom', label: 'Bottom drawer', desc: '"+ Schedule\u2026" button + list of scheduled jobs' },
+];
+
+const PRESETS = {
+    'Current': { layout: 'compact', sched: 'global', iconSize: 18, cardWidth: 360, backdrop: 50, showLabels: true, showHeader: true },
+    'Big grid': { layout: 'grid3', sched: 'bottom', iconSize: 36, cardWidth: 420, backdrop: 55, showLabels: true, showHeader: true },
+    'Pie': { layout: 'radial', sched: 'longpress', iconSize: 28, cardWidth: 380, backdrop: 60, showLabels: true, showHeader: false },
+    'Hero': { layout: 'hero', sched: 'none', iconSize: 40, cardWidth: 400, backdrop: 50, showLabels: true, showHeader: true },
+    'Minimal row': { layout: 'hrow', sched: 'none', iconSize: 28, cardWidth: 460, backdrop: 40, showLabels: false, showHeader: false },
+    'Two-tier': { layout: 'tier', sched: 'mode', iconSize: 30, cardWidth: 380, backdrop: 55, showLabels: true, showHeader: true },
+};
+
+// --- Icon paths (24x24 viewBox, stroke="currentColor") ---
+function iconSvg(name, size) {
+    const paths = {
+        power: '<line x1="12" y1="3" x2="12" y2="12"/><path d="M7.5 6 Q3 10 4 15 Q6 22 12 21 Q18 22 20 15 Q21 10 16.5 6"/>',
+        restart: '<path d="M3 12a9 9 0 1 0 3-6.7"/><polyline points="3,3 3,9 9,9"/>',
+        moon: '<path d="M21 12.8A8 8 0 1 1 11.2 3 a6.5 6.5 0 0 0 9.8 9.8 z"/>',
+        leaf: '<path d="M20 4 Q4 4 4 14 Q4 20 10 20 Q20 20 20 4 Z"/><path d="M4 20 L14 10"/>',
+        lock: '<rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11 V7 a4 4 0 0 1 8 0 v4"/>',
+    };
+    const p = paths[name] || '';
+    return `<svg class="icon-svg" width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${p}</svg>`;
+}
+
+// --- Rendering ---
+function renderActionInner(action) {
+    const icon = iconSvg(action.icon, state.iconSize);
+    const label = state.showLabels ? `<span class="lbl">${action.label}</span>` : '';
+    return icon + label;
+}
+
+function renderHeader() {
+    if (!state.showHeader) return '';
+    return `<div class="card-header"><h2>Power</h2><button class="close" tabindex="-1">\u00d7</button></div>`;
+}
+
+function renderScheduleGlobal() {
+    return `<div class="sched-global">
+        <label>Run after</label>
+        <select><option>now</option><option>5m</option><option>15m</option><option>30m</option><option>1h</option><option>custom\u2026</option></select>
+        <span style="color: var(--pg-muted); font-size: 11px;">\u2192 click any action</span>
+    </div>`;
+}
+
+function renderScheduleMode() {
+    return `<div class="sched-mode-toggle">
+        <button class="active">Now</button>
+        <button>Schedule\u2026</button>
+    </div>`;
+}
+
+function renderScheduleBottom() {
+    return `<div class="sched-bottom">
+        <div class="header-row">
+            <h4>Scheduled</h4>
+            <button class="add-btn">+ Schedule\u2026</button>
+        </div>
+        <div class="job"><span>Shutdown</span><span class="when">in 23m</span></div>
+    </div>`;
+}
+
+function renderScheduleLongPressHint() {
+    return `<div class="lp-hint">Tap to fire now \u00b7 hold to schedule</div>`;
+}
+
+function renderTopSched() {
+    switch (state.sched) {
+        case 'global': return renderScheduleGlobal();
+        case 'mode': return renderScheduleMode();
+        default: return '';
+    }
+}
+
+function renderBottomSched() {
+    switch (state.sched) {
+        case 'bottom': return renderScheduleBottom();
+        case 'longpress': return renderScheduleLongPressHint();
+        default: return '';
+    }
+}
+
+function renderLayoutCompact() {
+    return ACTIONS.map(a => `<div class="action">${renderActionInner(a)}</div>`).join('');
+}
+
+function renderLayoutVStack() {
+    return `<div class="layout-vstack">${ACTIONS.map(a => `<div class="action">${renderActionInner(a)}</div>`).join('')}</div>`;
+}
+
+function renderLayoutHRow() {
+    return `<div class="layout-hrow">${ACTIONS.map(a => `<div class="action">${renderActionInner(a)}</div>`).join('')}</div>`;
+}
+
+function renderLayoutGrid(cols) {
+    return `<div class="layout-grid cols-${cols}">${ACTIONS.map(a => `<div class="action">${renderActionInner(a)}</div>`).join('')}</div>`;
+}
+
+function renderLayoutRadial() {
+    // 5 actions arranged at 90, 162, 234, 306, 18 degrees (top + 4 around)
+    const angles = [-90, -18, 54, 126, 198];
+    const r = 110;
+    const cx = 160, cy = 160;
+    const items = ACTIONS.map((a, i) => {
+        const rad = angles[i] * Math.PI / 180;
+        const x = cx + Math.cos(rad) * r;
+        const y = cy + Math.sin(rad) * r;
+        return `<div class="action" style="left:${x}px; top:${y}px;">${renderActionInner(a)}</div>`;
+    }).join('');
+    return `<div class="layout-radial">${items}<div class="center-hint">Power</div></div>`;
+}
+
+function renderLayoutHero() {
+    const primary = ACTIONS[0]; // shutdown
+    const rest = ACTIONS.slice(1);
+    return `<div class="layout-hero">
+        <div class="hero">${iconSvg(primary.icon, state.iconSize + 12)}${state.showLabels ? `<span class="lbl">${primary.label}</span>` : ''}</div>
+        <div class="secondaries">${rest.map(a => `<div class="action">${renderActionInner(a)}</div>`).join('')}</div>
+    </div>`;
+}
+
+function renderLayoutTier() {
+    const top = [ACTIONS[0], ACTIONS[1]]; // shutdown, restart
+    const bottom = [ACTIONS[2], ACTIONS[3], ACTIONS[4]]; // suspend, hibernate, lock
+    return `<div class="layout-tier">
+        <div class="tier-primary">${top.map(a => `<div class="action">${renderActionInner(a)}</div>`).join('')}</div>
+        <div class="tier-secondary">${bottom.map(a => `<div class="action">${renderActionInner(a)}</div>`).join('')}</div>
+    </div>`;
+}
+
+function renderLayout() {
+    switch (state.layout) {
+        case 'compact': return `<div class="layout-compact">${renderLayoutCompact()}</div>`;
+        case 'vstack': return renderLayoutVStack();
+        case 'hrow': return renderLayoutHRow();
+        case 'grid3': return renderLayoutGrid(3);
+        case 'grid2': return renderLayoutGrid(2);
+        case 'radial': return renderLayoutRadial();
+        case 'hero': return renderLayoutHero();
+        case 'tier': return renderLayoutTier();
+        default: return '';
+    }
+}
+
+function renderCard() {
+    const card = document.getElementById('card-el');
+    card.style.width = state.cardWidth + 'px';
+    card.innerHTML = renderHeader() + renderTopSched() + renderLayout() + renderBottomSched();
+
+    const backdrop = document.getElementById('backdrop-el');
+    backdrop.style.background = `rgba(0, 0, 0, ${state.backdrop / 100})`;
+}
+
+// --- Prompt output ---
+function updatePrompt() {
+    const layoutInfo = LAYOUTS.find(l => l.id === state.layout);
+    const schedInfo = SCHEDULES.find(s => s.id === state.sched);
+
+    let prompt = `Redesign the Quantum power-menu (frontend/themes/default/views/widgets/power-menu/) using:\n\n`;
+    prompt += `LAYOUT: ${layoutInfo.label} \u2014 ${layoutInfo.desc.toLowerCase()}\n`;
+    prompt += `SCHEDULING: ${schedInfo.label} \u2014 ${schedInfo.desc.toLowerCase()}\n\n`;
+    prompt += `Visual details:\n`;
+    prompt += `- Card width approx ${state.cardWidth}px (the existing modal is 320\u2013400px; adjust min-width/max-width to suit).\n`;
+    prompt += `- Icon size ${state.iconSize}px (Icon.svelte's size prop).\n`;
+    prompt += `- Backdrop dim rgba(0,0,0,${(state.backdrop / 100).toFixed(2)}).\n`;
+    prompt += `- Labels: ${state.showLabels ? 'visible' : 'hidden (icon-only)'}.\n`;
+    prompt += `- Header bar: ${state.showHeader ? 'keep "POWER" title and close X' : 'remove header (no title, no close button \u2014 rely on Escape and click-outside)'}.\n\n`;
+    prompt += `Behavior to preserve:\n`;
+    prompt += `- Two-click confirmation (first click arms with red highlight, second invokes).\n`;
+    prompt += `- Only one row armed at a time; 3s disarm timeout.\n`;
+    prompt += `- Escape and click-outside dismiss the modal (already wired).\n`;
+    prompt += `- Capability filtering via SystemPowerState (only render actions where state.can_<command> is true).\n\n`;
+
+    if (state.sched === 'none') {
+        prompt += `Scheduling: remove from the GUI entirely. Drop ScheduleExpander.svelte and ScheduledList.svelte from the component tree and remove the related state/refresh logic from App.svelte. Keep the action.schedule/action.cancel/action.scheduled IPC methods intact \u2014 they remain callable from quantumctl.\n`;
+    } else if (state.sched === 'global') {
+        prompt += `Scheduling: one delay <select> at the top (now / 5m / 15m / 30m / 1h / custom\u2026). The chosen delay applies to whatever action the user clicks next. \"now\" routes to action.invoke; everything else routes to action.schedule with the given delay. Remove the per-row Schedule\u2026 toggle. Keep ScheduledList at the bottom for cancellation.\n`;
+    } else if (state.sched === 'mode') {
+        prompt += `Scheduling: a single Now \u2194 Schedule\u2026 toggle in/near the header. In Now mode the actions invoke immediately (with the existing two-click confirm). In Schedule mode each action click opens a one-shot delay picker (5m / 15m / 30m / 1h / custom) and then routes to action.schedule. Per-row Schedule\u2026 toggles disappear.\n`;
+    } else if (state.sched === 'longpress') {
+        prompt += `Scheduling: default click fires the immediate-action two-click confirm path. A long-press (\u2265 500ms) on any action opens a small popover with delay presets and a custom field, then routes to action.schedule. Per-row Schedule\u2026 toggles disappear; replace with the small "Tap to fire now \u00b7 hold to schedule" footer hint.\n`;
+    } else if (state.sched === 'bottom') {
+        prompt += `Scheduling: bottom drawer. Above the existing ScheduledList add a single "+ Schedule\u2026" button. Click it to open a one-shot modal (or inline form) that lets the user pick action + delay, then route to action.schedule. Remove per-row Schedule\u2026 toggles.\n`;
+    }
+
+    document.getElementById('prompt').textContent = prompt;
+}
+
+function updateAll() {
+    renderCard();
+    updatePrompt();
+
+    // Sync active classes on buttons
+    document.querySelectorAll('#layout-buttons .option-btn').forEach(b => {
+        b.classList.toggle('active', b.dataset.value === state.layout);
+    });
+    document.querySelectorAll('#sched-buttons .option-btn').forEach(b => {
+        b.classList.toggle('active', b.dataset.value === state.sched);
+    });
+    document.getElementById('iconSize-val').textContent = state.iconSize;
+    document.getElementById('cardWidth-val').textContent = state.cardWidth;
+    document.getElementById('backdrop-val').textContent = state.backdrop;
+}
+
+// --- Wire up controls ---
+function initControls() {
+    // Layout buttons
+    const layoutContainer = document.getElementById('layout-buttons');
+    LAYOUTS.forEach(l => {
+        const btn = document.createElement('button');
+        btn.className = 'option-btn';
+        btn.dataset.value = l.id;
+        btn.innerHTML = `${l.label}<small>${l.desc}</small>`;
+        btn.onclick = () => { state.layout = l.id; updateAll(); };
+        layoutContainer.appendChild(btn);
+    });
+
+    // Sched buttons
+    const schedContainer = document.getElementById('sched-buttons');
+    SCHEDULES.forEach(s => {
+        const btn = document.createElement('button');
+        btn.className = 'option-btn';
+        btn.dataset.value = s.id;
+        btn.innerHTML = `${s.label}<small>${s.desc}</small>`;
+        btn.onclick = () => { state.sched = s.id; updateAll(); };
+        schedContainer.appendChild(btn);
+    });
+
+    // Presets
+    const presetContainer = document.getElementById('presets');
+    Object.entries(PRESETS).forEach(([name, values]) => {
+        const btn = document.createElement('button');
+        btn.className = 'preset-btn';
+        btn.textContent = name;
+        btn.onclick = () => {
+            Object.assign(state, values);
+            // Sync DOM inputs
+            document.getElementById('iconSize').value = state.iconSize;
+            document.getElementById('cardWidth').value = state.cardWidth;
+            document.getElementById('backdrop').value = state.backdrop;
+            document.getElementById('showLabels').checked = state.showLabels;
+            document.getElementById('showHeader').checked = state.showHeader;
+            updateAll();
+        };
+        presetContainer.appendChild(btn);
+    });
+
+    // Sliders + toggles
+    document.getElementById('iconSize').oninput = e => { state.iconSize = +e.target.value; updateAll(); };
+    document.getElementById('cardWidth').oninput = e => { state.cardWidth = +e.target.value; updateAll(); };
+    document.getElementById('backdrop').oninput = e => { state.backdrop = +e.target.value; updateAll(); };
+    document.getElementById('showLabels').onchange = e => { state.showLabels = e.target.checked; updateAll(); };
+    document.getElementById('showHeader').onchange = e => { state.showHeader = e.target.checked; updateAll(); };
+
+    // Copy
+    document.getElementById('copy').onclick = async () => {
+        const text = document.getElementById('prompt').textContent;
+        try {
+            await navigator.clipboard.writeText(text);
+            const btn = document.getElementById('copy');
+            const originalText = btn.textContent;
+            btn.textContent = 'Copied!';
+            btn.classList.add('copied');
+            setTimeout(() => { btn.textContent = originalText; btn.classList.remove('copied'); }, 1500);
+        } catch (e) {
+            console.error('clipboard copy failed:', e);
+        }
+    };
+}
+
+initControls();
+updateAll();
+</script>
+</body>
+</html>
