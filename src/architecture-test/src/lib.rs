@@ -7,13 +7,16 @@ mod tests {
         let mut m: HashMap<&str, HashSet<&str>> = HashMap::new();
         m.insert("quantum-domain", HashSet::new());
         m.insert("quantum-dbus", ["quantum-domain"].into_iter().collect());
+        m.insert("quantum-hyprland", ["quantum-domain"].into_iter().collect());
         m.insert(
             "quantum-application",
             ["quantum-domain"].into_iter().collect(),
         );
         m.insert(
             "quantum-infrastructure",
-            ["quantum-domain", "quantum-dbus"].into_iter().collect(),
+            ["quantum-domain", "quantum-dbus", "quantum-hyprland"]
+                .into_iter()
+                .collect(),
         );
         m.insert(
             "quantum-ui",

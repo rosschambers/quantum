@@ -12,7 +12,7 @@ use quantum_domain::{
     ProviderId, ProviderSource, Query,
 };
 
-use crate::hyprland::client::{HyprlandEvent, HyprlandSocketClient};
+use quantum_hyprland::{HyprlandEvent, HyprlandSocketClient};
 
 /// One monitor reported by `hyprctl monitors -j`. Used solely to seed the
 /// per-monitor state map at startup; the event stream populates the rest.

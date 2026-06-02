@@ -6,7 +6,7 @@ use tokio::net::UnixStream;
 
 use quantum_domain::{DomainError, HyprlandClient};
 
-use crate::InfrastructureError;
+use crate::error::HyprlandError;
 
 /// Hyprland event parsed from the event socket. Only kinds the provider
 /// actually consumes are represented; unrecognised lines are dropped by
@@ -79,9 +79,9 @@ pub struct HyprlandSocketClient {
 
 impl HyprlandSocketClient {
     /// Create a new client by reading environment variables.
-    pub fn new() -> Result<Self, InfrastructureError> {
-        let instance_sig = std::env::var("HYPRLAND_INSTANCE_SIGNATURE")
-            .map_err(|_| InfrastructureError::HyprlandUnreachable)?;
+    pub fn new() -> Result<Self, HyprlandError> {
+        let instance_sig =
+            std::env::var("HYPRLAND_INSTANCE_SIGNATURE").map_err(|_| HyprlandError::Unreachable)?;
 
         let runtime_dir = std::env::var("XDG_RUNTIME_DIR")
             .unwrap_or_else(|_| format!("/run/user/{}", unsafe { libc::getuid() }));
@@ -96,9 +96,7 @@ impl HyprlandSocketClient {
 
     /// Subscribe to Hyprland events from the event socket.
     /// Returns a stream of parsed events.
-    pub fn subscribe_events(
-        &self,
-    ) -> Result<BoxStream<'static, HyprlandEvent>, InfrastructureError> {
+    pub fn subscribe_events(&self) -> Result<BoxStream<'static, HyprlandEvent>, HyprlandError> {
         let path = self.event_socket.clone();
         let stream = async_stream::stream! {
             let stream = match UnixStream::connect(&path).await {

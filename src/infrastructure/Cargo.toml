@@ -8,6 +8,7 @@ license.workspace = true
 [dependencies]
 quantum-domain = { path = "../../src/domain" }
 quantum-dbus = { path = "../dbus" }
+quantum-hyprland = { path = "../hyprland" }
 tokio.workspace = true
 async-trait.workspace = true
 serde.workspace = true
@@ -20,7 +21,6 @@ notify = "6"
 notify-debouncer-mini = "0.4"
 toml = "0.8"
 humantime-serde = "1"
-libc = "0.2"
 include_dir = "0.7"
 futures = "0.3"
 dirs = "5.0"

@@ -54,6 +54,16 @@ impl From<quantum_dbus::DbusError> for InfrastructureError {
         }
     }
 }
+impl From<quantum_hyprland::HyprlandError> for InfrastructureError {
+    fn from(e: quantum_hyprland::HyprlandError) -> Self {
+        use quantum_hyprland::HyprlandError as H;
+        match e {
+            H::Io(s) => InfrastructureError::Io(s),
+            H::Serde(s) => InfrastructureError::Serde(s),
+            H::Unreachable => InfrastructureError::HyprlandUnreachable,
+        }
+    }
+}
 
 impl InfrastructureError {
     /// Lossy conversion to DomainError for IPC boundaries.

@@ -1843,6 +1843,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "quantum-hyprland"
+version = "0.1.0"
+dependencies = [
+ "async-stream",
+ "async-trait",
+ "futures",
+ "libc",
+ "quantum-domain",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
 name = "quantum-infrastructure"
 version = "0.1.0"
 dependencies = [
@@ -1853,12 +1870,12 @@ dependencies = [
  "futures",
  "humantime-serde",
  "include_dir",
- "libc",
  "notify",
  "notify-debouncer-mini",
  "nucleo-matcher",
  "quantum-dbus",
  "quantum-domain",
+ "quantum-hyprland",
  "serde",
  "serde_json",
  "shell-words",

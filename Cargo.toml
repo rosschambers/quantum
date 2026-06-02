@@ -3,6 +3,7 @@ resolver = "2"
 members = [
     "src/domain",
     "src/dbus",
+    "src/hyprland",
     "src/application",
     "src/infrastructure",
     "src/ui/host",
