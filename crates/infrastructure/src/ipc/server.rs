@@ -297,10 +297,9 @@ mod tests {
         tokio::time::sleep(Duration::from_millis(100)).await;
 
         // Send an event through the broadcast channel
-        let payload = serde_json::value::RawValue::from_string(
-            json!({"css": ":root {}"}).to_string(),
-        )
-        .expect("valid JSON");
+        let payload =
+            serde_json::value::RawValue::from_string(json!({"css": ":root {}"}).to_string())
+                .expect("valid JSON");
         broadcast_tx
             .send(EventEnvelope {
                 channel: "theme.reloaded".to_string(),

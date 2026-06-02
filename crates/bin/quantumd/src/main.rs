@@ -95,8 +95,8 @@ impl EventBus for BroadcastingEventBus {
         // pure waste. Falling back to JSON `null` keeps the contract that
         // every publish produces a well-formed envelope even if a provider
         // pushes garbage.
-        let raw = serde_json::value::RawValue::from_string(payload.to_string())
-            .unwrap_or_else(|_| {
+        let raw =
+            serde_json::value::RawValue::from_string(payload.to_string()).unwrap_or_else(|_| {
                 serde_json::value::RawValue::from_string("null".to_string())
                     .expect("\"null\" is valid JSON")
             });
@@ -633,8 +633,7 @@ mod tests {
         let env = rx.recv().await.expect("subscriber receives envelope");
         assert_eq!(env.channel, "test.channel");
 
-        let parsed: Value =
-            serde_json::from_str(env.payload.get()).expect("payload is valid JSON");
+        let parsed: Value = serde_json::from_str(env.payload.get()).expect("payload is valid JSON");
         assert_eq!(parsed, original);
     }
 

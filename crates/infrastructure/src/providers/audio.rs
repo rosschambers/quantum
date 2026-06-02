@@ -520,9 +520,7 @@ mod tests {
         // user picks a new default in `pactl set-default-sink` and the
         // server emits a `server` event. We must refresh on that too,
         // otherwise the bar keeps showing the old sink's volume.
-        assert!(should_refresh_for_pactl_line(
-            "Event 'change' on server #0"
-        ));
+        assert!(should_refresh_for_pactl_line("Event 'change' on server #0"));
     }
 
     #[test]
@@ -534,9 +532,7 @@ mod tests {
         assert!(!should_refresh_for_pactl_line(
             "Event 'change' on sink-input #123"
         ));
-        assert!(!should_refresh_for_pactl_line(
-            "Event 'new' on source #4"
-        ));
+        assert!(!should_refresh_for_pactl_line("Event 'new' on source #4"));
         assert!(!should_refresh_for_pactl_line(
             "Event 'change' on client #99"
         ));
