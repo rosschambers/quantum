@@ -10,6 +10,7 @@
 use async_trait::async_trait;
 use futures::stream::BoxStream;
 use std::process::Stdio;
+use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::Command;
 
 use quantum_domain::{
@@ -97,7 +98,7 @@ impl ProviderSource for PulseAudioProvider {
             >());
         }
 
-        Some(polling_stream())
+        Some(event_driven_stream())
     }
 }
 
@@ -281,47 +282,117 @@ async fn get_sink_info(sink_name: &str) -> Option<AudioSink> {
     None
 }
 
-/// Polling stream that queries sink status once per second. `MissedTickBehavior::Skip`
-/// prevents a transient stall (for example a slow `pactl` invocation) from making
-/// the loop fire several catch-up ticks back-to-back.
-fn polling_stream() -> BoxStream<'static, serde_json::Value> {
+/// Decide whether a single line from `pactl subscribe` should trigger a
+/// re-fetch of the default sink's state.
+///
+/// `pactl subscribe` emits lines in the shape `Event '<kind>' on <facility> #<id>`
+/// where `<facility>` is one of `sink`, `source`, `sink-input`, `source-output`,
+/// `client`, `card`, `server`, etc. We only care about `sink` (the speakers /
+/// headphones state moved) and `server` (the default sink changed). Sink-input
+/// and source events fire constantly during playback or recording; honoring
+/// them would put us right back into polling-territory CPU usage.
+pub(crate) fn should_refresh_for_pactl_line(line: &str) -> bool {
+    // Look for `on <facility>` and extract the facility token.
+    let Some(rest) = line.split(" on ").nth(1) else {
+        return false;
+    };
+    let facility = rest.split_whitespace().next().unwrap_or("");
+    matches!(facility, "sink" | "server")
+}
+
+/// Fetch the current `AudioState` from `pactl` and return it as a JSON value.
+/// Returns `AudioState::default()` (which serializes to a "no sink" payload)
+/// when there is no default sink or the lookup fails.
+async fn current_audio_state_value() -> serde_json::Value {
+    let state = match get_default_sink().await {
+        Some(default_sink) => match get_sink_info(&default_sink).await {
+            Some(sink) => AudioState {
+                available: true,
+                default_sink: Some(sink),
+            },
+            None => AudioState::default(),
+        },
+        None => AudioState::default(),
+    };
+    serde_json::to_value(&state).unwrap_or(serde_json::Value::Null)
+}
+
+/// Event-driven stream backed by a long-lived `pactl subscribe` subprocess.
+///
+/// Behaviour:
+/// - Emit the current state once on startup so late subscribers see real data.
+/// - Spawn `pactl subscribe`. For every stdout line, decide via
+///   `should_refresh_for_pactl_line` whether to re-fetch. If so, fetch and
+///   emit when the state actually changed.
+/// - If the child exits (PulseAudio restart, pactl crash), sleep 1s and respawn.
+///   This keeps the stream alive across server restarts without burning CPU.
+fn event_driven_stream() -> BoxStream<'static, serde_json::Value> {
     Box::pin(async_stream::stream! {
-        let mut last_state: Option<serde_json::Value> = None;
-        let mut interval = tokio::time::interval(std::time::Duration::from_secs(1));
-        interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+        // Emit the current state once so subscribers see the initial
+        // volume/mute without waiting for the first server event.
+        let initial = current_audio_state_value().await;
+        let mut last_state: Option<serde_json::Value> = Some(initial.clone());
+        yield initial;
 
         loop {
-            interval.tick().await;
-
-            if let Some(default_sink) = get_default_sink().await {
-                if let Some(sink) = get_sink_info(&default_sink).await {
-                    let state = AudioState {
-                        available: true,
-                        default_sink: Some(sink),
-                    };
-                    let json_val = serde_json::to_value(&state).unwrap_or(serde_json::Value::Null);
-                    if last_state.as_ref() != Some(&json_val) {
-                        last_state = Some(json_val.clone());
-                        yield json_val;
-                    }
-                } else {
-                    // Sink query failed
-                    let state = AudioState::default();
-                    let json_val = serde_json::to_value(&state).unwrap_or(serde_json::Value::Null);
-                    if last_state.as_ref() != Some(&json_val) {
-                        last_state = Some(json_val.clone());
-                        yield json_val;
-                    }
+            // Spawn a fresh `pactl subscribe`. stdout is piped; stderr is
+            // dropped because pactl prints nothing useful on the steady path.
+            let mut child = match Command::new("pactl")
+                .arg("subscribe")
+                .stdout(Stdio::piped())
+                .stderr(Stdio::null())
+                .stdin(Stdio::null())
+                .spawn()
+            {
+                Ok(c) => c,
+                Err(err) => {
+                    tracing::warn!("pactl subscribe spawn failed: {err}; retry in 1s");
+                    tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+                    continue;
                 }
-            } else {
-                // No default sink
-                let state = AudioState::default();
-                let json_val = serde_json::to_value(&state).unwrap_or(serde_json::Value::Null);
-                if last_state.as_ref() != Some(&json_val) {
-                    last_state = Some(json_val.clone());
-                    yield json_val;
+            };
+
+            let stdout = match child.stdout.take() {
+                Some(s) => s,
+                None => {
+                    tracing::warn!("pactl subscribe has no stdout pipe; retry in 1s");
+                    // Best-effort kill — if the child already exited this is a no-op.
+                    let _ = child.kill().await;
+                    tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+                    continue;
+                }
+            };
+
+            let mut lines = BufReader::new(stdout).lines();
+            loop {
+                match lines.next_line().await {
+                    Ok(Some(line)) => {
+                        if !should_refresh_for_pactl_line(&line) {
+                            continue;
+                        }
+                        let value = current_audio_state_value().await;
+                        if last_state.as_ref() != Some(&value) {
+                            last_state = Some(value.clone());
+                            yield value;
+                        }
+                    }
+                    Ok(None) => {
+                        // EOF — child closed stdout, typically because pactl
+                        // exited (PulseAudio restart). Break to respawn.
+                        break;
+                    }
+                    Err(err) => {
+                        tracing::warn!("pactl subscribe read error: {err}; respawning");
+                        break;
+                    }
                 }
             }
+
+            // Reap the child so we don't accumulate zombies, then back off
+            // 1s before respawning so a permanently failing pactl doesn't
+            // pin a CPU.
+            let _ = child.wait().await;
+            tokio::time::sleep(std::time::Duration::from_secs(1)).await;
         }
     })
 }
@@ -431,6 +502,47 @@ mod tests {
         let output = "Mute: no";
         let muted = parse_pactl_mute(output);
         assert_eq!(muted, Some(false));
+    }
+
+    #[test]
+    fn pactl_subscribe_sink_change_triggers_refresh() {
+        // PulseAudio / PipeWire-Pulse emits one of these whenever the sink
+        // state changes (volume, mute, default-sink swap), so we refresh.
+        assert!(should_refresh_for_pactl_line("Event 'change' on sink #0"));
+        assert!(should_refresh_for_pactl_line("Event 'change' on sink #42"));
+        assert!(should_refresh_for_pactl_line("Event 'new' on sink #1"));
+        assert!(should_refresh_for_pactl_line("Event 'remove' on sink #1"));
+    }
+
+    #[test]
+    fn pactl_subscribe_server_change_triggers_refresh() {
+        // The default sink can change without any sink-level event — the
+        // user picks a new default in `pactl set-default-sink` and the
+        // server emits a `server` event. We must refresh on that too,
+        // otherwise the bar keeps showing the old sink's volume.
+        assert!(should_refresh_for_pactl_line(
+            "Event 'change' on server #0"
+        ));
+    }
+
+    #[test]
+    fn pactl_subscribe_unrelated_events_do_not_trigger_refresh() {
+        // Sink-input and source events fire constantly during playback /
+        // recording; ignoring them is the entire point of moving off
+        // polling. If we refreshed on every sink-input change we'd be
+        // back to 5+Hz wakeups during playback.
+        assert!(!should_refresh_for_pactl_line(
+            "Event 'change' on sink-input #123"
+        ));
+        assert!(!should_refresh_for_pactl_line(
+            "Event 'new' on source #4"
+        ));
+        assert!(!should_refresh_for_pactl_line(
+            "Event 'change' on client #99"
+        ));
+        // Stray blank / garbage lines must not refresh either.
+        assert!(!should_refresh_for_pactl_line(""));
+        assert!(!should_refresh_for_pactl_line("garbage"));
     }
 
     #[tokio::test]
