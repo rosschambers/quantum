@@ -222,6 +222,18 @@ impl<C: WindowConstructor> WindowRegistry<C> {
                     warn!("set_height: view {} not open", view);
                 }
             }
+            WindowRequest::Close { view } => match self.windows.remove(&view) {
+                Some(mut window) => {
+                    // Hide before drop so the layer-shell surface is
+                    // released cleanly. The window's Drop releases the
+                    // underlying GTK resources.
+                    window.hide();
+                    tracing::info!("closed window: {view}");
+                }
+                None => {
+                    tracing::debug!("close request for unknown view: {view}");
+                }
+            },
         }
     }
 }
@@ -339,6 +351,48 @@ mod tests {
         reg.handle(WindowRequest::Open {
             view: "nope".into(),
             mode: WindowMode::Show,
+        });
+        // If we reach here without panic, the test passes.
+    }
+
+    #[test]
+    fn close_removes_window_from_registry() {
+        let count = Rc::new(Cell::new(0));
+        let shown = Rc::new(Cell::new(false));
+        let mut reg = WindowRegistry::new(FakeCtor {
+            construct_count: count.clone(),
+            shown: shown.clone(),
+        });
+        reg.handle(WindowRequest::Open {
+            view: "launcher".into(),
+            mode: WindowMode::Show,
+        });
+        assert_eq!(count.get(), 1, "window was constructed");
+        reg.handle(WindowRequest::Close {
+            view: "launcher".into(),
+        });
+        // Re-opening should reconstruct (counter increments again),
+        // which is the observable signal that Close actually removed
+        // the entry from the windows map.
+        reg.handle(WindowRequest::Open {
+            view: "launcher".into(),
+            mode: WindowMode::Show,
+        });
+        assert_eq!(count.get(), 2, "window was reconstructed after close");
+        assert!(shown.get(), "reopened window is visible");
+    }
+
+    #[test]
+    fn close_for_unknown_view_does_not_panic() {
+        let count = Rc::new(Cell::new(0));
+        let shown = Rc::new(Cell::new(false));
+        let mut reg = WindowRegistry::new(FakeCtor {
+            construct_count: count,
+            shown,
+        });
+        // No prior Open; the registry is empty.
+        reg.handle(WindowRequest::Close {
+            view: "launcher".into(),
         });
         // If we reach here without panic, the test passes.
     }

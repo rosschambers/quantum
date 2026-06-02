@@ -2,8 +2,20 @@ pub use quantum_domain::WindowMode;
 
 #[derive(Debug, Clone)]
 pub enum WindowRequest {
-    Open { view: String, mode: WindowMode },
-    SetHeight { view: String, height: u32 },
+    Open {
+        view: String,
+        mode: WindowMode,
+    },
+    SetHeight {
+        view: String,
+        height: u32,
+    },
+    /// Tear down a window entirely. Used by the bar multiplexer when a
+    /// monitor disconnects so its bar window is released along with
+    /// the underlying layer-shell surface, instead of merely hidden.
+    Close {
+        view: String,
+    },
 }
 
 #[cfg(test)]
