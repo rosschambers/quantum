@@ -5,9 +5,9 @@ members = [
     "src/application",
     "src/infrastructure",
     "crates/ui",
-    "crates/bin/quantumd",
-    "crates/bin/quantumctl",
-    "crates/bin/quantum-dev",
+    "src/binaries/quantumd",
+    "src/binaries/quantumctl",
+    "src/binaries/quantum-dev",
     "src/architecture-test",
     "tests/e2e",
 ]
