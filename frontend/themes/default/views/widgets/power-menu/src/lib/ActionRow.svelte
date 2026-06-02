@@ -36,8 +36,8 @@
     onclick={handleClick}
     data-command={command}
 >
-    <span class="icon-slot"><Icon name={icon} size={18} /></span>
     <span class="label">{isArmed ? `Confirm ${label}` : label}</span>
+    <span class="icon-slot"><Icon name={icon} size={18} /></span>
 </button>
 
 <style>

@@ -250,8 +250,8 @@
         color: var(--color-fg, #cdd6f4);
         border-radius: 10px;
         padding: 16px 20px;
-        min-width: 440px;
-        max-width: 520px;
+        min-width: 320px;
+        max-width: 400px;
         box-shadow: 0 10px 30px rgba(0, 0, 0, 0.6);
         border: 1px solid var(--color-border, #45475a);
     }
