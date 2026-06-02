@@ -14,12 +14,12 @@ use quantum_application::{
     QueryProviderUseCase, ReloadThemeUseCase, ScheduleActionUseCase, SearchUseCase,
     SubscribeProviderUseCase,
 };
+use quantum_config::{Config, ConfigStore};
 use quantum_domain::{DomainError, EventBus, ProviderId, ProviderSource};
 use quantum_infrastructure::ipc::server::{
     DispatchError, DispatchResult, Dispatcher as IpcDispatcher,
 };
 use quantum_infrastructure::{
-    config::ConfigStore,
     providers::DesktopAppsProvider,
     providers::{
         BluezProvider, LogindBrightnessProvider, NetworkManagerProvider,
@@ -234,7 +234,7 @@ struct DaemonSetup {
     theme_store_concrete: Arc<ThemeStore>,
     event_bus: Arc<dyn quantum_domain::EventBus>,
     event_tx: tokio::sync::broadcast::Sender<EventEnvelope>,
-    config: quantum_infrastructure::config::Config,
+    config: Config,
 }
 
 async fn setup_daemon(

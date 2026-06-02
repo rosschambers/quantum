@@ -1220,22 +1220,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7f24254aa9a54b5c858eaee2f5bccdb46aaf0e486a595ed5fd8f86ba55232a70"
 
 [[package]]
-name = "humantime"
-version = "2.3.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "135b12329e5e3ce057a9f972339ea52bc954fe1e9358ef27f95e89716fbc5424"
-
-[[package]]
-name = "humantime-serde"
-version = "1.1.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "57a3db5ea5923d99402c94e9feb261dc5ee9b4efa158b0315f788cf549cc200c"
-dependencies = [
- "humantime",
- "serde",
-]
-
-[[package]]
 name = "id-arena"
 version = "2.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1784,6 +1768,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "quantum-config"
+version = "0.1.0"
+dependencies = [
+ "quantum-domain",
+ "serde",
+ "thiserror",
+ "tokio",
+ "toml 0.8.23",
+]
+
+[[package]]
 name = "quantum-dbus"
 version = "0.1.0"
 dependencies = [
@@ -1868,11 +1863,11 @@ dependencies = [
  "dirs 5.0.1",
  "freedesktop-desktop-entry",
  "futures",
- "humantime-serde",
  "include_dir",
  "notify",
  "notify-debouncer-mini",
  "nucleo-matcher",
+ "quantum-config",
  "quantum-dbus",
  "quantum-domain",
  "quantum-hyprland",
@@ -1934,6 +1929,7 @@ dependencies = [
  "glib 0.19.9",
  "gtk4",
  "quantum-application",
+ "quantum-config",
  "quantum-domain",
  "quantum-infrastructure",
  "quantum-ui",

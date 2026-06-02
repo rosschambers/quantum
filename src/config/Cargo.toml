@@ -1,0 +1,13 @@
+[package]
+name = "quantum-config"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+quantum-domain = { path = "../domain" }
+tokio.workspace = true
+serde.workspace = true
+thiserror.workspace = true
+toml = "0.8"

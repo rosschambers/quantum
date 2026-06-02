@@ -8,15 +8,21 @@ mod tests {
         m.insert("quantum-domain", HashSet::new());
         m.insert("quantum-dbus", ["quantum-domain"].into_iter().collect());
         m.insert("quantum-hyprland", ["quantum-domain"].into_iter().collect());
+        m.insert("quantum-config", ["quantum-domain"].into_iter().collect());
         m.insert(
             "quantum-application",
             ["quantum-domain"].into_iter().collect(),
         );
         m.insert(
             "quantum-infrastructure",
-            ["quantum-domain", "quantum-dbus", "quantum-hyprland"]
-                .into_iter()
-                .collect(),
+            [
+                "quantum-domain",
+                "quantum-dbus",
+                "quantum-hyprland",
+                "quantum-config",
+            ]
+            .into_iter()
+            .collect(),
         );
         m.insert(
             "quantum-ui",
@@ -30,6 +36,7 @@ mod tests {
                 "quantum-ui",
                 "quantum-application",
                 "quantum-infrastructure",
+                "quantum-config",
                 "quantum-domain",
             ]
             .into_iter()

@@ -6,6 +6,7 @@ members = [
     "src/hyprland",
     "src/application",
     "src/infrastructure",
+    "src/config",
     "src/ui/host",
     "src/binaries/quantumd",
     "src/binaries/quantumctl",

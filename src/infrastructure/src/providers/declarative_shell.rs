@@ -7,7 +7,7 @@ use quantum_domain::{
     ProviderSource, Query, ShellExecutor,
 };
 
-use crate::config::ProviderConfig;
+use quantum_config::ProviderConfig;
 
 /// Provider that runs commands and parses output declaratively.
 pub struct DeclarativeShellProvider {
@@ -229,7 +229,7 @@ mod tests {
             command: vec!["echo".to_string()],
             refresh: None,
             parse: Some("lines".to_string()),
-            match_template: Some(crate::config::loader::MatchTemplate {
+            match_template: Some(quantum_config::MatchTemplate {
                 title: Some("Item: {0}".to_string()),
                 subtitle: Some("description".to_string()),
             }),

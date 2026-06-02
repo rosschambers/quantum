@@ -54,6 +54,17 @@ impl From<quantum_dbus::DbusError> for InfrastructureError {
         }
     }
 }
+
+impl From<quantum_config::ConfigError> for InfrastructureError {
+    fn from(e: quantum_config::ConfigError) -> Self {
+        use quantum_config::ConfigError as C;
+        match e {
+            C::Io(s) => InfrastructureError::Io(s),
+            C::ConfigParse(s) => InfrastructureError::ConfigParse(s),
+        }
+    }
+}
+
 impl From<quantum_hyprland::HyprlandError> for InfrastructureError {
     fn from(e: quantum_hyprland::HyprlandError) -> Self {
         use quantum_hyprland::HyprlandError as H;

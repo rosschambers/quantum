@@ -4,7 +4,7 @@ use tokio::sync::RwLock;
 
 use quantum_domain::Action;
 
-use crate::InfrastructureError;
+use crate::error::ConfigError;
 
 /// Configuration for a declarative shell provider.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -83,15 +83,15 @@ pub struct ConfigStore {
 
 impl ConfigStore {
     /// Create a new config store and load from file.
-    pub async fn load() -> Result<Self, InfrastructureError> {
+    pub async fn load() -> Result<Self, ConfigError> {
         let path = Self::config_path();
 
         let config = if path.exists() {
-            let content = std::fs::read_to_string(&path)
-                .map_err(|e| InfrastructureError::Io(e.to_string()))?;
+            let content =
+                std::fs::read_to_string(&path).map_err(|e| ConfigError::Io(e.to_string()))?;
 
             toml::from_str(&content)
-                .map_err(|e| InfrastructureError::ConfigParse(format!("TOML parse error: {}", e)))?
+                .map_err(|e| ConfigError::ConfigParse(format!("TOML parse error: {}", e)))?
         } else {
             Config {
                 general: GeneralConfig::default(),
