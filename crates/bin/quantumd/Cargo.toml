@@ -7,7 +7,7 @@ license.workspace = true
 
 [dependencies]
 quantum-ui = { path = "../../ui" }
-quantum-application = { path = "../../application" }
+quantum-application = { path = "../../../src/application" }
 quantum-infrastructure = { path = "../../infrastructure" }
 quantum-domain = { path = "../../../src/domain" }
 tokio.workspace = true

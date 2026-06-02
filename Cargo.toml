@@ -2,7 +2,7 @@
 resolver = "2"
 members = [
     "src/domain",
-    "crates/application",
+    "src/application",
     "crates/infrastructure",
     "crates/ui",
     "crates/bin/quantumd",
