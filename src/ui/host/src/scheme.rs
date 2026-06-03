@@ -44,11 +44,7 @@ pub fn register_quantum_scheme(context: &WebContext, theme_store: Arc<dyn ThemeS
         let bytes = match parsed {
             QuantumPath::Theme { name, path } => theme_store.get_file(&name, &path),
             QuantumPath::Assets { path } => theme_store.get_asset(&path),
-            // Placeholder until P4-T2 lands ThemeStore::get_plugin_file.
-            // The URL parses correctly today, but the lookup returns
-            // None so requests under quantum://plugin/<name>/... still
-            // produce a 404. P4-T2 wires the disk read through.
-            QuantumPath::Plugin { name: _, path: _ } => None,
+            QuantumPath::Plugin { name, path } => theme_store.get_plugin_file(&name, &path),
         };
 
         let Some(bytes_data) = bytes else {
@@ -87,20 +83,9 @@ pub fn register_quantum_scheme(context: &WebContext, theme_store: Arc<dyn ThemeS
 /// Parsed quantum URI path.
 #[derive(Debug, Clone)]
 enum QuantumPath {
-    Theme {
-        name: String,
-        path: String,
-    },
-    Assets {
-        path: String,
-    },
-    // Fields read in P4-T2 (ThemeStore::get_plugin_file). Suppress
-    // dead-code warning for the placeholder match arm in this commit.
-    #[allow(dead_code)]
-    Plugin {
-        name: String,
-        path: String,
-    },
+    Theme { name: String, path: String },
+    Assets { path: String },
+    Plugin { name: String, path: String },
 }
 
 impl QuantumPath {

@@ -108,6 +108,7 @@ fn parse_tokens_table(parsed: toml::Table) -> HashMap<String, String> {
 /// Theme store for loading and cascading themes.
 pub struct ThemeStore {
     themes_dir: PathBuf,
+    plugins_dir: PathBuf,
     active_theme: RwLock<String>,
 }
 
@@ -115,10 +116,12 @@ impl ThemeStore {
     /// Create a new theme store.
     pub fn new(active_theme: Option<String>) -> Self {
         let themes_dir = Self::themes_dir();
+        let plugins_dir = Self::plugins_dir();
         let active = active_theme.unwrap_or_else(|| "default".to_string());
 
         Self {
             themes_dir,
+            plugins_dir,
             active_theme: RwLock::new(active),
         }
     }
@@ -130,7 +133,20 @@ impl ThemeStore {
         let active = active_theme.unwrap_or_else(|| "default".to_string());
         Self {
             themes_dir,
+            plugins_dir: Self::plugins_dir(),
             active_theme: RwLock::new(active),
+        }
+    }
+
+    /// Create a theme store with explicit themes AND plugins directories.
+    /// Intended for tests that exercise the plugin file lookup in
+    /// isolation.
+    #[cfg(test)]
+    fn with_plugins_dir(plugins_dir: PathBuf) -> Self {
+        Self {
+            themes_dir: Self::themes_dir(),
+            plugins_dir,
+            active_theme: RwLock::new("default".to_string()),
         }
     }
 
@@ -142,6 +158,30 @@ impl ThemeStore {
             .unwrap_or_else(|_| format!("{}/.config", std::env::var("HOME").unwrap_or_default()));
 
         PathBuf::from(config_home).join("quantum/themes")
+    }
+
+    /// Get the plugins directory. User plugins live under
+    /// `$XDG_CONFIG_HOME/quantum/plugins/<plugin-name>/`.
+    fn plugins_dir() -> PathBuf {
+        let config_home = std::env::var("XDG_CONFIG_HOME")
+            .unwrap_or_else(|_| format!("{}/.config", std::env::var("HOME").unwrap_or_default()));
+
+        PathBuf::from(config_home).join("quantum/plugins")
+    }
+
+    /// Read a file from a plugin's folder. Used by the `quantum://plugin/...`
+    /// scheme handler. Refuses traversal (`..`), dot segments, and absolute
+    /// paths before touching the disk. Returns `None` if the file does
+    /// not exist.
+    pub fn get_plugin_file(&self, plugin_name: &str, path: &str) -> Option<Vec<u8>> {
+        if path.is_empty() || path.starts_with('/') {
+            return None;
+        }
+        if path.split('/').any(|seg| seg == ".." || seg == ".") {
+            return None;
+        }
+        let full = self.plugins_dir.join(plugin_name).join(path);
+        std::fs::read(&full).ok()
     }
 
     /// Load a theme by name.
@@ -384,6 +424,10 @@ impl quantum_domain::ThemeStore for ThemeStore {
         // Asset path resolution: assets are in the active theme's root or fallback to embedded.
         // Since we can't use async here, we assume default theme for now.
         ThemeStore::get_file(self, "default", &format!("assets/{}", path))
+    }
+
+    fn get_plugin_file(&self, plugin_name: &str, path: &str) -> Option<Vec<u8>> {
+        ThemeStore::get_plugin_file(self, plugin_name, path)
     }
 
     fn resolved_tokens(&self) -> std::collections::HashMap<String, String> {
@@ -691,5 +735,53 @@ mod tests {
 
         // The watcher should not crash, and if files changed, events would be published.
         // This is a basic smoke test. If we got here, the watcher thread spawned successfully.
+    }
+
+    #[test]
+    fn get_plugin_file_serves_existing_file() {
+        let tmp = tempfile::tempdir().unwrap();
+        let plugins_dir = tmp.path().to_path_buf();
+        let plugin = plugins_dir.join("moon");
+        std::fs::create_dir_all(plugin.join("views/widget")).unwrap();
+        std::fs::write(plugin.join("views/widget/index.html"), b"<html>moon</html>").unwrap();
+
+        let store = ThemeStore::with_plugins_dir(plugins_dir);
+        let bytes = store
+            .get_plugin_file("moon", "views/widget/index.html")
+            .expect("found");
+        assert_eq!(bytes, b"<html>moon</html>");
+    }
+
+    #[test]
+    fn get_plugin_file_rejects_dotdot() {
+        let tmp = tempfile::tempdir().unwrap();
+        let store = ThemeStore::with_plugins_dir(tmp.path().to_path_buf());
+        assert!(store
+            .get_plugin_file("moon", "../../../etc/passwd")
+            .is_none());
+        assert!(store
+            .get_plugin_file("moon", "views/../../etc/passwd")
+            .is_none());
+    }
+
+    #[test]
+    fn get_plugin_file_rejects_dot_segment() {
+        let tmp = tempfile::tempdir().unwrap();
+        let store = ThemeStore::with_plugins_dir(tmp.path().to_path_buf());
+        assert!(store.get_plugin_file("moon", "./views/x.html").is_none());
+    }
+
+    #[test]
+    fn get_plugin_file_rejects_absolute_path() {
+        let tmp = tempfile::tempdir().unwrap();
+        let store = ThemeStore::with_plugins_dir(tmp.path().to_path_buf());
+        assert!(store.get_plugin_file("moon", "/etc/passwd").is_none());
+    }
+
+    #[test]
+    fn get_plugin_file_returns_none_for_missing() {
+        let tmp = tempfile::tempdir().unwrap();
+        let store = ThemeStore::with_plugins_dir(tmp.path().to_path_buf());
+        assert!(store.get_plugin_file("moon", "views/none.html").is_none());
     }
 }

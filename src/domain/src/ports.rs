@@ -58,6 +58,13 @@ pub trait ThemeStore: Send + Sync {
     /// Get an asset file from the active theme. Returns None if not found.
     /// This is a synchronous method since URI handlers run on the GTK thread.
     fn get_asset(&self, path: &str) -> Option<Vec<u8>>;
+    /// Get a file from a user-authored plugin's folder. Returns None if
+    /// not found or if `path` would escape the plugin's directory.
+    /// Default impl returns None so test doubles and ThemeStores that
+    /// don't serve plugins keep compiling without changes.
+    fn get_plugin_file(&self, _plugin_name: &str, _path: &str) -> Option<Vec<u8>> {
+        None
+    }
     /// Get resolved tokens for CSS variable injection.
     /// This is a synchronous method for use in URI handlers on the GTK thread.
     fn resolved_tokens(&self) -> std::collections::HashMap<String, String>;
