@@ -171,10 +171,26 @@ impl WidgetWindow {
             }
         }
 
-        // The scheme handler resolves paths against `views/<view_name>/...`
-        // so the URL must include the `views/` segment. ThemeStore's
-        // candidate_paths helper then maps to the Vite `dist/` subdir.
-        let uri = format!("quantum://theme/default/views/{}/index.html", view_name);
+        // Resolve the URL depending on whether this is a theme view or
+        // a plugin view. Plugin view names take the shape
+        // `plugin/<plugin-name>/<view-name>` and resolve to
+        // `quantum://plugin/<plugin-name>/views/<view-name>/index.html`
+        // (the scheme handler routes those to ~/.config/quantum/plugins/...
+        // through `ThemeStore::get_plugin_file`). Theme views stay on the
+        // existing `quantum://theme/default/views/<name>/index.html`
+        // route.
+        let uri = if let Some(plugin_path) = view_name.strip_prefix("plugin/") {
+            // plugin_path is "<plugin-name>/<view-name>"; split once.
+            if let Some((plugin, view)) = plugin_path.split_once('/') {
+                format!("quantum://plugin/{}/views/{}/index.html", plugin, view)
+            } else {
+                // Malformed plugin view key; fall back to a theme lookup
+                // that will 404 cleanly rather than panicking.
+                format!("quantum://theme/default/views/{}/index.html", view_name)
+            }
+        } else {
+            format!("quantum://theme/default/views/{}/index.html", view_name)
+        };
         webview.load_uri(&uri);
         window.set_child(Some(&webview));
 

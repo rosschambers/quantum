@@ -162,10 +162,7 @@ function render(state) {
 }
 
 // Default channel is "<plugin-name>.<script-name>".
-client
-  .call('provider.query', { id: 'moon-distance.moon-distance' })
-  .then(render);
-
+// Subscribe to the polling channel; render fires on every new tick.
 client.subscribe('moon-distance.moon-distance', render);
 
 btn.addEventListener('click', () => {
@@ -205,10 +202,12 @@ methods are exposed:
 
   Makes an IPC call. The most useful methods for plugin authors:
 
-  - `provider.query` with `{ id: "<channel>" }` - fetches the most
-    recent payload published on a channel.
   - `action.invoke` with `{ provider: "<plugin-name>", action: "<name>" }` -
     runs an action script. Returns its stdout as the response.
+
+  Plugin channels are NOT addressable through `provider.query`. To get
+  initial data, use `subscribe` and wait for the next polling tick, or
+  invoke an action that synchronously returns the data you need.
 
 `window.quantum.createClient().subscribe(channel, callback): () => void`
 

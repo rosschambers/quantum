@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Manual end-to-end smoke test for the plugin system.
 # Installs a moon-distance fake plugin into the user's plugins dir,
-# then exercises provider.query, view.show, and action.invoke against
+# then exercises view.show, plugin.reload, and action.invoke against
 # a running quantumd.
 #
 # Usage:
@@ -50,7 +50,6 @@ cat > "$PLUGIN_DIR/views/moon-widget/index.html" <<'INNER'
       if (!state) return;
       btn.textContent = 'Moon: ' + Math.round(state.distance_km / 1000) + ' thousand km';
     }
-    client.call('provider.query', { id: 'moon-distance.moon-distance' }).then(render);
     client.subscribe('moon-distance.moon-distance', render);
     btn.addEventListener('click', () => {
       client.call('action.invoke', { provider: 'moon-distance', action: 'open-calendar' });
@@ -65,9 +64,6 @@ echo "Plugin installed. Now (with the daemon running):"
 echo
 echo "  Check the startup log for 'Registered plugin moon-distance'."
 echo "  Then run the following IPC checks:"
-echo
-echo "  ./target/debug/quantumctl call provider.query '{\"id\":\"moon-distance.moon-distance\"}'"
-echo "    -> {\"distance_km\":384400} (after the first 5s tick)"
 echo
 echo "  ./target/debug/quantumctl call view.show '{\"name\":\"plugin/moon-distance/moon-widget\"}'"
 echo "    -> a WebKit window opens with 'Moon: 384 thousand km'"

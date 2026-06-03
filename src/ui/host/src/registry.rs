@@ -136,6 +136,22 @@ impl WindowConstructor for ManagedWindowConstructor {
                     monitor,
                 )))
             }
+            other if other.starts_with("plugin/") => {
+                // Plugin views look like `plugin/<plugin-name>/<view-name>`.
+                // The window itself is a regular WidgetWindow; only the
+                // URL it loads is different (see `WidgetWindow::new`,
+                // which detects the `plugin/` prefix and emits a
+                // `quantum://plugin/...` URL instead of a theme URL).
+                Some(ManagedWindow::Widget(WidgetWindow::new(
+                    &self.app,
+                    view_name.to_string(),
+                    self.dispatcher.clone(),
+                    self.theme_store.clone(),
+                    self.runtime.clone(),
+                    self.event_tx.clone(),
+                    monitor,
+                )))
+            }
             _ => None,
         }
     }
