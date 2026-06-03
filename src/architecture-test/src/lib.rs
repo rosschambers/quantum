@@ -18,6 +18,7 @@ mod tests {
                 "quantum-dbus",
                 "quantum-hyprland",
                 "quantum-config",
+                "quantum-plugins",
             ]
             .into_iter()
             .collect(),

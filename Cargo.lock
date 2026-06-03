@@ -1911,6 +1911,7 @@ dependencies = [
  "quantum-dbus",
  "quantum-domain",
  "quantum-hyprland",
+ "quantum-plugins",
  "serde",
  "serde_json",
  "shell-words",

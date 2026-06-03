@@ -10,6 +10,7 @@ quantum-domain = { path = "../domain" }
 quantum-dbus = { path = "../dbus" }
 quantum-hyprland = { path = "../hyprland" }
 quantum-config = { path = "../config" }
+quantum-plugins = { path = "../plugins" }
 tokio.workspace = true
 async-trait.workspace = true
 serde.workspace = true
