@@ -6,7 +6,7 @@ rust-version.workspace = true
 license.workspace = true
 
 [dependencies]
-quantum-domain = { path = "../../src/domain" }
+quantum-domain = { path = "../domain" }
 async-trait.workspace = true
 tokio.workspace = true
 thiserror.workspace = true

@@ -29,7 +29,7 @@ Crates and their allowed dependencies:
 - `infrastructure` importing `application` or `ui`.
 - `ui` importing `infrastructure` directly (must go through `application`).
 
-A CI test in `src/architecture-test/src/lib.rs` enforces these rules by parsing
+A CI test in `tests/architecture-test/src/lib.rs` enforces these rules by parsing
 Cargo metadata. Do not weaken it.
 
 ## Commit Style

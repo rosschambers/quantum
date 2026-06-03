@@ -6,7 +6,7 @@ rust-version.workspace = true
 license.workspace = true
 
 [dependencies]
-quantum-domain = { path = "../domain" }
+quantum-domain = { path = "../../domain" }
 quantum-dbus = { path = "../dbus" }
 quantum-hyprland = { path = "../hyprland" }
 quantum-config = { path = "../config" }

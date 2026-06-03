@@ -10,7 +10,7 @@ use quantum_domain::EventBus;
 
 // Embed the default theme
 static DEFAULT_THEME: include_dir::Dir<'_> =
-    include_dir::include_dir!("$CARGO_MANIFEST_DIR/../ui/themes/default");
+    include_dir::include_dir!("$CARGO_MANIFEST_DIR/../../ui/themes/default");
 
 /// Resolved view from embedded or disk sources.
 #[derive(Debug, Clone)]

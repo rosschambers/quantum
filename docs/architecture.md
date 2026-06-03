@@ -63,7 +63,7 @@ GTK4 and WebKitGTK windows, Svelte 5 frontends, and browser bridges. Contains:
 
 #### Testing Crate
 
-- **`src/architecture-test`** — Enforces dependency rules via `cargo_metadata`
+- **`tests/architecture-test`** — Enforces dependency rules via `cargo_metadata`
 
 ---
 

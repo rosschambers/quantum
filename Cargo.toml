@@ -2,19 +2,19 @@
 resolver = "2"
 members = [
     "src/domain",
-    "src/dbus",
-    "src/hyprland",
     "src/application",
-    "src/providers",
-    "src/plugins",
-    "src/config",
-    "src/theme-store",
-    "src/ipc",
+    "src/infrastructure/dbus",
+    "src/infrastructure/hyprland",
+    "src/infrastructure/config",
+    "src/infrastructure/theme-store",
+    "src/infrastructure/ipc",
+    "src/infrastructure/providers",
+    "src/infrastructure/plugins",
     "src/ui/host",
     "src/binaries/quantumd",
     "src/binaries/quantumctl",
     "src/binaries/quantum-dev",
-    "src/architecture-test",
+    "tests/architecture-test",
     "tests/e2e",
 ]
 

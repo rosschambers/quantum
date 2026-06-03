@@ -6,7 +6,7 @@ rust-version.workspace = true
 license.workspace = true
 
 [dependencies]
-quantum-domain = { path = "../domain" }
+quantum-domain = { path = "../../domain" }
 tokio.workspace = true
 serde.workspace = true
 thiserror.workspace = true

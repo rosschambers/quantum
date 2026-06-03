@@ -1,18 +1,24 @@
 [package]
-name = "quantum-dbus"
+name = "quantum-theme"
 version = "0.1.0"
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 
 [dependencies]
-quantum-domain = { path = "../domain" }
+quantum-domain = { path = "../../domain" }
 tokio.workspace = true
 async-trait.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
 tracing.workspace = true
-zbus = { version = "4", default-features = false, features = ["tokio"] }
+notify = "6"
+notify-debouncer-mini = "0.4"
+include_dir = "0.7"
+toml = "0.8"
+dirs = "5.0"
 futures.workspace = true
-async-stream = "0.3"
+
+[dev-dependencies]
+tempfile = "3"
