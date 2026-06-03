@@ -8,7 +8,9 @@
 pub mod description;
 pub mod error;
 pub mod manifest;
+pub mod walker;
 
 pub use description::{ActionScript, IdleScript, PluginDescription, PolledScript, ViewBundle};
 pub use error::PluginsError;
 pub use manifest::{parse_manifest, Manifest, ScriptConfig};
+pub use walker::walk;
