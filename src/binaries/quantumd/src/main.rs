@@ -1,4 +1,5 @@
 mod gtk_loop;
+mod plugin_loop;
 mod runtime;
 
 use std::path::PathBuf;
@@ -23,8 +24,9 @@ use quantum_ipc::{
 use quantum_providers::{
     BluezProvider, DeclarativeShellProvider, DesktopAppsProvider, HyprlandActiveWindowProvider,
     HyprlandWindowsProvider, InMemoryProviderRegistry, LogindBrightnessProvider, MprisProvider,
-    NetworkManagerProvider, PowerProfilesDaemonProvider, ProcStatsProvider, PulseAudioProvider,
-    ShellCommandProvider, SystemPowerProvider, TokioShellExecutor, UpowerBatteryProvider,
+    NetworkManagerProvider, PluginScriptProvider, PowerProfilesDaemonProvider, ProcStatsProvider,
+    PulseAudioProvider, ShellCommandProvider, SystemPowerProvider, TokioShellExecutor,
+    UpowerBatteryProvider,
 };
 use quantum_theme::ThemeStore;
 use quantum_ui::{DummyWindowHost, IpcDispatcher as UiIpcDispatcher};
@@ -105,6 +107,15 @@ impl EventBus for BroadcastingEventBus {
     async fn subscribe(&self, _event: &str) -> Result<(), DomainError> {
         Ok(())
     }
+}
+
+/// Resolve the user-side plugins directory. Falls back to `~/.config`
+/// if `XDG_CONFIG_HOME` is unset, matching the convention used by the
+/// theme store and standard XDG semantics.
+fn plugins_dir() -> PathBuf {
+    let config_home = std::env::var("XDG_CONFIG_HOME")
+        .unwrap_or_else(|_| format!("{}/.config", std::env::var("HOME").unwrap_or_default()));
+    PathBuf::from(config_home).join("quantum/plugins")
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -448,6 +459,74 @@ async fn setup_daemon(
         }
         Err(e) => tracing::warn!(error = ?e, "SystemPowerProvider unavailable"),
     }
+
+    // Plugins: walk ~/.config/quantum/plugins/, register one
+    // PluginScriptProvider per discovered plugin, spawn one polling task
+    // per polled script. Failure to walk (or to register any individual
+    // plugin) logs a warning but never aborts startup — the daemon must
+    // come up with built-in providers regardless of plugin state.
+    let plugins_dir = plugins_dir();
+    let plugin_descs = match quantum_plugins::walk(&plugins_dir) {
+        Ok(d) => d,
+        Err(e) => {
+            tracing::warn!(
+                "failed to walk plugins directory {}: {e}; continuing with no plugins",
+                plugins_dir.display()
+            );
+            Vec::new()
+        }
+    };
+    let mut total_plugins = 0usize;
+    let mut total_polled = 0usize;
+    let mut total_idle = 0usize;
+    let mut total_actions = 0usize;
+    let mut total_views = 0usize;
+    for desc in plugin_descs {
+        total_plugins += 1;
+        total_polled += desc.polled_scripts.len();
+        total_idle += desc.idle_scripts.len();
+        total_actions += desc.actions.len();
+        total_views += desc.views.len();
+
+        for ps in &desc.polled_scripts {
+            let channel = ps.channel.clone();
+            let interval = ps.interval;
+            let command = ps.command.clone();
+            let plugin_dir = desc.dir.clone();
+            let plugin_name = desc.name.clone();
+            let event_bus_clone = event_bus.clone();
+            tokio::spawn(async move {
+                plugin_loop::run_polling_script_loop(
+                    channel,
+                    interval,
+                    command,
+                    plugin_dir,
+                    plugin_name,
+                    event_bus_clone,
+                )
+                .await;
+            });
+        }
+
+        let provider = Arc::new(PluginScriptProvider::new(
+            &desc.name,
+            desc.polled_scripts.clone(),
+            desc.idle_scripts.clone(),
+            desc.actions.clone(),
+            shell_executor.clone(),
+        ));
+        registry
+            .register(
+                provider.id().clone(),
+                provider as Arc<dyn quantum_domain::ProviderSource>,
+            )
+            .await;
+        info!("Registered plugin '{}'", desc.name);
+    }
+    info!(
+        "Loaded {} plugins ({} polled scripts, {} idle scripts, {} actions, {} views)",
+        total_plugins, total_polled, total_idle, total_actions, total_views
+    );
 
     // Use cases
     let search_use_case = Arc::new(SearchUseCase::new(registry.clone()));

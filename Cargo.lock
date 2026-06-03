@@ -1992,6 +1992,7 @@ dependencies = [
  "quantum-domain",
  "quantum-hyprland",
  "quantum-ipc",
+ "quantum-plugins",
  "quantum-providers",
  "quantum-theme",
  "quantum-ui",

@@ -48,6 +48,7 @@ mod tests {
                 "quantum-ipc",
                 "quantum-providers",
                 "quantum-hyprland",
+                "quantum-plugins",
             ]
             .into_iter()
             .collect(),
