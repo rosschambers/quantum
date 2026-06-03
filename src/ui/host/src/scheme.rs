@@ -41,6 +41,7 @@ pub fn register_quantum_scheme(context: &WebContext, theme_store: Arc<dyn ThemeS
         };
 
         let path_for_mime = parsed.path();
+        let is_plugin = matches!(parsed, QuantumPath::Plugin { .. });
         let bytes = match parsed {
             QuantumPath::Theme { name, path } => theme_store.get_file(&name, &path),
             QuantumPath::Assets { path } => theme_store.get_asset(&path),
@@ -67,7 +68,10 @@ pub fn register_quantum_scheme(context: &WebContext, theme_store: Arc<dyn ThemeS
         let final_bytes = if is_html {
             let html = String::from_utf8_lossy(&bytes_data).into_owned();
             let tokens = theme_store.resolved_tokens();
-            let injected = inject_tokens(&html, &tokens);
+            let mut injected = inject_tokens(&html, &tokens);
+            if is_plugin {
+                injected = inject_plugin_client(&injected);
+            }
             injected.into_bytes()
         } else {
             bytes_data
@@ -181,6 +185,102 @@ fn content_type_for(path: &str) -> &'static str {
     }
 }
 
+/// JavaScript bootstrap injected into plugin HTML before the page's
+/// own scripts run. Wraps the existing bridge globals
+/// (`window.webkit.messageHandlers.quantum`, `window.__quantum_resolve`,
+/// `window.__quantum_reject`, `window.__quantum_notify`) into a tiny
+/// `window.quantum.createClient()` surface so plugin script.js can call
+/// IPC methods without bundling `@quantum/client`.
+const PLUGIN_CLIENT_SCRIPT: &str = r#"<script>
+(function () {
+    var responseCallbacks = [];
+    var notifyCallbacks = [];
+    var nextId = 1;
+    var pending = {};
+
+    function ensureGlobals() {
+        if (!window.__quantum_resolve) {
+            window.__quantum_resolve = function (id, result) {
+                var pc = pending[id];
+                if (!pc) return;
+                delete pending[id];
+                pc.resolve(result);
+            };
+        }
+        if (!window.__quantum_reject) {
+            window.__quantum_reject = function (id, err) {
+                var pc = pending[id];
+                if (!pc) return;
+                delete pending[id];
+                pc.reject(err || { code: -32603, message: 'Internal error' });
+            };
+        }
+        if (!window.__quantum_notify) {
+            window.__quantum_notify = function (channel, payload) {
+                notifyCallbacks.forEach(function (cb) { cb(channel, payload); });
+            };
+        }
+    }
+
+    function createClient() {
+        ensureGlobals();
+        return {
+            call: function (method, params) {
+                return new Promise(function (resolve, reject) {
+                    var transport = window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.quantum;
+                    if (!transport) {
+                        reject({ code: -32000, message: 'quantum bridge unavailable' });
+                        return;
+                    }
+                    var id = nextId++;
+                    pending[id] = { resolve: resolve, reject: reject };
+                    transport.postMessage(JSON.stringify({ jsonrpc: '2.0', id: id, method: method, params: params }));
+                });
+            },
+            subscribe: function (channel, callback) {
+                ensureGlobals();
+                var listener = function (ch, payload) {
+                    if (ch === channel) callback(payload);
+                };
+                notifyCallbacks.push(listener);
+                return function () {
+                    var idx = notifyCallbacks.indexOf(listener);
+                    if (idx !== -1) notifyCallbacks.splice(idx, 1);
+                };
+            },
+        };
+    }
+
+    window.quantum = { createClient: createClient };
+})();
+</script>
+"#;
+
+/// Insert the plugin-client bootstrap script into HTML. Placed after the
+/// `</head>` tag if one exists, otherwise immediately after the first `>`
+/// (which closes a doctype declaration or `<html ...>`). Falling-back
+/// prepends to the body for HTML fragments with no recognisable structure.
+pub fn inject_plugin_client(html: &str) -> String {
+    if let Some(idx) = html.find("</head>") {
+        let mut out = String::with_capacity(html.len() + PLUGIN_CLIENT_SCRIPT.len());
+        out.push_str(&html[..idx]);
+        out.push_str(PLUGIN_CLIENT_SCRIPT);
+        out.push_str(&html[idx..]);
+        return out;
+    }
+    if let Some(idx) = html.find('>') {
+        let mut out = String::with_capacity(html.len() + PLUGIN_CLIENT_SCRIPT.len());
+        out.push_str(&html[..=idx]);
+        out.push_str(PLUGIN_CLIENT_SCRIPT);
+        out.push_str(&html[idx + 1..]);
+        return out;
+    }
+    let mut out = String::with_capacity(html.len() + PLUGIN_CLIENT_SCRIPT.len());
+    out.push_str(PLUGIN_CLIENT_SCRIPT);
+    out.push_str(html);
+    out
+}
+
 /// Inject resolved tokens into HTML by replacing the placeholder with CSS.
 pub fn inject_tokens(html: &str, tokens: &std::collections::HashMap<String, String>) -> String {
     let css = quantum_domain::tokens_to_css(tokens);
@@ -207,6 +307,30 @@ mod inject_tests {
         let html = "<html><body>no placeholder</body></html>";
         let out = inject_tokens(html, &HashMap::new());
         assert_eq!(out, html);
+    }
+
+    #[test]
+    fn plugin_client_injected_before_page_scripts() {
+        let html = r#"<html><head><title>x</title></head><body><script src="script.js"></script></body></html>"#;
+        let out = inject_plugin_client(html);
+        assert!(out.contains("window.quantum"));
+        assert!(out.contains("createClient"));
+        let qpos = out.find("window.quantum").expect("present");
+        let spos = out.find("script.js").expect("present");
+        assert!(
+            qpos < spos,
+            "window.quantum injection must precede page scripts"
+        );
+    }
+
+    #[test]
+    fn plugin_client_injected_when_no_head() {
+        let html = r#"<html><body><script src="x.js"></script></body></html>"#;
+        let out = inject_plugin_client(html);
+        assert!(out.contains("window.quantum"));
+        let qpos = out.find("window.quantum").expect("present");
+        let spos = out.find("x.js").expect("present");
+        assert!(qpos < spos, "injection must precede the body script");
     }
 }
 
