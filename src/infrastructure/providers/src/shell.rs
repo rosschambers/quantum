@@ -101,8 +101,12 @@ impl ShellExecutor for TokioShellExecutor {
             cmd.arg(arg);
         }
 
-        cmd.spawn()
+        let mut child = cmd
+            .spawn()
             .map_err(|e| DomainError::Unsupported(e.to_string()))?;
+        tokio::spawn(async move {
+            let _ = child.wait().await;
+        });
 
         Ok(())
     }

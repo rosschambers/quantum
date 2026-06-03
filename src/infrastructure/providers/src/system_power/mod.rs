@@ -143,8 +143,12 @@ impl SystemPowerProvider {
         cmd.stdin(Stdio::null());
         cmd.stdout(Stdio::null());
         cmd.stderr(Stdio::null());
-        cmd.spawn()
+        let mut child = cmd
+            .spawn()
             .map_err(|e| DomainError::Unsupported(format!("system_power: spawn lock: {e}")))?;
+        tokio::spawn(async move {
+            let _ = child.wait().await;
+        });
         Ok(ActionOutcome { message: None })
     }
 }
