@@ -96,22 +96,77 @@ impl HyprlandSocketClient {
 
     /// Subscribe to Hyprland events from the event socket.
     /// Returns a stream of parsed events.
+    ///
+    /// The stream transparently reconnects to the event socket on
+    /// disconnect or connect failure, using exponential backoff
+    /// starting at 1 second and capped at 30 seconds. The backoff is
+    /// reset to 1 second after the first successfully read line on
+    /// each new connection, so a hyprland restart costs at most one
+    /// short delay before events resume.
+    ///
+    /// Per-line read errors (for example UTF-8 boundary glitches in
+    /// the line-buffered reader) are logged at `warn` and skipped;
+    /// only a clean EOF (`Ok(None)`) triggers a reconnect.
     pub fn subscribe_events(&self) -> Result<BoxStream<'static, HyprlandEvent>, HyprlandError> {
         let path = self.event_socket.clone();
         let stream = async_stream::stream! {
-            let stream = match UnixStream::connect(&path).await {
-                Ok(s) => s,
-                Err(err) => {
-                    tracing::warn!("hyprland event socket connect failed: {err}");
-                    return;
+            use std::time::Duration;
+            const INITIAL_BACKOFF: Duration = Duration::from_secs(1);
+            const MAX_BACKOFF: Duration = Duration::from_secs(30);
+            let mut backoff = INITIAL_BACKOFF;
+            loop {
+                tracing::info!(
+                    "hyprland: connecting to event socket at {}",
+                    path.display()
+                );
+                let stream = match UnixStream::connect(&path).await {
+                    Ok(s) => s,
+                    Err(err) => {
+                        tracing::warn!(
+                            "hyprland event socket connect failed: {err}; retrying in {:?}",
+                            backoff
+                        );
+                        tokio::time::sleep(backoff).await;
+                        backoff = (backoff * 2).min(MAX_BACKOFF);
+                        continue;
+                    }
+                };
+                let reader = BufReader::new(stream);
+                let mut lines = reader.lines();
+                let mut received_any = false;
+                loop {
+                    match lines.next_line().await {
+                        Ok(Some(line)) => {
+                            if !received_any {
+                                received_any = true;
+                                backoff = INITIAL_BACKOFF;
+                            }
+                            if let Some(ev) = parse_hypr_event_line(line.trim()) {
+                                yield ev;
+                            }
+                        }
+                        Ok(None) => {
+                            // Clean EOF - hyprland closed the socket
+                            // (likely a restart). Break to the outer
+                            // loop to reconnect.
+                            tracing::info!(
+                                "hyprland event socket closed; reconnecting in {:?}",
+                                backoff
+                            );
+                            break;
+                        }
+                        Err(err) => {
+                            // Transient per-line error; do not tear
+                            // down the whole subscription.
+                            tracing::warn!(
+                                "hyprland event socket read error: {err}; skipping line"
+                            );
+                            continue;
+                        }
+                    }
                 }
-            };
-            let reader = BufReader::new(stream);
-            let mut lines = reader.lines();
-            while let Ok(Some(line)) = lines.next_line().await {
-                if let Some(ev) = parse_hypr_event_line(line.trim()) {
-                    yield ev;
-                }
+                tokio::time::sleep(backoff).await;
+                backoff = (backoff * 2).min(MAX_BACKOFF);
             }
         };
         Ok(Box::pin(stream))
