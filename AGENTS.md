@@ -57,17 +57,11 @@ Commit per task in the implementation plan. Small commits beat big ones.
 
 ## Build Environment
 
-- **All builds, tests, lint, and format checks run inside the dev container
-  via `./scripts/devsh.sh <command>`.** The container pins Rust 1.85 and has
-  GTK4, WebKit2GTK, libxkbcommon, gtk4-layer-shell preinstalled.
-- **Never use `nix-shell` for builds.** `shell.nix` only exists so the daemon
-  can run on the host with a real Wayland session for smoke testing.
-- Host (likely newer rustc) and container (1.85) share the bind-mounted
-  `target/` directory. If you switch environments mid-task, expect a full
-  rebuild. Always run the binary in the environment that built it.
-- The audio provider currently shells out to `pactl` (the user's host
-  must have it). The container has `libpulse-dev` installed for
-  future native-libpulse work but no Rust crates link against it yet.
+- **All builds, tests, lint, and format checks run via `./scripts/devsh.sh
+  <command>`, which is a thin nix-shell wrapper around `shell.nix`.** The
+  host's nixpkgs provides Rust 1.85, GTK4, WebKitGTK 6, and gtk4-layer-shell.
+- The audio provider currently shells out to `pactl`, so that binary must be
+  available in the host environment.
 
 ## Provider and Event Conventions
 

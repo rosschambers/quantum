@@ -1,15 +1,6 @@
-# Host-side shell for running quantumd on a real Wayland session.
-#
-# The dev container at .devcontainer/ remains the canonical build env. This
-# shell.nix exists only because launching apps on the host's Wayland session
-# requires the daemon to run as a host process — Docker can't spawn graphical
-# children into the host compositor.
-#
-# Usage:
-#   nix-shell
-#   cargo build --bin quantumd --bin quantumctl
-#   ./target/debug/quantumd &
-#   ./target/debug/quantumctl system status
+# Build + dev shell for the Quantum workspace. Used by `scripts/devsh.sh` to
+# run all builds, tests, lint, and fmt commands. Run `nix-shell` directly to
+# drop into an interactive shell.
 
 { pkgs ? import <nixpkgs> {} }:
 

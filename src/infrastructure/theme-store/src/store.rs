@@ -37,7 +37,7 @@ fn candidate_paths(path: &str) -> Vec<String> {
     if let Some(rest) = path.strip_prefix("views/") {
         let segments: Vec<&str> = rest.split('/').collect();
         // Skip if path already contains `dist/` somewhere.
-        let already_has_dist = segments.iter().any(|seg| *seg == "dist");
+        let already_has_dist = segments.contains(&"dist");
         if !already_has_dist {
             // Try inserting `dist/` after each potential view-root boundary.
             // Most-nested first so `widgets/clock` wins over `widgets`.
@@ -519,16 +519,16 @@ mod tests {
         let dist_file = store.get_file("default", "views/launcher/dist/index.html");
 
         // If that fails, verify at least some embedded files exist
-        if dist_file.is_none() {
+        if let Some(content_bytes) = dist_file {
+            let content = String::from_utf8(content_bytes).expect("valid utf8");
+            assert!(!content.is_empty(), "index.html should have content");
+        } else {
             // Fallback: check tokens.toml exists as a sanity check
             let tokens = store.get_file("default", "tokens.toml");
             assert!(
                 tokens.is_some(),
                 "embedded default theme should have tokens.toml"
             );
-        } else {
-            let content = String::from_utf8(dist_file.unwrap()).expect("valid utf8");
-            assert!(!content.is_empty(), "index.html should have content");
         }
     }
 

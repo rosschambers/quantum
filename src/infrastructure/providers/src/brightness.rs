@@ -62,10 +62,7 @@ impl LogindBrightnessProvider {
         // Try to connect to logind for write support.
         let (conn, session_path) = match Connection::system().await {
             Ok(c) => {
-                let sp = match get_session_path(&c).await {
-                    Ok(path) => Some(path),
-                    Err(_) => None,
-                };
+                let sp = get_session_path(&c).await.ok();
                 (Some(c), sp)
             }
             Err(_) => (None, None),
