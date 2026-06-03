@@ -3,13 +3,19 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::path::Path;
 use std::sync::Arc;
-use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::net::{UnixListener, UnixStream};
 use tokio::sync::broadcast;
 
 use crate::error::IpcError;
 use crate::protocol::{JsonRpcError, JsonRpcRequest, JsonRpcResponse};
 use quantum_domain::EventEnvelope;
+
+/// Maximum size in bytes of a single JSON-RPC request line. A misbehaving
+/// client that never sends a newline would otherwise grow the read buffer
+/// without bound. Real requests are tiny; 1 MiB is generous headroom for
+/// theme.reload-style payloads.
+const MAX_LINE_BYTES: u64 = 1024 * 1024;
 
 /// Result type for dispatch operations.
 pub type DispatchResult = Result<Value, DispatchError>;
@@ -85,81 +91,107 @@ impl UnixSocketServer {
 }
 
 /// Handle a single client connection.
+///
+/// One task owns both halves of the connection: it reads JSON-RPC requests
+/// from the client and forwards broadcast events as JSON-RPC notifications
+/// to the same client. Using `tokio::select!` over both sources means that
+/// when the client disconnects (read returns EOF or error), the broadcast
+/// forwarder exits with it — no orphaned task, no leaked receiver slot,
+/// no need to share the writer behind a mutex.
 async fn handle_connection<D: Dispatcher + 'static>(
     stream: UnixStream,
     dispatcher: Arc<D>,
     broadcast_tx: broadcast::Sender<EventEnvelope>,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let (reader, writer) = stream.into_split();
+    let (reader, mut writer) = stream.into_split();
     let mut reader = BufReader::new(reader);
-    let writer = Arc::new(tokio::sync::Mutex::new(writer));
+    let mut event_rx = broadcast_tx.subscribe();
     let mut line = String::new();
 
-    // Subscribe to broadcast events for this connection.
-    let mut event_rx = broadcast_tx.subscribe();
-    let writer_for_events = writer.clone();
-
-    // Spawn a task to forward broadcast events as notifications to this client.
-    tokio::spawn(async move {
-        loop {
-            match event_rx.recv().await {
-                Ok(env) => {
-                    // `env.payload` is `Box<RawValue>` carrying raw JSON text
-                    // straight from the publisher. We inline it verbatim into
-                    // the JSON-RPC notification — no `to_value` round trip,
-                    // and the channel name still needs proper escaping so we
-                    // serialize that one field with `serde_json::to_string`.
-                    let channel_json = match serde_json::to_string(&env.channel) {
-                        Ok(s) => s,
-                        Err(err) => {
-                            tracing::warn!("ipc: failed to serialize channel: {err}");
-                            continue;
+    loop {
+        line.clear();
+        // `take` is reconstructed per iteration so its remaining-byte
+        // counter resets — we want a per-line cap, not a per-connection
+        // cap. Binding to a `let` keeps the temporary alive for the full
+        // duration of the `select!` future.
+        let mut limited_reader = (&mut reader).take(MAX_LINE_BYTES);
+        tokio::select! {
+            // Read JSON-RPC requests from the client. The `take` adapter
+            // caps the bytes a single `read_line` call will consume so a
+            // client that never sends a newline cannot grow `line`
+            // without bound and OOM the daemon.
+            result = limited_reader.read_line(&mut line) => {
+                match result {
+                    Ok(0) => break, // Connection closed
+                    Ok(n) if (n as u64) >= MAX_LINE_BYTES => {
+                        tracing::warn!(
+                            "ipc: request exceeded {} bytes without newline; closing connection",
+                            MAX_LINE_BYTES
+                        );
+                        let error_response = JsonRpcResponse::error(
+                            None,
+                            JsonRpcError::new(-32700, "request too large"),
+                        );
+                        if let Ok(response_json) = serde_json::to_string(&error_response) {
+                            let _ = writer.write_all(response_json.as_bytes()).await;
+                            let _ = writer.write_all(b"\n").await;
                         }
-                    };
-                    let line = format!(
-                        "{{\"jsonrpc\":\"2.0\",\"method\":{},\"params\":{}}}\n",
-                        channel_json,
-                        env.payload.get()
-                    );
-                    let mut w = writer_for_events.lock().await;
-                    if w.write_all(line.as_bytes()).await.is_err() {
+                        break;
+                    }
+                    Ok(_) => {
+                        // Parse JSON-RPC request
+                        match serde_json::from_str::<JsonRpcRequest>(&line) {
+                            Ok(request) => {
+                                let response = handle_request(&request, dispatcher.clone()).await;
+                                let response_json = serde_json::to_string(&response)?;
+                                writer.write_all(response_json.as_bytes()).await?;
+                                writer.write_all(b"\n").await?;
+                            }
+                            Err(e) => {
+                                let error_response = JsonRpcResponse::error(
+                                    None,
+                                    JsonRpcError::new(-32700, format!("Parse error: {}", e)),
+                                );
+                                let response_json = serde_json::to_string(&error_response)?;
+                                writer.write_all(response_json.as_bytes()).await?;
+                                writer.write_all(b"\n").await?;
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        tracing::warn!("ipc: read error: {e}");
                         break;
                     }
                 }
-                Err(broadcast::error::RecvError::Lagged(_)) => continue,
-                Err(_) => break,
             }
-        }
-    });
-
-    // Handle JSON-RPC requests from the client on the main connection loop.
-    loop {
-        line.clear();
-        let n = reader.read_line(&mut line).await?;
-
-        if n == 0 {
-            break; // Connection closed
-        }
-
-        // Parse JSON-RPC request
-        match serde_json::from_str::<JsonRpcRequest>(&line) {
-            Ok(request) => {
-                let response = handle_request(&request, dispatcher.clone()).await;
-
-                let response_json = serde_json::to_string(&response)?;
-                let mut w = writer.lock().await;
-                w.write_all(response_json.as_bytes()).await?;
-                w.write_all(b"\n").await?;
-            }
-            Err(e) => {
-                let error_response = JsonRpcResponse::error(
-                    None,
-                    JsonRpcError::new(-32700, format!("Parse error: {}", e)),
-                );
-                let response_json = serde_json::to_string(&error_response)?;
-                let mut w = writer.lock().await;
-                w.write_all(response_json.as_bytes()).await?;
-                w.write_all(b"\n").await?;
+            // Forward broadcast events as JSON-RPC notifications.
+            event = event_rx.recv() => {
+                match event {
+                    Ok(env) => {
+                        // `env.payload` is `Box<RawValue>` carrying raw JSON text
+                        // straight from the publisher. We inline it verbatim into
+                        // the JSON-RPC notification — no `to_value` round trip,
+                        // and the channel name still needs proper escaping so we
+                        // serialize that one field with `serde_json::to_string`.
+                        let channel_json = match serde_json::to_string(&env.channel) {
+                            Ok(s) => s,
+                            Err(err) => {
+                                tracing::warn!("ipc: failed to serialize channel: {err}");
+                                continue;
+                            }
+                        };
+                        let notification = format!(
+                            "{{\"jsonrpc\":\"2.0\",\"method\":{},\"params\":{}}}\n",
+                            channel_json,
+                            env.payload.get()
+                        );
+                        if writer.write_all(notification.as_bytes()).await.is_err() {
+                            break;
+                        }
+                    }
+                    Err(broadcast::error::RecvError::Lagged(_)) => continue,
+                    Err(broadcast::error::RecvError::Closed) => break,
+                }
             }
         }
     }
