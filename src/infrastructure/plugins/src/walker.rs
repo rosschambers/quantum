@@ -368,6 +368,39 @@ mod tests {
     }
 
     #[test]
+    fn malformed_script_does_not_drop_plugin() {
+        let tmp = tempdir().unwrap();
+        let plugin = tmp.path().join("mixed");
+        // 'bad' has sub-minimum interval; 'good' is fine.
+        write_file(
+            &plugin.join("config.toml"),
+            "[scripts.bad]\ninterval = 1\n[scripts.good]\ninterval = 60\n",
+        );
+        write_executable(&plugin.join("scripts/bad"), "#!/bin/sh\n");
+        write_executable(&plugin.join("scripts/good"), "#!/bin/sh\n");
+        write_executable(&plugin.join("actions/open"), "#!/bin/sh\nxdg-open x\n");
+        write_file(&plugin.join("views/widget/index.html"), "<html></html>");
+
+        let result = walk(tmp.path()).expect("plugin must still be discovered");
+        assert_eq!(result.len(), 1, "plugin must not be skipped");
+        let p = &result[0];
+        assert_eq!(p.name, "mixed");
+
+        // The 'good' script is polled, the 'bad' script is downgraded to idle
+        // (because the manifest now has no entry for it).
+        assert_eq!(p.polled_scripts.len(), 1, "good script is polled");
+        assert_eq!(p.polled_scripts[0].channel, "mixed.good");
+        assert_eq!(p.idle_scripts.len(), 1, "bad script falls through to idle");
+        assert_eq!(p.idle_scripts[0].channel, "mixed.bad");
+
+        // Action and view must still be present.
+        assert_eq!(p.actions.len(), 1, "action must be discovered");
+        assert_eq!(p.actions[0].name, "open");
+        assert_eq!(p.views.len(), 1, "view must be discovered");
+        assert_eq!(p.views[0].name, "widget");
+    }
+
+    #[test]
     fn distinct_channels_do_not_collide() {
         let tmp = tempdir().unwrap();
         let a = tmp.path().join("a");

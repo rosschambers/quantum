@@ -38,13 +38,17 @@ pub fn parse_manifest(text: &str) -> Result<Manifest, PluginsError> {
 
     let mut scripts = HashMap::new();
     for (name, raw_script) in raw.scripts {
-        let interval_secs = raw_script.interval.ok_or_else(|| {
-            PluginsError::ConfigParse(format!("missing interval for script '{name}'"))
-        })?;
+        let Some(interval_secs) = raw_script.interval else {
+            tracing::warn!(
+                "script '{name}' has no interval; treating as idle (entry dropped from manifest)"
+            );
+            continue;
+        };
         if interval_secs < MINIMUM_INTERVAL_SECS {
-            return Err(PluginsError::ConfigParse(format!(
-                "interval {interval_secs}s below minimum {MINIMUM_INTERVAL_SECS}s for script '{name}'"
-            )));
+            tracing::warn!(
+                "script '{name}' has interval {interval_secs}s below minimum {MINIMUM_INTERVAL_SECS}s; treating as idle (entry dropped from manifest)"
+            );
+            continue;
         }
         scripts.insert(
             name,
@@ -114,25 +118,32 @@ mod tests {
     }
 
     #[test]
-    fn interval_below_minimum_is_rejected() {
-        let toml = "[scripts.spam]\ninterval = 1\n";
-        let err = parse_manifest(toml).expect_err("must reject");
-        let msg = format!("{err}");
-        assert!(msg.contains("interval"), "error mentions 'interval': {msg}");
+    fn sub_minimum_interval_is_silently_dropped() {
+        let toml = "[scripts.bad]\ninterval = 1\n[scripts.good]\ninterval = 60\n";
+        let result = parse_manifest(toml).expect("malformed entries should not error");
+        assert_eq!(result.scripts.len(), 1);
         assert!(
-            msg.contains("spam") || msg.contains("minimum"),
-            "error mentions script name or minimum: {msg}"
+            result.scripts.contains_key("good"),
+            "good entry must be present"
+        );
+        assert!(
+            !result.scripts.contains_key("bad"),
+            "bad entry must be dropped"
         );
     }
 
     #[test]
-    fn missing_interval_is_rejected() {
-        let toml = "[scripts.broken]\nchannel = \"x\"\n";
-        let err = parse_manifest(toml).expect_err("must reject");
-        let msg = format!("{err}");
+    fn missing_interval_is_silently_dropped() {
+        let toml = "[scripts.broken]\nchannel = \"x\"\n[scripts.ok]\ninterval = 60\n";
+        let result = parse_manifest(toml).expect("missing interval should not error");
+        assert_eq!(result.scripts.len(), 1);
         assert!(
-            msg.contains("interval") || msg.contains("broken"),
-            "error mentions interval or script name: {msg}"
+            result.scripts.contains_key("ok"),
+            "ok entry must be present"
+        );
+        assert!(
+            !result.scripts.contains_key("broken"),
+            "broken entry must be dropped"
         );
     }
 
