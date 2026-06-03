@@ -7,7 +7,6 @@ license.workspace = true
 
 [dependencies]
 quantum-domain = { path = "../../domain" }
-quantum-infrastructure = { path = "../../infrastructure" }
 tokio = { workspace = true, features = ["sync"] }
 clap = { version = "4", features = ["derive"] }
 notify-debouncer-mini = "0.4"

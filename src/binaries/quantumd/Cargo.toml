@@ -8,12 +8,12 @@ license.workspace = true
 [dependencies]
 quantum-ui = { path = "../../ui/host" }
 quantum-application = { path = "../../application" }
-quantum-infrastructure = { path = "../../infrastructure" }
 quantum-theme = { path = "../../theme-store" }
 quantum-config = { path = "../../config" }
 quantum-domain = { path = "../../domain" }
 quantum-ipc = { path = "../../ipc" }
 quantum-providers = { path = "../../providers" }
+quantum-hyprland = { path = "../../hyprland" }
 tokio.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true

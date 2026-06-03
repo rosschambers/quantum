@@ -1,8 +1,11 @@
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
-/// Errors produced by concrete providers. Maps cleanly onto
-/// `InfrastructureError` via the compat From impl in `quantum-infrastructure`.
+/// Errors produced by concrete providers.
+///
+/// Each variant carries a stringified payload so the type is `Clone` and
+/// `Serialize`. Use cases convert these to `DomainError` at the application
+/// boundary; the IPC layer never sees a `ProvidersError` directly.
 #[derive(Debug, Error, Clone, Serialize, Deserialize)]
 #[serde(tag = "kind", content = "data", rename_all = "snake_case")]
 pub enum ProvidersError {

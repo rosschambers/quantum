@@ -8,7 +8,6 @@ publish = false
 
 [dependencies]
 quantum-domain = { path = "../../src/domain" }
-quantum-infrastructure = { path = "../../src/infrastructure" }
 tokio = { workspace = true, features = ["process", "net", "signal", "rt", "io-util"] }
 serde_json.workspace = true
 tempfile = "3"

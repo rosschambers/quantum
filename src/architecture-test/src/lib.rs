@@ -31,20 +31,6 @@ mod tests {
             ["quantum-domain"].into_iter().collect(),
         );
         m.insert(
-            "quantum-infrastructure",
-            [
-                "quantum-domain",
-                "quantum-dbus",
-                "quantum-hyprland",
-                "quantum-config",
-                "quantum-theme",
-                "quantum-ipc",
-                "quantum-providers",
-            ]
-            .into_iter()
-            .collect(),
-        );
-        m.insert(
             "quantum-ui",
             ["quantum-application", "quantum-domain"]
                 .into_iter()
@@ -55,34 +41,19 @@ mod tests {
             [
                 "quantum-ui",
                 "quantum-application",
-                "quantum-infrastructure",
                 "quantum-config",
                 "quantum-theme",
                 "quantum-domain",
                 "quantum-ipc",
                 "quantum-providers",
+                "quantum-hyprland",
             ]
             .into_iter()
             .collect(),
         );
-        m.insert(
-            "quantumctl",
-            ["quantum-domain", "quantum-infrastructure"]
-                .into_iter()
-                .collect(),
-        );
-        m.insert(
-            "quantum-dev",
-            ["quantum-domain", "quantum-infrastructure"]
-                .into_iter()
-                .collect(),
-        );
-        m.insert(
-            "quantum-e2e",
-            ["quantum-domain", "quantum-infrastructure"]
-                .into_iter()
-                .collect(),
-        );
+        m.insert("quantumctl", ["quantum-domain"].into_iter().collect());
+        m.insert("quantum-dev", ["quantum-domain"].into_iter().collect());
+        m.insert("quantum-e2e", ["quantum-domain"].into_iter().collect());
         m
     }
 

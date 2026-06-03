@@ -2,6 +2,9 @@
 
 pub mod error;
 
+pub mod registry;
+pub mod shell;
+
 pub mod audio;
 pub mod battery;
 pub mod bluetooth;
@@ -18,6 +21,8 @@ pub mod shell_command;
 pub mod system_power;
 
 pub use error::ProvidersError;
+pub use registry::InMemoryProviderRegistry;
+pub use shell::TokioShellExecutor;
 
 pub use audio::PulseAudioProvider;
 pub use battery::UpowerBatteryProvider;

@@ -16,16 +16,15 @@ use quantum_application::{
 };
 use quantum_config::{Config, ConfigStore};
 use quantum_domain::{DomainError, EventBus, ProviderId, ProviderSource};
-use quantum_infrastructure::{
-    registry::InMemoryProviderRegistry, shell::TokioShellExecutor, HyprlandSocketClient,
-};
+use quantum_hyprland::HyprlandSocketClient;
 use quantum_ipc::{
     DispatchError, DispatchResult, Dispatcher as IpcDispatcher, EventEnvelope, UnixSocketServer,
 };
 use quantum_providers::{
-    BluezProvider, DesktopAppsProvider, HyprlandActiveWindowProvider, LogindBrightnessProvider,
-    MprisProvider, NetworkManagerProvider, PowerProfilesDaemonProvider, ProcStatsProvider,
-    PulseAudioProvider, ShellCommandProvider, SystemPowerProvider, UpowerBatteryProvider,
+    BluezProvider, DeclarativeShellProvider, DesktopAppsProvider, HyprlandActiveWindowProvider,
+    HyprlandWindowsProvider, InMemoryProviderRegistry, LogindBrightnessProvider, MprisProvider,
+    NetworkManagerProvider, PowerProfilesDaemonProvider, ProcStatsProvider, PulseAudioProvider,
+    ShellCommandProvider, SystemPowerProvider, TokioShellExecutor, UpowerBatteryProvider,
 };
 use quantum_theme::ThemeStore;
 use quantum_ui::{DummyWindowHost, IpcDispatcher as UiIpcDispatcher};
@@ -292,7 +291,7 @@ async fn setup_daemon(
         Ok(client) => {
             let client_arc = Arc::new(client);
             hypr_client_opt = Some(client_arc.clone());
-            match quantum_infrastructure::HyprlandWindowsProvider::new(client_arc).await {
+            match HyprlandWindowsProvider::new(client_arc).await {
                 Ok(provider) => {
                     let id = provider.id().clone();
                     registry
@@ -315,10 +314,7 @@ async fn setup_daemon(
 
     // Register declarative shell providers from config
     for provider_config in &config.provider {
-        match quantum_infrastructure::DeclarativeShellProvider::new(
-            provider_config.clone(),
-            shell_executor.clone(),
-        ) {
+        match DeclarativeShellProvider::new(provider_config.clone(), shell_executor.clone()) {
             Ok(provider) => {
                 let id = ProviderId::from(provider_config.id.clone());
                 info!(

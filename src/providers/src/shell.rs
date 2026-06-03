@@ -4,7 +4,7 @@ use tokio::process::Command;
 
 use quantum_domain::{DomainError, ShellExecutor, ShellOutput};
 
-use crate::InfrastructureError;
+use crate::error::ProvidersError;
 
 /// Tokio-based shell executor for running commands with timeouts.
 pub struct TokioShellExecutor;
@@ -48,7 +48,7 @@ impl ShellExecutor for TokioShellExecutor {
         let future = async {
             cmd.output()
                 .await
-                .map_err(|e| InfrastructureError::Spawn(e.to_string()))
+                .map_err(|e| ProvidersError::Spawn(e.to_string()))
         };
 
         match tokio::time::timeout(timeout_duration, future).await {
@@ -57,7 +57,12 @@ impl ShellExecutor for TokioShellExecutor {
                 stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
                 status: output.status.code().unwrap_or(-1),
             }),
-            Ok(Err(e)) => Err(e.to_domain()),
+            Ok(Err(err)) => {
+                let ProvidersError::Spawn(msg) = err else {
+                    unreachable!("inner future only yields ProvidersError::Spawn")
+                };
+                Err(DomainError::Unsupported(format!("spawn: {}", msg)))
+            }
             Err(_) => Err(DomainError::Unsupported("command timeout".to_string())),
         }
     }
