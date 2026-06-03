@@ -23,6 +23,10 @@ mod tests {
             .collect(),
         );
         m.insert(
+            "quantum-plugins",
+            ["quantum-domain", "quantum-config"].into_iter().collect(),
+        );
+        m.insert(
             "quantum-application",
             ["quantum-domain"].into_iter().collect(),
         );

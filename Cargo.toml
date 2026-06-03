@@ -7,6 +7,7 @@ members = [
     "src/application",
     "src/infrastructure",
     "src/providers",
+    "src/plugins",
     "src/config",
     "src/theme-store",
     "src/ipc",

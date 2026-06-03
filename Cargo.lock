@@ -1905,6 +1905,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "quantum-plugins"
+version = "0.1.0"
+dependencies = [
+ "quantum-config",
+ "quantum-domain",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror",
+ "toml 0.8.23",
+ "tracing",
+]
+
+[[package]]
 name = "quantum-providers"
 version = "0.1.0"
 dependencies = [
