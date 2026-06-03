@@ -6,8 +6,10 @@
 //! Phase 3.
 
 pub mod error;
+pub mod manifest;
 
 pub use error::PluginsError;
+pub use manifest::{parse_manifest, Manifest, ScriptConfig};
 
 use std::path::Path;
 
