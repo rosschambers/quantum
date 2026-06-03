@@ -103,6 +103,15 @@ pub trait HyprlandClient: Send + Sync {
     async fn command(&self, cmd: &str) -> Result<String, DomainError>;
 }
 
+/// Source of user-authored plugins. Implementations walk a filesystem
+/// directory (or a synthetic source in tests) and report how many
+/// plugins were discovered. v1 only returns the count; richer detail
+/// can be added later if `plugin.reload` consumers need it.
+#[async_trait]
+pub trait PluginCatalog: Send + Sync {
+    async fn discover(&self) -> Result<usize, DomainError>;
+}
+
 /// Window host for managing windows.
 #[async_trait]
 pub trait WindowHost: Send + Sync {

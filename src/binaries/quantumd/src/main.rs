@@ -12,8 +12,8 @@ use tracing_subscriber::EnvFilter;
 
 use quantum_application::{
     Dispatcher as AppDispatcher, LaunchActionUseCase, ListProvidersUseCase, OpenViewUseCase,
-    QueryProviderUseCase, ReloadThemeUseCase, ScheduleActionUseCase, SearchUseCase,
-    SubscribeProviderUseCase,
+    QueryProviderUseCase, ReloadPluginsUseCase, ReloadThemeUseCase, ScheduleActionUseCase,
+    SearchUseCase, SubscribeProviderUseCase,
 };
 use quantum_config::{Config, ConfigStore};
 use quantum_domain::{DomainError, EventBus, ProviderId, ProviderSource};
@@ -116,6 +116,30 @@ fn plugins_dir() -> PathBuf {
     let config_home = std::env::var("XDG_CONFIG_HOME")
         .unwrap_or_else(|_| format!("{}/.config", std::env::var("HOME").unwrap_or_default()));
     PathBuf::from(config_home).join("quantum/plugins")
+}
+
+/// Domain `PluginCatalog` implementation backed by
+/// `quantum_plugins::walk`. Used by the `plugin.reload` IPC handler.
+struct FilesystemPluginCatalog {
+    plugins_dir: PathBuf,
+}
+
+#[async_trait::async_trait]
+impl quantum_domain::PluginCatalog for FilesystemPluginCatalog {
+    async fn discover(&self) -> std::result::Result<usize, quantum_domain::DomainError> {
+        let plugins_dir = self.plugins_dir.clone();
+        // Walk the filesystem on a blocking pool so we never park the
+        // async runtime on disk I/O.
+        let result = tokio::task::spawn_blocking(move || quantum_plugins::walk(&plugins_dir))
+            .await
+            .map_err(|e| {
+                quantum_domain::DomainError::Unsupported(format!("plugin walk join error: {e}"))
+            })?;
+        let descs = result.map_err(|e| {
+            quantum_domain::DomainError::Unsupported(format!("plugin walk failed: {e}"))
+        })?;
+        Ok(descs.len())
+    }
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -465,13 +489,13 @@ async fn setup_daemon(
     // per polled script. Failure to walk (or to register any individual
     // plugin) logs a warning but never aborts startup — the daemon must
     // come up with built-in providers regardless of plugin state.
-    let plugins_dir = plugins_dir();
-    let plugin_descs = match quantum_plugins::walk(&plugins_dir) {
+    let plugins_directory = plugins_dir();
+    let plugin_descs = match quantum_plugins::walk(&plugins_directory) {
         Ok(d) => d,
         Err(e) => {
             tracing::warn!(
                 "failed to walk plugins directory {}: {e}; continuing with no plugins",
-                plugins_dir.display()
+                plugins_directory.display()
             );
             Vec::new()
         }
@@ -571,6 +595,12 @@ async fn setup_daemon(
 
     let schedule_action_use_case =
         Arc::new(ScheduleActionUseCase::new(launch_action_use_case.clone()));
+    let plugins_directory = plugins_dir();
+    let plugin_catalog: Arc<dyn quantum_domain::PluginCatalog> =
+        Arc::new(FilesystemPluginCatalog {
+            plugins_dir: plugins_directory,
+        });
+    let reload_plugins_use_case = Arc::new(ReloadPluginsUseCase::new(plugin_catalog));
     let dispatcher = Arc::new(AppDispatcher::new(
         search_use_case,
         launch_action_use_case,
@@ -580,6 +610,7 @@ async fn setup_daemon(
         subscribe_provider_use_case,
         query_provider_use_case,
         schedule_action_use_case,
+        reload_plugins_use_case,
     ));
     let _ipc_dispatcher = Arc::new(AppDispatcherAdapter::new(dispatcher));
 

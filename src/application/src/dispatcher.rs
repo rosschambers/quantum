@@ -1,7 +1,7 @@
 use crate::{
     ApplicationError, LaunchActionUseCase, ListProvidersUseCase, OpenViewUseCase,
-    QueryProviderUseCase, ReloadThemeUseCase, Result, ScheduleActionUseCase, SearchUseCase,
-    SubscribeProviderUseCase,
+    QueryProviderUseCase, ReloadPluginsUseCase, ReloadThemeUseCase, Result, ScheduleActionUseCase,
+    SearchUseCase, SubscribeProviderUseCase,
 };
 use quantum_domain::{DomainError, WindowMode};
 use serde_json::{json, Value};
@@ -16,6 +16,7 @@ pub struct Dispatcher {
     subscribe_provider: Arc<SubscribeProviderUseCase>,
     query_provider: Arc<QueryProviderUseCase>,
     schedule_action: Arc<ScheduleActionUseCase>,
+    reload_plugins: Arc<ReloadPluginsUseCase>,
 }
 
 impl Dispatcher {
@@ -29,6 +30,7 @@ impl Dispatcher {
         subscribe_provider: Arc<SubscribeProviderUseCase>,
         query_provider: Arc<QueryProviderUseCase>,
         schedule_action: Arc<ScheduleActionUseCase>,
+        reload_plugins: Arc<ReloadPluginsUseCase>,
     ) -> Self {
         Self {
             search,
@@ -39,6 +41,7 @@ impl Dispatcher {
             subscribe_provider,
             query_provider,
             schedule_action,
+            reload_plugins,
         }
     }
 
@@ -57,6 +60,7 @@ impl Dispatcher {
             "view.hide" => self.handle_view_hide(params).await,
             "view.set_height" => self.handle_view_set_height(params).await,
             "theme.reload" => self.handle_theme_reload(params).await,
+            "plugin.reload" => self.handle_plugin_reload(params).await,
             "system.status" => self.handle_system_status(params).await,
             _ => Err(ApplicationError::Domain(DomainError::Unsupported(
                 method.to_string(),
@@ -163,6 +167,11 @@ impl Dispatcher {
     async fn handle_theme_reload(&self, _params: Value) -> Result<Value> {
         self.reload_theme.execute().await?;
         Ok(json!({}))
+    }
+
+    async fn handle_plugin_reload(&self, _params: Value) -> Result<Value> {
+        let loaded = self.reload_plugins.execute().await?;
+        Ok(json!({ "loaded": loaded }))
     }
 
     async fn handle_system_status(&self, _params: Value) -> Result<Value> {
@@ -364,6 +373,15 @@ mod tests {
         }
     }
 
+    struct FakePluginCatalog;
+
+    #[async_trait]
+    impl quantum_domain::PluginCatalog for FakePluginCatalog {
+        async fn discover(&self) -> std::result::Result<usize, DomainError> {
+            Ok(0)
+        }
+    }
+
     fn build_dispatcher() -> Arc<Dispatcher> {
         let mut providers = HashMap::new();
         providers.insert(
@@ -387,6 +405,9 @@ mod tests {
         let query_provider = Arc::new(QueryProviderUseCase::new(registry));
 
         let schedule_action = Arc::new(super::ScheduleActionUseCase::new(launch_action.clone()));
+        let reload_plugins = Arc::new(super::ReloadPluginsUseCase::new(Arc::new(
+            FakePluginCatalog,
+        )));
         Arc::new(Dispatcher::new(
             search,
             launch_action,
@@ -396,6 +417,7 @@ mod tests {
             subscribe_provider,
             query_provider,
             schedule_action,
+            reload_plugins,
         ))
     }
 

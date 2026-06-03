@@ -8,8 +8,8 @@ pub use dispatcher::Dispatcher;
 pub use error::{ApplicationError, Result};
 pub use use_cases::{
     LaunchActionUseCase, ListProvidersUseCase, OpenViewUseCase, QueryProviderUseCase,
-    ReloadThemeUseCase, ScheduleActionUseCase, ScheduleId, ScheduledJobSummary, SearchResponse,
-    SearchUseCase, SubscribeProviderUseCase,
+    ReloadPluginsUseCase, ReloadThemeUseCase, ScheduleActionUseCase, ScheduleId,
+    ScheduledJobSummary, SearchResponse, SearchUseCase, SubscribeProviderUseCase,
 };
 
 pub fn version() -> &'static str {
