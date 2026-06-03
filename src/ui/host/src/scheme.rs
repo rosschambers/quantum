@@ -44,6 +44,11 @@ pub fn register_quantum_scheme(context: &WebContext, theme_store: Arc<dyn ThemeS
         let bytes = match parsed {
             QuantumPath::Theme { name, path } => theme_store.get_file(&name, &path),
             QuantumPath::Assets { path } => theme_store.get_asset(&path),
+            // Placeholder until P4-T2 lands ThemeStore::get_plugin_file.
+            // The URL parses correctly today, but the lookup returns
+            // None so requests under quantum://plugin/<name>/... still
+            // produce a 404. P4-T2 wires the disk read through.
+            QuantumPath::Plugin { name: _, path: _ } => None,
         };
 
         let Some(bytes_data) = bytes else {
@@ -82,8 +87,20 @@ pub fn register_quantum_scheme(context: &WebContext, theme_store: Arc<dyn ThemeS
 /// Parsed quantum URI path.
 #[derive(Debug, Clone)]
 enum QuantumPath {
-    Theme { name: String, path: String },
-    Assets { path: String },
+    Theme {
+        name: String,
+        path: String,
+    },
+    Assets {
+        path: String,
+    },
+    // Fields read in P4-T2 (ThemeStore::get_plugin_file). Suppress
+    // dead-code warning for the placeholder match arm in this commit.
+    #[allow(dead_code)]
+    Plugin {
+        name: String,
+        path: String,
+    },
 }
 
 impl QuantumPath {
@@ -91,6 +108,7 @@ impl QuantumPath {
         match self {
             QuantumPath::Theme { path, .. } => path.clone(),
             QuantumPath::Assets { path } => path.clone(),
+            QuantumPath::Plugin { path, .. } => path.clone(),
         }
     }
 }
@@ -133,6 +151,16 @@ fn parse_quantum_uri(uri: &str) -> Option<QuantumPath> {
             if !rest.is_empty() && rest.iter().all(|seg| is_safe_segment(seg)) =>
         {
             Some(QuantumPath::Assets {
+                path: rest.join("/"),
+            })
+        }
+        ["plugin", name, rest @ ..]
+            if is_safe_segment(name)
+                && !rest.is_empty()
+                && rest.iter().all(|seg| is_safe_segment(seg)) =>
+        {
+            Some(QuantumPath::Plugin {
+                name: (*name).to_string(),
                 path: rest.join("/"),
             })
         }
@@ -316,5 +344,31 @@ mod tests {
         // bypass naive `..` filters while still resolving to the same path.
         assert!(parse_quantum_uri("quantum://theme/default/./views/launcher/index.html").is_none());
         assert!(parse_quantum_uri("quantum://assets/./icons/app.png").is_none());
+    }
+
+    #[test]
+    fn parse_quantum_uri_plugin_path() {
+        let uri = "quantum://plugin/moon-distance/views/moon-widget/index.html";
+        let parsed = parse_quantum_uri(uri).expect("parse");
+        match parsed {
+            QuantumPath::Plugin { name, path } => {
+                assert_eq!(name, "moon-distance");
+                assert_eq!(path, "views/moon-widget/index.html");
+            }
+            _ => panic!("expected Plugin variant"),
+        }
+    }
+
+    #[test]
+    fn parse_rejects_dotdot_in_plugin_path() {
+        assert!(parse_quantum_uri("quantum://plugin/moon/../etc/passwd").is_none());
+        assert!(parse_quantum_uri("quantum://plugin/../../etc/passwd").is_none());
+    }
+
+    #[test]
+    fn parse_rejects_plugin_without_path() {
+        assert!(parse_quantum_uri("quantum://plugin/moon").is_none());
+        assert!(parse_quantum_uri("quantum://plugin/").is_none());
+        assert!(parse_quantum_uri("quantum://plugin//x.html").is_none());
     }
 }
