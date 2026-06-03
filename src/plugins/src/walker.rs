@@ -8,6 +8,7 @@
 use crate::description::{ActionScript, IdleScript, PluginDescription, PolledScript, ViewBundle};
 use crate::error::PluginsError;
 use crate::manifest::{parse_manifest, Manifest};
+use std::collections::HashSet;
 use std::fs;
 use std::os::unix::fs::PermissionsExt;
 use std::path::Path;
@@ -36,6 +37,31 @@ pub fn walk(plugins_dir: &Path) -> Result<Vec<PluginDescription>, PluginsError> 
                 tracing::warn!("skipping plugin '{name}': {e}");
             }
         }
+    }
+
+    plugins.sort_by(|a, b| a.name.cmp(&b.name));
+
+    let mut claimed: HashSet<String> = HashSet::new();
+    for plugin in &mut plugins {
+        let mut keep: Vec<PolledScript> = Vec::new();
+        let mut demoted: Vec<IdleScript> = Vec::new();
+        for ps in plugin.polled_scripts.drain(..) {
+            if claimed.insert(ps.channel.clone()) {
+                keep.push(ps);
+            } else {
+                tracing::warn!(
+                    "plugin '{}': channel '{}' already claimed; script downgraded to idle",
+                    plugin.name,
+                    ps.channel
+                );
+                demoted.push(IdleScript {
+                    command: ps.command,
+                    channel: ps.channel,
+                });
+            }
+        }
+        plugin.polled_scripts = keep;
+        plugin.idle_scripts.extend(demoted);
     }
 
     Ok(plugins)
@@ -298,5 +324,71 @@ mod tests {
         let p = &result[0];
         assert_eq!(p.polled_scripts.len(), 1);
         assert_eq!(p.polled_scripts[0].channel, "custom.channel");
+    }
+
+    #[test]
+    fn channel_collision_first_wins() {
+        let tmp = tempdir().unwrap();
+
+        // Plugin "alpha" claims channel "weather.event".
+        let alpha = tmp.path().join("alpha");
+        write_file(
+            &alpha.join("config.toml"),
+            "[scripts.weather]\ninterval = 60\nchannel = \"weather.event\"\n",
+        );
+        fs::create_dir_all(alpha.join("scripts")).unwrap();
+        write_executable(&alpha.join("scripts/weather"), "#!/bin/sh\n");
+
+        // Plugin "beta" ALSO claims channel "weather.event".
+        let beta = tmp.path().join("beta");
+        write_file(
+            &beta.join("config.toml"),
+            "[scripts.weather]\ninterval = 60\nchannel = \"weather.event\"\n",
+        );
+        fs::create_dir_all(beta.join("scripts")).unwrap();
+        write_executable(&beta.join("scripts/weather"), "#!/bin/sh\n");
+
+        let result = walk(tmp.path()).expect("ok");
+        assert_eq!(result.len(), 2);
+
+        let alpha_p = result
+            .iter()
+            .find(|p| p.name == "alpha")
+            .expect("alpha present");
+        let beta_p = result
+            .iter()
+            .find(|p| p.name == "beta")
+            .expect("beta present");
+
+        assert_eq!(alpha_p.polled_scripts.len(), 1);
+        assert_eq!(alpha_p.idle_scripts.len(), 0);
+        assert_eq!(beta_p.polled_scripts.len(), 0);
+        assert_eq!(beta_p.idle_scripts.len(), 1);
+        assert_eq!(beta_p.idle_scripts[0].channel, "weather.event");
+    }
+
+    #[test]
+    fn distinct_channels_do_not_collide() {
+        let tmp = tempdir().unwrap();
+        let a = tmp.path().join("a");
+        write_file(&a.join("config.toml"), "[scripts.foo]\ninterval = 60\n");
+        fs::create_dir_all(a.join("scripts")).unwrap();
+        write_executable(&a.join("scripts/foo"), "#!/bin/sh\n");
+
+        let b = tmp.path().join("b");
+        write_file(&b.join("config.toml"), "[scripts.bar]\ninterval = 60\n");
+        fs::create_dir_all(b.join("scripts")).unwrap();
+        write_executable(&b.join("scripts/bar"), "#!/bin/sh\n");
+
+        let result = walk(tmp.path()).expect("ok");
+        assert_eq!(result.len(), 2);
+        for p in &result {
+            assert_eq!(
+                p.polled_scripts.len(),
+                1,
+                "{} should keep its polled script",
+                p.name
+            );
+        }
     }
 }
