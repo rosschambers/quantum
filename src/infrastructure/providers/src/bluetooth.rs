@@ -338,21 +338,25 @@ pub(crate) fn map_managed_objects(
     let device_key = zbus::names::OwnedInterfaceName::try_from("org.bluez.Device1").unwrap();
     let battery_key = zbus::names::OwnedInterfaceName::try_from("org.bluez.Battery1").unwrap();
 
-    // Find the first adapter.
-    for (path, interfaces) in objects.iter() {
-        if interfaces.contains_key(&adapter_key) {
-            if let Some(props) = interfaces.get(&adapter_key) {
-                adapter_path = Some(path.to_string());
-                powered = props
-                    .get("Powered")
-                    .and_then(|v| bool::try_from(v).ok())
-                    .unwrap_or(false);
-                discovering = props
-                    .get("Discovering")
-                    .and_then(|v| bool::try_from(v).ok())
-                    .unwrap_or(false);
-            }
-            break;
+    // Pick the adapter with the lexicographically smallest object path so
+    // that hosts with multiple adapters (for example hci0 and hci1) produce
+    // a stable BluetoothState across rebuilds. HashMap iteration order is
+    // unspecified, so iterating with break would otherwise flap.
+    if let Some((path, interfaces)) = objects
+        .iter()
+        .filter(|(_, ifaces)| ifaces.contains_key(&adapter_key))
+        .min_by_key(|(path, _)| path.as_str().to_string())
+    {
+        if let Some(props) = interfaces.get(&adapter_key) {
+            adapter_path = Some(path.to_string());
+            powered = props
+                .get("Powered")
+                .and_then(|v| bool::try_from(v).ok())
+                .unwrap_or(false);
+            discovering = props
+                .get("Discovering")
+                .and_then(|v| bool::try_from(v).ok())
+                .unwrap_or(false);
         }
     }
 
@@ -594,6 +598,47 @@ mod tests {
         assert!(state.available);
         assert_eq!(state.connected_devices.len(), 1);
         assert_eq!(state.connected_devices[0].battery_percent, Some(60));
+    }
+
+    #[test]
+    fn selects_adapter_with_lowest_path() {
+        // Build a two-adapter HashMap many times so HashMap iteration order
+        // varies, and confirm the result never depends on iteration order.
+        // hci0 is powered=true/discovering=false; hci1 is the opposite. If
+        // selection is non-deterministic, at least one iteration will pick
+        // hci1 and flip the asserted values. OwnedValue is not Clone, so the
+        // map is rebuilt from scratch each loop iteration.
+        for _ in 0..64 {
+            let adapter_key =
+                zbus::names::OwnedInterfaceName::try_from("org.bluez.Adapter1").unwrap();
+
+            let mut hci1_ifaces = HashMap::new();
+            let mut hci1_props = HashMap::new();
+            hci1_props.insert("Powered".to_string(), OwnedValue::from(false));
+            hci1_props.insert("Discovering".to_string(), OwnedValue::from(true));
+            hci1_ifaces.insert(adapter_key.clone(), hci1_props);
+
+            let mut hci0_ifaces = HashMap::new();
+            let mut hci0_props = HashMap::new();
+            hci0_props.insert("Powered".to_string(), OwnedValue::from(true));
+            hci0_props.insert("Discovering".to_string(), OwnedValue::from(false));
+            hci0_ifaces.insert(adapter_key, hci0_props);
+
+            let mut objects = HashMap::new();
+            objects.insert(
+                OwnedObjectPath::try_from("/org/bluez/hci1").unwrap(),
+                hci1_ifaces,
+            );
+            objects.insert(
+                OwnedObjectPath::try_from("/org/bluez/hci0").unwrap(),
+                hci0_ifaces,
+            );
+
+            let state = map_managed_objects(&objects);
+            assert!(state.available);
+            assert!(state.powered, "selected wrong adapter (got hci1)");
+            assert!(!state.discovering, "selected wrong adapter (got hci1)");
+        }
     }
 
     #[test]
