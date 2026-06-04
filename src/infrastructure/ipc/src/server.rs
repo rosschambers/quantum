@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::path::Path;
 use std::sync::Arc;
-use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
+use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader, BufWriter};
 use tokio::net::{UnixListener, UnixStream};
 use tokio::sync::broadcast;
 
@@ -103,8 +103,14 @@ async fn handle_connection<D: Dispatcher + 'static>(
     dispatcher: Arc<D>,
     broadcast_tx: broadcast::Sender<EventEnvelope>,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let (reader, mut writer) = stream.into_split();
+    let (reader, writer) = stream.into_split();
     let mut reader = BufReader::new(reader);
+    // Wrap the writer in a BufWriter so body+newline writes coalesce
+    // into a single syscall per frame (flushed explicitly below). 8 KiB
+    // matches BufReader's default and is plenty for typical JSON-RPC
+    // payloads. Without the per-frame flush the kernel would not see
+    // bytes until the buffer filled, which would stall responses.
+    let mut writer = BufWriter::new(writer);
     let mut event_rx = broadcast_tx.subscribe();
     let mut line = String::new();
 
@@ -135,6 +141,7 @@ async fn handle_connection<D: Dispatcher + 'static>(
                         if let Ok(response_json) = serde_json::to_string(&error_response) {
                             let _ = writer.write_all(response_json.as_bytes()).await;
                             let _ = writer.write_all(b"\n").await;
+                            let _ = writer.flush().await;
                         }
                         break;
                     }
@@ -146,6 +153,7 @@ async fn handle_connection<D: Dispatcher + 'static>(
                                 let response_json = serde_json::to_string(&response)?;
                                 writer.write_all(response_json.as_bytes()).await?;
                                 writer.write_all(b"\n").await?;
+                                writer.flush().await?;
                             }
                             Err(e) => {
                                 let error_response = JsonRpcResponse::error(
@@ -155,6 +163,7 @@ async fn handle_connection<D: Dispatcher + 'static>(
                                 let response_json = serde_json::to_string(&error_response)?;
                                 writer.write_all(response_json.as_bytes()).await?;
                                 writer.write_all(b"\n").await?;
+                                writer.flush().await?;
                             }
                         }
                     }
@@ -186,6 +195,9 @@ async fn handle_connection<D: Dispatcher + 'static>(
                             env.payload.get()
                         );
                         if writer.write_all(notification.as_bytes()).await.is_err() {
+                            break;
+                        }
+                        if writer.flush().await.is_err() {
                             break;
                         }
                     }
