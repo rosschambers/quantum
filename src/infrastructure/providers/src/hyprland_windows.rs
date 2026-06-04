@@ -1,6 +1,7 @@
 use async_trait::async_trait;
 use serde_json::json;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 use tokio::sync::RwLock;
 
 use quantum_domain::{
@@ -8,7 +9,14 @@ use quantum_domain::{
     ProviderId, ProviderSource, Query,
 };
 
-/// Information about a Hyprland window.
+/// Minimum interval between hyprctl j/clients refreshes. Within this window,
+/// successive search calls (one per keystroke during a typing burst) share
+/// the same cached snapshot instead of each shelling out.
+const REFRESH_TTL: Duration = Duration::from_millis(100);
+
+/// Information about a Hyprland window. Lowercase fields are precomputed
+/// once at refresh time so the per-keystroke match loop does not allocate
+/// fresh lowercase strings for every window.
 #[derive(Debug, Clone)]
 struct WindowInfo {
     address: String,
@@ -16,6 +24,9 @@ struct WindowInfo {
     class: String,
     workspace_id: i64,
     workspace_name: String,
+    title_lower: String,
+    class_lower: String,
+    workspace_name_lower: String,
 }
 
 /// Format a friendly subtitle from a workspace name, id, and window class.
@@ -41,6 +52,7 @@ pub struct HyprlandWindowsProvider {
     id: ProviderId,
     client: Arc<dyn HyprlandClient>,
     windows: RwLock<Vec<WindowInfo>>,
+    last_refresh: Mutex<Option<Instant>>,
 }
 
 impl HyprlandWindowsProvider {
@@ -50,12 +62,26 @@ impl HyprlandWindowsProvider {
             id: ProviderId::from("hyprland-windows"),
             client,
             windows: RwLock::new(Vec::new()),
+            last_refresh: Mutex::new(None),
         };
 
         // Try to load initial windows
         let _ = provider.refresh_windows().await;
 
         Ok(provider)
+    }
+
+    /// Refresh the window cache if the previous refresh is older than
+    /// `REFRESH_TTL`. Returns immediately when the cache is still fresh.
+    async fn refresh_if_stale(&self) -> Result<(), DomainError> {
+        if let Ok(guard) = self.last_refresh.lock() {
+            if let Some(last) = *guard {
+                if Instant::now().duration_since(last) < REFRESH_TTL {
+                    return Ok(());
+                }
+            }
+        }
+        self.refresh_windows().await
     }
 
     /// Refresh the list of windows from Hyprland.
@@ -79,18 +105,28 @@ impl HyprlandWindowsProvider {
                             .as_str()
                             .unwrap_or("")
                             .to_string();
+                        let title_lower = title.to_lowercase();
+                        let class_lower = class.to_lowercase();
+                        let workspace_name_lower = workspace_name.to_lowercase();
                         windows.push(WindowInfo {
                             address: address.to_string(),
                             title: title.to_string(),
                             class: class.to_string(),
                             workspace_id,
                             workspace_name,
+                            title_lower,
+                            class_lower,
+                            workspace_name_lower,
                         });
                     }
                 }
             }
 
             *self.windows.write().await = windows;
+        }
+
+        if let Ok(mut guard) = self.last_refresh.lock() {
+            *guard = Some(Instant::now());
         }
 
         Ok(())
@@ -111,24 +147,21 @@ impl ProviderSource for HyprlandWindowsProvider {
     }
 
     async fn search(&self, q: &Query) -> Result<Vec<Match>, DomainError> {
-        self.refresh_windows().await?;
+        self.refresh_if_stale().await?;
 
         let windows = self.windows.read().await;
         let query_lower = q.text.to_lowercase();
         let mut matches = Vec::new();
 
         for window in windows.iter() {
-            let title_lower = window.title.to_lowercase();
-            let class_lower = window.class.to_lowercase();
-            let workspace_name_lower = window.workspace_name.to_lowercase();
             let workspace_id_str = window.workspace_id.to_string();
 
             // Check if any field contains the query
-            let score = if title_lower.contains(&query_lower) {
+            let score = if window.title_lower.contains(&query_lower) {
                 1.0
-            } else if class_lower.contains(&query_lower) {
+            } else if window.class_lower.contains(&query_lower) {
                 0.7
-            } else if workspace_name_lower.contains(&query_lower)
+            } else if window.workspace_name_lower.contains(&query_lower)
                 || workspace_id_str.contains(&query_lower)
             {
                 0.5
@@ -197,6 +230,7 @@ impl ProviderSource for HyprlandWindowsProvider {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::atomic::{AtomicUsize, Ordering};
 
     struct MockHyprlandClient {
         response: String,
@@ -211,6 +245,36 @@ mod tests {
     #[async_trait]
     impl HyprlandClient for MockHyprlandClient {
         async fn command(&self, _cmd: &str) -> Result<String, DomainError> {
+            Ok(self.response.clone())
+        }
+    }
+
+    /// Mock that counts how many times `j/clients` is requested so tests
+    /// can assert the TTL gate prevents redundant shell-outs.
+    struct CountingHyprlandClient {
+        response: String,
+        clients_calls: AtomicUsize,
+    }
+
+    impl CountingHyprlandClient {
+        fn new(response: String) -> Self {
+            Self {
+                response,
+                clients_calls: AtomicUsize::new(0),
+            }
+        }
+
+        fn clients_calls(&self) -> usize {
+            self.clients_calls.load(Ordering::SeqCst)
+        }
+    }
+
+    #[async_trait]
+    impl HyprlandClient for CountingHyprlandClient {
+        async fn command(&self, cmd: &str) -> Result<String, DomainError> {
+            if cmd == "j/clients" {
+                self.clients_calls.fetch_add(1, Ordering::SeqCst);
+            }
             Ok(self.response.clone())
         }
     }
@@ -291,6 +355,36 @@ mod tests {
         let result = provider.invoke(&action).await;
 
         assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn successive_searches_within_ttl_share_one_refresh() {
+        let response = r#"[
+            {
+                "address": "0x123",
+                "title": "Firefox",
+                "class": "firefox",
+                "workspace": {"id": 1, "name": "1"}
+            }
+        ]"#
+        .to_string();
+
+        let client = Arc::new(CountingHyprlandClient::new(response));
+        // `new` does one initial refresh.
+        let provider = HyprlandWindowsProvider::new(client.clone()).await.unwrap();
+        assert_eq!(client.clients_calls(), 1);
+
+        // Two searches in immediate succession must not trigger any extra
+        // j/clients calls because they fall inside REFRESH_TTL.
+        let query = Query::new("fire");
+        let _ = provider.search(&query).await.unwrap();
+        let _ = provider.search(&query).await.unwrap();
+
+        assert_eq!(
+            client.clients_calls(),
+            1,
+            "expected the TTL gate to skip the refresh on back-to-back searches"
+        );
     }
 
     #[test]
