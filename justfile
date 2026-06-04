@@ -21,8 +21,7 @@ lint:
 dev:
     {{devsh}} cargo run --bin quantumd
 
-ts-bindgen:
-    {{devsh}} cargo run --bin quantum-dev -- generate-ts
+# TS bindings are committed manually until specta is wired
 
 frontend-install:
     {{devsh}} pnpm -C src/ui install
