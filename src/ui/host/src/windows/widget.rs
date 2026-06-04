@@ -238,9 +238,21 @@ impl WidgetWindow {
 
         let webview_for_notify = webview.clone();
         glib::MainContext::default().spawn_local(async move {
-            while let Some(js) = js_rx.recv().await {
+            // Coalesce per main-loop turn: when the first item arrives, drain
+            // any others already queued and submit a single
+            // `evaluate_javascript` call. Each item is a self-contained
+            // `if (...) { window.__quantum_notify(...); }` statement, so
+            // joining with `;` is syntactically safe. This cuts the JIT
+            // entry rate by the burst size when providers fan out (mpris
+            // position ticks, workspace events, audio level changes).
+            while let Some(first) = js_rx.recv().await {
+                let mut batch = first;
+                while let Ok(more) = js_rx.try_recv() {
+                    batch.push(';');
+                    batch.push_str(&more);
+                }
                 webview_for_notify.evaluate_javascript(
-                    &js,
+                    &batch,
                     None,
                     None,
                     None::<&gio::Cancellable>,
