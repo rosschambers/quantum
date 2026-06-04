@@ -1,7 +1,7 @@
 <script lang="ts">
     import type { Client } from '@quantum/client';
     import type { PowerProfile, PowerProfileState } from '../types';
-    import { POWER_PROFILE_CHANNEL } from '../channels';
+    import { POWER_PROFILE_CHANNEL, POWER_PROFILE_PROVIDER } from '../channels';
     import Icon from '../Icon.svelte';
     import { powerProfileIcon } from '../icons';
     import { onClick } from './interaction';
@@ -21,7 +21,7 @@
 
     $effect(() => {
         client
-            .call('provider.query', { id: 'power_profile' })
+            .call('provider.query', { id: POWER_PROFILE_PROVIDER })
             .then((r: unknown) => {
                 if (r) state = r as PowerProfileState;
             })

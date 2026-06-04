@@ -1,7 +1,7 @@
 <script lang="ts">
     import type { Client } from '@quantum/client';
     import type { AudioState } from '../types';
-    import { AUDIO_CHANNEL } from '../channels';
+    import { AUDIO_CHANNEL, AUDIO_PROVIDER } from '../channels';
     import { gradientColor } from '../gradient';
     import { volumeIcon } from '../icons';
     import { onClick, onScroll } from './interaction';
@@ -17,7 +17,7 @@
 
     $effect(() => {
         client
-            .call('provider.query', { id: 'audio' })
+            .call('provider.query', { id: AUDIO_PROVIDER })
             .then((r: unknown) => {
                 if (r) state = r as AudioState;
             })

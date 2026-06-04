@@ -1,7 +1,7 @@
 <script lang="ts">
     import type { Client } from '@quantum/client';
     import type { PowerState } from '../types';
-    import { POWER_CHANNEL } from '../channels';
+    import { POWER_CHANNEL, POWER_PROVIDER } from '../channels';
     import { inverseGradientColor } from '../gradient';
     import { batteryIcon } from '../icons';
     import Ring from '../Ring.svelte';
@@ -22,7 +22,7 @@
 
     $effect(() => {
         client
-            .call('provider.query', { id: 'power' })
+            .call('provider.query', { id: POWER_PROVIDER })
             .then((r: unknown) => {
                 if (r) state = r as PowerState;
             })

@@ -1,6 +1,7 @@
 <script lang="ts">
     import type { Client } from '@quantum/client';
     import type { SystemStats } from '../lib/types';
+    import { SYSTEM_STATS_CHANNEL, SYSTEM_STATS_PROVIDER } from './channels';
 
     interface Props {
         client: Client;
@@ -21,12 +22,12 @@
 
     $effect(() => {
         client
-            .call('provider.query', { id: 'system.stats' })
+            .call('provider.query', { id: SYSTEM_STATS_PROVIDER })
             .then((r: unknown) => {
                 if (r) pushStats(r as SystemStats);
             })
             .catch(() => {});
-        const unsubscribe = client.subscribe('system.stats.event', (payload: unknown) => {
+        const unsubscribe = client.subscribe(SYSTEM_STATS_CHANNEL, (payload: unknown) => {
             pushStats(payload as SystemStats);
         });
         return () => unsubscribe?.();

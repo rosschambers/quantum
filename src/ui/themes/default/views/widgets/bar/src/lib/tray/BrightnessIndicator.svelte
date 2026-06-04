@@ -1,7 +1,7 @@
 <script lang="ts">
     import type { Client } from '@quantum/client';
     import type { BrightnessState } from '../types';
-    import { BRIGHTNESS_CHANNEL } from '../channels';
+    import { BRIGHTNESS_CHANNEL, BRIGHTNESS_PROVIDER } from '../channels';
     import { gradientColor } from '../gradient';
 
     import { onScroll } from './interaction';
@@ -17,7 +17,7 @@
 
     $effect(() => {
         client
-            .call('provider.query', { id: 'brightness' })
+            .call('provider.query', { id: BRIGHTNESS_PROVIDER })
             .then((r: unknown) => {
                 if (r) state = r as BrightnessState;
             })

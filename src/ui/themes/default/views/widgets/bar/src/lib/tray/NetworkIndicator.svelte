@@ -1,7 +1,7 @@
 <script lang="ts">
     import type { Client } from '@quantum/client';
     import type { NetworkState } from '../types';
-    import { NETWORK_CHANNEL } from '../channels';
+    import { NETWORK_CHANNEL, NETWORK_PROVIDER } from '../channels';
     import { inverseGradientColor } from '../gradient';
     import { networkIcon } from '../icons';
     import { onClick } from './interaction';
@@ -23,7 +23,7 @@
 
     $effect(() => {
         client
-            .call('provider.query', { id: 'network' })
+            .call('provider.query', { id: NETWORK_PROVIDER })
             .then((r: unknown) => {
                 if (r) state = r as NetworkState;
             })

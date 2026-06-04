@@ -1,7 +1,7 @@
 <script lang="ts">
     import type { Client } from '@quantum/client';
     import type { BluetoothState } from '../types';
-    import { BLUETOOTH_CHANNEL } from '../channels';
+    import { BLUETOOTH_CHANNEL, BLUETOOTH_PROVIDER } from '../channels';
     import Icon from '../Icon.svelte';
     import { onClick } from './interaction';
 
@@ -20,7 +20,7 @@
 
     $effect(() => {
         client
-            .call('provider.query', { id: 'bluetooth' })
+            .call('provider.query', { id: BLUETOOTH_PROVIDER })
             .then((r: unknown) => {
                 if (r) state = r as BluetoothState;
             })

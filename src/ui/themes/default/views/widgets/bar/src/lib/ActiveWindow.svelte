@@ -1,7 +1,7 @@
 <script lang="ts">
     import type { Client } from '@quantum/client';
     import type { ActiveWindowState, MonitorActiveWindowState } from '../lib/types';
-    import { ACTIVE_WINDOW_CHANNEL } from './channels';
+    import { ACTIVE_WINDOW_CHANNEL, ACTIVE_WINDOW_PROVIDER } from './channels';
 
     interface Props {
         client: Client;
@@ -12,7 +12,7 @@
 
     // `$effect` runs reliably in testing-library + Svelte 5 where `onMount` does not.
     $effect(() => {
-        client.call('provider.query', { id: 'hyprland.activewindow' })
+        client.call('provider.query', { id: ACTIVE_WINDOW_PROVIDER })
             .then((r: unknown) => { if (r) payload = r as MonitorActiveWindowState; })
             .catch(() => {});
         const unsubscribe = client.subscribe(ACTIVE_WINDOW_CHANNEL, (p: unknown) => {

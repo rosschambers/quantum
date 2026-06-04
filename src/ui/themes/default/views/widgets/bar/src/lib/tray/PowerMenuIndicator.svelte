@@ -1,7 +1,7 @@
 <script lang="ts">
     import type { Client } from '@quantum/client';
     import type { SystemPowerState } from '../types';
-    import { SYSTEM_POWER_CHANNEL } from '../channels';
+    import { SYSTEM_POWER_CHANNEL, SYSTEM_POWER_PROVIDER } from '../channels';
     import Icon from '../Icon.svelte';
 
     interface Props {
@@ -19,7 +19,7 @@
 
     $effect(() => {
         client
-            .call('provider.query', { id: 'system_power' })
+            .call('provider.query', { id: SYSTEM_POWER_PROVIDER })
             .then((r: unknown) => {
                 if (r) state = r as SystemPowerState;
             })

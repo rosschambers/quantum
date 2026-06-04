@@ -2,6 +2,7 @@
     import type { Client } from '@quantum/client';
     import type { MprisState } from '../lib/types';
     import Icon from './Icon.svelte';
+    import { MPRIS_CHANNEL } from './channels';
 
     interface Props {
         client: Client;
@@ -13,7 +14,7 @@
     // `$effect` runs reliably in testing-library + Svelte 5 where `onMount` does not.
     // Behaviour at runtime in WebKit is the same.
     $effect(() => {
-        const unsubscribe = client.subscribe('mpris.event', (payload: unknown) => {
+        const unsubscribe = client.subscribe(MPRIS_CHANNEL, (payload: unknown) => {
             state = payload as MprisState;
         });
         return () => unsubscribe?.();
