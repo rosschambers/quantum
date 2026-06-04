@@ -151,16 +151,27 @@
     }
 
     const TRACK_COLOR = 'rgba(255, 255, 255, 0.12)';
+
+    // Hot-path derivations. The template reads these many times per
+    // render (tooltip, aria-label, ring stroke, ring dashoffset, ring
+    // label, sparkline stroke). Wrapping in $derived ensures each
+    // helper runs once per state change rather than once per template
+    // read - at 1 Hz polling this halves per-tick CPU work and avoids
+    // repeated O(N) Catmull-Rom passes for the sparkline paths.
+    const cpu = $derived(cpuPercent(stats));
+    const mem = $derived(memPercent(stats));
+    const cpuPath = $derived(smoothPath(cpuHistory, SPARK_W, SPARK_H));
+    const memPath = $derived(smoothPath(memHistory, SPARK_W, SPARK_H));
 </script>
 
 <div class="meters">
-    <div class="meter cpu" title={tooltipFor('CPU', cpuPercent(stats))}>
+    <div class="meter cpu" title={tooltipFor('CPU', cpu)}>
         <svg
             class="ring"
             width={RING_SIZE}
             height={RING_SIZE}
             viewBox="0 0 {RING_SIZE} {RING_SIZE}"
-            aria-label={tooltipFor('CPU', cpuPercent(stats))}
+            aria-label={tooltipFor('CPU', cpu)}
             role="img"
         >
             <circle
@@ -177,11 +188,11 @@
                 cy={RING_SIZE / 2}
                 r={RADIUS}
                 fill="none"
-                stroke={gradientColor(cpuPercent(stats))}
+                stroke={gradientColor(cpu)}
                 stroke-width={STROKE}
                 stroke-linecap="round"
                 stroke-dasharray={CIRC}
-                stroke-dashoffset={dashOffsetFor(cpuPercent(stats))}
+                stroke-dashoffset={dashOffsetFor(cpu)}
                 transform="rotate(-90 {RING_SIZE / 2} {RING_SIZE / 2})"
             />
             <text
@@ -190,7 +201,7 @@
                 y={RING_SIZE / 2}
                 text-anchor="middle"
                 dominant-baseline="central"
-            >{ringLabel(cpuPercent(stats))}</text>
+            >{ringLabel(cpu)}</text>
         </svg>
         <svg
             class="sparkline"
@@ -202,9 +213,9 @@
         >
             {#if cpuHistory.length > 1}
                 <path
-                    d={smoothPath(cpuHistory, SPARK_W, SPARK_H)}
+                    d={cpuPath}
                     fill="none"
-                    stroke={gradientColor(cpuPercent(stats))}
+                    stroke={gradientColor(cpu)}
                     stroke-width="1.2"
                     stroke-linecap="round"
                     stroke-linejoin="round"
@@ -212,13 +223,13 @@
             {/if}
         </svg>
     </div>
-    <div class="meter mem" title={tooltipFor('MEM', memPercent(stats))}>
+    <div class="meter mem" title={tooltipFor('MEM', mem)}>
         <svg
             class="ring"
             width={RING_SIZE}
             height={RING_SIZE}
             viewBox="0 0 {RING_SIZE} {RING_SIZE}"
-            aria-label={tooltipFor('MEM', memPercent(stats))}
+            aria-label={tooltipFor('MEM', mem)}
             role="img"
         >
             <circle
@@ -235,11 +246,11 @@
                 cy={RING_SIZE / 2}
                 r={RADIUS}
                 fill="none"
-                stroke={gradientColor(memPercent(stats))}
+                stroke={gradientColor(mem)}
                 stroke-width={STROKE}
                 stroke-linecap="round"
                 stroke-dasharray={CIRC}
-                stroke-dashoffset={dashOffsetFor(memPercent(stats))}
+                stroke-dashoffset={dashOffsetFor(mem)}
                 transform="rotate(-90 {RING_SIZE / 2} {RING_SIZE / 2})"
             />
             <text
@@ -248,7 +259,7 @@
                 y={RING_SIZE / 2}
                 text-anchor="middle"
                 dominant-baseline="central"
-            >{ringLabel(memPercent(stats))}</text>
+            >{ringLabel(mem)}</text>
         </svg>
         <svg
             class="sparkline"
@@ -260,9 +271,9 @@
         >
             {#if memHistory.length > 1}
                 <path
-                    d={smoothPath(memHistory, SPARK_W, SPARK_H)}
+                    d={memPath}
                     fill="none"
-                    stroke={gradientColor(memPercent(stats))}
+                    stroke={gradientColor(mem)}
                     stroke-width="1.2"
                     stroke-linecap="round"
                     stroke-linejoin="round"
