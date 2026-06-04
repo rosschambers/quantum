@@ -79,7 +79,7 @@ pub fn property_subscription_stream<S>(
     conn: Connection,
     service: &'static str,
     path: &'static str,
-    _interface: &'static str,
+    interface: &'static str,
     build: BuildFn<S>,
 ) -> BoxStream<'static, serde_json::Value>
 where
@@ -148,7 +148,18 @@ where
             // Stream changes. Yield each rebuilt DTO directly, dedupe by
             // PartialEq on the serialized JSON.
             let mut stream_ended_cleanly = true;
-            while let Some(_signal) = changes.next().await {
+            while let Some(signal) = changes.next().await {
+                match signal.args() {
+                    Ok(args) => {
+                        if args.interface_name().as_str() != interface {
+                            continue;
+                        }
+                    }
+                    Err(e) => {
+                        tracing::warn!(service, path, error = %e, "malformed PropertiesChanged signal args");
+                        continue;
+                    }
+                }
                 match build(&conn).await {
                     Ok(state) => match serde_json::to_value(&state) {
                         Ok(v) => {
