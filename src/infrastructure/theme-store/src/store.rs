@@ -2,6 +2,7 @@ use async_trait::async_trait;
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::sync::RwLock as StdRwLock;
 use std::time::Duration;
 use tokio::sync::RwLock;
 
@@ -110,6 +111,14 @@ pub struct ThemeStore {
     themes_dir: PathBuf,
     plugins_dir: PathBuf,
     active_theme: RwLock<String>,
+    /// Memoized resolved token maps keyed by theme name.
+    ///
+    /// `resolved_tokens()` is invoked once per HTML asset served through the
+    /// `quantum://` scheme handler, which runs on the GTK main thread. Each
+    /// uncached call hits the disk and parses TOML; cache hits clone an
+    /// `Arc` and copy a small `HashMap`. The watcher thread evicts entries
+    /// when a `tokens.toml` path changes.
+    cached_tokens: StdRwLock<HashMap<String, Arc<HashMap<String, String>>>>,
 }
 
 impl ThemeStore {
@@ -123,6 +132,7 @@ impl ThemeStore {
             themes_dir,
             plugins_dir,
             active_theme: RwLock::new(active),
+            cached_tokens: StdRwLock::new(HashMap::new()),
         }
     }
 
@@ -135,6 +145,7 @@ impl ThemeStore {
             themes_dir,
             plugins_dir: Self::plugins_dir(),
             active_theme: RwLock::new(active),
+            cached_tokens: StdRwLock::new(HashMap::new()),
         }
     }
 
@@ -147,6 +158,7 @@ impl ThemeStore {
             themes_dir: Self::themes_dir(),
             plugins_dir,
             active_theme: RwLock::new("default".to_string()),
+            cached_tokens: StdRwLock::new(HashMap::new()),
         }
     }
 
@@ -266,12 +278,36 @@ impl ThemeStore {
             Err(_) => "default".to_string(),
         };
 
-        if let Some(tokens) = self.load_tokens_from_theme(&theme) {
-            return tokens;
+        // Fast path: serve from the memoized cache. Cloning the Arc is cheap;
+        // the deref-and-clone of the inner map is a real copy but still
+        // strictly better than re-reading and re-parsing tokens.toml on
+        // every quantum:// HTML asset request from the GTK main thread.
+        if let Ok(cache) = self.cached_tokens.read() {
+            if let Some(cached) = cache.get(&theme) {
+                return (**cached).clone();
+            }
         }
 
-        // Fall back to defaults
-        self.default_tokens()
+        // Slow path: read tokens.toml from disk, parse it, populate the cache,
+        // and return a clone. If the lock is poisoned we silently fall
+        // through and serve a fresh resolution without caching it.
+        let resolved = self
+            .load_tokens_from_theme(&theme)
+            .unwrap_or_else(|| self.default_tokens());
+
+        if let Ok(mut cache) = self.cached_tokens.write() {
+            cache.insert(theme, Arc::new(resolved.clone()));
+        }
+
+        resolved
+    }
+
+    /// Drop cached tokens for every theme. Called by the watcher thread when
+    /// a tokens.toml file changes on disk.
+    fn invalidate_token_cache(&self) {
+        if let Ok(mut cache) = self.cached_tokens.write() {
+            cache.clear();
+        }
     }
 
     /// Load tokens.toml for `theme` and parse it, returning `Some` only if
@@ -372,7 +408,36 @@ impl ThemeStore {
                     }
                 }
 
-                while let Ok(_events) = rx.recv() {
+                while let Ok(events) = rx.recv() {
+                    // Only react to events that touch a `tokens.toml` file.
+                    // The watcher is registered recursively on the themes
+                    // directory, so it also fires for JS bundle writes from
+                    // `vite build` — those have no effect on resolved tokens
+                    // and used to trigger a wasted disk read plus a spurious
+                    // `theme.reloaded` broadcast.
+                    let tokens_changed = match &events {
+                        Ok(list) => list.iter().any(|event| {
+                            event
+                                .path
+                                .file_name()
+                                .and_then(|name| name.to_str())
+                                .map(|name| name == "tokens.toml")
+                                .unwrap_or(false)
+                        }),
+                        Err(error) => {
+                            tracing::warn!("theme watcher error: {error}");
+                            false
+                        }
+                    };
+
+                    if !tokens_changed {
+                        continue;
+                    }
+
+                    // Drop memoized tokens so the next `resolved_tokens()`
+                    // call re-reads tokens.toml.
+                    store.invalidate_token_cache();
+
                     // Resolve tokens and render CSS
                     let tokens = store.resolved_tokens();
                     let css = quantum_domain::tokens_to_css(&tokens);
@@ -783,5 +848,56 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let store = ThemeStore::with_plugins_dir(tmp.path().to_path_buf());
         assert!(store.get_plugin_file("moon", "views/none.html").is_none());
+    }
+
+    #[test]
+    fn resolved_tokens_cache_hit_returns_same_values_and_invalidates_on_demand() {
+        use std::fs;
+        use tempfile::tempdir;
+
+        // Lay out a custom themes_dir with a tokens.toml under `default/`
+        // so `get_file` reads from disk instead of falling through to the
+        // embedded bundle.
+        let tmp = tempdir().expect("tempdir");
+        let theme_root = tmp.path().join("default");
+        fs::create_dir_all(&theme_root).expect("mkdir");
+        fs::write(
+            theme_root.join("tokens.toml"),
+            "[colors]
+color-bg = \"#111111\"
+",
+        )
+        .expect("write initial tokens");
+
+        let store = ThemeStore::with_themes_dir(tmp.path().to_path_buf(), None);
+
+        // First call populates the cache from disk.
+        let first = store.resolved_tokens();
+        assert_eq!(first.get("color-bg"), Some(&"#111111".to_string()));
+
+        // Mutate tokens.toml on disk. Without the cache, the next call would
+        // immediately see the new value. With the cache and no invalidation,
+        // the stale value must still come back — that proves the cache is
+        // doing its job.
+        fs::write(
+            theme_root.join("tokens.toml"),
+            "[colors]
+color-bg = \"#222222\"
+",
+        )
+        .expect("write updated tokens");
+
+        let second = store.resolved_tokens();
+        assert_eq!(
+            second.get("color-bg"),
+            Some(&"#111111".to_string()),
+            "cache should serve the previously-resolved value"
+        );
+
+        // Now drop the cache the way the watcher thread would, and confirm
+        // the next call picks up the new file contents.
+        store.invalidate_token_cache();
+        let third = store.resolved_tokens();
+        assert_eq!(third.get("color-bg"), Some(&"#222222".to_string()));
     }
 }
