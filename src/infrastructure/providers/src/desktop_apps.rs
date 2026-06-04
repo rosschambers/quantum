@@ -11,13 +11,42 @@ use quantum_domain::{
 };
 
 /// Information about a desktop application.
+///
+/// `name_lower`, `generic_name_lower`, and `keywords_lower` are
+/// precomputed at scan time so the search hot path does not allocate a
+/// new lowercase `String` for every app on every keystroke.
 #[derive(Debug, Clone)]
 struct AppInfo {
     id: String,
     name: String,
     generic_name: Option<String>,
-    keywords: Vec<String>,
     exec: String,
+    name_lower: String,
+    generic_name_lower: Option<String>,
+    keywords_lower: Vec<String>,
+}
+
+impl AppInfo {
+    fn new(
+        id: String,
+        name: String,
+        generic_name: Option<String>,
+        keywords: Vec<String>,
+        exec: String,
+    ) -> Self {
+        let name_lower = name.to_lowercase();
+        let generic_name_lower = generic_name.as_ref().map(|s| s.to_lowercase());
+        let keywords_lower = keywords.iter().map(|k| k.to_lowercase()).collect();
+        Self {
+            id,
+            name,
+            generic_name,
+            exec,
+            name_lower,
+            generic_name_lower,
+            keywords_lower,
+        }
+    }
 }
 
 /// Provider for desktop applications (*.desktop files).
@@ -104,12 +133,14 @@ impl DesktopAppsProvider {
                                 let exec = de.exec().unwrap_or_default().to_string();
 
                                 if let Some(name) = path.file_stem().and_then(|s| s.to_str()) {
-                                    by_id.entry(name.to_string()).or_insert(AppInfo {
-                                        id: name.to_string(),
-                                        name: app_name,
-                                        generic_name,
-                                        keywords,
-                                        exec,
+                                    by_id.entry(name.to_string()).or_insert_with(|| {
+                                        AppInfo::new(
+                                            name.to_string(),
+                                            app_name,
+                                            generic_name,
+                                            keywords,
+                                            exec,
+                                        )
                                     });
                                 }
                             }
@@ -159,8 +190,8 @@ impl ProviderSource for DesktopAppsProvider {
         let mut matches = Vec::new();
 
         for app in apps.iter() {
-            let name_lower = app.name.to_lowercase();
-            let generic_lower = app.generic_name.as_ref().map(|s| s.to_lowercase());
+            let name_lower = app.name_lower.as_str();
+            let generic_lower = app.generic_name_lower.as_deref();
 
             // Simple substring matching with scoring based on position
             let name_score = if name_lower.contains(&query_lower) {
@@ -171,7 +202,7 @@ impl ProviderSource for DesktopAppsProvider {
                 0.0
             };
 
-            let generic_score = if let Some(gn_lower) = &generic_lower {
+            let generic_score = if let Some(gn_lower) = generic_lower {
                 if gn_lower.contains(&query_lower) {
                     0.6 // Lower weight than name
                 } else {
@@ -186,11 +217,7 @@ impl ProviderSource for DesktopAppsProvider {
             // keyword-only hit, but searching by category ("browser",
             // "editor") still surfaces relevant apps whose name does not
             // contain the term.
-            let keyword_score = if app
-                .keywords
-                .iter()
-                .any(|k| k.to_lowercase().contains(&query_lower))
-            {
+            let keyword_score = if app.keywords_lower.iter().any(|k| k.contains(&query_lower)) {
                 0.4
             } else {
                 0.0
@@ -396,18 +423,18 @@ Type=Application"#,
         let executor = Arc::new(FakeExecutor::new());
         let provider = DesktopAppsProvider {
             id: ProviderId::from("test"),
-            apps: RwLock::new(vec![AppInfo {
-                id: "firefox".to_string(),
-                name: "Firefox".to_string(),
-                generic_name: Some("Internet".to_string()),
-                keywords: vec![
+            apps: RwLock::new(vec![AppInfo::new(
+                "firefox".to_string(),
+                "Firefox".to_string(),
+                Some("Internet".to_string()),
+                vec![
                     "WWW".to_string(),
                     "Browser".to_string(),
                     "Web".to_string(),
                     "Explorer".to_string(),
                 ],
-                exec: "firefox".to_string(),
-            }]),
+                "firefox".to_string(),
+            )]),
             executor,
         };
 
@@ -430,20 +457,20 @@ Type=Application"#,
         let provider = DesktopAppsProvider {
             id: ProviderId::from("test"),
             apps: RwLock::new(vec![
-                AppInfo {
-                    id: "firefox".to_string(),
-                    name: "Firefox".to_string(),
-                    generic_name: None,
-                    keywords: vec!["Browser".to_string()],
-                    exec: "firefox".to_string(),
-                },
-                AppInfo {
-                    id: "browser-chooser".to_string(),
-                    name: "Browser Chooser".to_string(),
-                    generic_name: None,
-                    keywords: vec![],
-                    exec: "chooser".to_string(),
-                },
+                AppInfo::new(
+                    "firefox".to_string(),
+                    "Firefox".to_string(),
+                    None,
+                    vec!["Browser".to_string()],
+                    "firefox".to_string(),
+                ),
+                AppInfo::new(
+                    "browser-chooser".to_string(),
+                    "Browser Chooser".to_string(),
+                    None,
+                    vec![],
+                    "chooser".to_string(),
+                ),
             ]),
             executor,
         };
@@ -462,13 +489,13 @@ Type=Application"#,
         let executor = Arc::new(FakeExecutor::new());
         let provider = DesktopAppsProvider {
             id: ProviderId::from("test"),
-            apps: RwLock::new(vec![AppInfo {
-                id: "firefox".to_string(),
-                name: "Firefox".to_string(),
-                generic_name: Some("Web Browser".to_string()),
-                keywords: vec![],
-                exec: "firefox".to_string(),
-            }]),
+            apps: RwLock::new(vec![AppInfo::new(
+                "firefox".to_string(),
+                "Firefox".to_string(),
+                Some("Web Browser".to_string()),
+                vec![],
+                "firefox".to_string(),
+            )]),
             executor,
         };
 
@@ -569,13 +596,13 @@ Type=Application"#,
         let executor = Arc::new(FakeExecutor::new());
         let provider = DesktopAppsProvider {
             id: ProviderId::from("test"),
-            apps: RwLock::new(vec![AppInfo {
-                id: "firefox".to_string(),
-                name: "Firefox".to_string(),
-                generic_name: Some("Web Browser".to_string()),
-                keywords: vec![],
-                exec: "firefox %u".to_string(),
-            }]),
+            apps: RwLock::new(vec![AppInfo::new(
+                "firefox".to_string(),
+                "Firefox".to_string(),
+                Some("Web Browser".to_string()),
+                vec![],
+                "firefox %u".to_string(),
+            )]),
             executor: executor.clone(),
         };
 
