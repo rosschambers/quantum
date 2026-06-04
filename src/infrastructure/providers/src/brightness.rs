@@ -1,8 +1,8 @@
 //! Logind brightness provider via sysfs polling.
 //!
 //! Enumerates `/sys/class/backlight/*` and `/sys/class/leds/*::kbd_backlight` at startup,
-//! polls each brightness file at 1Hz, and emits `BrightnessState` updates. Supports
-//! SetBrightness via logind session interface.
+//! polls each brightness file every 5 seconds, and emits `BrightnessState` updates.
+//! Supports SetBrightness via logind session interface.
 
 use std::path::{Path, PathBuf};
 
@@ -39,7 +39,7 @@ impl LogindBrightnessProvider {
     /// Connect and enumerate brightness devices from sysfs.
     ///
     /// Polls `/sys/class/backlight` and `/sys/class/leds/*::kbd_backlight` to find
-    /// max_brightness. Attempts logind connection for write support. Spawns a 1Hz
+    /// max_brightness. Attempts logind connection for write support. Spawns a 5-second
     /// polling task on the provided runtime.
     pub async fn connect(runtime: tokio::runtime::Handle) -> Result<Self, ProvidersError> {
         let id = ProviderId::from("brightness");
@@ -263,12 +263,12 @@ impl LogindBrightnessProvider {
                 reason: format!("brightness device not found: {}/{}", subsystem, name),
             })?;
 
-        // Read current brightness synchronously.
-        let current_str = std::fs::read_to_string(&spec.brightness_path).map_err(|e| {
-            DomainError::ActionFailed {
+        // Read current brightness via tokio::fs to avoid blocking the runtime worker.
+        let current_str = tokio::fs::read_to_string(&spec.brightness_path)
+            .await
+            .map_err(|e| DomainError::ActionFailed {
                 reason: format!("read brightness: {e}"),
-            }
-        })?;
+            })?;
 
         let current = current_str
             .trim()
