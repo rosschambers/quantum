@@ -25,8 +25,8 @@ use quantum_providers::{
     BluezProvider, DeclarativeShellProvider, DesktopAppsProvider, HyprlandActiveWindowProvider,
     HyprlandWindowsProvider, InMemoryProviderRegistry, LogindBrightnessProvider, MprisProvider,
     NetworkManagerProvider, PluginScriptProvider, PowerProfilesDaemonProvider, ProcStatsProvider,
-    PulseAudioProvider, ShellCommandProvider, SystemPowerProvider, TokioShellExecutor,
-    UpowerBatteryProvider,
+    ProvidersError, PulseAudioProvider, ShellCommandProvider, SystemPowerProvider,
+    TokioShellExecutor, UpowerBatteryProvider,
 };
 use quantum_theme::ThemeStore;
 use quantum_ui::{DummyWindowHost, IpcDispatcher as UiIpcDispatcher};
@@ -139,6 +139,27 @@ impl quantum_domain::PluginCatalog for FilesystemPluginCatalog {
             quantum_domain::DomainError::Unsupported(format!("plugin walk failed: {e}"))
         })?;
         Ok(descs.len())
+    }
+}
+
+/// Register a fallible provider into the in-memory registry, or warn and
+/// continue if its connect failed. Collapses the previously-repeated
+/// `match ::connect()` boilerplate now that the tray providers are
+/// constructed in parallel via `tokio::join!`.
+async fn register_or_warn<P: quantum_domain::ProviderSource + 'static>(
+    registry: &InMemoryProviderRegistry,
+    name: &str,
+    result: Result<P, ProvidersError>,
+) {
+    match result {
+        Ok(provider) => {
+            let provider: Arc<dyn quantum_domain::ProviderSource> = Arc::new(provider);
+            registry
+                .register(provider.id().clone(), provider.clone())
+                .await;
+            info!("Registered {name}");
+        }
+        Err(err) => tracing::warn!(error = ?err, "{name} unavailable"),
     }
 }
 
@@ -404,85 +425,37 @@ async fn setup_daemon(
         info!("Registered HyprlandActiveWindowProvider");
     }
 
-    // Tray providers — each registered with graceful fallback. If the
-    // underlying service is missing the provider still publishes an
-    // unavailable state so the frontend has a uniform contract.
-    match UpowerBatteryProvider::connect().await {
-        Ok(p) => {
-            let p = Arc::new(p);
-            registry
-                .register(p.id().clone(), p as Arc<dyn quantum_domain::ProviderSource>)
-                .await;
-            info!("Registered UpowerBatteryProvider");
-        }
-        Err(e) => tracing::warn!(error = ?e, "UpowerBatteryProvider unavailable"),
-    }
-    match NetworkManagerProvider::connect().await {
-        Ok(p) => {
-            let p = Arc::new(p);
-            registry
-                .register(p.id().clone(), p as Arc<dyn quantum_domain::ProviderSource>)
-                .await;
-            info!("Registered NetworkManagerProvider");
-        }
-        Err(e) => tracing::warn!(error = ?e, "NetworkManagerProvider unavailable"),
-    }
-    match BluezProvider::connect().await {
-        Ok(p) => {
-            let p = Arc::new(p);
-            registry
-                .register(p.id().clone(), p as Arc<dyn quantum_domain::ProviderSource>)
-                .await;
-            info!("Registered BluezProvider");
-        }
-        Err(e) => tracing::warn!(error = ?e, "BluezProvider unavailable"),
-    }
-    match PowerProfilesDaemonProvider::connect().await {
-        Ok(p) => {
-            let p = Arc::new(p);
-            registry
-                .register(p.id().clone(), p as Arc<dyn quantum_domain::ProviderSource>)
-                .await;
-            info!("Registered PowerProfilesDaemonProvider");
-        }
-        Err(e) => tracing::warn!(error = ?e, "PowerProfilesDaemonProvider unavailable"),
-    }
-    match LogindBrightnessProvider::connect(tokio::runtime::Handle::current()).await {
-        Ok(p) => {
-            let p = Arc::new(p);
-            registry
-                .register(p.id().clone(), p as Arc<dyn quantum_domain::ProviderSource>)
-                .await;
-            info!("Registered LogindBrightnessProvider");
-        }
-        Err(e) => tracing::warn!(error = ?e, "LogindBrightnessProvider unavailable"),
-    }
-    match PulseAudioProvider::connect(tokio::runtime::Handle::current()).await {
-        Ok(p) => {
-            let p = Arc::new(p);
-            registry
-                .register(p.id().clone(), p as Arc<dyn quantum_domain::ProviderSource>)
-                .await;
-            info!("Registered PulseAudioProvider");
-        }
-        Err(e) => tracing::warn!(error = ?e, "PulseAudioProvider unavailable"),
-    }
-
-    // Action-only system_power provider (shutdown/restart/suspend/hibernate/lock).
+    // Tray providers and the action-only system_power provider — each
+    // registered with graceful fallback. If the underlying service is
+    // missing the provider still publishes an unavailable state so the
+    // frontend has a uniform contract.
+    //
+    // All seven of these connects are DBus or pactl service-discovery
+    // round-trips with no dependency on each other, so we fan them out
+    // with `tokio::join!` and then register the results sequentially.
+    // Serially awaiting each connect added several seconds of cold-start
+    // latency on systems where every service responds.
     let lock_command_cfg = config
         .system_power
         .as_ref()
         .and_then(|sp| sp.lock_command.clone());
-    match SystemPowerProvider::connect(lock_command_cfg).await {
-        Ok(p) => {
-            let p = Arc::new(p);
-            registry
-                .register(p.id().clone(), p as Arc<dyn quantum_domain::ProviderSource>)
-                .await;
-            info!("Registered SystemPowerProvider");
-        }
-        Err(e) => tracing::warn!(error = ?e, "SystemPowerProvider unavailable"),
-    }
+    let runtime_handle = tokio::runtime::Handle::current();
+    let (battery, network, bluez, ppd, brightness, audio, sysp) = tokio::join!(
+        UpowerBatteryProvider::connect(),
+        NetworkManagerProvider::connect(),
+        BluezProvider::connect(),
+        PowerProfilesDaemonProvider::connect(),
+        LogindBrightnessProvider::connect(runtime_handle.clone()),
+        PulseAudioProvider::connect(runtime_handle.clone()),
+        SystemPowerProvider::connect(lock_command_cfg),
+    );
+    register_or_warn(&registry, "UpowerBatteryProvider", battery).await;
+    register_or_warn(&registry, "NetworkManagerProvider", network).await;
+    register_or_warn(&registry, "BluezProvider", bluez).await;
+    register_or_warn(&registry, "PowerProfilesDaemonProvider", ppd).await;
+    register_or_warn(&registry, "LogindBrightnessProvider", brightness).await;
+    register_or_warn(&registry, "PulseAudioProvider", audio).await;
+    register_or_warn(&registry, "SystemPowerProvider", sysp).await;
 
     // Plugins: walk ~/.config/quantum/plugins/, register one
     // PluginScriptProvider per discovered plugin, spawn one polling task
