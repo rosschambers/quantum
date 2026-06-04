@@ -77,9 +77,13 @@ impl ProviderSource for PluginScriptProvider {
     }
 
     fn capabilities(&self) -> ProviderCapabilities {
+        // The provider exposes invoke-only. Polled scripts (the streaming
+        // half) are driven by per-script tokio tasks in quantumd::main,
+        // which publish directly to the broadcast event bus. The provider
+        // never returns a Stream itself.
         ProviderCapabilities {
             searchable: false,
-            streamable: true,
+            streamable: false,
         }
     }
 
