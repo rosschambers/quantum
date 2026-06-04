@@ -166,15 +166,61 @@ pub(crate) fn parse_pactl_volume_percent(stdout: &str) -> Option<u8> {
 }
 
 /// Parse pactl mute output. Expected values: "yes" or "no".
+///
+/// Matches the trimmed value after the colon rather than substring-searching
+/// the whole line so that a sink description containing the word "yes" (which
+/// can appear in earlier `Description:` lines when scanning a long-form block)
+/// does not flip the mute flag.
 pub(crate) fn parse_pactl_mute(stdout: &str) -> Option<bool> {
     for line in stdout.lines() {
-        if line.contains("Mute:") {
-            if line.contains("yes") {
-                return Some(true);
-            } else if line.contains("no") {
-                return Some(false);
+        let trimmed = line.trim_start();
+        if let Some(rest) = trimmed.strip_prefix("Mute:") {
+            return match rest.trim() {
+                "yes" => Some(true),
+                "no" => Some(false),
+                _ => None,
+            };
+        }
+    }
+    None
+}
+
+/// Parse a single sink's description, volume percent, and mute state out of
+/// the long-form `pactl list sinks` output, identifying the sink by its
+/// `Name:` field.
+///
+/// The long-form output is a sequence of blocks separated by blank lines, each
+/// beginning with `Sink #<id>` and containing tab-indented `Name:`,
+/// `Description:`, `Mute:`, `Volume:` fields among others. Returning all three
+/// pieces from a single buffer is what lets `get_sink_info` collapse four
+/// `pactl` subprocess spawns per event into one.
+pub(crate) fn parse_pactl_sink_block(stdout: &str, sink_name: &str) -> Option<(String, u8, bool)> {
+    for block in stdout.split("\n\n") {
+        let mut name: Option<&str> = None;
+        for line in block.lines() {
+            let trimmed = line.trim_start();
+            if let Some(rest) = trimmed.strip_prefix("Name:") {
+                name = Some(rest.trim());
+                break;
             }
         }
+        if name != Some(sink_name) {
+            continue;
+        }
+
+        let mut description = String::new();
+        for line in block.lines() {
+            let trimmed = line.trim_start();
+            if let Some(rest) = trimmed.strip_prefix("Description:") {
+                description = rest.trim().to_string();
+                break;
+            }
+        }
+
+        let volume_percent = parse_pactl_volume_percent(block)?;
+        let muted = parse_pactl_mute(block).unwrap_or(false);
+
+        return Some((description, volume_percent, muted));
     }
     None
 }
@@ -240,9 +286,18 @@ async fn get_default_sink() -> Option<String> {
 }
 
 /// Fetch current sink info and build an AudioSink DTO.
+///
+/// Uses `pactl list sinks` (long form) which exposes `Name:`, `Description:`,
+/// `Volume:`, and `Mute:` for every sink in a single buffer. The previous
+/// implementation issued separate `get-sink-volume` and `get-sink-mute`
+/// subprocesses after a `list sinks short` lookup, costing four `clone+execve`
+/// pairs per sink-change event (combined with the caller's `get-default-sink`).
+/// Collapsing the per-sink lookups into one long-form list call cuts that to
+/// two subprocesses per event, which matters when a single volume notch on the
+/// keyboard fires several events back-to-back.
 async fn get_sink_info(sink_name: &str) -> Option<AudioSink> {
     let output = Command::new("pactl")
-        .args(["list", "sinks", "short"])
+        .args(["list", "sinks"])
         .output()
         .await
         .ok()?;
@@ -252,38 +307,14 @@ async fn get_sink_info(sink_name: &str) -> Option<AudioSink> {
     }
 
     let stdout = String::from_utf8(output.stdout).ok()?;
-    for line in stdout.lines() {
-        let parts: Vec<&str> = line.split('\t').collect();
-        if parts.len() >= 2 && parts[1] == sink_name {
-            // Found the sink; now query its volume and mute status
-            let volume_output = Command::new("pactl")
-                .args(["get-sink-volume", sink_name])
-                .output()
-                .await
-                .ok()?;
-            let volume_str = String::from_utf8(volume_output.stdout).ok()?;
-            let volume_percent = parse_pactl_volume_percent(&volume_str)?;
+    let (description, volume_percent, muted) = parse_pactl_sink_block(&stdout, sink_name)?;
 
-            let mute_output = Command::new("pactl")
-                .args(["get-sink-mute", sink_name])
-                .output()
-                .await
-                .ok()?;
-            let mute_str = String::from_utf8(mute_output.stdout).ok()?;
-            let muted = parse_pactl_mute(&mute_str).unwrap_or(false);
-
-            let description = parts.get(3).map(|s| s.to_string()).unwrap_or_default();
-
-            return Some(AudioSink {
-                name: sink_name.to_string(),
-                description,
-                volume_percent,
-                muted,
-            });
-        }
-    }
-
-    None
+    Some(AudioSink {
+        name: sink_name.to_string(),
+        description,
+        volume_percent,
+        muted,
+    })
 }
 
 /// Decide whether a single line from `pactl subscribe` should trigger a
