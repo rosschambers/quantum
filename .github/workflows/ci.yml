@@ -22,9 +22,8 @@ jobs:
             libgtk4-layer-shell-dev
 
       - name: Install Rust toolchain
+        # Toolchain version is pinned via rust-toolchain.toml; do not hardcode here.
         uses: dtolnay/rust-toolchain@master
-        with:
-          toolchain: 1.82
 
       - name: Install Node.js
         uses: actions/setup-node@v4
