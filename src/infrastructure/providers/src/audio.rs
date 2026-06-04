@@ -92,7 +92,13 @@ impl ProviderSource for PulseAudioProvider {
     }
 
     fn subscribe(&self) -> Option<BoxStream<'static, serde_json::Value>> {
+        // Audio uses `pactl subscribe` rather than a DBus property
+        // subscription, so the DBus-shaped `service_lifecycle_stream`
+        // helper does not apply. If pactl is missing entirely we fall
+        // back to the legacy default-then-pending stream; recovery on
+        // late install would require restarting the daemon.
         if !self.available {
+            #[allow(deprecated)]
             return Some(quantum_dbus::common::unavailable_stream::<AudioState>());
         }
 

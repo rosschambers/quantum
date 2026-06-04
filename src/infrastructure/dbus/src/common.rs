@@ -56,12 +56,71 @@ pub async fn service_available(conn: &Connection, service: &str) -> bool {
 /// keeps the channel open; if the service appears later, the provider
 /// is expected to restart its real stream via a `NameOwnerChanged`
 /// watcher running elsewhere.
+#[deprecated(note = "use service_lifecycle_stream instead")]
 pub fn unavailable_stream<S: Default + Serialize + Send + 'static>(
 ) -> BoxStream<'static, serde_json::Value> {
     let first = serde_json::to_value(S::default()).unwrap_or(serde_json::Value::Null);
     let initial = futures::stream::iter(std::iter::once(first));
     let pending: futures::stream::Pending<serde_json::Value> = futures::stream::pending();
     Box::pin(initial.chain(pending))
+}
+
+/// Interval (in seconds) between availability checks when the backing
+/// service is absent. Low enough that users notice when they start the
+/// service; high enough that idle daemons do not churn.
+pub const RECHECK_INTERVAL_SECS: u64 = 30;
+
+/// Wrap an inner stream with a lifecycle-aware outer loop that polls
+/// service availability.
+///
+/// While `service` is not owned on `conn`, this helper yields the
+/// default value of `S` and then sleeps for [`RECHECK_INTERVAL_SECS`]
+/// before checking again. Once the service appears, it constructs the
+/// inner stream via `inner_factory` and forwards every item it
+/// produces. If that inner stream ever terminates (for example because
+/// the service disappeared and its property loop ran out of retries),
+/// the outer loop catches the termination and falls back to the
+/// default-then-recheck path, picking the service back up the next
+/// time it returns.
+///
+/// This replaces the old `service_available` -> `unavailable_stream`
+/// branch in providers, which left them stalled forever when the
+/// service was down at daemon startup.
+pub fn service_lifecycle_stream<S, F>(
+    conn: Connection,
+    service: &'static str,
+    inner_factory: F,
+) -> BoxStream<'static, serde_json::Value>
+where
+    S: Default + Serialize + Send + 'static,
+    F: Fn(Connection) -> BoxStream<'static, serde_json::Value> + Send + Sync + 'static,
+{
+    Box::pin(async_stream::stream! {
+        let recheck = Duration::from_secs(RECHECK_INTERVAL_SECS);
+        loop {
+            if service_available(&conn, service).await {
+                tracing::debug!(service, "service available, starting inner stream");
+                let mut inner = inner_factory(conn.clone());
+                while let Some(v) = inner.next().await {
+                    yield v;
+                }
+                tracing::debug!(
+                    service,
+                    "inner stream ended, rechecking service availability"
+                );
+            } else {
+                tracing::debug!(
+                    service,
+                    "service unavailable, yielding default and rechecking in {}s",
+                    RECHECK_INTERVAL_SECS,
+                );
+                let v = serde_json::to_value(S::default())
+                    .unwrap_or(serde_json::Value::Null);
+                yield v;
+                tokio::time::sleep(recheck).await;
+            }
+        }
+    })
 }
 
 /// Run a property-subscription loop on `(service, path, interface)`,
@@ -227,6 +286,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[allow(deprecated)]
     async fn unavailable_stream_yields_one_default_then_pends() {
         let mut s = unavailable_stream::<PowerState>();
         let v = tokio::time::timeout(Duration::from_millis(100), s.next())

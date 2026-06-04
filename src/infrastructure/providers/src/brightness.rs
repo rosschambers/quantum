@@ -184,6 +184,10 @@ impl ProviderSource for LogindBrightnessProvider {
 
     fn subscribe(&self) -> Option<BoxStream<'static, serde_json::Value>> {
         if self.specs.is_empty() {
+            // No backlight devices discovered at startup. This is a
+            // filesystem (sysfs) discovery, not a DBus service, so
+            // `service_lifecycle_stream` does not apply.
+            #[allow(deprecated)]
             return Some(quantum_dbus::common::unavailable_stream::<BrightnessState>());
         }
         // WatchStream yields the current value immediately on subscribe,

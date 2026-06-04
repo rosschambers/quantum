@@ -22,15 +22,16 @@ use crate::error::ProvidersError;
 pub struct UpowerBatteryProvider {
     id: ProviderId,
     conn: Option<Connection>,
-    available: bool,
 }
 
 impl UpowerBatteryProvider {
     /// Attempt to connect to UPower on the system bus.
     ///
-    /// If the system bus is unavailable, returns `Ok(Self { ... available: false })`
-    /// with no error — the provider degrades gracefully. If the bus is available
-    /// but UPower is not, marks `available: false` and continues.
+    /// If the system bus is unavailable, returns `Ok(Self { conn: None })` with no
+    /// error -- the provider degrades gracefully and `subscribe` returns a stream
+    /// that yields a default state. When the bus is available but UPower is not,
+    /// `service_lifecycle_stream` polls availability and switches to a real
+    /// subscription once UPower appears.
     pub async fn connect() -> Result<Self, ProvidersError> {
         let conn = match Connection::system().await {
             Ok(c) => c,
@@ -40,18 +41,13 @@ impl UpowerBatteryProvider {
                 return Ok(Self {
                     id: ProviderId::from("power"),
                     conn: None,
-                    available: false,
                 });
             }
         };
 
-        let available =
-            quantum_dbus::common::service_available(&conn, "org.freedesktop.UPower").await;
-
         Ok(Self {
             id: ProviderId::from("power"),
             conn: Some(conn),
-            available,
         })
     }
 }
@@ -80,46 +76,63 @@ impl ProviderSource for UpowerBatteryProvider {
     }
 
     fn subscribe(&self) -> Option<BoxStream<'static, serde_json::Value>> {
-        if !self.available || self.conn.is_none() {
-            return Some(quantum_dbus::common::unavailable_stream::<PowerState>());
-        }
+        let conn = match self.conn.as_ref() {
+            Some(c) => c.clone(),
+            None => {
+                #[allow(deprecated)]
+                return Some(quantum_dbus::common::unavailable_stream::<PowerState>());
+            }
+        };
 
-        let conn = self.conn.as_ref().unwrap().clone();
+        Some(quantum_dbus::common::service_lifecycle_stream::<
+            PowerState,
+            _,
+        >(
+            conn,
+            "org.freedesktop.UPower",
+            |conn: Connection| {
+                let build: quantum_dbus::common::BuildFn<PowerState> =
+                    Box::new(|conn: &Connection| {
+                        Box::pin(async {
+                            let proxy = zbus::Proxy::new(
+                                conn,
+                                "org.freedesktop.UPower",
+                                "/org/freedesktop/UPower/devices/DisplayDevice",
+                                "org.freedesktop.UPower.Device",
+                            )
+                            .await
+                            .map_err(|e| DbusError::Transport(e.to_string()))?;
 
-        let build: quantum_dbus::common::BuildFn<PowerState> = Box::new(|conn: &Connection| {
-            Box::pin(async {
-                let proxy = zbus::Proxy::new(
+                            let percentage: f64 =
+                                proxy.get_property("Percentage").await.unwrap_or(0.0);
+                            let state: u32 = proxy.get_property("State").await.unwrap_or(0);
+                            let time_to_empty: i64 =
+                                proxy.get_property("TimeToEmpty").await.unwrap_or(0);
+                            let time_to_full: i64 =
+                                proxy.get_property("TimeToFull").await.unwrap_or(0);
+                            let is_present: bool =
+                                proxy.get_property("IsPresent").await.unwrap_or(false);
+
+                            let mut props = HashMap::new();
+                            props.insert("Percentage".to_string(), OwnedValue::from(percentage));
+                            props.insert("State".to_string(), OwnedValue::from(state));
+                            props
+                                .insert("TimeToEmpty".to_string(), OwnedValue::from(time_to_empty));
+                            props.insert("TimeToFull".to_string(), OwnedValue::from(time_to_full));
+                            props.insert("IsPresent".to_string(), OwnedValue::from(is_present));
+
+                            Ok(map_upower_props(&props))
+                        })
+                    });
+
+                quantum_dbus::common::property_subscription_stream(
                     conn,
                     "org.freedesktop.UPower",
                     "/org/freedesktop/UPower/devices/DisplayDevice",
                     "org.freedesktop.UPower.Device",
+                    build,
                 )
-                .await
-                .map_err(|e| DbusError::Transport(e.to_string()))?;
-
-                let percentage: f64 = proxy.get_property("Percentage").await.unwrap_or(0.0);
-                let state: u32 = proxy.get_property("State").await.unwrap_or(0);
-                let time_to_empty: i64 = proxy.get_property("TimeToEmpty").await.unwrap_or(0);
-                let time_to_full: i64 = proxy.get_property("TimeToFull").await.unwrap_or(0);
-                let is_present: bool = proxy.get_property("IsPresent").await.unwrap_or(false);
-
-                let mut props = HashMap::new();
-                props.insert("Percentage".to_string(), OwnedValue::from(percentage));
-                props.insert("State".to_string(), OwnedValue::from(state));
-                props.insert("TimeToEmpty".to_string(), OwnedValue::from(time_to_empty));
-                props.insert("TimeToFull".to_string(), OwnedValue::from(time_to_full));
-                props.insert("IsPresent".to_string(), OwnedValue::from(is_present));
-
-                Ok(map_upower_props(&props))
-            })
-        });
-
-        Some(quantum_dbus::common::property_subscription_stream(
-            conn,
-            "org.freedesktop.UPower",
-            "/org/freedesktop/UPower/devices/DisplayDevice",
-            "org.freedesktop.UPower.Device",
-            build,
+            },
         ))
     }
 }

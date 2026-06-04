@@ -21,15 +21,15 @@ use crate::error::ProvidersError;
 pub struct BluezProvider {
     id: ProviderId,
     conn: Option<Connection>,
-    available: bool,
 }
 
 impl BluezProvider {
     /// Attempt to connect to BlueZ on the system bus.
     ///
-    /// If the system bus is unavailable, returns `Ok(Self { ... available: false })`
-    /// with no error — the provider degrades gracefully. If the bus is available
-    /// but BlueZ is not, marks `available: false` and continues.
+    /// If the system bus is unavailable, returns `Ok(Self { conn: None })` with no
+    /// error -- the provider degrades gracefully. When the bus is available but
+    /// BlueZ is not, `service_lifecycle_stream` polls availability and switches to
+    /// a real subscription once BlueZ appears.
     pub async fn connect() -> Result<Self, ProvidersError> {
         let conn = match Connection::system().await {
             Ok(c) => c,
@@ -37,17 +37,13 @@ impl BluezProvider {
                 return Ok(Self {
                     id: ProviderId::from("bluetooth"),
                     conn: None,
-                    available: false,
                 });
             }
         };
 
-        let available = quantum_dbus::common::service_available(&conn, "org.bluez").await;
-
         Ok(Self {
             id: ProviderId::from("bluetooth"),
             conn: Some(conn),
-            available,
         })
     }
 }
@@ -139,42 +135,111 @@ impl ProviderSource for BluezProvider {
     }
 
     fn subscribe(&self) -> Option<BoxStream<'static, serde_json::Value>> {
-        if !self.available || self.conn.is_none() {
-            return Some(quantum_dbus::common::unavailable_stream::<BluetoothState>());
-        }
+        let conn = match self.conn.as_ref() {
+            Some(c) => c.clone(),
+            None => {
+                #[allow(deprecated)]
+                return Some(quantum_dbus::common::unavailable_stream::<BluetoothState>());
+            }
+        };
 
-        let conn = self.conn.as_ref().unwrap().clone();
+        Some(quantum_dbus::common::service_lifecycle_stream::<
+            BluetoothState,
+            _,
+        >(conn, "org.bluez", |conn: Connection| {
+            bluez_managed_objects_stream(conn)
+        }))
+    }
+}
 
-        Some(Box::pin(async_stream::stream! {
-            let mut backoff = std::time::Duration::from_secs(1);
-            let max_backoff = std::time::Duration::from_secs(30);
-            let mut last_emitted: Option<serde_json::Value> = None;
+/// Build the inner ObjectManager-driven stream for BlueZ.
+///
+/// This is the original property-subscription-shaped loop that watches
+/// `InterfacesAdded` / `InterfacesRemoved` on `org.bluez` root. It is
+/// wrapped by `service_lifecycle_stream` so that when `org.bluez`
+/// disappears (or was never present at startup) the outer loop
+/// recovers automatically.
+fn bluez_managed_objects_stream(conn: Connection) -> BoxStream<'static, serde_json::Value> {
+    Box::pin(async_stream::stream! {
+        let mut backoff = std::time::Duration::from_secs(1);
+        let max_backoff = std::time::Duration::from_secs(30);
+        let mut last_emitted: Option<serde_json::Value> = None;
 
-            loop {
-                // Open ObjectManagerProxy at org.bluez root.
-                let om_proxy = match zbus::fdo::ObjectManagerProxy::builder(&conn)
-                    .destination("org.bluez")
-                    .and_then(|b| b.path("/"))
-                    .map(|b| b.build())
-                {
-                    Ok(fut) => match fut.await {
-                        Ok(p) => p,
-                        Err(e) => {
-                            tracing::warn!(error = %e, "bluez ObjectManagerProxy build failed");
-                            tokio::time::sleep(backoff).await;
-                            backoff = (backoff * 2).min(max_backoff);
-                            continue;
-                        }
-                    },
+        loop {
+            // Open ObjectManagerProxy at org.bluez root.
+            let om_proxy = match zbus::fdo::ObjectManagerProxy::builder(&conn)
+                .destination("org.bluez")
+                .and_then(|b| b.path("/"))
+                .map(|b| b.build())
+            {
+                Ok(fut) => match fut.await {
+                    Ok(p) => p,
                     Err(e) => {
-                        tracing::warn!(error = %e, "bluez ObjectManagerProxy builder failed");
+                        tracing::warn!(error = %e, "bluez ObjectManagerProxy build failed");
                         tokio::time::sleep(backoff).await;
                         backoff = (backoff * 2).min(max_backoff);
                         continue;
                     }
-                };
+                },
+                Err(e) => {
+                    tracing::warn!(error = %e, "bluez ObjectManagerProxy builder failed");
+                    tokio::time::sleep(backoff).await;
+                    backoff = (backoff * 2).min(max_backoff);
+                    continue;
+                }
+            };
 
-                // Initial state.
+            // Initial state.
+            match om_proxy.get_managed_objects().await {
+                Ok(objs) => {
+                    let state = map_managed_objects(&objs);
+                    let v = serde_json::to_value(&state).unwrap_or(serde_json::Value::Null);
+                    if last_emitted.as_ref() != Some(&v) {
+                        last_emitted = Some(v.clone());
+                        yield v;
+                    }
+                }
+                Err(e) => {
+                    tracing::warn!(error = %e, "bluez get_managed_objects failed");
+                    tokio::time::sleep(backoff).await;
+                    backoff = (backoff * 2).min(max_backoff);
+                    continue;
+                }
+            }
+
+            // Subscribe to InterfacesAdded / InterfacesRemoved.
+            let mut interfaces_added = match om_proxy.receive_interfaces_added().await {
+                Ok(s) => s,
+                Err(e) => {
+                    tracing::warn!(error = %e, "bluez receive_interfaces_added failed");
+                    tokio::time::sleep(backoff).await;
+                    backoff = (backoff * 2).min(max_backoff);
+                    continue;
+                }
+            };
+            let mut interfaces_removed = match om_proxy.receive_interfaces_removed().await {
+                Ok(s) => s,
+                Err(e) => {
+                    tracing::warn!(error = %e, "bluez receive_interfaces_removed failed");
+                    tokio::time::sleep(backoff).await;
+                    backoff = (backoff * 2).min(max_backoff);
+                    continue;
+                }
+            };
+
+            backoff = std::time::Duration::from_secs(1);
+
+            // Yield deduped rebuilds on each event.
+            let mut clean = true;
+            loop {
+                tokio::select! {
+                    next = interfaces_added.next() => {
+                        if next.is_none() { break; }
+                    }
+                    next = interfaces_removed.next() => {
+                        if next.is_none() { break; }
+                    }
+                }
                 match om_proxy.get_managed_objects().await {
                     Ok(objs) => {
                         let state = map_managed_objects(&objs);
@@ -185,70 +250,19 @@ impl ProviderSource for BluezProvider {
                         }
                     }
                     Err(e) => {
-                        tracing::warn!(error = %e, "bluez get_managed_objects failed");
-                        tokio::time::sleep(backoff).await;
-                        backoff = (backoff * 2).min(max_backoff);
-                        continue;
+                        tracing::warn!(error = %e, "bluez get_managed_objects failed during loop");
+                        clean = false;
+                        break;
                     }
-                }
-
-                // Subscribe to InterfacesAdded / InterfacesRemoved.
-                let mut interfaces_added = match om_proxy.receive_interfaces_added().await {
-                    Ok(s) => s,
-                    Err(e) => {
-                        tracing::warn!(error = %e, "bluez receive_interfaces_added failed");
-                        tokio::time::sleep(backoff).await;
-                        backoff = (backoff * 2).min(max_backoff);
-                        continue;
-                    }
-                };
-                let mut interfaces_removed = match om_proxy.receive_interfaces_removed().await {
-                    Ok(s) => s,
-                    Err(e) => {
-                        tracing::warn!(error = %e, "bluez receive_interfaces_removed failed");
-                        tokio::time::sleep(backoff).await;
-                        backoff = (backoff * 2).min(max_backoff);
-                        continue;
-                    }
-                };
-
-                backoff = std::time::Duration::from_secs(1);
-
-                // Yield deduped rebuilds on each event.
-                let mut clean = true;
-                loop {
-                    tokio::select! {
-                        next = interfaces_added.next() => {
-                            if next.is_none() { break; }
-                        }
-                        next = interfaces_removed.next() => {
-                            if next.is_none() { break; }
-                        }
-                    }
-                    match om_proxy.get_managed_objects().await {
-                        Ok(objs) => {
-                            let state = map_managed_objects(&objs);
-                            let v = serde_json::to_value(&state).unwrap_or(serde_json::Value::Null);
-                            if last_emitted.as_ref() != Some(&v) {
-                                last_emitted = Some(v.clone());
-                                yield v;
-                            }
-                        }
-                        Err(e) => {
-                            tracing::warn!(error = %e, "bluez get_managed_objects failed during loop");
-                            clean = false;
-                            break;
-                        }
-                    }
-                }
-
-                if !clean {
-                    tokio::time::sleep(backoff).await;
-                    backoff = (backoff * 2).min(max_backoff);
                 }
             }
-        }))
-    }
+
+            if !clean {
+                tokio::time::sleep(backoff).await;
+                backoff = (backoff * 2).min(max_backoff);
+            }
+        }
+    })
 }
 
 /// Enum for parsed Bluetooth actions.

@@ -19,15 +19,15 @@ use crate::error::ProvidersError;
 pub struct NetworkManagerProvider {
     id: ProviderId,
     conn: Option<Connection>,
-    available: bool,
 }
 
 impl NetworkManagerProvider {
     /// Attempt to connect to NetworkManager on the system bus.
     ///
-    /// If the system bus is unavailable, returns `Ok(Self { ... available: false })`
-    /// with no error — the provider degrades gracefully. If the bus is available
-    /// but NetworkManager is not, marks `available: false` and continues.
+    /// If the system bus is unavailable, returns `Ok(Self { conn: None })` with no
+    /// error -- the provider degrades gracefully. When the bus is available but
+    /// NetworkManager is not, `service_lifecycle_stream` polls availability and
+    /// switches to a real subscription once NetworkManager appears.
     pub async fn connect() -> Result<Self, ProvidersError> {
         let conn = match Connection::system().await {
             Ok(c) => c,
@@ -35,18 +35,13 @@ impl NetworkManagerProvider {
                 return Ok(Self {
                     id: ProviderId::from("network"),
                     conn: None,
-                    available: false,
                 });
             }
         };
 
-        let available =
-            quantum_dbus::common::service_available(&conn, "org.freedesktop.NetworkManager").await;
-
         Ok(Self {
             id: ProviderId::from("network"),
             conn: Some(conn),
-            available,
         })
     }
 }
@@ -112,60 +107,73 @@ impl ProviderSource for NetworkManagerProvider {
     }
 
     fn subscribe(&self) -> Option<BoxStream<'static, serde_json::Value>> {
-        if !self.available || self.conn.is_none() {
-            return Some(quantum_dbus::common::unavailable_stream::<NetworkState>());
-        }
+        let conn = match self.conn.as_ref() {
+            Some(c) => c.clone(),
+            None => {
+                #[allow(deprecated)]
+                return Some(quantum_dbus::common::unavailable_stream::<NetworkState>());
+            }
+        };
 
-        let conn = self.conn.as_ref().unwrap().clone();
+        Some(quantum_dbus::common::service_lifecycle_stream::<
+            NetworkState,
+            _,
+        >(
+            conn,
+            "org.freedesktop.NetworkManager",
+            |conn: Connection| {
+                let build: quantum_dbus::common::BuildFn<NetworkState> =
+                    Box::new(|conn: &Connection| {
+                        Box::pin(async {
+                            let proxy = zbus::Proxy::new(
+                                conn,
+                                "org.freedesktop.NetworkManager",
+                                "/org/freedesktop/NetworkManager",
+                                "org.freedesktop.NetworkManager",
+                            )
+                            .await
+                            .map_err(|e| DbusError::Transport(e.to_string()))?;
 
-        let build: quantum_dbus::common::BuildFn<NetworkState> = Box::new(|conn: &Connection| {
-            Box::pin(async {
-                let proxy = zbus::Proxy::new(
+                            let connectivity: u32 =
+                                proxy.get_property("Connectivity").await.unwrap_or(0);
+                            let wifi_enabled: bool =
+                                proxy.get_property("WirelessEnabled").await.unwrap_or(false);
+                            let primary_path: zbus::zvariant::OwnedObjectPath = proxy
+                                .get_property("PrimaryConnection")
+                                .await
+                                .unwrap_or_else(|_| {
+                                    zbus::zvariant::OwnedObjectPath::from(
+                                        zbus::zvariant::ObjectPath::try_from("/").unwrap(),
+                                    )
+                                });
+
+                            let (primary, wifi_signal_percent) = if primary_path.as_str() != "/" {
+                                match build_primary_connection(conn, &primary_path).await {
+                                    Ok((conn_info, strength)) => (Some(conn_info), strength),
+                                    Err(_) => (None, None),
+                                }
+                            } else {
+                                (None, None)
+                            };
+
+                            Ok(NetworkState {
+                                available: true,
+                                connectivity: map_connectivity(connectivity),
+                                primary,
+                                wifi_enabled,
+                                wifi_signal_percent,
+                            })
+                        })
+                    });
+
+                quantum_dbus::common::property_subscription_stream(
                     conn,
                     "org.freedesktop.NetworkManager",
                     "/org/freedesktop/NetworkManager",
                     "org.freedesktop.NetworkManager",
+                    build,
                 )
-                .await
-                .map_err(|e| DbusError::Transport(e.to_string()))?;
-
-                let connectivity: u32 = proxy.get_property("Connectivity").await.unwrap_or(0);
-                let wifi_enabled: bool =
-                    proxy.get_property("WirelessEnabled").await.unwrap_or(false);
-                let primary_path: zbus::zvariant::OwnedObjectPath = proxy
-                    .get_property("PrimaryConnection")
-                    .await
-                    .unwrap_or_else(|_| {
-                        zbus::zvariant::OwnedObjectPath::from(
-                            zbus::zvariant::ObjectPath::try_from("/").unwrap(),
-                        )
-                    });
-
-                let (primary, wifi_signal_percent) = if primary_path.as_str() != "/" {
-                    match build_primary_connection(conn, &primary_path).await {
-                        Ok((conn_info, strength)) => (Some(conn_info), strength),
-                        Err(_) => (None, None),
-                    }
-                } else {
-                    (None, None)
-                };
-
-                Ok(NetworkState {
-                    available: true,
-                    connectivity: map_connectivity(connectivity),
-                    primary,
-                    wifi_enabled,
-                    wifi_signal_percent,
-                })
-            })
-        });
-
-        Some(quantum_dbus::common::property_subscription_stream(
-            conn,
-            "org.freedesktop.NetworkManager",
-            "/org/freedesktop/NetworkManager",
-            "org.freedesktop.NetworkManager",
-            build,
+            },
         ))
     }
 }
