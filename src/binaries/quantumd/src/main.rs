@@ -273,11 +273,26 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             .map(|w| w.view.clone())
             .collect();
         // Track whether widgets/bar should be auto-shown per-monitor on the GTK thread.
+        // Default behaviour: install the BarMultiplexer so the bar appears on every
+        // monitor automatically. Users who explicitly do not want the bar can opt out
+        // by adding a `[[widget]]` entry with `view = "widgets/bar"` and
+        // `auto_show = false` to their config.toml.
         let auto_show_bar = setup
             .config
             .widget
             .iter()
-            .any(|w| w.auto_show && w.view == "widgets/bar");
+            .find(|w| w.view == "widgets/bar")
+            .map(|w| w.auto_show)
+            .unwrap_or(true);
+        if auto_show_bar {
+            tracing::info!(
+                "BarMultiplexer install enabled: bar will be auto-shown on every monitor"
+            );
+        } else {
+            tracing::info!(
+                "BarMultiplexer install skipped: widgets/bar is configured with auto_show = false"
+            );
+        }
         if !widgets_to_show.is_empty() {
             worker.handle.spawn(async move {
                 tokio::time::sleep(std::time::Duration::from_millis(500)).await;
