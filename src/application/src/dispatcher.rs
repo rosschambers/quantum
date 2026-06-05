@@ -21,6 +21,14 @@ pub struct Dispatcher {
     reload_plugins: Arc<ReloadPluginsUseCase>,
 }
 
+/// Params for the three `view.*` handlers (`view.toggle`, `view.show`,
+/// `view.hide`). All three accept the same single `name` field; only the
+/// `WindowMode` passed to `OpenViewUseCase::execute` differs.
+#[derive(serde::Deserialize)]
+struct ViewParams {
+    name: String,
+}
+
 /// Deserialize a required JSON-RPC `params` slice directly into the
 /// handler's typed request struct. Skips the `serde_json::Value` round
 /// trip the old `from_value(Value)` path performed.
@@ -67,9 +75,9 @@ impl Dispatcher {
             "provider.list" => self.handle_provider_list(params).await,
             "provider.subscribe" => self.handle_provider_subscribe(params).await,
             "provider.query" => self.handle_provider_query(params).await,
-            "view.toggle" => self.handle_view_toggle(params).await,
-            "view.show" => self.handle_view_show(params).await,
-            "view.hide" => self.handle_view_hide(params).await,
+            "view.toggle" => self.handle_view(params, WindowMode::Toggle).await,
+            "view.show" => self.handle_view(params, WindowMode::Show).await,
+            "view.hide" => self.handle_view(params, WindowMode::Hide).await,
             "view.set_height" => self.handle_view_set_height(params).await,
             "theme.reload" => self.handle_theme_reload(params).await,
             "plugin.reload" => self.handle_plugin_reload(params).await,
@@ -110,48 +118,9 @@ impl Dispatcher {
         Ok(json!(provider_strs))
     }
 
-    async fn handle_view_toggle(&self, params: Option<&RawValue>) -> Result<Value> {
-        #[derive(serde::Deserialize)]
-        struct ViewParams {
-            name: String,
-        }
-
+    async fn handle_view(&self, params: Option<&RawValue>, mode: WindowMode) -> Result<Value> {
         let params: ViewParams = parse_params(params, "view")?;
-
-        self.open_view
-            .execute(params.name, WindowMode::Toggle)
-            .await?;
-
-        Ok(json!({}))
-    }
-
-    async fn handle_view_show(&self, params: Option<&RawValue>) -> Result<Value> {
-        #[derive(serde::Deserialize)]
-        struct ViewParams {
-            name: String,
-        }
-
-        let params: ViewParams = parse_params(params, "view")?;
-
-        self.open_view
-            .execute(params.name, WindowMode::Show)
-            .await?;
-
-        Ok(json!({}))
-    }
-
-    async fn handle_view_hide(&self, params: Option<&RawValue>) -> Result<Value> {
-        #[derive(serde::Deserialize)]
-        struct ViewParams {
-            name: String,
-        }
-
-        let params: ViewParams = parse_params(params, "view")?;
-
-        self.open_view
-            .execute(params.name, WindowMode::Hide)
-            .await?;
-
+        self.open_view.execute(params.name, mode).await?;
         Ok(json!({}))
     }
 
@@ -265,9 +234,6 @@ mod tests {
         id: ProviderId,
     }
 
-    unsafe impl Send for FakeProvider {}
-    unsafe impl Sync for FakeProvider {}
-
     #[async_trait]
     impl ProviderSource for FakeProvider {
         fn id(&self) -> &ProviderId {
@@ -297,9 +263,6 @@ mod tests {
         providers: HashMap<ProviderId, Arc<dyn ProviderSource>>,
     }
 
-    unsafe impl Send for FakeRegistry {}
-    unsafe impl Sync for FakeRegistry {}
-
     #[async_trait]
     impl ProviderRegistry for FakeRegistry {
         async fn list(&self) -> Vec<ProviderId> {
@@ -312,9 +275,6 @@ mod tests {
     }
 
     struct FakeThemeStore;
-
-    unsafe impl Send for FakeThemeStore {}
-    unsafe impl Sync for FakeThemeStore {}
 
     #[async_trait]
     impl ThemeStore for FakeThemeStore {
@@ -344,9 +304,6 @@ mod tests {
     }
 
     struct FakeEventBus;
-
-    unsafe impl Send for FakeEventBus {}
-    unsafe impl Sync for FakeEventBus {}
 
     #[async_trait]
     impl EventBus for FakeEventBus {
