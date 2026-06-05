@@ -1,5 +1,6 @@
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
+use serde_json::value::RawValue;
 use serde_json::{json, Value};
 use std::path::Path;
 use std::sync::Arc;
@@ -43,9 +44,15 @@ impl std::fmt::Display for DispatchError {
 }
 
 /// Trait for dispatching JSON-RPC requests.
+///
+/// `params` is the raw JSON slice straight off the wire, or `None` when
+/// the request carried no `params` field. Handlers deserialize directly
+/// from the slice into their typed request struct via
+/// `serde_json::from_str(raw.get())`, skipping the `serde_json::Value`
+/// intermediate that doubled allocation cost per call.
 #[async_trait]
 pub trait Dispatcher: Send + Sync {
-    async fn dispatch(&self, method: &str, params: Value) -> DispatchResult;
+    async fn dispatch(&self, method: &str, params: Option<&RawValue>) -> DispatchResult;
 }
 
 /// Unix socket IPC server.
@@ -216,10 +223,7 @@ async fn handle_request<D: Dispatcher>(
     request: &JsonRpcRequest,
     dispatcher: Arc<D>,
 ) -> JsonRpcResponse {
-    let params = request
-        .params
-        .clone()
-        .unwrap_or(Value::Object(Default::default()));
+    let params = request.params.as_deref();
 
     match dispatcher.dispatch(&request.method, params).await {
         Ok(result) => JsonRpcResponse::success(request.id.clone(), result),
@@ -240,7 +244,7 @@ mod tests {
 
     #[async_trait]
     impl Dispatcher for FakeDispatcher {
-        async fn dispatch(&self, method: &str, _params: Value) -> DispatchResult {
+        async fn dispatch(&self, method: &str, _params: Option<&RawValue>) -> DispatchResult {
             match method {
                 "test.ping" => Ok(json!({"pong": true})),
                 "test.error" => Err(DispatchError::new(-32603, "test error")),

@@ -6,6 +6,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use async_trait::async_trait;
+use serde_json::value::RawValue;
 use serde_json::Value;
 use tracing::info;
 use tracing_subscriber::EnvFilter;
@@ -46,7 +47,7 @@ impl AppDispatcherAdapter {
 
 #[async_trait]
 impl IpcDispatcher for AppDispatcherAdapter {
-    async fn dispatch(&self, method: &str, params: Value) -> DispatchResult {
+    async fn dispatch(&self, method: &str, params: Option<&RawValue>) -> DispatchResult {
         match self.inner.dispatch(method, params).await {
             Ok(value) => Ok(value),
             Err(err) => Err(DispatchError::new(err.rpc_code(), err.to_string())),
@@ -61,7 +62,27 @@ impl UiIpcDispatcher for AppDispatcherAdapter {
         method: &str,
         params: Value,
     ) -> quantum_ui::dispatcher::DispatchResult {
-        match self.inner.dispatch(method, params).await {
+        // The UI bridge still hands us a fully-parsed `Value` because the
+        // ui crate cannot depend on serde_json's `raw_value` shape across
+        // its public trait. Bounce through `to_raw_value` so the
+        // application dispatcher sees the unified `Option<&RawValue>`
+        // contract. A `Value::Null` here means the JS bridge omitted
+        // params; forward `None` so handlers can distinguish "no params"
+        // from "empty object".
+        let raw = if params.is_null() {
+            None
+        } else {
+            match serde_json::value::to_raw_value(&params) {
+                Ok(r) => Some(r),
+                Err(err) => {
+                    return Err(quantum_ui::dispatcher::DispatchError {
+                        code: -32603,
+                        message: format!("failed to encode UI params: {err}"),
+                    });
+                }
+            }
+        };
+        match self.inner.dispatch(method, raw.as_deref()).await {
             Ok(value) => Ok(value),
             Err(err) => Err(quantum_ui::dispatcher::DispatchError {
                 code: err.rpc_code(),

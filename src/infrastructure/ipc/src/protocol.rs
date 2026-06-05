@@ -1,12 +1,20 @@
 use serde::{Deserialize, Serialize};
+use serde_json::value::RawValue;
 use serde_json::Value;
 
 /// JSON-RPC 2.0 request.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+///
+/// `params` is held as `Option<Box<RawValue>>` rather than `Option<Value>`
+/// so the JSON payload is not eagerly parsed into a `serde_json::Value`
+/// tree. Dispatchers deserialize the raw slice directly into their typed
+/// request struct (`serde_json::from_str(raw.get())`), eliminating the
+/// double-walk we used to do with `from_value` on a `Value`.
+#[derive(Debug, Serialize, Deserialize)]
 pub struct JsonRpcRequest {
     pub jsonrpc: String,
     pub method: String,
-    pub params: Option<Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub params: Option<Box<RawValue>>,
     pub id: Option<Value>,
 }
 
@@ -20,8 +28,13 @@ impl JsonRpcRequest {
         }
     }
 
+    /// Attach params from any serializable value. Used by tests and by
+    /// in-process clients that already have a typed struct; the wire
+    /// format stays the same.
     pub fn with_params(mut self, params: Value) -> Self {
-        self.params = Some(params);
+        let raw = serde_json::value::to_raw_value(&params)
+            .expect("serializing serde_json::Value to RawValue never fails");
+        self.params = Some(raw);
         self
     }
 }
@@ -117,6 +130,17 @@ mod tests {
 
         assert_eq!(back.method, "test.method");
         assert_eq!(back.id, Some(Value::Number(1.into())));
+        let raw = back.params.expect("params present");
+        assert!(raw.get().contains("\"key\""));
+        assert!(raw.get().contains("\"value\""));
+    }
+
+    #[test]
+    fn request_without_params_deserializes() {
+        // theme.reload and plugin.reload legitimately omit `params`.
+        let wire = r#"{"jsonrpc":"2.0","method":"theme.reload","id":1}"#;
+        let req: JsonRpcRequest = serde_json::from_str(wire).unwrap();
+        assert!(req.params.is_none());
     }
 
     #[test]
