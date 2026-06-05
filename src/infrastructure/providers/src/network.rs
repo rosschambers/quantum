@@ -3,8 +3,11 @@
 //! Subscribes to network state via `org.freedesktop.NetworkManager` service,
 //! reading connectivity, primary connection type, and WiFi state.
 
+use std::sync::Arc;
+
 use async_trait::async_trait;
 use futures::stream::BoxStream;
+use tokio::sync::RwLock;
 use zbus::Connection;
 
 use quantum_domain::{
@@ -16,9 +19,28 @@ use quantum_dbus::DbusError;
 
 use crate::error::ProvidersError;
 
+/// In-memory cache of the last successfully built `NetworkState`,
+/// keyed alongside the `PrimaryConnection` object path it was built
+/// from.
+///
+/// NetworkManager fires `PropertiesChanged` on the root object dozens of
+/// times during a single connectivity probe -- usually only the
+/// `Connectivity` field has flipped while `PrimaryConnection` is
+/// unchanged. Walking the active-connection proxy + access-point proxy
+/// on every signal is wasted I/O in that case. We cache the previous
+/// `primary` / `wifi_signal_percent` together with the path they came
+/// from; when the path is unchanged on the next signal we reuse them
+/// and only re-read the cheap root-level properties.
+#[derive(Default)]
+struct NetworkStateCache {
+    last_primary_path: Option<zbus::zvariant::OwnedObjectPath>,
+    last_state: Option<NetworkState>,
+}
+
 pub struct NetworkManagerProvider {
     id: ProviderId,
     conn: Option<Connection>,
+    state: Arc<RwLock<NetworkStateCache>>,
 }
 
 impl NetworkManagerProvider {
@@ -35,6 +57,7 @@ impl NetworkManagerProvider {
                 return Ok(Self {
                     id: ProviderId::from("network"),
                     conn: None,
+                    state: Arc::new(RwLock::new(NetworkStateCache::default())),
                 });
             }
         };
@@ -42,6 +65,7 @@ impl NetworkManagerProvider {
         Ok(Self {
             id: ProviderId::from("network"),
             conn: Some(conn),
+            state: Arc::new(RwLock::new(NetworkStateCache::default())),
         })
     }
 }
@@ -115,15 +139,19 @@ impl ProviderSource for NetworkManagerProvider {
             }
         };
 
+        let cache = self.state.clone();
+
         Some(quantum_dbus::common::service_lifecycle_stream::<
             NetworkState,
             _,
         >(
             conn,
             "org.freedesktop.NetworkManager",
-            |conn: Connection| {
-                let build = |conn: &Connection| {
+            move |conn: Connection| {
+                let cache = cache.clone();
+                let build = move |conn: &Connection| {
                     let conn = conn.clone();
+                    let cache = cache.clone();
                     async move {
                         let proxy = zbus::Proxy::new(
                             &conn,
@@ -134,6 +162,8 @@ impl ProviderSource for NetworkManagerProvider {
                         .await
                         .map_err(|e| DbusError::Transport(e.to_string()))?;
 
+                        // Cheap root-level properties: re-read on every
+                        // signal because that is exactly what changes.
                         let connectivity: u32 =
                             proxy.get_property("Connectivity").await.unwrap_or(0);
                         let wifi_enabled: bool =
@@ -147,22 +177,58 @@ impl ProviderSource for NetworkManagerProvider {
                                 )
                             });
 
-                        let (primary, wifi_signal_percent) = if primary_path.as_str() != "/" {
-                            match build_primary_connection(&conn, &primary_path).await {
-                                Ok((conn_info, strength)) => (Some(conn_info), strength),
-                                Err(_) => (None, None),
+                        // Try the cache: if the PrimaryConnection path is
+                        // unchanged from the previous build, reuse the
+                        // cached `primary` + `wifi_signal_percent` instead
+                        // of walking the active-connection proxy + access
+                        // point proxy again. Those properties (SSID,
+                        // signal strength, connection type) only change
+                        // when the active connection itself changes.
+                        let reused = {
+                            let guard = cache.read().await;
+                            match (&guard.last_primary_path, &guard.last_state) {
+                                (Some(prev_path), Some(prev_state))
+                                    if prev_path == &primary_path =>
+                                {
+                                    Some((
+                                        prev_state.primary.clone(),
+                                        prev_state.wifi_signal_percent,
+                                    ))
+                                }
+                                _ => None,
                             }
-                        } else {
-                            (None, None)
                         };
 
-                        Ok(NetworkState {
+                        let (primary, wifi_signal_percent) = match reused {
+                            Some((p, s)) => (p, s),
+                            None => {
+                                if primary_path.as_str() != "/" {
+                                    match build_primary_connection(&conn, &primary_path).await {
+                                        Ok((conn_info, strength)) => (Some(conn_info), strength),
+                                        Err(_) => (None, None),
+                                    }
+                                } else {
+                                    (None, None)
+                                }
+                            }
+                        };
+
+                        let new_state = NetworkState {
                             available: true,
                             connectivity: map_connectivity(connectivity),
                             primary,
                             wifi_enabled,
                             wifi_signal_percent,
-                        })
+                        };
+
+                        // Update the cache for the next signal.
+                        {
+                            let mut guard = cache.write().await;
+                            guard.last_primary_path = Some(primary_path);
+                            guard.last_state = Some(new_state.clone());
+                        }
+
+                        Ok(new_state)
                     }
                 };
 
