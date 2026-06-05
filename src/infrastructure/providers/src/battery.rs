@@ -91,39 +91,36 @@ impl ProviderSource for UpowerBatteryProvider {
             conn,
             "org.freedesktop.UPower",
             |conn: Connection| {
-                let build: quantum_dbus::common::BuildFn<PowerState> =
-                    Box::new(|conn: &Connection| {
-                        Box::pin(async {
-                            let proxy = zbus::Proxy::new(
-                                conn,
-                                "org.freedesktop.UPower",
-                                "/org/freedesktop/UPower/devices/DisplayDevice",
-                                "org.freedesktop.UPower.Device",
-                            )
-                            .await
-                            .map_err(|e| DbusError::Transport(e.to_string()))?;
+                let build = |conn: &Connection| {
+                    let conn = conn.clone();
+                    async move {
+                        let proxy = zbus::Proxy::new(
+                            &conn,
+                            "org.freedesktop.UPower",
+                            "/org/freedesktop/UPower/devices/DisplayDevice",
+                            "org.freedesktop.UPower.Device",
+                        )
+                        .await
+                        .map_err(|e| DbusError::Transport(e.to_string()))?;
 
-                            let percentage: f64 =
-                                proxy.get_property("Percentage").await.unwrap_or(0.0);
-                            let state: u32 = proxy.get_property("State").await.unwrap_or(0);
-                            let time_to_empty: i64 =
-                                proxy.get_property("TimeToEmpty").await.unwrap_or(0);
-                            let time_to_full: i64 =
-                                proxy.get_property("TimeToFull").await.unwrap_or(0);
-                            let is_present: bool =
-                                proxy.get_property("IsPresent").await.unwrap_or(false);
+                        let percentage: f64 = proxy.get_property("Percentage").await.unwrap_or(0.0);
+                        let state: u32 = proxy.get_property("State").await.unwrap_or(0);
+                        let time_to_empty: i64 =
+                            proxy.get_property("TimeToEmpty").await.unwrap_or(0);
+                        let time_to_full: i64 = proxy.get_property("TimeToFull").await.unwrap_or(0);
+                        let is_present: bool =
+                            proxy.get_property("IsPresent").await.unwrap_or(false);
 
-                            let mut props = HashMap::new();
-                            props.insert("Percentage".to_string(), OwnedValue::from(percentage));
-                            props.insert("State".to_string(), OwnedValue::from(state));
-                            props
-                                .insert("TimeToEmpty".to_string(), OwnedValue::from(time_to_empty));
-                            props.insert("TimeToFull".to_string(), OwnedValue::from(time_to_full));
-                            props.insert("IsPresent".to_string(), OwnedValue::from(is_present));
+                        let mut props = HashMap::new();
+                        props.insert("Percentage".to_string(), OwnedValue::from(percentage));
+                        props.insert("State".to_string(), OwnedValue::from(state));
+                        props.insert("TimeToEmpty".to_string(), OwnedValue::from(time_to_empty));
+                        props.insert("TimeToFull".to_string(), OwnedValue::from(time_to_full));
+                        props.insert("IsPresent".to_string(), OwnedValue::from(is_present));
 
-                            Ok(map_upower_props(&props))
-                        })
-                    });
+                        Ok(map_upower_props(&props))
+                    }
+                };
 
                 quantum_dbus::common::property_subscription_stream(
                     conn,

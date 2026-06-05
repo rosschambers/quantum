@@ -125,58 +125,58 @@ impl ProviderSource for PowerProfilesDaemonProvider {
             conn,
             "net.hadess.PowerProfiles",
             |conn: Connection| {
-                let build: quantum_dbus::common::BuildFn<PowerProfileState> =
-                    Box::new(|conn: &Connection| {
-                        Box::pin(async {
-                            let proxy = zbus::Proxy::new(
-                                conn,
-                                "net.hadess.PowerProfiles",
-                                "/net/hadess/PowerProfiles",
-                                "net.hadess.PowerProfiles",
-                            )
+                let build = |conn: &Connection| {
+                    let conn = conn.clone();
+                    async move {
+                        let proxy = zbus::Proxy::new(
+                            &conn,
+                            "net.hadess.PowerProfiles",
+                            "/net/hadess/PowerProfiles",
+                            "net.hadess.PowerProfiles",
+                        )
+                        .await
+                        .map_err(|e| DbusError::Transport(e.to_string()))?;
+
+                        let active_profile_str: String = proxy
+                            .get_property("ActiveProfile")
                             .await
-                            .map_err(|e| DbusError::Transport(e.to_string()))?;
+                            .unwrap_or_default();
+                        let active = parse_profile_str(&active_profile_str);
 
-                            let active_profile_str: String = proxy
-                                .get_property("ActiveProfile")
-                                .await
-                                .unwrap_or_default();
-                            let active = parse_profile_str(&active_profile_str);
-
-                            // Profiles is `aa{sv}`: an array of dicts (string ->
-                            // variant). Each dict has a "Profile" key whose value
-                            // is the profile name string (power-saver / balanced /
-                            // performance) plus driver metadata we ignore.
-                            let profiles_data: Vec<
-                                std::collections::HashMap<String, zbus::zvariant::OwnedValue>,
-                            > = proxy.get_property("Profiles").await.unwrap_or_default();
-                            let profiles: Vec<PowerProfile> = profiles_data
-                                .iter()
-                                .filter_map(|dict| {
-                                    let val = dict.get("Profile")?;
-                                    let s: String = val.try_clone().ok()?.try_into().ok()?;
-                                    parse_profile_str(&s)
-                                })
-                                .collect();
-
-                            let performance_inhibited_str: String = proxy
-                                .get_property("PerformanceInhibited")
-                                .await
-                                .unwrap_or_default();
-                            let performance_inhibited = if performance_inhibited_str.is_empty() {
-                                None
-                            } else {
-                                Some(performance_inhibited_str)
-                            };
-
-                            Ok(PowerProfileState {
-                                available: true,
-                                active,
-                                profiles,
-                                performance_inhibited,
+                        // Profiles is `aa{sv}`: an array of dicts (string ->
+                        // variant). Each dict has a "Profile" key whose value
+                        // is the profile name string (power-saver / balanced /
+                        // performance) plus driver metadata we ignore.
+                        let profiles_data: Vec<
+                            std::collections::HashMap<String, zbus::zvariant::OwnedValue>,
+                        > = proxy.get_property("Profiles").await.unwrap_or_default();
+                        let profiles: Vec<PowerProfile> = profiles_data
+                            .iter()
+                            .filter_map(|dict| {
+                                let val = dict.get("Profile")?;
+                                let s: String = val.try_clone().ok()?.try_into().ok()?;
+                                parse_profile_str(&s)
                             })
+                            .collect();
+
+                        let performance_inhibited_str: String = proxy
+                            .get_property("PerformanceInhibited")
+                            .await
+                            .unwrap_or_default();
+                        let performance_inhibited = if performance_inhibited_str.is_empty() {
+                            None
+                        } else {
+                            Some(performance_inhibited_str)
+                        };
+
+                        Ok(PowerProfileState {
+                            available: true,
+                            active,
+                            profiles,
+                            performance_inhibited,
                         })
-                    });
+                    }
+                };
 
                 quantum_dbus::common::property_subscription_stream(
                     conn,

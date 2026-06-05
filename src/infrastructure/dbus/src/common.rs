@@ -8,27 +8,61 @@
 //! `BoxStream<serde_json::Value>`. This module factors that out.
 //!
 //! The helper is intentionally bus-agnostic at the call site: providers
-//! pass a `BuildFn` closure that takes a `&zbus::Connection` and returns
-//! their fully-constructed DTO. Reconnect-on-error uses exponential
-//! backoff capped at 30 seconds, matching the `hyprland_active_window`
-//! provider's pattern.
+//! pass a [`BuildState`] implementation (typically a closure) that takes
+//! a `&zbus::Connection` and returns their fully-constructed DTO.
+//! Reconnect-on-error uses exponential backoff capped at 30 seconds,
+//! matching the `hyprland_active_window` provider's pattern.
 
+use std::future::Future;
 use std::time::Duration;
 
-use futures::future::BoxFuture;
 use futures::stream::{BoxStream, StreamExt};
 use serde::Serialize;
 use zbus::Connection;
 
 use crate::error::DbusError;
 
-/// Closure type for building a DTO from a live connection.
+/// Trait for building a DTO from a live connection.
 ///
 /// Takes a borrowed connection so the builder can hop to other paths on
-/// the same bus (BlueZ's ObjectManager needs this). Returns
-/// `DbusError` so transport errors surface for backoff.
-pub type BuildFn<S> =
-    Box<dyn for<'a> Fn(&'a Connection) -> BoxFuture<'a, Result<S, DbusError>> + Send + Sync>;
+/// the same bus (BlueZ's ObjectManager needs this). Returns `DbusError`
+/// so transport errors surface for backoff.
+///
+/// The original implementation used a
+/// `Box<dyn Fn(&Connection) -> BoxFuture<Result<S, DbusError>>>` type
+/// alias. Each invocation incurred a virtual call plus a `Box::pin`
+/// heap allocation for the returned future. For high-rate signal
+/// sources (NetworkManager during a connectivity probe fires dozens of
+/// `PropertiesChanged` per second) the per-event allocation was pure
+/// overhead. The trait below is monomorphized by
+/// [`property_subscription_stream`], removing both the `Box<dyn>`
+/// indirection and the inner `BoxFuture`.
+///
+/// The blanket impl matches any
+/// `Fn(&Connection) -> impl Future<Output = Result<S, DbusError>>`, so
+/// call sites pass an ordinary closure; the returned future just needs
+/// to be a concrete (non-boxed) future. Call sites typically clone the
+/// connection and return an `async move { ... }` block so the future is
+/// `'static`.
+pub trait BuildState<S>: Send + Sync + 'static {
+    /// Concrete future type returned by [`build`](Self::build).
+    type Future: Future<Output = Result<S, DbusError>> + Send + 'static;
+
+    /// Build a fresh state value from the connection.
+    fn build(&self, conn: &Connection) -> Self::Future;
+}
+
+impl<S, F, Fut> BuildState<S> for F
+where
+    F: Fn(&Connection) -> Fut + Send + Sync + 'static,
+    Fut: Future<Output = Result<S, DbusError>> + Send + 'static,
+{
+    type Future = Fut;
+
+    fn build(&self, conn: &Connection) -> Self::Future {
+        (self)(conn)
+    }
+}
 
 /// Check whether a DBus service is currently owned on the given bus.
 ///
@@ -124,8 +158,8 @@ where
 }
 
 /// Run a property-subscription loop on `(service, path, interface)`,
-/// yielding fresh DTOs via the supplied `build` closure on every
-/// `PropertiesChanged` signal.
+/// yielding fresh DTOs via the supplied [`BuildState`] implementation
+/// on every `PropertiesChanged` signal.
 ///
 /// The initial state is yielded before the loop blocks on signals.
 /// Identical consecutive states are deduped via `serde_json::Value`
@@ -134,15 +168,16 @@ where
 ///
 /// This function never returns under normal conditions. Drop the
 /// resulting stream to stop it.
-pub fn property_subscription_stream<S>(
+pub fn property_subscription_stream<S, B>(
     conn: Connection,
     service: &'static str,
     path: &'static str,
     interface: &'static str,
-    build: BuildFn<S>,
+    build: B,
 ) -> BoxStream<'static, serde_json::Value>
 where
     S: Serialize + Send + Sync + 'static,
+    B: BuildState<S>,
 {
     Box::pin(async_stream::stream! {
         let mut backoff = Duration::from_secs(1);
@@ -167,7 +202,7 @@ where
             };
 
             // Initial state.
-            match build(&conn).await {
+            match build.build(&conn).await {
                 Ok(state) => match serde_json::to_value(&state) {
                     Ok(v) => {
                         if last_emitted.as_ref() != Some(&v) {
@@ -219,7 +254,7 @@ where
                         continue;
                     }
                 }
-                match build(&conn).await {
+                match build.build(&conn).await {
                     Ok(state) => match serde_json::to_value(&state) {
                         Ok(v) => {
                             if last_emitted.as_ref() != Some(&v) {

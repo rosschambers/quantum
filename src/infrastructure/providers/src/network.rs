@@ -122,49 +122,49 @@ impl ProviderSource for NetworkManagerProvider {
             conn,
             "org.freedesktop.NetworkManager",
             |conn: Connection| {
-                let build: quantum_dbus::common::BuildFn<NetworkState> =
-                    Box::new(|conn: &Connection| {
-                        Box::pin(async {
-                            let proxy = zbus::Proxy::new(
-                                conn,
-                                "org.freedesktop.NetworkManager",
-                                "/org/freedesktop/NetworkManager",
-                                "org.freedesktop.NetworkManager",
-                            )
+                let build = |conn: &Connection| {
+                    let conn = conn.clone();
+                    async move {
+                        let proxy = zbus::Proxy::new(
+                            &conn,
+                            "org.freedesktop.NetworkManager",
+                            "/org/freedesktop/NetworkManager",
+                            "org.freedesktop.NetworkManager",
+                        )
+                        .await
+                        .map_err(|e| DbusError::Transport(e.to_string()))?;
+
+                        let connectivity: u32 =
+                            proxy.get_property("Connectivity").await.unwrap_or(0);
+                        let wifi_enabled: bool =
+                            proxy.get_property("WirelessEnabled").await.unwrap_or(false);
+                        let primary_path: zbus::zvariant::OwnedObjectPath = proxy
+                            .get_property("PrimaryConnection")
                             .await
-                            .map_err(|e| DbusError::Transport(e.to_string()))?;
+                            .unwrap_or_else(|_| {
+                                zbus::zvariant::OwnedObjectPath::from(
+                                    zbus::zvariant::ObjectPath::try_from("/").unwrap(),
+                                )
+                            });
 
-                            let connectivity: u32 =
-                                proxy.get_property("Connectivity").await.unwrap_or(0);
-                            let wifi_enabled: bool =
-                                proxy.get_property("WirelessEnabled").await.unwrap_or(false);
-                            let primary_path: zbus::zvariant::OwnedObjectPath = proxy
-                                .get_property("PrimaryConnection")
-                                .await
-                                .unwrap_or_else(|_| {
-                                    zbus::zvariant::OwnedObjectPath::from(
-                                        zbus::zvariant::ObjectPath::try_from("/").unwrap(),
-                                    )
-                                });
+                        let (primary, wifi_signal_percent) = if primary_path.as_str() != "/" {
+                            match build_primary_connection(&conn, &primary_path).await {
+                                Ok((conn_info, strength)) => (Some(conn_info), strength),
+                                Err(_) => (None, None),
+                            }
+                        } else {
+                            (None, None)
+                        };
 
-                            let (primary, wifi_signal_percent) = if primary_path.as_str() != "/" {
-                                match build_primary_connection(conn, &primary_path).await {
-                                    Ok((conn_info, strength)) => (Some(conn_info), strength),
-                                    Err(_) => (None, None),
-                                }
-                            } else {
-                                (None, None)
-                            };
-
-                            Ok(NetworkState {
-                                available: true,
-                                connectivity: map_connectivity(connectivity),
-                                primary,
-                                wifi_enabled,
-                                wifi_signal_percent,
-                            })
+                        Ok(NetworkState {
+                            available: true,
+                            connectivity: map_connectivity(connectivity),
+                            primary,
+                            wifi_enabled,
+                            wifi_signal_percent,
                         })
-                    });
+                    }
+                };
 
                 quantum_dbus::common::property_subscription_stream(
                     conn,
