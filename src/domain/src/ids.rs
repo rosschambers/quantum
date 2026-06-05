@@ -27,9 +27,6 @@ impl std::fmt::Display for ProviderId {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub struct WindowId(pub u64);
-
 #[cfg(test)]
 mod tests {
     use super::*;

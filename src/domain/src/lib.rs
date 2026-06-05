@@ -21,7 +21,7 @@ pub use bar_state::{
 };
 pub use error::DomainError;
 pub use event_bus::EventEnvelope;
-pub use ids::{ProviderId, WindowId};
+pub use ids::ProviderId;
 pub use match_result::{IconRef, Match};
 pub use ports::{
     ActionOutcome, EventBus, HyprlandClient, PluginCatalog, ProviderRegistry, ProviderSource,
