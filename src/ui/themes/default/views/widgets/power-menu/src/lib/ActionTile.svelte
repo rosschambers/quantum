@@ -26,7 +26,7 @@
     let { command, label, icon, variant, armed, onArm, onInvoke }: Props = $props();
 
     let isArmed = $derived(armed === command);
-    let iconSize = $derived(variant === 'primary' ? 28 : 20);
+    let iconSize = $derived(variant === 'primary' ? 32 : 24);
 
     async function handleClick(): Promise<void> {
         if (isArmed) {
@@ -64,13 +64,13 @@
         transition: background-color 0.1s, border-color 0.1s, color 0.1s;
     }
     .action-tile.primary {
-        padding: 18px 14px;
-        font-size: 13px;
+        padding: 24px 18px;
+        font-size: 14px;
         font-weight: 600;
     }
     .action-tile.secondary {
-        padding: 10px 8px;
-        font-size: 11px;
+        padding: 14px 10px;
+        font-size: 12px;
         font-weight: 500;
         gap: 6px;
         background: transparent;

@@ -280,26 +280,27 @@
     .card {
         background: var(--color-bg-alt, #313244);
         color: var(--color-fg, #cdd6f4);
-        border-radius: 12px;
-        padding: 18px 20px;
-        min-width: 360px;
-        max-width: 400px;
+        border-radius: 14px;
+        padding: 24px 28px;
+        width: min(28vw, 560px);
+        min-width: 380px;
+        max-width: 560px;
         box-shadow: 0 14px 40px rgba(0, 0, 0, 0.6);
         border: 1px solid var(--color-border, #45475a);
     }
     .tier-primary {
         display: grid;
         grid-template-columns: 1fr 1fr;
-        gap: 10px;
+        gap: 14px;
     }
     .tier-secondary {
         display: flex;
-        gap: 4px;
+        gap: 8px;
         justify-content: space-around;
-        margin-top: 10px;
+        margin-top: 14px;
     }
     .tier-secondary.divider {
-        padding-top: 12px;
+        padding-top: 16px;
         border-top: 1px solid var(--color-border, #45475a);
     }
     .tier-secondary :global(.action-tile) {
