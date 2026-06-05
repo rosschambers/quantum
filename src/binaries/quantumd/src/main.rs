@@ -12,9 +12,9 @@ use tracing::info;
 use tracing_subscriber::EnvFilter;
 
 use quantum_application::{
-    Dispatcher as AppDispatcher, LaunchActionUseCase, ListProvidersUseCase, OpenViewUseCase,
-    QueryProviderUseCase, ReloadPluginsUseCase, ReloadThemeUseCase, ScheduleActionUseCase,
-    SearchUseCase, SubscribeProviderUseCase,
+    ApplicationError, Dispatcher as AppDispatcher, LaunchActionUseCase, ListProvidersUseCase,
+    OpenViewUseCase, QueryProviderUseCase, ReloadPluginsUseCase, ReloadThemeUseCase,
+    ScheduleActionUseCase, SearchUseCase, SubscribeProviderUseCase,
 };
 use quantum_config::{Config, ConfigStore};
 use quantum_domain::{DomainError, EventBus, ProviderId, ProviderSource};
@@ -45,12 +45,26 @@ impl AppDispatcherAdapter {
     }
 }
 
+/// Lower an `ApplicationError` into the `(code, message)` pair that every
+/// wire-level `DispatchError` carries. Both the infrastructure `IpcDispatcher`
+/// and the UI `IpcDispatcher` need the same mapping, but their
+/// `DispatchError` structs live in different crates (the ui crate cannot
+/// depend on infrastructure per the onion-architecture rule) so we map to
+/// the common shape here and each impl block wraps the tuple in its own
+/// error type.
+fn application_error_parts(err: &ApplicationError) -> (i32, String) {
+    (err.rpc_code(), err.to_string())
+}
+
 #[async_trait]
 impl IpcDispatcher for AppDispatcherAdapter {
     async fn dispatch(&self, method: &str, params: Option<&RawValue>) -> DispatchResult {
         match self.inner.dispatch(method, params).await {
             Ok(value) => Ok(value),
-            Err(err) => Err(DispatchError::new(err.rpc_code(), err.to_string())),
+            Err(err) => {
+                let (code, message) = application_error_parts(&err);
+                Err(DispatchError::new(code, message))
+            }
         }
     }
 }
@@ -84,10 +98,10 @@ impl UiIpcDispatcher for AppDispatcherAdapter {
         };
         match self.inner.dispatch(method, raw.as_deref()).await {
             Ok(value) => Ok(value),
-            Err(err) => Err(quantum_ui::dispatcher::DispatchError {
-                code: err.rpc_code(),
-                message: err.to_string(),
-            }),
+            Err(err) => {
+                let (code, message) = application_error_parts(&err);
+                Err(quantum_ui::dispatcher::DispatchError { code, message })
+            }
         }
     }
 }
