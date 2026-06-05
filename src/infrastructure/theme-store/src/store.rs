@@ -651,10 +651,6 @@ mod tests {
             async fn publish(&self, _event: &str, _payload: &str) -> Result<(), DomainError> {
                 Ok(())
             }
-
-            async fn subscribe(&self, _event: &str) -> Result<(), DomainError> {
-                Ok(())
-            }
         }
 
         // Point themes_dir at a path that definitely does not exist.
@@ -683,10 +679,6 @@ mod tests {
         #[async_trait]
         impl quantum_domain::EventBus for NoopBus {
             async fn publish(&self, _event: &str, _payload: &str) -> Result<(), DomainError> {
-                Ok(())
-            }
-
-            async fn subscribe(&self, _event: &str) -> Result<(), DomainError> {
                 Ok(())
             }
         }
@@ -756,10 +748,6 @@ mod tests {
                     .lock()
                     .await
                     .push((event.to_string(), payload.to_string()));
-                Ok(())
-            }
-
-            async fn subscribe(&self, _event: &str) -> Result<(), DomainError> {
                 Ok(())
             }
         }

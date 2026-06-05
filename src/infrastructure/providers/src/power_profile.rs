@@ -8,8 +8,8 @@ use futures::stream::BoxStream;
 use zbus::Connection;
 
 use quantum_domain::{
-    Action, ActionOutcome, DomainError, Match, PowerProfile, PowerProfileState,
-    ProviderCapabilities, ProviderId, ProviderSource, Query,
+    Action, ActionOutcome, DomainError, Match, PowerProfile, PowerProfileState, ProviderId,
+    ProviderSource, Query,
 };
 
 use quantum_dbus::DbusError;
@@ -50,13 +50,6 @@ impl PowerProfilesDaemonProvider {
 impl ProviderSource for PowerProfilesDaemonProvider {
     fn id(&self) -> &ProviderId {
         &self.id
-    }
-
-    fn capabilities(&self) -> ProviderCapabilities {
-        ProviderCapabilities {
-            searchable: false,
-            streamable: true,
-        }
     }
 
     async fn search(&self, _: &Query) -> Result<Vec<Match>, DomainError> {

@@ -56,12 +56,6 @@ mod tests {
         fn id(&self) -> &ProviderId {
             &self.id
         }
-        fn capabilities(&self) -> quantum_domain::ProviderCapabilities {
-            quantum_domain::ProviderCapabilities {
-                searchable: false,
-                streamable: true,
-            }
-        }
         async fn search(
             &self,
             _: &quantum_domain::Query,
@@ -119,9 +113,6 @@ mod tests {
                 .lock()
                 .await
                 .push((event.to_string(), payload.to_string()));
-            Ok(())
-        }
-        async fn subscribe(&self, _: &str) -> std::result::Result<(), DomainError> {
             Ok(())
         }
     }

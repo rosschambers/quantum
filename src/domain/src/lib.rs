@@ -24,8 +24,8 @@ pub use event_bus::EventEnvelope;
 pub use ids::{ProviderId, WindowId};
 pub use match_result::{IconRef, Match};
 pub use ports::{
-    ActionOutcome, ConfigStore, EventBus, HyprlandClient, PluginCatalog, ProviderCapabilities,
-    ProviderRegistry, ProviderSource, ShellExecutor, ShellOutput, ThemeStore, WindowHost,
+    ActionOutcome, EventBus, HyprlandClient, PluginCatalog, ProviderRegistry, ProviderSource,
+    ShellExecutor, ShellOutput, ThemeStore, WindowHost,
 };
 pub use query::Query;
 pub use score::MatchScore;

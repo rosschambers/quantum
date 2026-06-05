@@ -23,12 +23,6 @@ impl Default for TokioShellExecutor {
 
 #[async_trait]
 impl ShellExecutor for TokioShellExecutor {
-    async fn execute(&self, _command: &[String]) -> Result<String, DomainError> {
-        Err(DomainError::Unsupported(
-            "use run_with_timeout instead".to_string(),
-        ))
-    }
-
     async fn run_with_timeout(
         &self,
         command: &[String],

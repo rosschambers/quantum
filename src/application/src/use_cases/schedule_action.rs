@@ -153,8 +153,7 @@ mod tests {
     use super::*;
     use async_trait::async_trait;
     use quantum_domain::{
-        ActionOutcome, DomainError, Match, ProviderCapabilities, ProviderId, ProviderRegistry,
-        ProviderSource, Query,
+        ActionOutcome, DomainError, Match, ProviderId, ProviderRegistry, ProviderSource, Query,
     };
 
     /// Fake provider that records its received actions and reports
@@ -169,12 +168,6 @@ mod tests {
     impl ProviderSource for FakeProvider {
         fn id(&self) -> &ProviderId {
             &self.id
-        }
-        fn capabilities(&self) -> ProviderCapabilities {
-            ProviderCapabilities {
-                searchable: false,
-                streamable: false,
-            }
         }
         async fn search(&self, _q: &Query) -> std::result::Result<Vec<Match>, DomainError> {
             Ok(vec![])

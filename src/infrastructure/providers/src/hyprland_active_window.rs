@@ -8,8 +8,8 @@ use tokio_stream::wrappers::BroadcastStream;
 use crate::error::ProvidersError;
 
 use quantum_domain::{
-    Action, ActionOutcome, DomainError, Match, MonitorActiveWindowState, ProviderCapabilities,
-    ProviderId, ProviderSource, Query,
+    Action, ActionOutcome, DomainError, Match, MonitorActiveWindowState, ProviderId,
+    ProviderSource, Query,
 };
 
 use quantum_hyprland::{HyprlandEvent, HyprlandSocketClient};
@@ -188,13 +188,6 @@ pub(crate) fn send_state_if_changed(
 impl ProviderSource for HyprlandActiveWindowProvider {
     fn id(&self) -> &ProviderId {
         &self.id
-    }
-
-    fn capabilities(&self) -> ProviderCapabilities {
-        ProviderCapabilities {
-            searchable: false,
-            streamable: true,
-        }
     }
 
     async fn search(&self, _: &Query) -> Result<Vec<Match>, DomainError> {

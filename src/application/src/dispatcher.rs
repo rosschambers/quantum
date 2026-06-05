@@ -247,8 +247,8 @@ mod tests {
     use crate::SearchResponse;
     use async_trait::async_trait;
     use quantum_domain::{
-        Action, ActionOutcome, DomainError, EventBus, Match, MatchScore, ProviderCapabilities,
-        ProviderId, ProviderRegistry, ProviderSource, Query, ThemeStore, WindowHost,
+        Action, ActionOutcome, DomainError, EventBus, Match, MatchScore, ProviderId,
+        ProviderRegistry, ProviderSource, Query, ThemeStore, WindowHost,
     };
     use std::collections::HashMap;
 
@@ -272,13 +272,6 @@ mod tests {
     impl ProviderSource for FakeProvider {
         fn id(&self) -> &ProviderId {
             &self.id
-        }
-
-        fn capabilities(&self) -> ProviderCapabilities {
-            ProviderCapabilities {
-                searchable: true,
-                streamable: false,
-            }
         }
 
         async fn search(&self, _q: &Query) -> std::result::Result<Vec<Match>, DomainError> {
@@ -341,6 +334,10 @@ mod tests {
             None
         }
 
+        fn get_plugin_file(&self, _plugin_name: &str, _path: &str) -> Option<Vec<u8>> {
+            None
+        }
+
         fn resolved_tokens(&self) -> std::collections::HashMap<String, String> {
             std::collections::HashMap::new()
         }
@@ -360,10 +357,6 @@ mod tests {
         ) -> std::result::Result<(), DomainError> {
             Ok(())
         }
-
-        async fn subscribe(&self, _event: &str) -> std::result::Result<(), DomainError> {
-            Ok(())
-        }
     }
 
     #[derive(Clone)]
@@ -375,6 +368,14 @@ mod tests {
             &self,
             _view: &str,
             _mode: WindowMode,
+        ) -> std::result::Result<(), DomainError> {
+            Ok(())
+        }
+
+        async fn set_view_height(
+            &self,
+            _view: &str,
+            _height: u32,
         ) -> std::result::Result<(), DomainError> {
             Ok(())
         }

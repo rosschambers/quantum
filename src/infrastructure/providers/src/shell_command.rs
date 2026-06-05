@@ -2,8 +2,8 @@ use async_trait::async_trait;
 use std::sync::Arc;
 
 use quantum_domain::{
-    Action, ActionOutcome, DomainError, Match, MatchScore, ProviderCapabilities, ProviderId,
-    ProviderSource, Query, ShellExecutor,
+    Action, ActionOutcome, DomainError, Match, MatchScore, ProviderId, ProviderSource, Query,
+    ShellExecutor,
 };
 
 /// Provider for shell commands (queries starting with ">").
@@ -26,13 +26,6 @@ impl ShellCommandProvider {
 impl ProviderSource for ShellCommandProvider {
     fn id(&self) -> &ProviderId {
         &self.id
-    }
-
-    fn capabilities(&self) -> ProviderCapabilities {
-        ProviderCapabilities {
-            searchable: true,
-            streamable: false,
-        }
     }
 
     async fn search(&self, q: &Query) -> Result<Vec<Match>, DomainError> {
@@ -97,10 +90,6 @@ mod tests {
 
     #[async_trait]
     impl ShellExecutor for FakeExecutor {
-        async fn execute(&self, _command: &[String]) -> Result<String, DomainError> {
-            Ok(String::new())
-        }
-
         async fn run_with_timeout(
             &self,
             _command: &[String],

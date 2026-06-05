@@ -5,8 +5,7 @@
 
 use async_trait::async_trait;
 use quantum_domain::{
-    Action, ActionOutcome, DomainError, Match, ProviderCapabilities, ProviderId, ProviderSource,
-    Query, ShellExecutor,
+    Action, ActionOutcome, DomainError, Match, ProviderId, ProviderSource, Query, ShellExecutor,
 };
 use quantum_plugins::{ActionScript, IdleScript, PolledScript};
 use serde::Deserialize;
@@ -76,17 +75,10 @@ impl ProviderSource for PluginScriptProvider {
         &self.id
     }
 
-    fn capabilities(&self) -> ProviderCapabilities {
-        // The provider exposes invoke-only. Polled scripts (the streaming
-        // half) are driven by per-script tokio tasks in quantumd::main,
-        // which publish directly to the broadcast event bus. The provider
-        // never returns a Stream itself.
-        ProviderCapabilities {
-            searchable: false,
-            streamable: false,
-        }
-    }
-
+    // The provider exposes invoke-only. Polled scripts (the streaming
+    // half) are driven by per-script tokio tasks in quantumd::main,
+    // which publish directly to the broadcast event bus. The provider
+    // never returns a Stream itself.
     async fn search(&self, _q: &Query) -> Result<Vec<Match>, DomainError> {
         Ok(Vec::new())
     }
@@ -158,9 +150,6 @@ mod tests {
 
     #[async_trait]
     impl ShellExecutor for FakeExecutor {
-        async fn execute(&self, _command: &[String]) -> Result<String, DomainError> {
-            Err(DomainError::Unsupported("not used in tests".into()))
-        }
         async fn run_with_timeout(
             &self,
             command: &[String],

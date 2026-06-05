@@ -60,9 +60,7 @@ mod tests {
     use super::*;
     use async_trait::async_trait;
     use futures::stream::{self, BoxStream, StreamExt};
-    use quantum_domain::{
-        Action, ActionOutcome, Match, ProviderCapabilities, ProviderSource, Query,
-    };
+    use quantum_domain::{Action, ActionOutcome, Match, ProviderSource, Query};
     use std::sync::Mutex;
 
     struct YieldingProvider {
@@ -74,12 +72,6 @@ mod tests {
     impl ProviderSource for YieldingProvider {
         fn id(&self) -> &ProviderId {
             &self.id
-        }
-        fn capabilities(&self) -> ProviderCapabilities {
-            ProviderCapabilities {
-                searchable: false,
-                streamable: true,
-            }
         }
         async fn search(&self, _: &Query) -> std::result::Result<Vec<Match>, DomainError> {
             Ok(vec![])
@@ -104,12 +96,6 @@ mod tests {
         fn id(&self) -> &ProviderId {
             &self.id
         }
-        fn capabilities(&self) -> ProviderCapabilities {
-            ProviderCapabilities {
-                searchable: false,
-                streamable: true,
-            }
-        }
         async fn search(&self, _: &Query) -> std::result::Result<Vec<Match>, DomainError> {
             Ok(vec![])
         }
@@ -130,12 +116,6 @@ mod tests {
     impl ProviderSource for NonStreamingProvider {
         fn id(&self) -> &ProviderId {
             &self.id
-        }
-        fn capabilities(&self) -> ProviderCapabilities {
-            ProviderCapabilities {
-                searchable: false,
-                streamable: false,
-            }
         }
         async fn search(&self, _: &Query) -> std::result::Result<Vec<Match>, DomainError> {
             Ok(vec![])

@@ -64,6 +64,10 @@ impl WindowHost for DummyWindowHost {
     async fn open(&self, _view: &str, _mode: WindowMode) -> Result<(), DomainError> {
         Ok(())
     }
+
+    async fn set_view_height(&self, _view: &str, _height: u32) -> Result<(), DomainError> {
+        Ok(())
+    }
 }
 
 #[cfg(test)]

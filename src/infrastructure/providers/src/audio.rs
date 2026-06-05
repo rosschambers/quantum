@@ -14,8 +14,8 @@ use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::Command;
 
 use quantum_domain::{
-    Action, ActionOutcome, AudioSink, AudioState, DomainError, Match, ProviderCapabilities,
-    ProviderId, ProviderSource, Query,
+    Action, ActionOutcome, AudioSink, AudioState, DomainError, Match, ProviderId, ProviderSource,
+    Query,
 };
 
 use crate::error::ProvidersError;
@@ -50,13 +50,6 @@ impl PulseAudioProvider {
 impl ProviderSource for PulseAudioProvider {
     fn id(&self) -> &ProviderId {
         &self.id
-    }
-
-    fn capabilities(&self) -> ProviderCapabilities {
-        ProviderCapabilities {
-            searchable: false,
-            streamable: true,
-        }
     }
 
     async fn search(&self, _: &Query) -> Result<Vec<Match>, DomainError> {

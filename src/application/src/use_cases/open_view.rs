@@ -58,6 +58,14 @@ mod tests {
                 Ok(())
             }
         }
+
+        async fn set_view_height(
+            &self,
+            _view: &str,
+            _height: u32,
+        ) -> std::result::Result<(), DomainError> {
+            Ok(())
+        }
     }
 
     #[tokio::test]

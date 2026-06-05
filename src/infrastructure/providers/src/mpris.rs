@@ -11,8 +11,8 @@ use zbus::zvariant::OwnedValue;
 use zbus::{Connection, Proxy};
 
 use quantum_domain::{
-    Action, ActionOutcome, DomainError, Match, MprisState, PlaybackStatus, ProviderCapabilities,
-    ProviderId, ProviderSource, Query,
+    Action, ActionOutcome, DomainError, Match, MprisState, PlaybackStatus, ProviderId,
+    ProviderSource, Query,
 };
 
 const MPRIS_PREFIX: &str = "org.mpris.MediaPlayer2.";
@@ -102,13 +102,6 @@ impl MprisProvider {
 impl ProviderSource for MprisProvider {
     fn id(&self) -> &ProviderId {
         &self.id
-    }
-
-    fn capabilities(&self) -> ProviderCapabilities {
-        ProviderCapabilities {
-            searchable: false,
-            streamable: true,
-        }
     }
 
     async fn search(&self, _: &Query) -> Result<Vec<Match>, DomainError> {

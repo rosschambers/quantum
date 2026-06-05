@@ -4,8 +4,7 @@ use tokio::sync::broadcast;
 use tokio_stream::wrappers::BroadcastStream;
 
 use quantum_domain::{
-    Action, ActionOutcome, DomainError, Match, ProviderCapabilities, ProviderId, ProviderSource,
-    Query, SystemStats,
+    Action, ActionOutcome, DomainError, Match, ProviderId, ProviderSource, Query, SystemStats,
 };
 
 pub struct ProcStatsProvider {
@@ -106,13 +105,6 @@ pub(crate) fn send_if_changed(
 impl ProviderSource for ProcStatsProvider {
     fn id(&self) -> &ProviderId {
         &self.id
-    }
-
-    fn capabilities(&self) -> ProviderCapabilities {
-        ProviderCapabilities {
-            searchable: false,
-            streamable: true,
-        }
     }
 
     async fn search(&self, _: &Query) -> Result<Vec<Match>, DomainError> {

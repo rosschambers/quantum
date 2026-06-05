@@ -12,7 +12,7 @@ use zbus::Connection;
 
 use quantum_domain::{
     Action, ActionOutcome, DomainError, Match, NetworkConnection, NetworkConnectivity, NetworkKind,
-    NetworkState, ProviderCapabilities, ProviderId, ProviderSource, Query,
+    NetworkState, ProviderId, ProviderSource, Query,
 };
 
 use quantum_dbus::DbusError;
@@ -74,13 +74,6 @@ impl NetworkManagerProvider {
 impl ProviderSource for NetworkManagerProvider {
     fn id(&self) -> &ProviderId {
         &self.id
-    }
-
-    fn capabilities(&self) -> ProviderCapabilities {
-        ProviderCapabilities {
-            searchable: false,
-            streamable: true,
-        }
     }
 
     async fn search(&self, _: &Query) -> Result<Vec<Match>, DomainError> {

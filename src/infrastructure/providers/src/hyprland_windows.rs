@@ -5,8 +5,8 @@ use std::time::{Duration, Instant};
 use tokio::sync::RwLock;
 
 use quantum_domain::{
-    Action, ActionOutcome, DomainError, HyprlandClient, Match, MatchScore, ProviderCapabilities,
-    ProviderId, ProviderSource, Query,
+    Action, ActionOutcome, DomainError, HyprlandClient, Match, MatchScore, ProviderId,
+    ProviderSource, Query,
 };
 
 /// Minimum interval between hyprctl j/clients refreshes. Within this window,
@@ -137,13 +137,6 @@ impl HyprlandWindowsProvider {
 impl ProviderSource for HyprlandWindowsProvider {
     fn id(&self) -> &ProviderId {
         &self.id
-    }
-
-    fn capabilities(&self) -> ProviderCapabilities {
-        ProviderCapabilities {
-            searchable: true,
-            streamable: false,
-        }
     }
 
     async fn search(&self, q: &Query) -> Result<Vec<Match>, DomainError> {

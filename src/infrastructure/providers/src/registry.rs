@@ -48,7 +48,7 @@ impl ProviderRegistry for InMemoryProviderRegistry {
 mod tests {
     use super::*;
     use async_trait::async_trait;
-    use quantum_domain::{Action, ActionOutcome, DomainError, Match, ProviderCapabilities, Query};
+    use quantum_domain::{Action, ActionOutcome, DomainError, Match, Query};
 
     struct TestProvider {
         id: ProviderId,
@@ -58,13 +58,6 @@ mod tests {
     impl ProviderSource for TestProvider {
         fn id(&self) -> &ProviderId {
             &self.id
-        }
-
-        fn capabilities(&self) -> ProviderCapabilities {
-            ProviderCapabilities {
-                searchable: true,
-                streamable: false,
-            }
         }
 
         async fn search(&self, _q: &Query) -> Result<Vec<Match>, DomainError> {

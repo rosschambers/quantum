@@ -66,6 +66,10 @@ mod tests {
             None
         }
 
+        fn get_plugin_file(&self, _plugin_name: &str, _path: &str) -> Option<Vec<u8>> {
+            None
+        }
+
         fn resolved_tokens(&self) -> std::collections::HashMap<String, String> {
             std::collections::HashMap::new()
         }
@@ -91,10 +95,6 @@ mod tests {
                 self.events.lock().unwrap().push(event.to_string());
                 Ok(())
             }
-        }
-
-        async fn subscribe(&self, _event: &str) -> std::result::Result<(), DomainError> {
-            Ok(())
         }
     }
 

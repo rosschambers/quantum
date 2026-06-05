@@ -11,8 +11,8 @@ use zbus::zvariant::OwnedValue;
 use zbus::Connection;
 
 use quantum_domain::{
-    Action, ActionOutcome, BatteryChargeState, DomainError, Match, PowerState,
-    ProviderCapabilities, ProviderId, ProviderSource, Query,
+    Action, ActionOutcome, BatteryChargeState, DomainError, Match, PowerState, ProviderId,
+    ProviderSource, Query,
 };
 
 use quantum_dbus::DbusError;
@@ -56,13 +56,6 @@ impl UpowerBatteryProvider {
 impl ProviderSource for UpowerBatteryProvider {
     fn id(&self) -> &ProviderId {
         &self.id
-    }
-
-    fn capabilities(&self) -> ProviderCapabilities {
-        ProviderCapabilities {
-            searchable: false,
-            streamable: true,
-        }
     }
 
     async fn search(&self, _: &Query) -> Result<Vec<Match>, DomainError> {

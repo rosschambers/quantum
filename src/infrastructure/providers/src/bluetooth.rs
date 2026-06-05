@@ -12,8 +12,8 @@ use zbus::zvariant::{OwnedObjectPath, OwnedValue};
 use zbus::Connection;
 
 use quantum_domain::{
-    Action, ActionOutcome, BluetoothDevice, BluetoothState, DomainError, Match,
-    ProviderCapabilities, ProviderId, ProviderSource, Query,
+    Action, ActionOutcome, BluetoothDevice, BluetoothState, DomainError, Match, ProviderId,
+    ProviderSource, Query,
 };
 
 use crate::error::ProvidersError;
@@ -52,13 +52,6 @@ impl BluezProvider {
 impl ProviderSource for BluezProvider {
     fn id(&self) -> &ProviderId {
         &self.id
-    }
-
-    fn capabilities(&self) -> ProviderCapabilities {
-        ProviderCapabilities {
-            searchable: false,
-            streamable: true,
-        }
     }
 
     async fn search(&self, _: &Query) -> Result<Vec<Match>, DomainError> {

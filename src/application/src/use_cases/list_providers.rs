@@ -19,9 +19,7 @@ impl ListProvidersUseCase {
 mod tests {
     use super::*;
     use async_trait::async_trait;
-    use quantum_domain::{
-        ActionOutcome, DomainError, Match, ProviderCapabilities, ProviderSource, Query,
-    };
+    use quantum_domain::{ActionOutcome, DomainError, Match, ProviderSource, Query};
     use std::collections::HashMap;
 
     struct FakeProvider {
@@ -32,13 +30,6 @@ mod tests {
     impl ProviderSource for FakeProvider {
         fn id(&self) -> &ProviderId {
             &self.id
-        }
-
-        fn capabilities(&self) -> ProviderCapabilities {
-            ProviderCapabilities {
-                searchable: true,
-                streamable: false,
-            }
         }
 
         async fn search(&self, _q: &Query) -> std::result::Result<Vec<Match>, DomainError> {

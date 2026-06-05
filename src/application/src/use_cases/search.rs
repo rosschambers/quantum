@@ -86,9 +86,7 @@ impl SearchUseCase {
 mod tests {
     use super::*;
     use async_trait::async_trait;
-    use quantum_domain::{
-        Action, DomainError, MatchScore, ProviderCapabilities, ProviderId, ProviderSource,
-    };
+    use quantum_domain::{Action, DomainError, MatchScore, ProviderId, ProviderSource};
     use std::collections::HashMap;
     use std::time::Duration as StdDuration;
     use tokio::time::sleep;
@@ -103,13 +101,6 @@ mod tests {
     impl ProviderSource for FakeProvider {
         fn id(&self) -> &ProviderId {
             &self.id
-        }
-
-        fn capabilities(&self) -> ProviderCapabilities {
-            ProviderCapabilities {
-                searchable: true,
-                streamable: false,
-            }
         }
 
         async fn search(&self, _q: &Query) -> std::result::Result<Vec<Match>, DomainError> {

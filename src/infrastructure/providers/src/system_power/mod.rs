@@ -8,8 +8,7 @@
 use async_trait::async_trait;
 use futures::stream::{BoxStream, StreamExt};
 use quantum_domain::{
-    Action, ActionOutcome, DomainError, Match, ProviderCapabilities, ProviderId, ProviderSource,
-    Query, SystemPowerState,
+    Action, ActionOutcome, DomainError, Match, ProviderId, ProviderSource, Query, SystemPowerState,
 };
 use std::process::Stdio;
 
@@ -157,13 +156,6 @@ impl SystemPowerProvider {
 impl ProviderSource for SystemPowerProvider {
     fn id(&self) -> &ProviderId {
         &self.id
-    }
-
-    fn capabilities(&self) -> ProviderCapabilities {
-        ProviderCapabilities {
-            searchable: false,
-            streamable: true,
-        }
     }
 
     async fn search(&self, _: &Query) -> Result<Vec<Match>, DomainError> {

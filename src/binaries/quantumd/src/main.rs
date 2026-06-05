@@ -124,10 +124,6 @@ impl EventBus for BroadcastingEventBus {
         });
         Ok(())
     }
-
-    async fn subscribe(&self, _event: &str) -> Result<(), DomainError> {
-        Ok(())
-    }
 }
 
 /// Resolve the user-side plugins directory. Falls back to `~/.config`

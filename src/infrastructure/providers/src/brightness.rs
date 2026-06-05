@@ -13,8 +13,8 @@ use tokio_stream::wrappers::WatchStream;
 use zbus::Connection;
 
 use quantum_domain::{
-    Action, ActionOutcome, BrightnessDisplay, BrightnessState, DomainError, Match,
-    ProviderCapabilities, ProviderId, ProviderSource, Query,
+    Action, ActionOutcome, BrightnessDisplay, BrightnessState, DomainError, Match, ProviderId,
+    ProviderSource, Query,
 };
 
 use crate::error::ProvidersError;
@@ -142,13 +142,6 @@ async fn sample_brightness(specs: &[BrightnessSpec]) -> BrightnessState {
 impl ProviderSource for LogindBrightnessProvider {
     fn id(&self) -> &ProviderId {
         &self.id
-    }
-
-    fn capabilities(&self) -> ProviderCapabilities {
-        ProviderCapabilities {
-            searchable: false,
-            streamable: true,
-        }
     }
 
     async fn search(&self, _: &Query) -> Result<Vec<Match>, DomainError> {
