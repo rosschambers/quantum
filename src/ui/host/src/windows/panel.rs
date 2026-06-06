@@ -67,6 +67,7 @@ impl PanelWindow {
         _theme_store: Arc<dyn ThemeStore>,
         runtime: Handle,
         event_tx: broadcast::Sender<EventEnvelope>,
+        monitor: Option<gdk::Monitor>,
     ) -> Self {
         let view_name: String = view_name.into();
         let layer_shell = use_layer_shell();
@@ -140,13 +141,14 @@ impl PanelWindow {
             window.set_exclusive_zone(-1); // Don't reserve space.
 
             if is_fullscreen_overlay {
-                // Pin to the primary monitor so the overlay always
-                // appears on the same display rather than wherever the
-                // compositor happens to focus at show time. Without
-                // this the panel drifts between monitors based on
-                // cursor/focus state, which feels random.
-                if let Some(monitor) = pick_overlay_monitor() {
-                    window.set_monitor(&monitor);
+                // Pin to the monitor supplied by the caller (typically
+                // the bar widget's `@<monitor>` suffix on the view key)
+                // so the overlay opens on the same display as the bar
+                // that triggered it. Fall back to the primary monitor
+                // when no monitor is supplied (e.g. direct quantumctl
+                // calls without a suffix).
+                if let Some(m) = monitor.as_ref().cloned().or_else(pick_overlay_monitor) {
+                    window.set_monitor(&m);
                 }
                 // Anchor all four edges so the surface spans the whole
                 // output; the page renders a centered card on a dark

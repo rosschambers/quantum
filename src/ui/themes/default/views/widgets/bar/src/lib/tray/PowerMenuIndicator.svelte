@@ -35,10 +35,18 @@
     }
 
     async function openMenu(): Promise<void> {
+        // The bar widget is injected with a per-monitor `__quantum_monitor`
+        // global (e.g. "DP-1") by the WebView host. Append it as an `@monitor`
+        // suffix so the registry pins the power-menu overlay to the same
+        // monitor as the bar that triggered it.
+        const monitor = window.__quantum_monitor;
+        const name = monitor
+            ? `widgets/power-menu@${monitor}`
+            : 'widgets/power-menu';
         try {
-            await client.call('view.show', { name: 'widgets/power-menu' });
+            await client.call('view.show', { name });
         } catch (err) {
-            console.error('view.show widgets/power-menu failed:', err);
+            console.error(`view.show ${name} failed:`, err);
         }
     }
 </script>
