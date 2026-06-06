@@ -13,6 +13,22 @@ use tokio::runtime::Handle;
 use tokio::sync::broadcast;
 use webkit6::{prelude::*, WebView};
 
+/// Pick the GDK monitor that fullscreen-overlay panels should anchor
+/// to. Returns the first monitor in `gdk::Display::monitors()`, which
+/// is the user's primary display under Wayland. Returning `None`
+/// lets the compositor pick (current behaviour).
+fn pick_overlay_monitor() -> Option<gdk::Monitor> {
+    let display = gdk::Display::default()?;
+    let monitors = display.monitors();
+    let n = monitors.n_items();
+    if n == 0 {
+        return None;
+    }
+    monitors
+        .item(0)
+        .and_then(|obj| obj.downcast::<gdk::Monitor>().ok())
+}
+
 /// The panel window - a top-layer panel window anchored on-demand.
 ///
 /// The `dispatcher` and `theme_store` constructor arguments are consumed
@@ -124,6 +140,14 @@ impl PanelWindow {
             window.set_exclusive_zone(-1); // Don't reserve space.
 
             if is_fullscreen_overlay {
+                // Pin to the primary monitor so the overlay always
+                // appears on the same display rather than wherever the
+                // compositor happens to focus at show time. Without
+                // this the panel drifts between monitors based on
+                // cursor/focus state, which feels random.
+                if let Some(monitor) = pick_overlay_monitor() {
+                    window.set_monitor(&monitor);
+                }
                 // Anchor all four edges so the surface spans the whole
                 // output; the page renders a centered card on a dark
                 // backdrop that fills the entire surface. Keyboard goes

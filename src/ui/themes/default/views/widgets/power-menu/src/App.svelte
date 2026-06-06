@@ -280,30 +280,38 @@
     .card {
         background: var(--color-bg-alt, #313244);
         color: var(--color-fg, #cdd6f4);
-        border-radius: 14px;
-        padding: 24px 28px;
-        width: min(28vw, 560px);
-        min-width: 380px;
-        max-width: 560px;
+        border-radius: 12px;
+        padding: 18px 20px;
+        width: 420px;
         box-shadow: 0 14px 40px rgba(0, 0, 0, 0.6);
         border: 1px solid var(--color-border, #45475a);
     }
     .tier-primary {
         display: grid;
         grid-template-columns: 1fr 1fr;
-        gap: 14px;
+        gap: 12px;
+    }
+    /* Cap the tile width so a primary tile is never wider than tall
+       (square-ish). When the card is at its 420px width minus padding
+       and gap, each column is ~184px; without this cap the tile
+       stretches as the card stretches and looks empty. */
+    .tier-primary :global(.action-tile) {
+        max-width: 200px;
+        margin: 0 auto;
+        width: 100%;
     }
     .tier-secondary {
         display: flex;
-        gap: 8px;
+        gap: 6px;
         justify-content: space-around;
-        margin-top: 14px;
+        margin-top: 12px;
     }
     .tier-secondary.divider {
-        padding-top: 16px;
+        padding-top: 14px;
         border-top: 1px solid var(--color-border, #45475a);
     }
     .tier-secondary :global(.action-tile) {
         flex: 1;
+        max-width: 140px;
     }
 </style>
