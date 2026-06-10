@@ -78,11 +78,15 @@ impl PanelWindow {
         // card, and the surrounding "bars above and below the card"
         // (artefacts of a fixed-size centered surface) disappear. Other
         // panels (launcher today) stay as fixed-size centered surfaces.
-        let is_fullscreen_overlay = view_name == "widgets/power-menu";
+        let is_fullscreen_overlay = matches!(
+            view_name.as_str(),
+            "widgets/power-menu" | "widgets/power-profile-menu"
+        );
 
         let (width, height) = match view_name.as_str() {
             "launcher" => (600, 420),
             "widgets/power-menu" => (440, 320),
+            "widgets/power-profile-menu" => (440, 320),
             _ => (480, 320),
         };
 

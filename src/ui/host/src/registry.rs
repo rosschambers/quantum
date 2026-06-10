@@ -49,7 +49,7 @@ pub(crate) fn canonical_view_key(view: &str) -> String {
         // Per-monitor: one window per monitor; keep the suffix.
         "widgets/bar" => view.to_string(),
         // Single-instance views (panels): drop the suffix.
-        "launcher" | "widgets/power-menu" => prefix.to_string(),
+        "launcher" | "widgets/power-menu" | "widgets/power-profile-menu" => prefix.to_string(),
         // Plugin views: one instance per plugin/view combination; keep
         // whatever the caller asked for (no suffix expected today).
         other if other.starts_with("plugin/") => view.to_string(),
@@ -153,6 +153,15 @@ impl WindowConstructor for ManagedWindowConstructor {
             "widgets/power-menu" => Some(ManagedWindow::Panel(PanelWindow::new(
                 &self.app,
                 "widgets/power-menu",
+                self.dispatcher.clone(),
+                self.theme_store.clone(),
+                self.runtime.clone(),
+                self.event_tx.clone(),
+                monitor,
+            ))),
+            "widgets/power-profile-menu" => Some(ManagedWindow::Panel(PanelWindow::new(
+                &self.app,
+                "widgets/power-profile-menu",
                 self.dispatcher.clone(),
                 self.theme_store.clone(),
                 self.runtime.clone(),

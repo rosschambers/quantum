@@ -1,0 +1,51 @@
+:root {
+    --bar-height: 32px;
+}
+
+html, body {
+    margin: 0;
+    padding: 0;
+    /*
+     * The layer-shell surface is normally only as tall as the visible
+     * bar (32px), keeping it from intercepting clicks on apps below.
+     * When a popover wants to render it sends `view.set_height` IPC
+     * which grows the GTK surface so the popover has room. Body fills
+     * the surface; overflow stays visible so popovers can render
+     * outside the .bar row but inside the surface. Background is
+     * transparent so the area outside the bar row doesn't paint over
+     * apps beneath.
+     */
+    height: 100%;
+    overflow: visible;
+    background: transparent;
+    font-family: var(--font-sans, -apple-system, BlinkMacSystemFont, sans-serif);
+    font-size: var(--font-size-base, 14px);
+    color: var(--color-fg, #cdd6f4);
+    /*
+     * Force all emoji-presentation codepoints to render in monochrome
+     * text style so battery / speaker / signal / sun all read in the
+     * bar's foreground color instead of as full-color emoji.
+     * Combined with U+FE0E variation selectors on individual glyphs
+     * for browsers that ignore this property.
+     */
+    font-variant-emoji: text;
+}
+
+.bar {
+    /*
+     * Three-region flex layout: left (active window + meters), center
+     * (media + volume), right (other indicators). Only the bar row
+     * itself paints opaque; the surface around it remains transparent
+     * so apps below are visible and (when the surface is the bar's
+     * default 32px height) clickable.
+     */
+    height: var(--bar-height);
+    width: 100%;
+    display: flex;
+    align-items: center;
+    gap: var(--space-3, 0.75rem);
+    padding: 0 var(--space-2, 0.5rem);
+    border-bottom: 1px solid var(--color-border, #313244);
+    box-sizing: border-box;
+    background: rgba(30, 30, 46, 0.85);
+}
