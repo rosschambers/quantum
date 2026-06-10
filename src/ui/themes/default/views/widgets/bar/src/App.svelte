@@ -9,7 +9,6 @@
     import BrightnessIndicator from './lib/tray/BrightnessIndicator.svelte';
     import NetworkIndicator from './lib/tray/NetworkIndicator.svelte';
     import PowerMenuIndicator from './lib/tray/PowerMenuIndicator.svelte';
-    import PowerProfileIndicator from './lib/tray/PowerProfileIndicator.svelte';
     import VolumeIndicator from './lib/tray/VolumeIndicator.svelte';
 
     const client = createClient();
@@ -43,7 +42,6 @@
         </div>
         <div class="divider" aria-hidden="true"></div>
         <div class="group">
-            <PowerProfileIndicator {client} />
             <PowerMenuIndicator {client} />
         </div>
     </div>
