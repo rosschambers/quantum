@@ -1,6 +1,7 @@
 <script lang="ts">
     import { createClient } from '@quantum/client';
     import ActiveWindow from './lib/ActiveWindow.svelte';
+    import KillWindowButton from './lib/KillWindowButton.svelte';
     import SystemMeters from './lib/SystemMeters.svelte';
     import MediaControls from './lib/MediaControls.svelte';
     import BatteryIndicator from './lib/tray/BatteryIndicator.svelte';
@@ -22,6 +23,7 @@
 
 <div class="bar">
     <div class="region region-left">
+        <KillWindowButton {client} />
         <ActiveWindow {client} />
     </div>
     <div class="region region-center">

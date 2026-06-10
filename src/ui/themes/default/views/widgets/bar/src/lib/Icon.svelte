@@ -45,7 +45,8 @@
         | 'play'
         | 'pause'
         | 'prev'
-        | 'next';
+        | 'next'
+        | 'target';
 
     let { name, size = 14, color = 'currentColor', stroke = 2 }: Props = $props();
 </script>
@@ -153,6 +154,13 @@
     {:else if name === 'next'}
         <polygon points="7,5 17,12 7,19" fill={color} stroke="none" />
         <rect x="18" y="5" width="2" height="14" fill={color} stroke="none" />
+    {:else if name === 'target'}
+        <circle cx="12" cy="12" r="7" />
+        <circle cx="12" cy="12" r="1.5" fill={color} stroke="none" />
+        <line x1="12" y1="2" x2="12" y2="6" />
+        <line x1="12" y1="18" x2="12" y2="22" />
+        <line x1="2" y1="12" x2="6" y2="12" />
+        <line x1="18" y1="12" x2="22" y2="12" />
     {/if}
 </svg>
 
