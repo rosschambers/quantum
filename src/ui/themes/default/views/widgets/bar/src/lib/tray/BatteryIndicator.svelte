@@ -86,7 +86,7 @@
         // Append the per-monitor suffix so the menu opens on the bar's
         // own monitor (see `window.__quantum_monitor` injection in
         // `crates/ui/src/windows/widget.rs`). Same pattern as
-        // PowerMenuIndicator and the former PowerProfileIndicator.
+        // PowerMenuIndicator.
         const monitor = window.__quantum_monitor;
         const name = monitor
             ? `widgets/power-profile-menu@${monitor}`
