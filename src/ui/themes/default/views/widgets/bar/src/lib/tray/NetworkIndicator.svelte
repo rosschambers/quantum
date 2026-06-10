@@ -2,10 +2,9 @@
     import type { Client } from '@quantum/client';
     import type { NetworkState } from '../types';
     import { NETWORK_CHANNEL, NETWORK_PROVIDER } from '../channels';
-    import { inverseGradientColor } from '../gradient';
     import { networkIcon } from '../icons';
-    import { onClick } from './interaction';
-    import Ring from '../Ring.svelte';
+    import Icon from '../Icon.svelte';
+    import BarButton from '../BarButton.svelte';
 
     interface Props {
         client: Client;
@@ -19,7 +18,6 @@
         wifi_enabled: false,
         wifi_signal_percent: null,
     });
-    let root: HTMLElement | undefined = $state(undefined);
 
     $effect(() => {
         client
@@ -34,74 +32,63 @@
         return () => unsubscribe?.();
     });
 
-    $effect(() => {
-        if (!root) return;
-        const off1 = onClick(root, toggleWifi, 'left');
-        const off2 = onClick(root, openPopover, 'right');
-        return () => {
-            off1();
-            off2();
-        };
-    });
-
-    async function toggleWifi(): Promise<void> {
-        if (!state.available) return;
+    async function launchConnectionEditor(): Promise<void> {
         try {
             await client.call('action.invoke', {
-                provider: 'network',
+                provider: 'shell_command',
                 action: {
-                    kind: 'custom',
-                    data: {
-                        kind: 'network',
-                        payload: { command: 'set_wifi_enabled', value: !state.wifi_enabled },
-                    },
+                    kind: 'shell',
+                    data: { command: ['nm-connection-editor'], terminal: false },
                 },
             });
         } catch (err) {
-            console.error('network toggle failed:', err);
+            console.error('nm-connection-editor launch failed:', err);
         }
-    }
-
-    function openPopover(): void {
-        // TODO: connection-list popover. Deferred from batch 1.
-    }
-
-    function ringPercent(s: NetworkState): number | null {
-        if (!s.available || !s.primary) return null;
-        if (s.primary.kind === 'wifi' || s.primary.kind === 'cellular') {
-            return s.wifi_signal_percent;
-        }
-        return 100;
     }
 
     function tooltipFor(s: NetworkState): string {
-        if (!s.available) return 'network unavailable';
-        if (!s.primary) return s.wifi_enabled ? 'wifi on, no connection' : 'wifi off';
-        const parts = [s.primary.id];
-        if (s.primary.ssid) parts.push(s.primary.ssid);
-        if (s.wifi_signal_percent !== null) parts.push(`${s.wifi_signal_percent}%`);
-        return parts.join(' \u00b7 ');
+        if (!s.primary) {
+            const base = s.wifi_enabled ? 'wifi on, no connection' : 'wifi off';
+            return `${base} \u00b7 ${s.connectivity}`;
+        }
+        const name = s.primary.ssid ?? s.primary.id;
+        return `${name} \u00b7 ${s.connectivity}`;
     }
 </script>
 
 {#if state.available}
-    <div bind:this={root} class="tray-icon network" title={tooltipFor(state)}>
-        <Ring
-            percent={ringPercent(state)}
-            color={inverseGradientColor(ringPercent(state))}
-            kind="icon"
-            iconName={networkIcon(state.primary?.kind ?? null, state.primary !== null)}
-        />
-    </div>
+    <BarButton
+        ariaLabel="Network"
+        title={tooltipFor(state)}
+        onclick={launchConnectionEditor}
+    >
+        <span
+            class="network-icon"
+            class:connected={state.primary !== null}
+            class:full={state.connectivity === 'full'}
+        >
+            <Icon
+                name={networkIcon(state.primary?.kind ?? null, state.primary !== null)}
+                size={14}
+            />
+        </span>
+    </BarButton>
 {/if}
 
 <style>
-    .tray-icon {
+    .network-icon {
         display: inline-flex;
         align-items: center;
-        color: var(--tray-icon-color, var(--color-fg, #cdd6f4));
-        user-select: none;
-        cursor: pointer;
         line-height: 1;
+    }
+    /*
+     * A primary connection with full connectivity shifts the icon to
+     * the accent color. A connection with limited/portal connectivity
+     * keeps the icon muted so the user can tell the link is up but
+     * not actually reaching the wider network. No connection keeps it
+     * muted too.
+     */
+    .network-icon.connected.full {
+        color: var(--color-accent, #89b4fa);
     }
 </style>

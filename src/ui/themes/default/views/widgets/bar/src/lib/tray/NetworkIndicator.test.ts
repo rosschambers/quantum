@@ -27,10 +27,10 @@ describe('NetworkIndicator', () => {
 	it('renders nothing when unavailable', () => {
 		const { client } = mockClient();
 		const { container } = render(NetworkIndicator, { props: { client } });
-		expect(container.querySelector('.tray-icon')).toBeNull();
+		expect(container.querySelector('.bar-button')).toBeNull();
 	});
 
-	it('renders ethernet icon with a fully-filled ring when connected via ethernet', async () => {
+	it('renders the BarButton with ethernet icon when connected via ethernet', async () => {
 		const { client, emit } = mockClient();
 		const { container } = render(NetworkIndicator, { props: { client } });
 		await emit({
@@ -44,16 +44,17 @@ describe('NetworkIndicator', () => {
 			wifi_enabled: false,
 			wifi_signal_percent: null,
 		});
-		const el = container.querySelector('.tray-icon');
-		expect(el).not.toBeNull();
-		// Ethernet draws an SVG icon overlaid on the ring.
-		expect(el!.querySelector('.icon-overlay svg.icon')).not.toBeNull();
-		const fill = el!.querySelector('svg.ring .ring-fill');
-		const off = Number(fill!.getAttribute('stroke-dashoffset'));
-		expect(off).toBeCloseTo(0, 1);
+		const btn = container.querySelector('.bar-button');
+		expect(btn).not.toBeNull();
+		const iconWrap = btn!.querySelector('.network-icon');
+		expect(iconWrap).not.toBeNull();
+		expect(iconWrap!.classList.contains('connected')).toBe(true);
+		expect(iconWrap!.classList.contains('full')).toBe(true);
+		// SVG icon always present.
+		expect(btn!.querySelector('svg.icon')).not.toBeNull();
 	});
 
-	it('drives the ring fill by signal strength on wifi', async () => {
+	it('marks the icon connected+full when on wifi with full connectivity', async () => {
 		const { client, emit } = mockClient();
 		const { container } = render(NetworkIndicator, { props: { client } });
 		await emit({
@@ -67,14 +68,13 @@ describe('NetworkIndicator', () => {
 			wifi_enabled: true,
 			wifi_signal_percent: 90,
 		});
-		const fill = container.querySelector('.tray-icon svg.ring .ring-fill');
-		const circ = Number(fill!.getAttribute('stroke-dasharray'));
-		const off = Number(fill!.getAttribute('stroke-dashoffset'));
-		// 90% -> dashoffset is 10% of the circumference.
-		expect(off).toBeCloseTo(circ * 0.1, 1);
+		const iconWrap = container.querySelector('.network-icon');
+		expect(iconWrap).not.toBeNull();
+		expect(iconWrap!.classList.contains('connected')).toBe(true);
+		expect(iconWrap!.classList.contains('full')).toBe(true);
 	});
 
-	it('drives the ring fill by signal strength when wifi is weak', async () => {
+	it('does not mark the icon full when wifi connectivity is limited', async () => {
 		const { client, emit } = mockClient();
 		const { container } = render(NetworkIndicator, { props: { client } });
 		await emit({
@@ -88,14 +88,13 @@ describe('NetworkIndicator', () => {
 			wifi_enabled: true,
 			wifi_signal_percent: 30,
 		});
-		const fill = container.querySelector('.tray-icon svg.ring .ring-fill');
-		const circ = Number(fill!.getAttribute('stroke-dasharray'));
-		const off = Number(fill!.getAttribute('stroke-dashoffset'));
-		// 30% -> dashoffset is 70% of the circumference.
-		expect(off).toBeCloseTo(circ * 0.7, 1);
+		const iconWrap = container.querySelector('.network-icon');
+		expect(iconWrap).not.toBeNull();
+		expect(iconWrap!.classList.contains('connected')).toBe(true);
+		expect(iconWrap!.classList.contains('full')).toBe(false);
 	});
 
-	it('left click invokes set_wifi_enabled with toggled value', async () => {
+	it('tooltip includes connection name and connectivity', async () => {
 		const { client, emit } = mockClient();
 		const { container } = render(NetworkIndicator, { props: { client } });
 		await emit({
@@ -104,28 +103,18 @@ describe('NetworkIndicator', () => {
 			primary: {
 				kind: 'wifi',
 				id: 'wlan0',
-				ssid: 'Home',
+				ssid: 'HomeWifi',
 			},
 			wifi_enabled: true,
-			wifi_signal_percent: 80,
+			wifi_signal_percent: 90,
 		});
-		const el = container.querySelector('.tray-icon');
-		expect(el).not.toBeNull();
-		fireEvent.click(el!);
-		await tick();
-		expect(client.call).toHaveBeenCalledWith('action.invoke', {
-			provider: 'network',
-			action: {
-				kind: 'custom',
-				data: {
-					kind: 'network',
-					payload: { command: 'set_wifi_enabled', value: false },
-				},
-			},
-		});
+		const btn = container.querySelector('.bar-button') as HTMLButtonElement | null;
+		expect(btn).not.toBeNull();
+		expect(btn!.title).toContain('HomeWifi');
+		expect(btn!.title).toContain('full');
 	});
 
-	it('right click does not call action.invoke', async () => {
+	it('click invokes shell_command to launch nm-connection-editor', async () => {
 		const { client, emit } = mockClient();
 		const { container } = render(NetworkIndicator, { props: { client } });
 		await emit({
@@ -139,10 +128,16 @@ describe('NetworkIndicator', () => {
 			wifi_enabled: false,
 			wifi_signal_percent: null,
 		});
-		const el = container.querySelector('.tray-icon');
-		expect(el).not.toBeNull();
-		fireEvent.contextMenu(el!);
+		const btn = container.querySelector('.bar-button') as HTMLButtonElement | null;
+		expect(btn).not.toBeNull();
+		await fireEvent.click(btn!);
 		await tick();
-		expect(client.call).not.toHaveBeenCalledWith('action.invoke', expect.anything());
+		expect(client.call).toHaveBeenCalledWith('action.invoke', {
+			provider: 'shell_command',
+			action: {
+				kind: 'shell',
+				data: { command: ['nm-connection-editor'], terminal: false },
+			},
+		});
 	});
 });
