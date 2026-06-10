@@ -3,7 +3,7 @@
     import type { BluetoothState } from '../types';
     import { BLUETOOTH_CHANNEL, BLUETOOTH_PROVIDER } from '../channels';
     import Icon from '../Icon.svelte';
-    import { onClick } from './interaction';
+    import BarButton from '../BarButton.svelte';
 
     interface Props {
         client: Client;
@@ -16,7 +16,6 @@
         discovering: false,
         connected_devices: [],
     });
-    let root: HTMLElement | undefined = $state(undefined);
 
     $effect(() => {
         client
@@ -31,36 +30,18 @@
         return () => unsubscribe?.();
     });
 
-    $effect(() => {
-        if (!root) return;
-        const off1 = onClick(root, togglePowered, 'left');
-        const off2 = onClick(root, openPopover, 'right');
-        return () => {
-            off1();
-            off2();
-        };
-    });
-
-    async function togglePowered(): Promise<void> {
-        if (!state.available) return;
+    async function launchBluemanManager(): Promise<void> {
         try {
             await client.call('action.invoke', {
-                provider: 'bluetooth',
+                provider: 'shell_command',
                 action: {
-                    kind: 'custom',
-                    data: {
-                        kind: 'bluetooth',
-                        payload: { command: 'set_powered', value: !state.powered },
-                    },
+                    kind: 'shell',
+                    data: { command: ['blueman-manager'], terminal: false },
                 },
             });
         } catch (err) {
-            console.error('bluetooth toggle failed:', err);
+            console.error('blueman-manager launch failed:', err);
         }
-    }
-
-    function openPopover(): void {
-        // TODO: device-list popover. Deferred from batch 1.
     }
 
     function tooltipFor(s: BluetoothState): string {
@@ -78,25 +59,25 @@
 </script>
 
 {#if state.available}
-    <div
-        bind:this={root}
-        class="tray-icon bluetooth"
-        class:powered={state.powered}
-        class:has-devices={state.connected_devices.length > 0}
+    <BarButton
+        ariaLabel="Bluetooth"
         title={tooltipFor(state)}
+        onclick={launchBluemanManager}
     >
-        <Icon name="bluetooth" size={14} />
-    </div>
+        <span
+            class="bluetooth-icon"
+            class:powered={state.powered}
+            class:has-devices={state.connected_devices.length > 0}
+        >
+            <Icon name="bluetooth" size={14} />
+        </span>
+    </BarButton>
 {/if}
 
 <style>
-    .tray-icon {
+    .bluetooth-icon {
         display: inline-flex;
         align-items: center;
-        gap: 3px;
-        color: var(--color-fg-alt, #a6adc8);
-        user-select: none;
-        cursor: pointer;
         line-height: 1;
     }
     /*
@@ -105,7 +86,7 @@
      * the user the radio is on but reads less prominent than active
      * connections); off keeps it muted too.
      */
-    .tray-icon.powered.has-devices {
+    .bluetooth-icon.powered.has-devices {
         color: var(--color-accent, #89b4fa);
     }
 </style>

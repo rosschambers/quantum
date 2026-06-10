@@ -27,10 +27,10 @@ describe('BluetoothIndicator', () => {
 	it('renders nothing when unavailable', () => {
 		const { client } = mockClient();
 		const { container } = render(BluetoothIndicator, { props: { client } });
-		expect(container.querySelector('.tray-icon')).toBeNull();
+		expect(container.querySelector('.bar-button')).toBeNull();
 	});
 
-	it('renders the BT icon dimmed when powered is false', async () => {
+	it('renders the BarButton with BT icon when available and unpowered', async () => {
 		const { client, emit } = mockClient();
 		const { container } = render(BluetoothIndicator, { props: { client } });
 		await emit({
@@ -39,11 +39,13 @@ describe('BluetoothIndicator', () => {
 			discovering: false,
 			connected_devices: [],
 		});
-		const el = container.querySelector('.tray-icon');
-		expect(el).not.toBeNull();
-		expect(el!.classList.contains('powered')).toBe(false);
+		const btn = container.querySelector('.bar-button');
+		expect(btn).not.toBeNull();
+		const iconWrap = btn!.querySelector('.bluetooth-icon');
+		expect(iconWrap).not.toBeNull();
+		expect(iconWrap!.classList.contains('powered')).toBe(false);
 		// SVG bluetooth icon (always present, color shifts when powered).
-		expect(el!.querySelector('svg.icon')).not.toBeNull();
+		expect(btn!.querySelector('svg.icon')).not.toBeNull();
 	});
 
 	it('renders the BT icon highlighted when devices are connected', async () => {
@@ -58,10 +60,10 @@ describe('BluetoothIndicator', () => {
 				{ address: 'BB:CC:DD:EE:FF:00', name: 'Mouse', battery_percent: 50 },
 			],
 		});
-		const el = container.querySelector('.tray-icon');
-		expect(el).not.toBeNull();
-		expect(el!.classList.contains('powered')).toBe(true);
-		expect(el!.classList.contains('has-devices')).toBe(true);
+		const iconWrap = container.querySelector('.bluetooth-icon');
+		expect(iconWrap).not.toBeNull();
+		expect(iconWrap!.classList.contains('powered')).toBe(true);
+		expect(iconWrap!.classList.contains('has-devices')).toBe(true);
 		// Connected state shows through the accent color on the icon
 		// itself; the device-count badge was removed since the names
 		// are already in the tooltip.
@@ -79,10 +81,10 @@ describe('BluetoothIndicator', () => {
 				{ address: 'BB:CC:DD:EE:FF:00', name: 'Mouse', battery_percent: 50 },
 			],
 		});
-		const el = container.querySelector('.tray-icon');
-		expect(el).not.toBeNull();
-		expect(el!.title).toContain('Headphones');
-		expect(el!.title).toContain('Mouse');
+		const btn = container.querySelector('.bar-button') as HTMLButtonElement | null;
+		expect(btn).not.toBeNull();
+		expect(btn!.title).toContain('Headphones');
+		expect(btn!.title).toContain('Mouse');
 	});
 
 	it('tooltip shows battery percent when present', async () => {
@@ -97,12 +99,12 @@ describe('BluetoothIndicator', () => {
 				{ address: 'BB:CC:DD:EE:FF:00', name: 'Mouse', battery_percent: 50 },
 			],
 		});
-		const el = container.querySelector('.tray-icon');
-		expect(el).not.toBeNull();
-		expect(el!.title).toContain('50%');
+		const btn = container.querySelector('.bar-button') as HTMLButtonElement | null;
+		expect(btn).not.toBeNull();
+		expect(btn!.title).toContain('50%');
 	});
 
-	it('left click toggles powered', async () => {
+	it('click invokes shell_command to launch blueman-manager', async () => {
 		const { client, emit } = mockClient();
 		const { container } = render(BluetoothIndicator, { props: { client } });
 		await emit({
@@ -111,35 +113,16 @@ describe('BluetoothIndicator', () => {
 			discovering: false,
 			connected_devices: [],
 		});
-		const el = container.querySelector('.tray-icon');
-		expect(el).not.toBeNull();
-		fireEvent.click(el!);
+		const btn = container.querySelector('.bar-button') as HTMLButtonElement | null;
+		expect(btn).not.toBeNull();
+		await fireEvent.click(btn!);
 		await tick();
 		expect(client.call).toHaveBeenCalledWith('action.invoke', {
-			provider: 'bluetooth',
+			provider: 'shell_command',
 			action: {
-				kind: 'custom',
-				data: {
-					kind: 'bluetooth',
-					payload: { command: 'set_powered', value: false },
-				},
+				kind: 'shell',
+				data: { command: ['blueman-manager'], terminal: false },
 			},
 		});
-	});
-
-	it('right click does not invoke action', async () => {
-		const { client, emit } = mockClient();
-		const { container } = render(BluetoothIndicator, { props: { client } });
-		await emit({
-			available: true,
-			powered: true,
-			discovering: false,
-			connected_devices: [],
-		});
-		const el = container.querySelector('.tray-icon');
-		expect(el).not.toBeNull();
-		fireEvent.contextMenu(el!);
-		await tick();
-		expect(client.call).not.toHaveBeenCalledWith('action.invoke', expect.anything());
 	});
 });
