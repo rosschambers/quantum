@@ -2,6 +2,8 @@
     import type { Client } from '@quantum/client';
     import type { MprisState } from '../lib/types';
     import Icon from './Icon.svelte';
+    import BarButtonCluster from './BarButtonCluster.svelte';
+    import BarClusterButton from './BarClusterButton.svelte';
     import { MPRIS_CHANNEL } from './channels';
 
     interface Props {
@@ -47,40 +49,26 @@
     }
 </script>
 
-<div class="media-controls" class:disabled={isDisabled(state)}>
-    <button type="button" aria-label="Previous track" onclick={() => invokeCommand('previous')} disabled={isDisabled(state)}>
-        <Icon name="prev" size={14} />
-    </button>
-    <button type="button" aria-label={isPlaying(state) ? 'Pause' : 'Play'} onclick={() => invokeCommand('play-pause')} disabled={isDisabled(state)}>
-        <Icon name={isPlaying(state) ? 'pause' : 'play'} size={14} />
-    </button>
-    <button type="button" aria-label="Next track" onclick={() => invokeCommand('next')} disabled={isDisabled(state)}>
-        <Icon name="next" size={14} />
-    </button>
-</div>
-
-<style>
-    .media-controls {
-        display: flex;
-        gap: var(--space-1, 0.25rem);
-    }
-    .media-controls.disabled button {
-        opacity: 0.4;
-        cursor: not-allowed;
-    }
-    button {
-        background: transparent;
-        color: var(--color-fg, #cdd6f4);
-        border: none;
-        padding: 2px 8px;
-        cursor: pointer;
-        font-size: var(--font-size-base, 14px);
-    }
-    button:hover:not(:disabled) {
-        background: var(--color-bg-alt, #313244);
-        border-radius: var(--radius-sm, 2px);
-    }
-    button:disabled {
-        cursor: not-allowed;
-    }
-</style>
+<BarButtonCluster disabled={isDisabled(state)}>
+    <BarClusterButton
+        ariaLabel="Previous track"
+        onclick={() => invokeCommand('previous')}
+        disabled={isDisabled(state)}
+    >
+        <Icon name="prev" size={18} />
+    </BarClusterButton>
+    <BarClusterButton
+        ariaLabel={isPlaying(state) ? 'Pause' : 'Play'}
+        onclick={() => invokeCommand('play-pause')}
+        disabled={isDisabled(state)}
+    >
+        <Icon name={isPlaying(state) ? 'pause' : 'play'} size={18} />
+    </BarClusterButton>
+    <BarClusterButton
+        ariaLabel="Next track"
+        onclick={() => invokeCommand('next')}
+        disabled={isDisabled(state)}
+    >
+        <Icon name="next" size={18} />
+    </BarClusterButton>
+</BarButtonCluster>

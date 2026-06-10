@@ -1,0 +1,635 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>Quantum bar button styling</title>
+<style>
+:root {
+    --pg-bg: #1e1e2e;
+    --pg-bg-alt: #313244;
+    --pg-bg-card: #181825;
+    --pg-border: #45475a;
+    --pg-fg: #cdd6f4;
+    --pg-fg-alt: #a6adc8;
+    --pg-muted: #6c7086;
+    --pg-accent: #89b4fa;
+    --pg-font: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    --pg-mono: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+* { box-sizing: border-box; }
+html, body {
+    margin: 0;
+    padding: 0;
+    height: 100vh;
+    background: var(--pg-bg);
+    color: var(--pg-fg);
+    font-family: var(--pg-font);
+    font-size: 14px;
+    overflow: hidden;
+}
+.shell {
+    display: grid;
+    grid-template-columns: 340px 1fr;
+    grid-template-rows: 1fr auto;
+    grid-template-areas:
+        "controls preview"
+        "controls prompt";
+    height: 100vh;
+}
+.controls {
+    grid-area: controls;
+    background: var(--pg-bg-card);
+    border-right: 1px solid var(--pg-border);
+    padding: 16px;
+    overflow-y: auto;
+}
+.preview-pane {
+    grid-area: preview;
+    overflow-y: auto;
+    padding: 24px;
+    display: flex;
+    flex-direction: column;
+    gap: 24px;
+    background: linear-gradient(135deg, #2a2433 0%, #1f1f2e 100%);
+}
+.prompt-pane {
+    grid-area: prompt;
+    background: #11111b;
+    border-top: 1px solid var(--pg-border);
+    padding: 12px 16px;
+    display: flex;
+    gap: 12px;
+    align-items: flex-start;
+}
+.prompt-text {
+    flex: 1;
+    font-family: var(--pg-mono);
+    font-size: 12px;
+    line-height: 1.55;
+    color: var(--pg-fg);
+    white-space: pre-wrap;
+    max-height: 160px;
+    overflow-y: auto;
+}
+.copy-btn {
+    background: var(--pg-accent);
+    color: var(--pg-bg);
+    border: none;
+    padding: 8px 14px;
+    border-radius: 6px;
+    font-weight: 600;
+    font-size: 12px;
+    cursor: pointer;
+    font-family: inherit;
+    white-space: nowrap;
+}
+.copy-btn.copied { background: #a6e3a1; }
+
+.section {
+    margin-bottom: 18px;
+    padding-bottom: 16px;
+    border-bottom: 1px solid var(--pg-border);
+}
+.section:last-child { border-bottom: none; }
+.section h3 {
+    margin: 0 0 10px;
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--pg-fg-alt);
+    font-weight: 600;
+}
+.preset-row { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 8px; }
+.preset-btn {
+    background: var(--pg-bg-alt);
+    color: var(--pg-fg);
+    border: 1px solid var(--pg-border);
+    border-radius: 999px;
+    padding: 4px 12px;
+    font-size: 11px;
+    cursor: pointer;
+    font-family: inherit;
+}
+.preset-btn:hover { border-color: var(--pg-accent); }
+
+.slider-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 8px;
+}
+.slider-row label {
+    flex: 0 0 100px;
+    font-size: 11px;
+    color: var(--pg-fg-alt);
+}
+.slider-row input[type="range"] {
+    flex: 1;
+    accent-color: var(--pg-accent);
+}
+.slider-row .val {
+    flex: 0 0 44px;
+    font-family: var(--pg-mono);
+    font-size: 11px;
+    color: var(--pg-fg);
+    text-align: right;
+}
+.toggle-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 6px;
+    font-size: 12px;
+    color: var(--pg-fg-alt);
+}
+.toggle-row input { accent-color: var(--pg-accent); }
+
+.bar-sample {
+    background: rgba(30, 30, 46, 0.6);
+    backdrop-filter: blur(8px);
+    border: 1px solid rgba(255,255,255,0.04);
+    border-radius: 8px;
+    padding: 6px 16px;
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    min-height: 44px;
+    font-family: var(--pg-font);
+}
+.bar-sample .label {
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--pg-muted);
+    width: 140px;
+}
+
+/* --- The interactive items being tuned --- */
+.btn-cluster {
+    /* outer wrapper around a grouped button cluster (e.g. media controls) */
+    display: inline-flex;
+    align-items: center;
+    overflow: hidden;
+    transition: background-color 0.15s, border-color 0.15s;
+}
+.btn-single {
+    /* solo button (power profile / power menu / clock) */
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    user-select: none;
+    transition: background-color 0.12s, color 0.12s, transform 0.12s;
+    border: none;
+    font-family: inherit;
+    color: var(--pg-fg-alt, #a6adc8);
+}
+.cluster-btn {
+    /* individual buttons inside the cluster */
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    background: transparent;
+    border: none;
+    transition: background-color 0.12s, color 0.12s;
+    color: var(--pg-fg, #cdd6f4);
+    font-family: inherit;
+}
+.cluster-divider {
+    align-self: stretch;
+    width: 1px;
+    margin: 4px 0;
+}
+.slider-block {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 0 8px;
+}
+.slider-block .meter {
+    display: inline-block;
+    width: 56px;
+    height: 4px;
+    border-radius: 2px;
+    background: rgba(255,255,255,0.12);
+    overflow: hidden;
+    position: relative;
+}
+.slider-block .meter .fill {
+    position: absolute;
+    inset: 0;
+    background: linear-gradient(90deg, var(--pg-accent), #cba6f7);
+    width: 65%;
+}
+svg.ic {
+    display: block;
+}
+
+/* Reference image */
+.ref-img {
+    background: #1a1a1a;
+    border: 1px solid var(--pg-border);
+    border-radius: 8px;
+    padding: 16px;
+}
+.ref-img p {
+    margin: 0 0 10px;
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--pg-fg-alt);
+}
+.ref-img .img-row {
+    display: flex;
+    gap: 14px;
+    align-items: center;
+}
+.ref-img .img-row span {
+    font-size: 11px;
+    color: var(--pg-muted);
+    font-family: var(--pg-mono);
+}
+</style>
+</head>
+<body>
+<div class="shell">
+    <div class="controls">
+        <div class="section">
+            <h3>Presets</h3>
+            <div class="preset-row" id="presets"></div>
+        </div>
+
+        <div class="section">
+            <h3>Background</h3>
+            <div class="slider-row">
+                <label>Bg opacity</label>
+                <input type="range" id="bgOpacity" min="0" max="100" step="2" value="40" />
+                <span class="val" id="bgOpacity-val">40%</span>
+            </div>
+            <div class="slider-row">
+                <label>Bg lightness</label>
+                <input type="range" id="bgLightness" min="0" max="100" step="2" value="20" />
+                <span class="val" id="bgLightness-val">20%</span>
+            </div>
+            <div class="toggle-row">
+                <input type="checkbox" id="hasBorder" />
+                <label for="hasBorder">subtle border</label>
+            </div>
+        </div>
+
+        <div class="section">
+            <h3>Shape</h3>
+            <div class="slider-row">
+                <label>Radius</label>
+                <input type="range" id="radius" min="0" max="20" step="1" value="6" />
+                <span class="val" id="radius-val">6px</span>
+            </div>
+            <div class="slider-row">
+                <label>Pad X</label>
+                <input type="range" id="padX" min="4" max="20" step="1" value="10" />
+                <span class="val" id="padX-val">10px</span>
+            </div>
+            <div class="slider-row">
+                <label>Pad Y</label>
+                <input type="range" id="padY" min="2" max="16" step="1" value="6" />
+                <span class="val" id="padY-val">6px</span>
+            </div>
+        </div>
+
+        <div class="section">
+            <h3>Hover state</h3>
+            <div class="slider-row">
+                <label>Hover lighten</label>
+                <input type="range" id="hoverDelta" min="0" max="40" step="2" value="14" />
+                <span class="val" id="hoverDelta-val">+14%</span>
+            </div>
+            <div class="toggle-row">
+                <input type="checkbox" id="hoverColor" checked />
+                <label for="hoverColor">Brighten icon on hover</label>
+            </div>
+        </div>
+
+        <div class="section">
+            <h3>Clusters</h3>
+            <div class="toggle-row">
+                <input type="checkbox" id="dividers" checked />
+                <label for="dividers">Show dividers between cluster buttons</label>
+            </div>
+            <div class="slider-row">
+                <label>Divider opacity</label>
+                <input type="range" id="divOpacity" min="0" max="40" step="2" value="14" />
+                <span class="val" id="divOpacity-val">14%</span>
+            </div>
+            <div class="slider-row">
+                <label>Cluster gap</label>
+                <input type="range" id="clusterGap" min="0" max="6" step="1" value="0" />
+                <span class="val" id="clusterGap-val">0px</span>
+            </div>
+        </div>
+
+        <div class="section">
+            <h3>Hover toggle</h3>
+            <div class="toggle-row">
+                <input type="checkbox" id="forceHover" />
+                <label for="forceHover">Render every button in hover state</label>
+            </div>
+        </div>
+    </div>
+
+    <div class="preview-pane">
+        <div class="ref-img">
+            <p>Reference (from screenshot)</p>
+            <div class="img-row">
+                <svg width="200" height="40" viewBox="0 0 200 40">
+                    <rect x="0" y="4" width="100" height="32" rx="6" fill="#2a2a32"/>
+                    <text x="14" y="25" font-size="16" fill="#ddd">⏪</text>
+                    <text x="40" y="25" font-size="16" fill="#ddd">▶</text>
+                    <text x="66" y="25" font-size="16" fill="#ddd">⏩</text>
+                    <rect x="110" y="4" width="90" height="32" rx="6" fill="#2a2a32"/>
+                    <text x="124" y="25" font-size="16" fill="#ddd">🔊</text>
+                    <rect x="145" y="18" width="50" height="4" rx="2" fill="#666"/>
+                    <rect x="145" y="18" width="30" height="4" rx="2" fill="#bbb"/>
+                </svg>
+                <span>matte dark pill · ~6-8px radius · ~32px tall · slight inset on icons</span>
+            </div>
+        </div>
+
+        <div class="bar-sample">
+            <span class="label">Media controls</span>
+            <div class="btn-cluster" id="cluster-media">
+                <button class="cluster-btn" data-btn data-cluster><svg class="ic" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="19 20 9 12 19 4 19 20"/><line x1="5" y1="19" x2="5" y2="5"/></svg></button>
+                <div class="cluster-divider" data-divider></div>
+                <button class="cluster-btn" data-btn data-cluster><svg class="ic" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="5 3 19 12 5 21 5 3"/></svg></button>
+                <div class="cluster-divider" data-divider></div>
+                <button class="cluster-btn" data-btn data-cluster><svg class="ic" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="5 4 15 12 5 20 5 4"/><line x1="19" y1="5" x2="19" y2="19"/></svg></button>
+            </div>
+        </div>
+
+        <div class="bar-sample">
+            <span class="label">Volume + slider</span>
+            <div class="btn-cluster" id="cluster-volume">
+                <button class="cluster-btn" data-btn data-cluster><svg class="ic" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><path d="M15.54 8.46a5 5 0 0 1 0 7.07"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14"/></svg></button>
+                <div class="slider-block" data-slider><div class="meter"><div class="fill"></div></div></div>
+            </div>
+        </div>
+
+        <div class="bar-sample">
+            <span class="label">Solo buttons</span>
+            <button class="btn-single" data-btn data-single><svg class="ic" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2v20"/><path d="M5 8c-2 2-3 5-3 8 0 5 4 8 10 8s10-3 10-8c0-3-1-6-3-8"/></svg></button>
+            <button class="btn-single" data-btn data-single><svg class="ic" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg></button>
+            <button class="btn-single" data-btn data-single><svg class="ic" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg></button>
+        </div>
+
+        <div class="bar-sample">
+            <span class="label">Mixed (real layout)</span>
+            <div class="btn-cluster" id="cluster-mix-media">
+                <button class="cluster-btn" data-btn data-cluster><svg class="ic" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="19 20 9 12 19 4 19 20"/><line x1="5" y1="19" x2="5" y2="5"/></svg></button>
+                <div class="cluster-divider" data-divider></div>
+                <button class="cluster-btn" data-btn data-cluster><svg class="ic" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="5 3 19 12 5 21 5 3"/></svg></button>
+                <div class="cluster-divider" data-divider></div>
+                <button class="cluster-btn" data-btn data-cluster><svg class="ic" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="5 4 15 12 5 20 5 4"/><line x1="19" y1="5" x2="19" y2="19"/></svg></button>
+            </div>
+            <div class="btn-cluster" id="cluster-mix-volume">
+                <button class="cluster-btn" data-btn data-cluster><svg class="ic" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><path d="M15.54 8.46a5 5 0 0 1 0 7.07"/></svg></button>
+                <div class="slider-block" data-slider><div class="meter"><div class="fill"></div></div></div>
+            </div>
+            <button class="btn-single" data-btn data-single><svg class="ic" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg></button>
+            <button class="btn-single" data-btn data-single><svg class="ic" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2v20"/><path d="M5 8c-2 2-3 5-3 8 0 5 4 8 10 8s10-3 10-8c0-3-1-6-3-8"/></svg></button>
+        </div>
+    </div>
+
+    <div class="prompt-pane">
+        <div class="prompt-text" id="prompt"></div>
+        <button class="copy-btn" id="copy">Copy prompt</button>
+    </div>
+</div>
+
+<script>
+const DEFAULTS = {
+    bgOpacity: 40,
+    bgLightness: 20,
+    hasBorder: false,
+    radius: 6,
+    padX: 10,
+    padY: 6,
+    hoverDelta: 14,
+    hoverColor: true,
+    dividers: true,
+    divOpacity: 14,
+    clusterGap: 0,
+    forceHover: false,
+};
+
+const PRESETS = {
+    'Reference (matte pill)': { bgOpacity: 50, bgLightness: 18, hasBorder: false, radius: 6, padX: 10, padY: 6, hoverDelta: 12, hoverColor: true, dividers: true, divOpacity: 18, clusterGap: 0, forceHover: false },
+    'Soft + rounded': { bgOpacity: 35, bgLightness: 25, hasBorder: false, radius: 10, padX: 12, padY: 7, hoverDelta: 16, hoverColor: true, dividers: true, divOpacity: 14, clusterGap: 0, forceHover: false },
+    'Pill (capsule)': { bgOpacity: 45, bgLightness: 20, hasBorder: false, radius: 18, padX: 12, padY: 6, hoverDelta: 14, hoverColor: true, dividers: true, divOpacity: 16, clusterGap: 0, forceHover: false },
+    'Outlined ghost': { bgOpacity: 0, bgLightness: 0, hasBorder: true, radius: 6, padX: 10, padY: 6, hoverDelta: 20, hoverColor: true, dividers: false, divOpacity: 0, clusterGap: 2, forceHover: false },
+    'Minimal (current)': { bgOpacity: 0, bgLightness: 0, hasBorder: false, radius: 0, padX: 6, padY: 4, hoverDelta: 18, hoverColor: true, dividers: false, divOpacity: 0, clusterGap: 0, forceHover: false },
+};
+
+const state = { ...DEFAULTS };
+
+function rgba(lightness, opacity) {
+    // l in 0..100, alpha in 0..1. Use HSL so we can sweep lightness cleanly.
+    return `hsla(230, 14%, ${lightness}%, ${opacity})`;
+}
+
+function paintAll() {
+    const bgFill = state.bgOpacity === 0 ? 'transparent' : rgba(state.bgLightness, state.bgOpacity / 100);
+    const bgHover = state.bgOpacity === 0
+        ? rgba(state.bgLightness + state.hoverDelta, 0.18)
+        : rgba(state.bgLightness + state.hoverDelta, Math.min(1, (state.bgOpacity + state.hoverDelta) / 100));
+    const borderRule = state.hasBorder ? '1px solid rgba(255,255,255,0.06)' : '1px solid transparent';
+
+    document.querySelectorAll('.btn-cluster').forEach((cluster) => {
+        cluster.style.background = bgFill;
+        cluster.style.border = borderRule;
+        cluster.style.borderRadius = state.radius + 'px';
+    });
+
+    // Single buttons get the same pill treatment but applied to themselves.
+    document.querySelectorAll('[data-single]').forEach((b) => {
+        b.style.background = bgFill;
+        b.style.border = borderRule;
+        b.style.borderRadius = state.radius + 'px';
+        b.style.padding = `${state.padY}px ${state.padX}px`;
+        b.style.color = state.forceHover ? '#cdd6f4' : 'var(--pg-fg-alt)';
+        if (state.forceHover) {
+            b.style.background = bgHover;
+        }
+    });
+
+    // Cluster buttons inherit padding but no background of their own.
+    document.querySelectorAll('[data-cluster]').forEach((b) => {
+        b.style.padding = `${state.padY}px ${state.padX}px`;
+        b.style.background = 'transparent';
+        b.style.color = state.forceHover ? '#cdd6f4' : 'var(--pg-fg)';
+        if (state.forceHover) {
+            b.style.background = bgHover;
+        }
+    });
+
+    document.querySelectorAll('[data-slider]').forEach((s) => {
+        s.style.padding = `0 ${state.padX}px`;
+    });
+
+    document.querySelectorAll('[data-divider]').forEach((d) => {
+        d.style.background = state.dividers ? `rgba(255,255,255,${state.divOpacity / 100})` : 'transparent';
+        d.style.display = state.dividers ? 'block' : 'none';
+    });
+
+    // Cluster internal gap
+    document.querySelectorAll('.btn-cluster').forEach((cluster) => {
+        cluster.style.gap = state.clusterGap + 'px';
+    });
+
+    // Live hover (when not forced): inject a one-shot stylesheet
+    let style = document.getElementById('hover-style');
+    if (!style) {
+        style = document.createElement('style');
+        style.id = 'hover-style';
+        document.head.appendChild(style);
+    }
+    const hoverColorRule = state.hoverColor ? 'color: #cdd6f4;' : '';
+    style.textContent = `
+        [data-single]:hover, [data-cluster]:hover {
+            background: ${bgHover} !important;
+            ${hoverColorRule}
+        }
+    `;
+}
+
+function updatePrompt() {
+    const presetLikeReference =
+        Math.abs(state.bgOpacity - 50) < 8 && state.radius >= 4 && state.radius <= 8;
+    const lines = [];
+    lines.push('Update the bar widget interactive items (media controls, volume, power profile,');
+    lines.push('power menu) to look like buttons with a visible background pill.');
+    lines.push('');
+    lines.push('Files to touch (these are the four affected components plus their shared cluster wrapper):');
+    lines.push('  src/ui/themes/default/views/widgets/bar/src/lib/MediaControls.svelte');
+    lines.push('  src/ui/themes/default/views/widgets/bar/src/lib/tray/VolumeIndicator.svelte');
+    lines.push('  src/ui/themes/default/views/widgets/bar/src/lib/tray/PowerProfileIndicator.svelte');
+    lines.push('  src/ui/themes/default/views/widgets/bar/src/lib/tray/PowerMenuIndicator.svelte');
+    lines.push('  (consider extracting a shared <BarButton> component for the common pill style)');
+    lines.push('');
+    lines.push('Style:');
+    if (state.bgOpacity > 0) {
+        lines.push(`  - Background: hsla(230, 14%, ${state.bgLightness}%, ${state.bgOpacity / 100})`);
+        lines.push(`    On hover: hsla(230, 14%, ${state.bgLightness + state.hoverDelta}%, ${Math.min(1, (state.bgOpacity + state.hoverDelta) / 100)})`);
+    } else {
+        lines.push(`  - Background: transparent. On hover: hsla(230, 14%, ${state.bgLightness + state.hoverDelta}%, 0.18).`);
+    }
+    if (state.hasBorder) {
+        lines.push(`  - Border: 1px solid rgba(255,255,255,0.06).`);
+    }
+    lines.push(`  - Border radius: ${state.radius}px.`);
+    lines.push(`  - Padding: ${state.padY}px ${state.padX}px.`);
+    if (state.hoverColor) {
+        lines.push(`  - On hover the icon color brightens to var(--color-fg) (#cdd6f4).`);
+    }
+    lines.push('');
+    lines.push('Grouping:');
+    if (state.dividers) {
+        lines.push(`  - Multi-button clusters (media controls, volume+slider) share one background pill`);
+        lines.push(`    with thin dividers between buttons (rgba(255,255,255,${state.divOpacity / 100})), no`);
+        lines.push(`    internal gaps inside the pill.`);
+    } else {
+        lines.push(`  - No dividers between buttons inside a cluster.`);
+        if (state.clusterGap > 0) {
+            lines.push(`  - ${state.clusterGap}px gap between adjacent buttons inside a cluster.`);
+        }
+    }
+    lines.push('');
+    lines.push('Notes:');
+    lines.push('  - Solo buttons (power profile, power menu, brightness if you decide it should be a button)');
+    lines.push('    get the same pill treatment directly on the button element.');
+    lines.push('  - Cluster buttons should NOT have their own background; the parent cluster owns it.');
+    lines.push('  - Keep the transition timing already in MediaControls.svelte: 0.12-0.15s ease.');
+    if (presetLikeReference) {
+        lines.push('  - This matches the screenshot reference (matte dark pill, ~6px radius).');
+    }
+    document.getElementById('prompt').textContent = lines.join('\n');
+}
+
+function updateValueLabels() {
+    document.getElementById('bgOpacity-val').textContent = state.bgOpacity + '%';
+    document.getElementById('bgLightness-val').textContent = state.bgLightness + '%';
+    document.getElementById('radius-val').textContent = state.radius + 'px';
+    document.getElementById('padX-val').textContent = state.padX + 'px';
+    document.getElementById('padY-val').textContent = state.padY + 'px';
+    document.getElementById('hoverDelta-val').textContent = '+' + state.hoverDelta + '%';
+    document.getElementById('divOpacity-val').textContent = state.divOpacity + '%';
+    document.getElementById('clusterGap-val').textContent = state.clusterGap + 'px';
+}
+
+function syncControlsFromState() {
+    document.getElementById('bgOpacity').value = state.bgOpacity;
+    document.getElementById('bgLightness').value = state.bgLightness;
+    document.getElementById('hasBorder').checked = state.hasBorder;
+    document.getElementById('radius').value = state.radius;
+    document.getElementById('padX').value = state.padX;
+    document.getElementById('padY').value = state.padY;
+    document.getElementById('hoverDelta').value = state.hoverDelta;
+    document.getElementById('hoverColor').checked = state.hoverColor;
+    document.getElementById('dividers').checked = state.dividers;
+    document.getElementById('divOpacity').value = state.divOpacity;
+    document.getElementById('clusterGap').value = state.clusterGap;
+    document.getElementById('forceHover').checked = state.forceHover;
+}
+
+function updateAll() {
+    updateValueLabels();
+    paintAll();
+    updatePrompt();
+}
+
+// Wire controls
+['bgOpacity', 'bgLightness', 'radius', 'padX', 'padY', 'hoverDelta', 'divOpacity', 'clusterGap'].forEach((id) => {
+    document.getElementById(id).addEventListener('input', (e) => {
+        state[id] = parseInt(e.target.value, 10);
+        updateAll();
+    });
+});
+['hasBorder', 'hoverColor', 'dividers', 'forceHover'].forEach((id) => {
+    document.getElementById(id).addEventListener('change', (e) => {
+        state[id] = e.target.checked;
+        updateAll();
+    });
+});
+
+// Presets
+const presetContainer = document.getElementById('presets');
+Object.entries(PRESETS).forEach(([name, values]) => {
+    const btn = document.createElement('button');
+    btn.className = 'preset-btn';
+    btn.textContent = name;
+    btn.addEventListener('click', () => {
+        Object.assign(state, values);
+        syncControlsFromState();
+        updateAll();
+    });
+    presetContainer.appendChild(btn);
+});
+
+// Copy
+document.getElementById('copy').addEventListener('click', async () => {
+    const text = document.getElementById('prompt').textContent;
+    try {
+        await navigator.clipboard.writeText(text);
+        const btn = document.getElementById('copy');
+        const orig = btn.textContent;
+        btn.textContent = 'Copied!';
+        btn.classList.add('copied');
+        setTimeout(() => { btn.textContent = orig; btn.classList.remove('copied'); }, 1500);
+    } catch (e) {
+        console.error(e);
+    }
+});
+
+updateAll();
+</script>
+</body>
+</html>

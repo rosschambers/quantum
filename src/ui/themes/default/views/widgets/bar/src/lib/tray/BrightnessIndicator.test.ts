@@ -27,7 +27,7 @@ describe('BrightnessIndicator', () => {
 	it('renders nothing when unavailable', () => {
 		const { client } = mockClient();
 		const { container } = render(BrightnessIndicator, { props: { client } });
-		expect(container.querySelector('.tray-icon')).toBeNull();
+		expect(container.querySelector('.bar-button')).toBeNull();
 	});
 
 	it('renders nothing when displays array is empty even if available', async () => {
@@ -37,7 +37,7 @@ describe('BrightnessIndicator', () => {
 			available: true,
 			displays: [],
 		});
-		expect(container.querySelector('.tray-icon')).toBeNull();
+		expect(container.querySelector('.bar-button')).toBeNull();
 	});
 
 	it('renders an icon + ring at 50% brightness', async () => {
@@ -54,7 +54,7 @@ describe('BrightnessIndicator', () => {
 				},
 			],
 		});
-		const el = container.querySelector('.tray-icon');
+		const el = container.querySelector('.bar-button');
 		expect(el).not.toBeNull();
 		expect(el!.querySelector('.icon-overlay svg.icon')).not.toBeNull();
 		const fill = el!.querySelector('svg.ring .ring-fill');
@@ -97,7 +97,7 @@ describe('BrightnessIndicator', () => {
 				},
 			],
 		});
-		const el = container.querySelector('.tray-icon');
+		const el = container.querySelector('.bar-button');
 		expect(el).not.toBeNull();
 		fireEvent.wheel(el!, { deltaY: -10 });
 		await tick();
@@ -132,7 +132,7 @@ describe('BrightnessIndicator', () => {
 				},
 			],
 		});
-		const el = container.querySelector('.tray-icon');
+		const el = container.querySelector('.bar-button');
 		expect(el).not.toBeNull();
 		fireEvent.wheel(el!, { deltaY: 10 });
 		await tick();
@@ -167,7 +167,7 @@ describe('BrightnessIndicator', () => {
 				},
 			],
 		});
-		const el = container.querySelector('.tray-icon');
+		const el = container.querySelector('.bar-button');
 		expect(el).not.toBeNull();
 		expect(el!.title).toContain('backlight/intel_backlight');
 		expect(el!.title).toContain('50%');

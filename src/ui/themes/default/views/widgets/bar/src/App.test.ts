@@ -19,6 +19,7 @@ describe('Bar App', () => {
         // ActiveWindow, SystemMeters, MediaControls all have their own root containers
         expect(container.querySelector('.active-window')).not.toBeNull();
         expect(container.querySelector('.meters')).not.toBeNull();
-        expect(container.querySelector('.media-controls')).not.toBeNull();
+        // Media controls now render as a BarButtonCluster pill.
+        expect(container.querySelector('.bar-button-cluster')).not.toBeNull();
     });
 });

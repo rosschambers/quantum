@@ -5,6 +5,7 @@
     import { gradientColor } from '../gradient';
     import { volumeIcon } from '../icons';
     import { onClick, onScroll } from './interaction';
+    import BarButton from '../BarButton.svelte';
     import Ring from '../Ring.svelte';
 
     interface Props {
@@ -13,7 +14,7 @@
 
     let { client }: Props = $props();
     let state: AudioState = $state({ available: false, default_sink: null });
-    let root: HTMLElement | undefined = $state(undefined);
+    let root: HTMLButtonElement | undefined = $state(undefined);
 
     $effect(() => {
         client
@@ -80,23 +81,12 @@
 </script>
 
 {#if state.available && state.default_sink !== null}
-    <div bind:this={root} class="tray-icon volume" title={tooltipFor(state)}>
+    <BarButton title={tooltipFor(state)} bindRef={(el) => (root = el)}>
         <Ring
             percent={state.default_sink.muted ? 0 : state.default_sink.volume_percent}
             color={gradientColor(state.default_sink.volume_percent)}
             kind="icon"
             iconName={volumeIcon(state.default_sink.volume_percent, state.default_sink.muted)}
         />
-    </div>
+    </BarButton>
 {/if}
-
-<style>
-    .tray-icon {
-        display: inline-flex;
-        align-items: center;
-        color: var(--tray-icon-color, var(--color-fg, #cdd6f4));
-        user-select: none;
-        cursor: pointer;
-        line-height: 1;
-    }
-</style>

@@ -24,7 +24,7 @@ describe('PowerMenuIndicator', () => {
     it('renders nothing when no capabilities are available', () => {
         const { client } = mockClient();
         const { container } = render(PowerMenuIndicator, { props: { client } });
-        expect(container.querySelector('.power-menu-trigger')).toBeNull();
+        expect(container.querySelector('.bar-button')).toBeNull();
     });
 
     it('renders the power icon button when at least one capability is true', async () => {
@@ -37,7 +37,7 @@ describe('PowerMenuIndicator', () => {
             can_hibernate: false,
             can_lock: false,
         });
-        const button = container.querySelector('.power-menu-trigger');
+        const button = container.querySelector('.bar-button');
         expect(button).not.toBeNull();
         expect(button!.querySelector('svg.icon')).not.toBeNull();
     });
@@ -52,7 +52,7 @@ describe('PowerMenuIndicator', () => {
             can_hibernate: false,
             can_lock: true,
         });
-        const button = container.querySelector('.power-menu-trigger') as HTMLElement;
+        const button = container.querySelector('.bar-button') as HTMLElement;
         await fireEvent.click(button);
         await tick();
         expect(client.call).toHaveBeenCalledWith('view.show', { name: 'widgets/power-menu' });

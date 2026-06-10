@@ -3,6 +3,7 @@
     import type { SystemPowerState } from '../types';
     import { SYSTEM_POWER_CHANNEL, SYSTEM_POWER_PROVIDER } from '../channels';
     import Icon from '../Icon.svelte';
+    import BarButton from '../BarButton.svelte';
 
     interface Props {
         client: Client;
@@ -52,29 +53,7 @@
 </script>
 
 {#if anyCapable(state)}
-    <button
-        type="button"
-        class="tray-icon power-menu-trigger"
-        aria-label="Power menu"
-        onclick={openMenu}
-    >
-        <Icon name="power" size={14} />
-    </button>
+    <BarButton ariaLabel="Power menu" onclick={openMenu}>
+        <Icon name="power" size={18} />
+    </BarButton>
 {/if}
-
-<style>
-    .tray-icon {
-        background: transparent;
-        border: none;
-        padding: 0 4px;
-        cursor: pointer;
-        user-select: none;
-        color: var(--color-fg-alt, #a6adc8);
-        display: inline-flex;
-        align-items: center;
-        line-height: 1;
-    }
-    .tray-icon:hover {
-        color: var(--color-fg, #cdd6f4);
-    }
-</style>

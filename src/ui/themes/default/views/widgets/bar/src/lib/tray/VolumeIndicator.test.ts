@@ -27,7 +27,7 @@ describe('VolumeIndicator', () => {
 	it('renders nothing when unavailable', () => {
 		const { client } = mockClient();
 		const { container } = render(VolumeIndicator, { props: { client } });
-		expect(container.querySelector('.tray-icon')).toBeNull();
+		expect(container.querySelector('.bar-button')).toBeNull();
 	});
 
 	it('renders nothing when default_sink is null even if available', async () => {
@@ -37,7 +37,7 @@ describe('VolumeIndicator', () => {
 			available: true,
 			default_sink: null,
 		});
-		expect(container.querySelector('.tray-icon')).toBeNull();
+		expect(container.querySelector('.bar-button')).toBeNull();
 	});
 
 	it('renders an icon and ring at 50%', async () => {
@@ -52,7 +52,7 @@ describe('VolumeIndicator', () => {
 				muted: false,
 			},
 		});
-		const el = container.querySelector('.tray-icon');
+		const el = container.querySelector('.bar-button');
 		expect(el).not.toBeNull();
 		expect(el!.querySelector('.icon-overlay svg.icon')).not.toBeNull();
 		expect(el!.querySelector('svg.ring')).not.toBeNull();
@@ -70,7 +70,7 @@ describe('VolumeIndicator', () => {
 				muted: true,
 			},
 		});
-		const el = container.querySelector('.tray-icon');
+		const el = container.querySelector('.bar-button');
 		expect(el).not.toBeNull();
 		// Volume off icon contains crossed lines (the mute X) in its
 		// SVG path set.
@@ -97,7 +97,7 @@ describe('VolumeIndicator', () => {
 				muted: false,
 			},
 		});
-		const el = container.querySelector('.tray-icon');
+		const el = container.querySelector('.bar-button');
 		expect(el).not.toBeNull();
 		fireEvent.click(el!);
 		await tick();
@@ -125,7 +125,7 @@ describe('VolumeIndicator', () => {
 				muted: false,
 			},
 		});
-		const el = container.querySelector('.tray-icon');
+		const el = container.querySelector('.bar-button');
 		expect(el).not.toBeNull();
 		fireEvent.wheel(el!, { deltaY: -10 });
 		await tick();
@@ -153,7 +153,7 @@ describe('VolumeIndicator', () => {
 				muted: false,
 			},
 		});
-		const el = container.querySelector('.tray-icon');
+		const el = container.querySelector('.bar-button');
 		expect(el).not.toBeNull();
 		fireEvent.wheel(el!, { deltaY: 10 });
 		await tick();
@@ -181,7 +181,7 @@ describe('VolumeIndicator', () => {
 				muted: false,
 			},
 		});
-		const el = container.querySelector('.tray-icon');
+		const el = container.querySelector('.bar-button');
 		expect(el).not.toBeNull();
 		expect(el!.title).toContain('Built-in');
 		expect(el!.title).toContain('50%');

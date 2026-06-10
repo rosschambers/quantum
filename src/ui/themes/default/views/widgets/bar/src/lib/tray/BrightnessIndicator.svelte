@@ -5,6 +5,7 @@
     import { gradientColor } from '../gradient';
 
     import { onScroll } from './interaction';
+    import BarButton from '../BarButton.svelte';
     import Ring from '../Ring.svelte';
 
     interface Props {
@@ -13,7 +14,7 @@
 
     let { client }: Props = $props();
     let state: BrightnessState = $state({ available: false, displays: [] });
-    let root: HTMLElement | undefined = $state(undefined);
+    let root: HTMLButtonElement | undefined = $state(undefined);
 
     $effect(() => {
         client
@@ -76,23 +77,12 @@
 </script>
 
 {#if state.available && state.displays.length > 0}
-    <div bind:this={root} class="tray-icon brightness" title={tooltipFor(state)}>
+    <BarButton title={tooltipFor(state)} bindRef={(el) => (root = el)}>
         <Ring
             percent={brightnessPercent(state)}
             color={gradientColor(brightnessPercent(state))}
             kind="icon"
             iconName="sun"
         />
-    </div>
+    </BarButton>
 {/if}
-
-<style>
-    .tray-icon {
-        display: inline-flex;
-        align-items: center;
-        color: var(--tray-icon-color, var(--color-fg, #cdd6f4));
-        user-select: none;
-        cursor: pointer;
-        line-height: 1;
-    }
-</style>
