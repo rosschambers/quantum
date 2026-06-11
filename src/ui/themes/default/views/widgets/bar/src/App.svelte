@@ -22,7 +22,6 @@
 
 <div class="bar">
     <div class="region region-left">
-        <KillWindowButton {client} />
         <ActiveWindow {client} />
     </div>
     <div class="region region-center">
@@ -32,6 +31,7 @@
     <div class="region region-right">
         <div class="group">
             <SystemMeters {client} />
+            <KillWindowButton {client} />
         </div>
         <div class="divider" aria-hidden="true"></div>
         <div class="group">
