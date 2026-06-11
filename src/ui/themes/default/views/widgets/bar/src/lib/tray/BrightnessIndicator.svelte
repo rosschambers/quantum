@@ -4,7 +4,14 @@
     import { BRIGHTNESS_CHANNEL, BRIGHTNESS_PROVIDER } from '../channels';
     import { gradientColor } from '../gradient';
 
-    import { onScroll } from './interaction';
+    import { onClick, onScroll } from './interaction';
+
+    /** Click toggles between these two brightness percentages. The
+     *  threshold (15%) splits them so the click does the opposite of
+     *  whatever the current level is closer to. */
+    const DIM_PERCENT = 1;
+    const BRIGHT_PERCENT = 30;
+    const TOGGLE_THRESHOLD = 15;
     import BarButton from '../BarButton.svelte';
     import Ring from '../Ring.svelte';
 
@@ -31,9 +38,43 @@
 
     $effect(() => {
         if (!root) return;
-        const off = onScroll(root, handleScroll);
-        return () => off();
+        const offScroll = onScroll(root, handleScroll);
+        const offClick = onClick(root, handleClick, 'left');
+        return () => {
+            offScroll();
+            offClick();
+        };
     });
+
+    async function handleClick(): Promise<void> {
+        if (!state.available || state.displays.length === 0) return;
+        const display = state.displays[0];
+        if (display.max === 0) return;
+        const currentPct = (display.current / display.max) * 100;
+        // If brightness is above the threshold, dim it. Otherwise raise
+        // it. Click alternates between DIM_PERCENT and BRIGHT_PERCENT.
+        const targetPct = currentPct > TOGGLE_THRESHOLD ? DIM_PERCENT : BRIGHT_PERCENT;
+        const targetValue = Math.max(0, Math.round((targetPct / 100) * display.max));
+        try {
+            await client.call('action.invoke', {
+                provider: 'brightness',
+                action: {
+                    kind: 'custom',
+                    data: {
+                        kind: 'brightness',
+                        payload: {
+                            command: 'set',
+                            subsystem: display.subsystem,
+                            name: display.name,
+                            value: targetValue,
+                        },
+                    },
+                },
+            });
+        } catch (err) {
+            console.error('brightness toggle failed:', err);
+        }
+    }
 
     async function handleScroll(delta: 1 | -1): Promise<void> {
         if (!state.available || state.displays.length === 0) return;
@@ -83,6 +124,7 @@
             color={gradientColor(brightnessPercent(state))}
             kind="icon"
             iconName="sun"
+            size={18}
         />
     </BarButton>
 {/if}
