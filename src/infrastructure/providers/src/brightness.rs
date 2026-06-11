@@ -25,6 +25,11 @@ pub struct LogindBrightnessProvider {
     session_path: Option<zbus::zvariant::OwnedObjectPath>,
     specs: Vec<BrightnessSpec>,
     state_rx: watch::Receiver<serde_json::Value>,
+    /// Cloned sender retained on the provider so set_brightness /
+    /// adjust_brightness can push an updated state to subscribers
+    /// immediately rather than waiting up to 5s for the next poll
+    /// tick.
+    state_tx: watch::Sender<serde_json::Value>,
 }
 
 #[derive(Clone)]
@@ -49,13 +54,14 @@ impl LogindBrightnessProvider {
 
         // If no devices found, return unavailable.
         if specs.is_empty() {
-            let (_tx, state_rx) = watch::channel(serde_json::Value::Null);
+            let (state_tx, state_rx) = watch::channel(serde_json::Value::Null);
             return Ok(Self {
                 id,
                 conn: None,
                 session_path: None,
                 specs,
                 state_rx,
+                state_tx,
             });
         }
 
@@ -77,6 +83,7 @@ impl LogindBrightnessProvider {
         let (state_tx, state_rx) = watch::channel(initial_value);
 
         let specs_task = specs.clone();
+        let state_tx_task = state_tx.clone();
         runtime.spawn(async move {
             // 5s is far slower than the human response time for a brightness
             // keypress, but the brightness value only changes on a keypress or
@@ -94,7 +101,7 @@ impl LogindBrightnessProvider {
                 // watch::send_if_modified only fires on change, deduping by
                 // serde_json::Value equality. No subscribers? Fine, watch
                 // retains the latest value for future receivers.
-                state_tx.send_if_modified(|current| {
+                state_tx_task.send_if_modified(|current| {
                     if *current != value {
                         *current = value.clone();
                         true
@@ -111,6 +118,7 @@ impl LogindBrightnessProvider {
             session_path,
             specs,
             state_rx,
+            state_tx,
         })
     }
 }
@@ -135,6 +143,25 @@ async fn sample_brightness(specs: &[BrightnessSpec]) -> BrightnessState {
     BrightnessState {
         available: true,
         displays,
+    }
+}
+
+impl LogindBrightnessProvider {
+    /// Re-sample the current brightness from sysfs and publish it on
+    /// the state channel. Called from set_brightness / adjust_brightness
+    /// so subscribers (the bar's brightness ring) see the new value
+    /// immediately, without waiting up to 5s for the next poll tick.
+    async fn publish_current_state(&self) {
+        let state = sample_brightness(&self.specs).await;
+        let value = serde_json::to_value(&state).unwrap_or(serde_json::Value::Null);
+        self.state_tx.send_if_modified(|current| {
+            if *current != value {
+                *current = value.clone();
+                true
+            } else {
+                false
+            }
+        });
     }
 }
 
@@ -235,6 +262,12 @@ impl LogindBrightnessProvider {
             .map_err(|e| DomainError::ActionFailed {
                 reason: format!("set brightness: {e}"),
             })?;
+
+        // The poller only re-samples sysfs every 5s. Push the updated
+        // state to subscribers now so the bar's brightness ring reflects
+        // the change within milliseconds of the click/keypress, not the
+        // next tick.
+        self.publish_current_state().await;
 
         Ok(ActionOutcome {
             message: Some(format!("set {}/{} to {}", subsystem, name, value)),
