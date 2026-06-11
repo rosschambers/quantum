@@ -40,13 +40,18 @@
     function displayWorkspace(s: ActiveWindowState | null): string | null {
         if (!s) return null;
         if (s.workspace_name.startsWith('special:')) return null;
-        return s.workspace_name || `${s.workspace_id}`;
+        const text = s.workspace_name || String(s.workspace_id);
+        // Numeric workspace names get a '#' prefix to match the bar's
+        // typographic style. Named workspaces (e.g. 'web', 'chat') are
+        // shown verbatim.
+        return /^\d+$/.test(text) ? `#${text}` : text;
     }
 </script>
 
 <div class="active-window">
     {#if displayWorkspace(state)}
         <span class="workspace">{displayWorkspace(state)}</span>
+        <span class="separator" aria-hidden="true">·</span>
     {/if}
     <span class="title">{displayTitle(state)}</span>
 </div>
@@ -54,21 +59,37 @@
 <style>
     .active-window {
         display: flex;
-        align-items: center;
-        gap: var(--space-2, 0.5rem);
+        align-items: baseline;
+        gap: 8px;
         min-width: 0;
         overflow: hidden;
+        font-size: 14px;
+        line-height: 1;
     }
+    /* Workspace label: a dimmer typographic accent. Tabular nums so
+       "#1" and "#10" align. No background, no pill — the hash
+       prefix is enough to mark it as a workspace tag. */
     .workspace {
-        font-size: var(--font-size-sm, 12px);
-        background: var(--color-bg-alt, #313244);
-        color: var(--color-fg-alt, #a6adc8);
-        padding: 2px 8px;
-        border-radius: var(--radius-sm, 2px);
+        color: var(--color-accent, #89b4fa);
+        font-weight: 600;
+        font-variant-numeric: tabular-nums;
+        white-space: nowrap;
+        opacity: 0.85;
+        flex-shrink: 0;
+    }
+    /* Discreet middle-dot between workspace and title. Same accent
+       tint as the workspace so the two read as a single label group. */
+    .separator {
+        color: var(--color-accent, #89b4fa);
+        opacity: 0.5;
+        flex-shrink: 0;
     }
     .title {
+        color: var(--color-fg, #cdd6f4);
+        font-weight: 500;
         white-space: nowrap;
         overflow: hidden;
         text-overflow: ellipsis;
+        min-width: 0;
     }
 </style>
