@@ -87,6 +87,7 @@
             color={gradientColor(state.default_sink.volume_percent)}
             kind="icon"
             iconName={volumeIcon(state.default_sink.volume_percent, state.default_sink.muted)}
+            size={18}
         />
     </BarButton>
 {/if}

@@ -153,6 +153,7 @@
                 color={inverseGradientColor(battery.percentage)}
                 kind="icon"
                 iconName={powerProfileIcon(profile.active)}
+            size={18}
             />
             {#if battery.state === 'charging'}
                 <!--
