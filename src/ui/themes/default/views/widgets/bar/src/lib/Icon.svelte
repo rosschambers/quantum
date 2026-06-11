@@ -46,6 +46,7 @@
         | 'pause'
         | 'prev'
         | 'next'
+        | 'pacman'
         | 'target';
 
     let { name, size = 14, color = 'currentColor', stroke = 2 }: Props = $props();
@@ -154,6 +155,12 @@
     {:else if name === 'next'}
         <polygon points="7,5 17,12 7,19" fill={color} stroke="none" />
         <rect x="18" y="5" width="2" height="14" fill={color} stroke="none" />
+    {:else if name === 'pacman'}
+        <!-- Pac-Man: a circle with a wedge cut on the right, drawn as a path
+             that closes back to the center. Mouth opens to the upper-right. -->
+        <path d="M 12 12 L 22 5 A 10 10 0 1 0 22 19 Z" fill={color} stroke="none" />
+        <!-- Pac-Man eye -->
+        <circle cx="12" cy="7" r="1.3" fill="#1e1e2e" stroke="none" />
     {:else if name === 'target'}
         <circle cx="12" cy="12" r="7" />
         <circle cx="12" cy="12" r="1.5" fill={color} stroke="none" />
