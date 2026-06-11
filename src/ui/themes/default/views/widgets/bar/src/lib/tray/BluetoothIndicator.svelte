@@ -33,7 +33,7 @@
     async function launchBluemanManager(): Promise<void> {
         try {
             await client.call('action.invoke', {
-                provider: 'shell_command',
+                provider: 'shell',
                 action: {
                     kind: 'shell',
                     data: { command: ['blueman-manager'], terminal: false },
@@ -69,7 +69,7 @@
             class:powered={state.powered}
             class:has-devices={state.connected_devices.length > 0}
         >
-            <Icon name="bluetooth" size={14} />
+            <Icon name="bluetooth" size={18} />
         </span>
     </BarButton>
 {/if}

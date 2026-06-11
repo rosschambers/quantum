@@ -26,7 +26,7 @@ describe('KillWindowButton', () => {
 		await fireEvent.click(btn!);
 		await tick();
 		expect(client.call).toHaveBeenCalledWith('action.invoke', {
-			provider: 'shell_command',
+			provider: 'shell',
 			action: {
 				kind: 'shell',
 				data: { command: ['hyprctl', 'kill'], terminal: false },

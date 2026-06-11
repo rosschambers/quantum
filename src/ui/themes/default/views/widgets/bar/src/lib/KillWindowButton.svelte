@@ -18,7 +18,7 @@
     async function invokeKill(): Promise<void> {
         try {
             await client.call('action.invoke', {
-                provider: 'shell_command',
+                provider: 'shell',
                 action: {
                     kind: 'shell',
                     data: { command: ['hyprctl', 'kill'], terminal: false },
@@ -35,5 +35,5 @@
     title="Click then pick a window to kill"
     onclick={invokeKill}
 >
-    <Icon name="target" size={14} />
+    <Icon name="pacman" size={18} />
 </BarButton>

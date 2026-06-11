@@ -35,7 +35,7 @@
     async function launchConnectionEditor(): Promise<void> {
         try {
             await client.call('action.invoke', {
-                provider: 'shell_command',
+                provider: 'shell',
                 action: {
                     kind: 'shell',
                     data: { command: ['nm-connection-editor'], terminal: false },
@@ -69,7 +69,7 @@
         >
             <Icon
                 name={networkIcon(state.primary?.kind ?? null, state.primary !== null)}
-                size={14}
+                size={18}
             />
         </span>
     </BarButton>
