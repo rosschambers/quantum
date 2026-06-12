@@ -1,6 +1,8 @@
 /target
 **/node_modules
 **/dist
+!src/infrastructure/plugins/test-fixtures/**/dist
+!src/infrastructure/plugins/test-fixtures/**/dist/**
 .DS_Store
 *.log
 .env

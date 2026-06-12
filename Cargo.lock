@@ -1886,6 +1886,7 @@ dependencies = [
 name = "quantum-plugins"
 version = "0.1.0"
 dependencies = [
+ "include_dir",
  "quantum-config",
  "quantum-domain",
  "serde",

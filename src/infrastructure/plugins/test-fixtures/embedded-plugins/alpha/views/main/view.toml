@@ -1,0 +1,4 @@
+kind = "panel"
+anchor = "top"
+height = 32
+per_monitor = true
