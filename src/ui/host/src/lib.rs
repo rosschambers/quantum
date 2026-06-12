@@ -7,6 +7,7 @@ pub mod messages;
 pub mod multiplex;
 pub mod registry;
 pub mod scheme;
+pub mod view_catalog;
 pub mod window_host;
 pub mod windows;
 
@@ -18,6 +19,7 @@ pub use multiplex::{BarMultiplexer, BarMultiplexerHandle};
 pub use quantum_domain::tokens_to_css;
 pub use registry::{ManagedWindow, ManagedWindowConstructor, WindowOps, WindowRegistry};
 pub use scheme::{register_quantum_scheme, register_quantum_scheme_on_default};
+pub use view_catalog::ViewCatalog;
 pub use window_host::{DummyWindowHost, GtkWindowHost};
 pub use windows::PanelWindow;
 

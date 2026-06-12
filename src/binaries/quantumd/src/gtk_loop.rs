@@ -35,7 +35,9 @@ use gtk4::gio;
 use gtk4::prelude::*;
 use quantum_domain::ports::ThemeStore;
 use quantum_domain::EventEnvelope;
-use quantum_ui::{IpcDispatcher, ManagedWindowConstructor, WindowRegistry, WindowRequest};
+use quantum_ui::{
+    IpcDispatcher, ManagedWindowConstructor, ViewCatalog, WindowRegistry, WindowRequest,
+};
 use tokio::runtime::Handle;
 use tokio::sync::broadcast;
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
@@ -59,6 +61,7 @@ pub fn run(
     event_tx: broadcast::Sender<EventEnvelope>,
     window_request_tx: UnboundedSender<WindowRequest>,
     auto_show_bar: bool,
+    view_catalog: ViewCatalog,
 ) -> i32 {
     let rx = Rc::new(RefCell::new(Some(rx)));
 
@@ -98,7 +101,10 @@ pub fn run(
             runtime.clone(),
             event_tx_for_activate.clone(),
         );
-        let registry = Rc::new(RefCell::new(WindowRegistry::new(ctor)));
+        let registry = Rc::new(RefCell::new(WindowRegistry::new(
+            ctor,
+            view_catalog.clone(),
+        )));
 
         let Some(mut rx) = rx_for_activate.borrow_mut().take() else {
             return;

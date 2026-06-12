@@ -351,6 +351,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             });
         }
 
+        let view_catalog = quantum_ui::ViewCatalog::from_plugins(setup.view_catalog_entries);
         let _exit_code = crate::gtk_loop::run(
             &app,
             window_rx,
@@ -360,6 +361,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             setup.event_tx.clone(),
             window_request_tx,
             auto_show_bar,
+            view_catalog,
         );
         // After GTK exits, clean up socket.
         let _ = std::fs::remove_file(&setup.socket_path);
@@ -378,6 +380,7 @@ struct DaemonSetup {
     event_bus: Arc<dyn quantum_domain::EventBus>,
     event_tx: tokio::sync::broadcast::Sender<EventEnvelope>,
     config: Config,
+    view_catalog_entries: Vec<(String, quantum_domain::ViewDescriptor)>,
 }
 
 async fn setup_daemon(
@@ -564,6 +567,21 @@ async fn setup_daemon(
         "plugins discovered: {embedded_plugin_count} embedded, {user_plugin_count} user, {} after merge",
         plugin_descs.len()
     );
+    // Flatten plugin views into (canonical name, descriptor) tuples for the
+    // window registry's ViewCatalog. quantum-ui cannot depend on the plugin
+    // discovery crate, so the daemon does the flattening here, from the same
+    // merged list used for provider registration below.
+    let view_catalog_entries: Vec<(String, quantum_domain::ViewDescriptor)> = plugin_descs
+        .iter()
+        .flat_map(|plugin| {
+            plugin.views.iter().map(|view| {
+                (
+                    format!("plugin/{}/{}", plugin.name, view.name),
+                    view.descriptor.clone(),
+                )
+            })
+        })
+        .collect();
     let mut total_plugins = 0usize;
     let mut total_polled = 0usize;
     let mut total_idle = 0usize;
@@ -723,6 +741,7 @@ async fn setup_daemon(
         event_bus,
         event_tx,
         config,
+        view_catalog_entries,
     })
 }
 

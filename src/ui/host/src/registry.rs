@@ -234,15 +234,24 @@ impl WindowOps for ManagedWindow {
 pub struct WindowRegistry<C: WindowConstructor> {
     constructor: C,
     windows: HashMap<String, C::Window>,
+    catalog: crate::ViewCatalog,
 }
 
 impl<C: WindowConstructor> WindowRegistry<C> {
-    /// Create a new window registry.
-    pub fn new(constructor: C) -> Self {
+    /// Create a new window registry. The `catalog` maps canonical plugin
+    /// view names to their declared window descriptors; dispatch through
+    /// the catalog lands in a follow-up change.
+    pub fn new(constructor: C, catalog: crate::ViewCatalog) -> Self {
         Self {
             constructor,
             windows: HashMap::new(),
+            catalog,
         }
+    }
+
+    /// The descriptor catalog this registry was constructed with.
+    pub fn catalog(&self) -> &crate::ViewCatalog {
+        &self.catalog
     }
 
     /// Handle a window request (construct or reuse window, then apply the operation).
@@ -349,13 +358,38 @@ mod tests {
     }
 
     #[test]
+    fn registry_exposes_its_view_catalog() {
+        use quantum_domain::{ViewDescriptor, ViewKind};
+        let catalog = crate::ViewCatalog::from_plugins(vec![(
+            "plugin/bar/bar".to_string(),
+            ViewDescriptor {
+                kind: ViewKind::Panel,
+                ..ViewDescriptor::default()
+            },
+        )]);
+        let reg = WindowRegistry::new(
+            FakeCtor {
+                construct_count: Rc::new(Cell::new(0)),
+                shown: Rc::new(Cell::new(false)),
+            },
+            catalog,
+        );
+        let descriptor = reg.catalog().get("plugin/bar/bar");
+        assert_eq!(descriptor.map(|d| d.kind), Some(ViewKind::Panel));
+        assert!(reg.catalog().get("plugin/unknown/view").is_none());
+    }
+
+    #[test]
     fn first_request_constructs_window() {
         let count = Rc::new(Cell::new(0));
         let shown = Rc::new(Cell::new(false));
-        let mut reg = WindowRegistry::new(FakeCtor {
-            construct_count: count.clone(),
-            shown: shown.clone(),
-        });
+        let mut reg = WindowRegistry::new(
+            FakeCtor {
+                construct_count: count.clone(),
+                shown: shown.clone(),
+            },
+            crate::ViewCatalog::from_plugins(vec![]),
+        );
         reg.handle(WindowRequest::Open {
             view: "launcher".into(),
             mode: WindowMode::Show,
@@ -368,10 +402,13 @@ mod tests {
     fn second_request_reuses_window() {
         let count = Rc::new(Cell::new(0));
         let shown = Rc::new(Cell::new(false));
-        let mut reg = WindowRegistry::new(FakeCtor {
-            construct_count: count.clone(),
-            shown: shown.clone(),
-        });
+        let mut reg = WindowRegistry::new(
+            FakeCtor {
+                construct_count: count.clone(),
+                shown: shown.clone(),
+            },
+            crate::ViewCatalog::from_plugins(vec![]),
+        );
         reg.handle(WindowRequest::Open {
             view: "launcher".into(),
             mode: WindowMode::Show,
@@ -412,10 +449,13 @@ mod tests {
     fn unknown_view_does_not_panic() {
         let count = Rc::new(Cell::new(0));
         let shown = Rc::new(Cell::new(false));
-        let mut reg = WindowRegistry::new(FakeCtor {
-            construct_count: count,
-            shown,
-        });
+        let mut reg = WindowRegistry::new(
+            FakeCtor {
+                construct_count: count,
+                shown,
+            },
+            crate::ViewCatalog::from_plugins(vec![]),
+        );
         reg.handle(WindowRequest::Open {
             view: "nope".into(),
             mode: WindowMode::Show,
@@ -427,10 +467,13 @@ mod tests {
     fn close_removes_window_from_registry() {
         let count = Rc::new(Cell::new(0));
         let shown = Rc::new(Cell::new(false));
-        let mut reg = WindowRegistry::new(FakeCtor {
-            construct_count: count.clone(),
-            shown: shown.clone(),
-        });
+        let mut reg = WindowRegistry::new(
+            FakeCtor {
+                construct_count: count.clone(),
+                shown: shown.clone(),
+            },
+            crate::ViewCatalog::from_plugins(vec![]),
+        );
         reg.handle(WindowRequest::Open {
             view: "launcher".into(),
             mode: WindowMode::Show,
@@ -454,10 +497,13 @@ mod tests {
     fn close_for_unknown_view_does_not_panic() {
         let count = Rc::new(Cell::new(0));
         let shown = Rc::new(Cell::new(false));
-        let mut reg = WindowRegistry::new(FakeCtor {
-            construct_count: count,
-            shown,
-        });
+        let mut reg = WindowRegistry::new(
+            FakeCtor {
+                construct_count: count,
+                shown,
+            },
+            crate::ViewCatalog::from_plugins(vec![]),
+        );
         // No prior Open; the registry is empty.
         reg.handle(WindowRequest::Close {
             view: "launcher".into(),
@@ -505,10 +551,13 @@ mod tests {
         // canonical_view_key code path.
         let count = Rc::new(Cell::new(0));
         let shown = Rc::new(Cell::new(false));
-        let mut reg = WindowRegistry::new(FakeCtor {
-            construct_count: count.clone(),
-            shown: shown.clone(),
-        });
+        let mut reg = WindowRegistry::new(
+            FakeCtor {
+                construct_count: count.clone(),
+                shown: shown.clone(),
+            },
+            crate::ViewCatalog::from_plugins(vec![]),
+        );
         reg.handle(WindowRequest::Open {
             view: "launcher@DP-1".into(),
             mode: WindowMode::Show,
