@@ -191,7 +191,13 @@ impl ProviderSource for PowerProfilesDaemonProvider {
 /// Anything else → None
 pub(crate) fn parse_profile_str(s: &str) -> Option<PowerProfile> {
     match s {
-        "power-saver" => Some(PowerProfile::PowerSaver),
+        // power-profiles-daemon's DBus wire format uses hyphens;
+        // the domain's serde snake_case representation (what the
+        // frontend sends back from PowerProfileState) uses an
+        // underscore. Accept both so action payloads can echo either
+        // form. Only power_saver/power-saver differs; balanced and
+        // performance are identical in both.
+        "power-saver" | "power_saver" => Some(PowerProfile::PowerSaver),
         "balanced" => Some(PowerProfile::Balanced),
         "performance" => Some(PowerProfile::Performance),
         _ => None,
@@ -265,6 +271,18 @@ mod tests {
             Some(PowerProfile::Performance)
         );
         assert_eq!(parse_profile_str("unknown"), None);
+    }
+
+    #[test]
+    fn parse_profile_str_accepts_snake_case_from_frontend() {
+        // The domain PowerProfile serializes as snake_case
+        // (power_saver), which is what the frontend receives in
+        // PowerProfileState and echoes back in set commands. The
+        // parser must accept it alongside the DBus hyphenated form.
+        assert_eq!(
+            parse_profile_str("power_saver"),
+            Some(PowerProfile::PowerSaver)
+        );
     }
 
     #[test]
