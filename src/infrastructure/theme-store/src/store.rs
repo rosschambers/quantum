@@ -145,7 +145,9 @@ impl ThemeStore {
     /// Attach an embedded plugin file tree (built into the binary with
     /// `include_dir!`). `get_plugin_file` falls back to this tree when the
     /// requested file is absent from the user plugins directory, so user
-    /// plugins on disk always shadow embedded ones.
+    /// plugins on disk always shadow embedded ones. Shadowing is per-file,
+    /// not per-plugin: a file missing from the user copy still resolves
+    /// against the embedded tree.
     pub fn with_embedded_plugins(
         mut self,
         embedded_plugins: &'static include_dir::Dir<'static>,
@@ -879,6 +881,20 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let store = ThemeStore::with_plugins_dir(tmp.path().to_path_buf());
         assert!(store.get_plugin_file("moon", "/etc/passwd").is_none());
+    }
+
+    #[test]
+    fn get_plugin_file_rejects_unsafe_plugin_name() {
+        let tmp = tempfile::tempdir().unwrap();
+        let store = ThemeStore::with_plugins_dir(tmp.path().to_path_buf());
+        // `..` as the plugin name would escape the plugins directory.
+        assert!(store.get_plugin_file("..", "quantum/themes/x").is_none());
+        // A slash in the plugin name would smuggle extra path segments.
+        assert!(store
+            .get_plugin_file("a/b", "views/main/index.html")
+            .is_none());
+        // An empty plugin name would resolve against the plugins root itself.
+        assert!(store.get_plugin_file("", "views/main/index.html").is_none());
     }
 
     #[test]
