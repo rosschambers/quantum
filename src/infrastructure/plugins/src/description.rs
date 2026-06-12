@@ -1,6 +1,7 @@
 //! Discovered plugin descriptions and recipe types. The walker (in
 //! `walker.rs`) produces these; the daemon's startup wiring consumes them.
 
+use quantum_domain::ViewDescriptor;
 use std::path::PathBuf;
 use std::time::Duration;
 
@@ -47,6 +48,7 @@ pub struct ActionScript {
 pub struct ViewBundle {
     pub name: String,
     pub dir: PathBuf,
+    pub descriptor: ViewDescriptor,
 }
 
 #[cfg(test)]
@@ -74,6 +76,7 @@ mod tests {
             views: vec![ViewBundle {
                 name: "widget".into(),
                 dir: PathBuf::from("/tmp/moon/views/widget"),
+                descriptor: ViewDescriptor::default(),
             }],
         };
         assert_eq!(d.name, "moon");

@@ -8,6 +8,7 @@
 use crate::description::{ActionScript, IdleScript, PluginDescription, PolledScript, ViewBundle};
 use crate::error::PluginsError;
 use crate::manifest::{parse_manifest, Manifest};
+use quantum_domain::ViewDescriptor;
 use std::collections::HashSet;
 use std::fs;
 use std::os::unix::fs::PermissionsExt;
@@ -179,7 +180,11 @@ fn list_views(dir: &Path) -> Vec<ViewBundle> {
             continue;
         }
         let name = entry.file_name().to_string_lossy().to_string();
-        out.push(ViewBundle { name, dir: path });
+        out.push(ViewBundle {
+            name,
+            dir: path,
+            descriptor: ViewDescriptor::default(),
+        });
     }
     out
 }

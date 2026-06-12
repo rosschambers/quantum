@@ -13,4 +13,5 @@ pub mod walker;
 pub use description::{ActionScript, IdleScript, PluginDescription, PolledScript, ViewBundle};
 pub use error::PluginsError;
 pub use manifest::{parse_manifest, Manifest, ScriptConfig};
+pub use quantum_domain::{ViewAnchor, ViewDescriptor, ViewKind};
 pub use walker::walk;
