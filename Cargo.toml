@@ -35,3 +35,4 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 anyhow = "1"
 cargo_metadata = "0.18"
 futures = "0.3"
+include_dir = "0.7"

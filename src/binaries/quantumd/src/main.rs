@@ -140,6 +140,18 @@ impl EventBus for BroadcastingEventBus {
     }
 }
 
+/// First-party plugins compiled into the daemon. The build script
+/// (`build.rs`) stages each plugin's `views/<view>/view.toml` and built
+/// `dist/` output into `$OUT_DIR/embedded-plugins`, so this static never
+/// contains pnpm `node_modules`, Svelte sources, or tooling configs.
+///
+/// Constraint: the view `dist/` directories must exist when quantumd is
+/// compiled. Build them first with
+/// `pnpm -C src/ui/plugins/<name>/views/<name> build`; views without a
+/// `dist/` are skipped by the build script with a cargo warning.
+static EMBEDDED_PLUGINS: include_dir::Dir<'static> =
+    include_dir::include_dir!("$OUT_DIR/embedded-plugins");
+
 /// Resolve the user-side plugins directory. Falls back to `~/.config`
 /// if `XDG_CONFIG_HOME` is unset, matching the convention used by the
 /// theme store and standard XDG semantics.
@@ -149,27 +161,61 @@ fn plugins_dir() -> PathBuf {
     PathBuf::from(config_home).join("quantum/plugins")
 }
 
+/// Walk the user plugins directory and merge the result over the
+/// embedded first-party catalog (user plugins shadow embedded ones by
+/// name). Returns the merged list plus the separate embedded and user
+/// counts for logging. A failed user walk degrades to "no user plugins"
+/// with a warning; the embedded catalog is compiled in and cannot fail.
+fn discover_merged_plugins(
+    user_plugins_dir: &std::path::Path,
+    embedded: &include_dir::Dir<'static>,
+) -> (Vec<quantum_plugins::PluginDescription>, usize, usize) {
+    let user_plugins = match quantum_plugins::walk(user_plugins_dir) {
+        Ok(d) => d,
+        Err(e) => {
+            tracing::warn!(
+                "failed to walk plugins directory {}: {e}; continuing with embedded plugins only",
+                user_plugins_dir.display()
+            );
+            Vec::new()
+        }
+    };
+    let embedded_plugins = match quantum_plugins::walk_embedded(embedded) {
+        Ok(d) => d,
+        Err(e) => {
+            tracing::warn!("failed to walk embedded plugins: {e}; continuing without them");
+            Vec::new()
+        }
+    };
+    let embedded_count = embedded_plugins.len();
+    let user_count = user_plugins.len();
+    let merged = quantum_plugins::merge_plugins(user_plugins, embedded_plugins);
+    (merged, embedded_count, user_count)
+}
+
 /// Domain `PluginCatalog` implementation backed by
-/// `quantum_plugins::walk`. Used by the `plugin.reload` IPC handler.
+/// `quantum_plugins::walk` merged over the embedded first-party catalog,
+/// mirroring startup discovery exactly. Used by the `plugin.reload` IPC
+/// handler, so reload counts embedded plugins too.
 struct FilesystemPluginCatalog {
     plugins_dir: PathBuf,
+    embedded: &'static include_dir::Dir<'static>,
 }
 
 #[async_trait::async_trait]
 impl quantum_domain::PluginCatalog for FilesystemPluginCatalog {
     async fn discover(&self) -> std::result::Result<usize, quantum_domain::DomainError> {
         let plugins_dir = self.plugins_dir.clone();
+        let embedded = self.embedded;
         // Walk the filesystem on a blocking pool so we never park the
         // async runtime on disk I/O.
-        let result = tokio::task::spawn_blocking(move || quantum_plugins::walk(&plugins_dir))
-            .await
-            .map_err(|e| {
-                quantum_domain::DomainError::Unsupported(format!("plugin walk join error: {e}"))
-            })?;
-        let descs = result.map_err(|e| {
-            quantum_domain::DomainError::Unsupported(format!("plugin walk failed: {e}"))
-        })?;
-        Ok(descs.len())
+        let (merged, _, _) =
+            tokio::task::spawn_blocking(move || discover_merged_plugins(&plugins_dir, embedded))
+                .await
+                .map_err(|e| {
+                    quantum_domain::DomainError::Unsupported(format!("plugin walk join error: {e}"))
+                })?;
+        Ok(merged.len())
     }
 }
 
@@ -503,22 +549,20 @@ async fn setup_daemon(
     register_or_warn(&registry, "PulseAudioProvider", audio).await;
     register_or_warn(&registry, "SystemPowerProvider", sysp).await;
 
-    // Plugins: walk ~/.config/quantum/plugins/, register one
-    // PluginScriptProvider per discovered plugin, spawn one polling task
-    // per polled script. Failure to walk (or to register any individual
-    // plugin) logs a warning but never aborts startup — the daemon must
-    // come up with built-in providers regardless of plugin state.
+    // Plugins: walk ~/.config/quantum/plugins/, merge over the embedded
+    // first-party catalog (user plugins shadow embedded ones by name),
+    // register one PluginScriptProvider per discovered plugin, spawn one
+    // polling task per polled script. Failure to walk (or to register any
+    // individual plugin) logs a warning but never aborts startup — the
+    // daemon must come up with built-in providers regardless of plugin
+    // state.
     let plugins_directory = plugins_dir();
-    let plugin_descs = match quantum_plugins::walk(&plugins_directory) {
-        Ok(d) => d,
-        Err(e) => {
-            tracing::warn!(
-                "failed to walk plugins directory {}: {e}; continuing with no plugins",
-                plugins_directory.display()
-            );
-            Vec::new()
-        }
-    };
+    let (plugin_descs, embedded_plugin_count, user_plugin_count) =
+        discover_merged_plugins(&plugins_directory, &EMBEDDED_PLUGINS);
+    info!(
+        "plugins discovered: {embedded_plugin_count} embedded, {user_plugin_count} user, {} after merge",
+        plugin_descs.len()
+    );
     let mut total_plugins = 0usize;
     let mut total_polled = 0usize;
     let mut total_idle = 0usize;
@@ -618,6 +662,7 @@ async fn setup_daemon(
     let plugin_catalog: Arc<dyn quantum_domain::PluginCatalog> =
         Arc::new(FilesystemPluginCatalog {
             plugins_dir: plugins_directory,
+            embedded: &EMBEDDED_PLUGINS,
         });
     let reload_plugins_use_case = Arc::new(ReloadPluginsUseCase::new(plugin_catalog));
     let dispatcher = Arc::new(AppDispatcher::new(
@@ -772,5 +817,47 @@ mod tests {
         let env = rx.recv().await.expect("subscriber receives envelope");
         assert_eq!(env.channel, "garbage.channel");
         assert_eq!(env.payload.get(), "null");
+    }
+
+    /// Test-only embedded catalog: `alpha` and `beta`, each with one view.
+    static TEST_EMBEDDED_PLUGINS: include_dir::Dir<'static> =
+        include_dir::include_dir!("$CARGO_MANIFEST_DIR/test-fixtures/embedded-plugins");
+
+    /// `plugin.reload` must see the same merged catalog as startup:
+    /// embedded plugins count, and a user plugin with the same name as
+    /// an embedded one shadows it instead of double-counting.
+    #[tokio::test]
+    async fn catalog_discover_merges_embedded_and_user_plugins() {
+        let user_dir = tempfile::tempdir().expect("tempdir");
+        // `alpha` shadows the embedded plugin of the same name; `zeta`
+        // exists only on the user side.
+        std::fs::create_dir_all(user_dir.path().join("alpha")).expect("mkdir alpha");
+        std::fs::create_dir_all(user_dir.path().join("zeta")).expect("mkdir zeta");
+
+        let catalog = FilesystemPluginCatalog {
+            plugins_dir: user_dir.path().to_path_buf(),
+            embedded: &TEST_EMBEDDED_PLUGINS,
+        };
+        let count = quantum_domain::PluginCatalog::discover(&catalog)
+            .await
+            .expect("discover");
+
+        // embedded {alpha, beta} merged with user {alpha, zeta}
+        // -> {alpha (user), beta, zeta}
+        assert_eq!(count, 3);
+    }
+
+    /// With no user plugins directory at all, discover still reports the
+    /// embedded plugins.
+    #[tokio::test]
+    async fn catalog_discover_reports_embedded_when_user_directory_is_missing() {
+        let catalog = FilesystemPluginCatalog {
+            plugins_dir: PathBuf::from("/nonexistent/quantum/plugins"),
+            embedded: &TEST_EMBEDDED_PLUGINS,
+        };
+        let count = quantum_domain::PluginCatalog::discover(&catalog)
+            .await
+            .expect("discover");
+        assert_eq!(count, 2);
     }
 }
