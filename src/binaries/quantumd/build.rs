@@ -69,7 +69,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 /// `quantum_plugins::walk_embedded` expects. Emits precise
 /// `rerun-if-changed` paths so cargo never has to scan the pnpm
 /// `node_modules` symlink farms; the cost is that brand-new plugins
-/// added under `src/ui/plugins/` need one manual rebuild to be noticed.
+/// added under `src/ui/plugins/`, and brand-new views added to an
+/// existing plugin, each need one manual rebuild to be noticed (their
+/// paths are only registered once this script has seen them).
 fn stage_view(
     plugin_name: &str,
     view_name: &str,

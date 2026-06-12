@@ -3,6 +3,8 @@
 **/dist
 !src/infrastructure/plugins/test-fixtures/**/dist
 !src/infrastructure/plugins/test-fixtures/**/dist/**
+!src/infrastructure/theme-store/test-fixtures/**/dist
+!src/infrastructure/theme-store/test-fixtures/**/dist/**
 .DS_Store
 *.log
 .env

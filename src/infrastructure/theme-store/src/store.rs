@@ -110,6 +110,11 @@ fn parse_tokens_table(parsed: toml::Table) -> HashMap<String, String> {
 pub struct ThemeStore {
     themes_dir: PathBuf,
     plugins_dir: PathBuf,
+    /// First-party plugin files compiled into the daemon binary. Laid out
+    /// as `<plugin>/views/<view>/dist/...` plus `<plugin>/views/<view>/view.toml`
+    /// (the quantumd build script strips everything else). Consulted by
+    /// `get_plugin_file` only after the user plugins directory misses.
+    embedded_plugins: Option<&'static include_dir::Dir<'static>>,
     active_theme: RwLock<String>,
     /// Memoized resolved token maps keyed by theme name.
     ///
@@ -131,9 +136,22 @@ impl ThemeStore {
         Self {
             themes_dir,
             plugins_dir,
+            embedded_plugins: None,
             active_theme: RwLock::new(active),
             cached_tokens: StdRwLock::new(HashMap::new()),
         }
+    }
+
+    /// Attach an embedded plugin file tree (built into the binary with
+    /// `include_dir!`). `get_plugin_file` falls back to this tree when the
+    /// requested file is absent from the user plugins directory, so user
+    /// plugins on disk always shadow embedded ones.
+    pub fn with_embedded_plugins(
+        mut self,
+        embedded_plugins: &'static include_dir::Dir<'static>,
+    ) -> Self {
+        self.embedded_plugins = Some(embedded_plugins);
+        self
     }
 
     /// Create a theme store with an explicit themes directory.
@@ -144,6 +162,7 @@ impl ThemeStore {
         Self {
             themes_dir,
             plugins_dir: Self::plugins_dir(),
+            embedded_plugins: None,
             active_theme: RwLock::new(active),
             cached_tokens: StdRwLock::new(HashMap::new()),
         }
@@ -157,6 +176,7 @@ impl ThemeStore {
         Self {
             themes_dir: Self::themes_dir(),
             plugins_dir,
+            embedded_plugins: None,
             active_theme: RwLock::new("default".to_string()),
             cached_tokens: StdRwLock::new(HashMap::new()),
         }
@@ -183,17 +203,47 @@ impl ThemeStore {
 
     /// Read a file from a plugin's folder. Used by the `quantum://plugin/...`
     /// scheme handler. Refuses traversal (`..`), dot segments, and absolute
-    /// paths before touching the disk. Returns `None` if the file does
-    /// not exist.
+    /// paths before touching the disk or the embedded tree.
+    ///
+    /// Lookup order: the user plugins directory first, then the embedded
+    /// first-party tree attached via `with_embedded_plugins`. Both sources
+    /// try each candidate from `candidate_paths`, so a request for
+    /// `views/<view>/index.html` also resolves against
+    /// `views/<view>/dist/index.html` — required for embedded views, whose
+    /// built files always live under `dist/`. Returns `None` if no source
+    /// has the file.
     pub fn get_plugin_file(&self, plugin_name: &str, path: &str) -> Option<Vec<u8>> {
         if path.is_empty() || path.starts_with('/') {
+            return None;
+        }
+        if plugin_name.is_empty() || plugin_name.contains('/') {
+            return None;
+        }
+        if plugin_name == ".." || plugin_name == "." {
             return None;
         }
         if path.split('/').any(|seg| seg == ".." || seg == ".") {
             return None;
         }
-        let full = self.plugins_dir.join(plugin_name).join(path);
-        std::fs::read(&full).ok()
+
+        let candidates = candidate_paths(path);
+
+        let plugin_dir = self.plugins_dir.join(plugin_name);
+        for candidate in &candidates {
+            if let Ok(data) = std::fs::read(plugin_dir.join(candidate)) {
+                return Some(data);
+            }
+        }
+
+        let embedded = self.embedded_plugins?;
+        for candidate in &candidates {
+            let embedded_path = format!("{plugin_name}/{candidate}");
+            if let Some(file) = embedded.get_file(&embedded_path) {
+                return Some(file.contents().to_vec());
+            }
+        }
+
+        None
     }
 
     /// Load a theme by name.
@@ -836,6 +886,109 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let store = ThemeStore::with_plugins_dir(tmp.path().to_path_buf());
         assert!(store.get_plugin_file("moon", "views/none.html").is_none());
+    }
+
+    static TEST_EMBEDDED_PLUGINS: include_dir::Dir<'_> =
+        include_dir::include_dir!("$CARGO_MANIFEST_DIR/test-fixtures/embedded-plugins");
+
+    #[test]
+    fn get_plugin_file_serves_embedded_when_absent_on_disk() {
+        let tmp = tempfile::tempdir().unwrap();
+        let store = ThemeStore::with_plugins_dir(tmp.path().to_path_buf())
+            .with_embedded_plugins(&TEST_EMBEDDED_PLUGINS);
+
+        // Exact path into the embedded tree resolves as-is.
+        let bytes = store
+            .get_plugin_file("epsilon", "views/main/dist/index.html")
+            .expect("embedded file served");
+        assert_eq!(bytes, b"<html><body>embedded epsilon</body></html>\n");
+
+        // view.toml sits next to dist/, no insertion needed.
+        let toml_bytes = store
+            .get_plugin_file("epsilon", "views/main/view.toml")
+            .expect("embedded view.toml served");
+        assert!(String::from_utf8(toml_bytes).unwrap().contains("main"));
+    }
+
+    #[test]
+    fn get_plugin_file_embedded_resolves_with_dist_insertion() {
+        let tmp = tempfile::tempdir().unwrap();
+        let store = ThemeStore::with_plugins_dir(tmp.path().to_path_buf())
+            .with_embedded_plugins(&TEST_EMBEDDED_PLUGINS);
+
+        // The scheme handler hands us `views/<view>/index.html`; the
+        // embedded tree only has `views/<view>/dist/index.html`.
+        let bytes = store
+            .get_plugin_file("epsilon", "views/main/index.html")
+            .expect("dist-inserted embedded file served");
+        assert_eq!(bytes, b"<html><body>embedded epsilon</body></html>\n");
+
+        // Nested asset paths get the same treatment.
+        let asset = store
+            .get_plugin_file("epsilon", "views/main/assets/app.js")
+            .expect("dist-inserted embedded asset served");
+        assert_eq!(asset, b"console.log(\"embedded epsilon asset\");\n");
+    }
+
+    #[test]
+    fn get_plugin_file_disk_shadows_embedded() {
+        let tmp = tempfile::tempdir().unwrap();
+        let plugin = tmp.path().join("epsilon");
+        std::fs::create_dir_all(plugin.join("views/main")).unwrap();
+        std::fs::write(
+            plugin.join("views/main/index.html"),
+            b"<html>disk epsilon</html>",
+        )
+        .unwrap();
+
+        let store = ThemeStore::with_plugins_dir(tmp.path().to_path_buf())
+            .with_embedded_plugins(&TEST_EMBEDDED_PLUGINS);
+
+        let bytes = store
+            .get_plugin_file("epsilon", "views/main/index.html")
+            .expect("disk file served");
+        assert_eq!(bytes, b"<html>disk epsilon</html>");
+    }
+
+    #[test]
+    fn get_plugin_file_disk_resolves_with_dist_insertion() {
+        let tmp = tempfile::tempdir().unwrap();
+        let plugin = tmp.path().join("zeta");
+        std::fs::create_dir_all(plugin.join("views/main/dist")).unwrap();
+        std::fs::write(
+            plugin.join("views/main/dist/index.html"),
+            b"<html>disk zeta dist</html>",
+        )
+        .unwrap();
+
+        let store = ThemeStore::with_plugins_dir(tmp.path().to_path_buf());
+
+        let bytes = store
+            .get_plugin_file("zeta", "views/main/index.html")
+            .expect("disk dist-inserted file served");
+        assert_eq!(bytes, b"<html>disk zeta dist</html>");
+    }
+
+    #[test]
+    fn get_plugin_file_embedded_rejects_traversal() {
+        let tmp = tempfile::tempdir().unwrap();
+        let store = ThemeStore::with_plugins_dir(tmp.path().to_path_buf())
+            .with_embedded_plugins(&TEST_EMBEDDED_PLUGINS);
+        assert!(store
+            .get_plugin_file("epsilon", "../epsilon/views/main/view.toml")
+            .is_none());
+        assert!(store
+            .get_plugin_file("epsilon", "./views/main/view.toml")
+            .is_none());
+    }
+
+    #[test]
+    fn get_plugin_file_without_embedded_returns_none_for_missing() {
+        let tmp = tempfile::tempdir().unwrap();
+        let store = ThemeStore::with_plugins_dir(tmp.path().to_path_buf());
+        assert!(store
+            .get_plugin_file("epsilon", "views/main/index.html")
+            .is_none());
     }
 
     #[test]

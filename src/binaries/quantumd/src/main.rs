@@ -396,7 +396,8 @@ async fn setup_daemon(
 
     let active_theme = config.general.active_theme.clone();
 
-    let theme_store = Arc::new(ThemeStore::new(active_theme));
+    let theme_store =
+        Arc::new(ThemeStore::new(active_theme).with_embedded_plugins(&EMBEDDED_PLUGINS));
     let shell_executor = Arc::new(TokioShellExecutor::new());
     let registry = Arc::new(InMemoryProviderRegistry::new());
 

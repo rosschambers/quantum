@@ -5,8 +5,12 @@ use quantum_domain::ViewDescriptor;
 use std::path::PathBuf;
 use std::time::Duration;
 
-/// A plugin discovered under `~/.config/quantum/plugins/<name>/`. The
-/// walker emits one of these per subdirectory.
+/// A discovered plugin. User plugins come from
+/// `~/.config/quantum/plugins/<name>/` via `walk`, where `dir` is the
+/// absolute on-disk plugin directory. Embedded first-party plugins come
+/// from the compiled-in `include_dir` tree via `walk_embedded`, where
+/// `dir` is a path relative to the embedded tree root (there is no real
+/// filesystem directory behind it).
 #[derive(Debug, Clone)]
 pub struct PluginDescription {
     pub name: String,
