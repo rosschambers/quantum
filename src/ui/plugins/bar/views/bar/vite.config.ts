@@ -13,7 +13,7 @@ export default defineConfig({
   },
   resolve: {
     alias: {
-      "@quantum/client": path.resolve(__dirname, "../../../../../packages/client/src/index.ts"),
+      "@quantum/client": path.resolve(__dirname, "../../../../packages/client/src/index.ts"),
     },
   },
   test: {

@@ -1,0 +1,5 @@
+kind = "widget"
+per_monitor = true
+auto_show = true
+anchor = "top"
+height = 32
