@@ -180,13 +180,41 @@ fn list_views(dir: &Path) -> Vec<ViewBundle> {
             continue;
         }
         let name = entry.file_name().to_string_lossy().to_string();
+        let descriptor = read_view_descriptor(&name, &path);
         out.push(ViewBundle {
             name,
             dir: path,
-            descriptor: ViewDescriptor::default(),
+            descriptor,
         });
     }
     out
+}
+
+fn read_view_descriptor(view_name: &str, view_dir: &Path) -> ViewDescriptor {
+    let descriptor_path = view_dir.join("view.toml");
+    let text = match fs::read_to_string(&descriptor_path) {
+        Ok(text) => text,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            return ViewDescriptor::default();
+        }
+        Err(e) => {
+            tracing::warn!(
+                "view '{view_name}': failed to read {}: {e}; using default descriptor",
+                descriptor_path.display()
+            );
+            return ViewDescriptor::default();
+        }
+    };
+    match crate::view_metadata::parse_view_toml(&text) {
+        Ok(descriptor) => descriptor,
+        Err(e) => {
+            tracing::warn!(
+                "view '{view_name}': invalid {}: {e}; using default descriptor",
+                descriptor_path.display()
+            );
+            ViewDescriptor::default()
+        }
+    }
 }
 
 #[cfg(test)]
@@ -289,6 +317,70 @@ mod tests {
         let p = &result[0];
         assert_eq!(p.views.len(), 1);
         assert_eq!(p.views[0].name, "good");
+    }
+
+    #[test]
+    fn view_with_view_toml_gets_parsed_descriptor() {
+        let tmp = tempdir().unwrap();
+        let plugin = tmp.path().join("withmeta");
+        write_file(&plugin.join("views/bar/index.html"), "<html></html>");
+        write_file(
+            &plugin.join("views/bar/view.toml"),
+            "kind = \"panel\"\nanchor = \"top\"\nheight = 32\nper_monitor = true\n",
+        );
+
+        let result = walk(tmp.path()).expect("ok");
+        assert_eq!(result.len(), 1);
+        let p = &result[0];
+        assert_eq!(p.views.len(), 1);
+        let view = &p.views[0];
+        assert_eq!(view.name, "bar");
+        assert_eq!(view.descriptor.kind, quantum_domain::ViewKind::Panel);
+        assert_eq!(view.descriptor.anchor, quantum_domain::ViewAnchor::Top);
+        assert_eq!(view.descriptor.height, Some(32));
+        assert!(view.descriptor.per_monitor);
+    }
+
+    #[test]
+    fn view_without_view_toml_gets_default_descriptor() {
+        let tmp = tempdir().unwrap();
+        let plugin = tmp.path().join("nometa");
+        write_file(&plugin.join("views/plain/index.html"), "<html></html>");
+
+        let result = walk(tmp.path()).expect("ok");
+        assert_eq!(result.len(), 1);
+        let p = &result[0];
+        assert_eq!(p.views.len(), 1);
+        assert_eq!(p.views[0].descriptor, ViewDescriptor::default());
+    }
+
+    #[test]
+    fn malformed_view_toml_falls_back_to_default_and_view_is_still_discovered() {
+        let tmp = tempdir().unwrap();
+        let plugin = tmp.path().join("badmeta");
+        write_file(&plugin.join("views/broken/index.html"), "<html></html>");
+        write_file(&plugin.join("views/broken/view.toml"), "not toml [[[");
+
+        let result = walk(tmp.path()).expect("ok");
+        assert_eq!(result.len(), 1);
+        let p = &result[0];
+        assert_eq!(p.views.len(), 1, "view must still be discovered");
+        assert_eq!(p.views[0].name, "broken");
+        assert_eq!(p.views[0].descriptor, ViewDescriptor::default());
+    }
+
+    #[test]
+    fn view_toml_with_invalid_kind_falls_back_to_default_and_view_is_still_discovered() {
+        let tmp = tempdir().unwrap();
+        let plugin = tmp.path().join("badkind");
+        write_file(&plugin.join("views/odd/index.html"), "<html></html>");
+        write_file(&plugin.join("views/odd/view.toml"), "kind = \"banana\"\n");
+
+        let result = walk(tmp.path()).expect("ok");
+        assert_eq!(result.len(), 1);
+        let p = &result[0];
+        assert_eq!(p.views.len(), 1, "view must still be discovered");
+        assert_eq!(p.views[0].descriptor, ViewDescriptor::default());
     }
 
     #[test]
