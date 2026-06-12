@@ -5,7 +5,7 @@ REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$REPO_DIR"
 
 echo "[1/4] Rebuild Svelte launcher bundle (in container)..."
-./scripts/devsh.sh bash -c "pnpm -C src/ui install && cd src/ui/themes/default/views/launcher && pnpm build"
+./scripts/devsh.sh bash -c "pnpm -C src/ui install && cd src/ui/plugins/launcher/views/launcher && pnpm build"
 
 echo "[2/4] Rebuild quantumd + quantumctl (on host via nix-shell)..."
 nix-shell --run "cargo build --bin quantumd --bin quantumctl"
