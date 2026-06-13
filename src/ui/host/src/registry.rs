@@ -84,6 +84,20 @@ fn resolve_alias(bare: &str) -> Option<&'static str> {
     }
 }
 
+/// Resolve a view name to its canonical `plugin/<plugin>/<view>` form,
+/// silently following the alias map. A canonical name (or any name not in
+/// the alias map) passes through unchanged. The `@<monitor>` suffix is not
+/// handled here; callers that may pass a suffixed name should split it off
+/// first. Used by the daemon to match config overrides (which may name a
+/// view by its legacy alias or canonical name) against the canonical view
+/// list computed from descriptors.
+pub fn canonicalize_view_name(name: &str) -> String {
+    match resolve_alias(name) {
+        Some(canonical) => canonical.to_string(),
+        None => name.to_string(),
+    }
+}
+
 /// Resolve a bare legacy name to its canonical form, emitting a deprecation
 /// warning on every alias hit. Names that are not aliases pass through
 /// unchanged. Used at construction time; [`canonical_view_key`] resolves the

@@ -15,9 +15,11 @@ pub use bridge::register_bridge;
 pub use dispatcher::IpcDispatcher;
 pub use error::{Result, UiError};
 pub use messages::WindowRequest;
-pub use multiplex::{BarMultiplexer, BarMultiplexerHandle};
+pub use multiplex::{ViewMultiplexer, ViewMultiplexerHandle};
 pub use quantum_domain::tokens_to_css;
-pub use registry::{ManagedWindow, ManagedWindowConstructor, WindowOps, WindowRegistry};
+pub use registry::{
+    canonicalize_view_name, ManagedWindow, ManagedWindowConstructor, WindowOps, WindowRegistry,
+};
 pub use scheme::{register_quantum_scheme, register_quantum_scheme_on_default};
 pub use view_catalog::ViewCatalog;
 pub use window_host::{DummyWindowHost, GtkWindowHost};

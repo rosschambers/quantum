@@ -15,7 +15,7 @@ impl GtkWindowHost {
     }
 
     /// Clone of the underlying sender. Used by the GTK loop to install
-    /// the `BarMultiplexer`, which needs to push `WindowRequest`s on
+    /// the `ViewMultiplexer`, which needs to push `WindowRequest`s on
     /// the same channel that `GtkWindowHost::open` uses.
     pub fn sender(&self) -> UnboundedSender<WindowRequest> {
         self.tx.clone()

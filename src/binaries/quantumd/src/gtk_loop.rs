@@ -36,7 +36,8 @@ use gtk4::prelude::*;
 use quantum_domain::ports::ThemeStore;
 use quantum_domain::EventEnvelope;
 use quantum_ui::{
-    IpcDispatcher, ManagedWindowConstructor, ViewCatalog, WindowRegistry, WindowRequest,
+    IpcDispatcher, ManagedWindowConstructor, ViewCatalog, ViewMultiplexer, WindowRegistry,
+    WindowRequest,
 };
 use tokio::runtime::Handle;
 use tokio::sync::broadcast;
@@ -44,13 +45,15 @@ use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
 
 /// Run the GTK main loop with window registry.
 ///
-/// `auto_show_bar` enables per-monitor bar windows. When true, after the
-/// registry is wired up the activate handler installs a `BarMultiplexer` on
-/// `gdk::Display::default()`. The multiplexer performs an initial sync against
-/// the currently-connected monitors and stays subscribed to the display's
-/// `items-changed` signal so hot-plugged monitors get a bar window and removed
-/// monitors have theirs closed. The returned handle is stashed for the
-/// lifetime of the application so the signal stays connected.
+/// `multiplexed_views` is the list of canonical view names (for example
+/// `plugin/bar/bar`) that should appear once per monitor. When it is
+/// non-empty, after the registry is wired up the activate handler installs a
+/// `ViewMultiplexer` on `gdk::Display::default()`. The multiplexer performs
+/// an initial sync against the currently-connected monitors and stays
+/// subscribed to the display's `items-changed` signal so hot-plugged monitors
+/// get a window per view and removed monitors have theirs closed. The
+/// returned handle is stashed for the lifetime of the application so the
+/// signal stays connected.
 #[allow(clippy::too_many_arguments)]
 pub fn run(
     app: &gtk4::Application,
@@ -60,7 +63,7 @@ pub fn run(
     runtime: Handle,
     event_tx: broadcast::Sender<EventEnvelope>,
     window_request_tx: UnboundedSender<WindowRequest>,
-    auto_show_bar: bool,
+    multiplexed_views: Vec<String>,
     view_catalog: ViewCatalog,
 ) -> i32 {
     let rx = Rc::new(RefCell::new(Some(rx)));
@@ -79,12 +82,12 @@ pub fn run(
     let hold_guard = Rc::new(RefCell::new(None::<gio::ApplicationHoldGuard>));
     let hold_for_activate = hold_guard.clone();
 
-    // Owns the `BarMultiplexer` handle for the lifetime of the application.
+    // Owns the `ViewMultiplexer` handle for the lifetime of the application.
     // Dropping the handle disconnects the monitor `items-changed` signal,
     // so we keep it alive until after `app.run_with_args` returns.
-    let bar_multiplexer_handle: Rc<RefCell<Option<quantum_ui::BarMultiplexerHandle>>> =
+    let view_multiplexer_handle: Rc<RefCell<Option<quantum_ui::ViewMultiplexerHandle>>> =
         Rc::new(RefCell::new(None));
-    let bar_multiplexer_handle_for_activate = bar_multiplexer_handle.clone();
+    let view_multiplexer_handle_for_activate = view_multiplexer_handle.clone();
 
     app.connect_activate(move |app| {
         *hold_for_activate.borrow_mut() = Some(app.hold());
@@ -117,16 +120,20 @@ pub fn run(
             }
         });
 
-        if auto_show_bar {
+        if !multiplexed_views.is_empty() {
             let Some(display) = gdk::Display::default() else {
-                tracing::warn!("no gdk::Display available; widgets/bar not auto-shown");
+                tracing::warn!(
+                    "no gdk::Display available; per-monitor views not auto-shown: {:?}",
+                    multiplexed_views
+                );
                 return;
             };
-            let handle = quantum_ui::BarMultiplexer::install(
+            let handle = ViewMultiplexer::install(
                 &display,
                 window_request_tx_for_activate.clone(),
+                multiplexed_views.clone(),
             );
-            *bar_multiplexer_handle_for_activate.borrow_mut() = Some(handle);
+            *view_multiplexer_handle_for_activate.borrow_mut() = Some(handle);
         }
     });
 
@@ -139,7 +146,7 @@ pub fn run(
     // holds clones of both `Rc`s, so the actual handle / hold drop
     // happens when the `gtk4::Application` is itself dropped at end
     // of `main`. These calls just shed the local refs eagerly.
-    drop(bar_multiplexer_handle);
+    drop(view_multiplexer_handle);
     drop(hold_guard);
     i32::from(exit_code)
 }

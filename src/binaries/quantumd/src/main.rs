@@ -306,39 +306,58 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             .application_id("dev.quantum.daemon")
             .build();
 
-        // Spawn a task to auto-show widgets after a brief delay for GTK to activate.
-        // `widgets/bar` is excluded here: bars are spawned per-monitor on the GTK
-        // thread (see `gtk_loop::run`'s `auto_show_bar` path), because monitor
-        // enumeration requires `gdk::Display::default()` which is GTK-thread-only.
+        // Compute the per-monitor multiplexed view list from descriptors:
+        // every catalog entry whose descriptor declares both `per_monitor`
+        // and `auto_show`. These are spawned per-monitor on the GTK thread by
+        // the `ViewMultiplexer` (see `gtk_loop::run`'s `multiplexed_views`
+        // path), because monitor enumeration requires `gdk::Display::default()`
+        // which is GTK-thread-only.
+        //
+        // A user can opt a view out of multiplexing by adding a `[[widget]]`
+        // entry to config.toml naming the view (by its canonical
+        // `plugin/<plugin>/<view>` name OR its legacy alias, for example
+        // `widgets/bar`) with `auto_show = false`. We canonicalize both the
+        // descriptor names and the config-override names before comparing so
+        // a legacy alias in config disables the matching canonical view.
+        let disabled_views: std::collections::HashSet<String> = setup
+            .config
+            .widget
+            .iter()
+            .filter(|w| !w.auto_show)
+            .map(|w| quantum_ui::canonicalize_view_name(&w.view))
+            .collect();
+        let multiplexed_views: Vec<String> = setup
+            .view_catalog_entries
+            .iter()
+            .filter(|(_, descriptor)| descriptor.per_monitor && descriptor.auto_show)
+            .map(|(name, _)| name.clone())
+            .filter(|name| !disabled_views.contains(name))
+            .collect();
+        if multiplexed_views.is_empty() {
+            tracing::info!("ViewMultiplexer install skipped: no per-monitor auto-show views");
+        } else {
+            tracing::info!(
+                "ViewMultiplexer install enabled for per-monitor views: {:?}",
+                multiplexed_views
+            );
+        }
+
+        // Spawn a task to auto-show non-multiplexed widgets after a brief
+        // delay for GTK to activate. Per-monitor multiplexed views are
+        // excluded here: they are handled by the `ViewMultiplexer` above.
         let dispatcher_for_autoshow = setup.ipc_dispatcher.clone();
+        let multiplexed_canonical: std::collections::HashSet<String> =
+            multiplexed_views.iter().cloned().collect();
         let widgets_to_show: Vec<String> = setup
             .config
             .widget
             .iter()
-            .filter(|w| w.auto_show && w.view != "widgets/bar")
+            .filter(|w| {
+                w.auto_show
+                    && !multiplexed_canonical.contains(&quantum_ui::canonicalize_view_name(&w.view))
+            })
             .map(|w| w.view.clone())
             .collect();
-        // Track whether widgets/bar should be auto-shown per-monitor on the GTK thread.
-        // Default behaviour: install the BarMultiplexer so the bar appears on every
-        // monitor automatically. Users who explicitly do not want the bar can opt out
-        // by adding a `[[widget]]` entry with `view = "widgets/bar"` and
-        // `auto_show = false` to their config.toml.
-        let auto_show_bar = setup
-            .config
-            .widget
-            .iter()
-            .find(|w| w.view == "widgets/bar")
-            .map(|w| w.auto_show)
-            .unwrap_or(true);
-        if auto_show_bar {
-            tracing::info!(
-                "BarMultiplexer install enabled: bar will be auto-shown on every monitor"
-            );
-        } else {
-            tracing::info!(
-                "BarMultiplexer install skipped: widgets/bar is configured with auto_show = false"
-            );
-        }
         if !widgets_to_show.is_empty() {
             worker.handle.spawn(async move {
                 tokio::time::sleep(std::time::Duration::from_millis(500)).await;
@@ -360,7 +379,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             worker.handle.clone(),
             setup.event_tx.clone(),
             window_request_tx,
-            auto_show_bar,
+            multiplexed_views,
             view_catalog,
         );
         // After GTK exits, clean up socket.
