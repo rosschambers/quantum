@@ -3,7 +3,7 @@
 [colors]
 color-bg = "#1e1e2e"
 color-fg = "#cdd6f4"
-color-accent = "#89b4fa"
+color-accent = "#a6e3a1"
 color-muted = "#6c7086"
 color-border = "#313244"
 color-bg-alt = "#313244"
@@ -44,6 +44,6 @@ ease-default = "cubic-bezier(0.4, 0, 0.2, 1)"
 [tray]
 tray-icon-size = "14px"
 tray-icon-color = "#cdd6f4"
-tray-icon-color-active = "#89b4fa"
+tray-icon-color-active = "#a6e3a1"
 tray-icon-color-warning = "#f38ba8"
 tray-gap = "8px"

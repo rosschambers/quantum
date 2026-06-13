@@ -71,7 +71,7 @@ pub struct GeneralConfig {
 impl Default for GeneralConfig {
     fn default() -> Self {
         Self {
-            active_theme: Some("default".to_string()),
+            active_theme: Some("sycamore".to_string()),
         }
     }
 }
