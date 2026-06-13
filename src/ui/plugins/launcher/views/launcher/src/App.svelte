@@ -51,6 +51,38 @@
     }, 50);
   }
 
+  function handleSearchInput(text: string) {
+    searchText = text;
+
+    if (lastSearchTimeout !== undefined) {
+      clearTimeout(lastSearchTimeout);
+    }
+
+    if (!text.trim()) {
+      matches = [];
+      highlightedIndex = 0;
+      return;
+    }
+
+    isLoading = true;
+    lastSearchTimeout = window.setTimeout(async () => {
+      try {
+        const response = await client.call('search', {
+          text,
+          providers: [],
+        });
+
+        matches = response.matches || [];
+        highlightedIndex = 0;
+      } catch (error) {
+        console.error('Search failed:', error);
+        matches = [];
+      } finally {
+        isLoading = false;
+      }
+    }, 50);
+  }
+
   function handleKeyDown(event: KeyboardEvent) {
     if (event.key === 'ArrowDown') {
       event.preventDefault();
@@ -76,6 +108,8 @@
         provider: match.provider,
         action: match.action,
       });
+      searchText = '';
+      matches = [];
       await client.call('view.hide', { name: 'launcher' });
     } catch (error) {
       console.error('Action invocation failed:', error);

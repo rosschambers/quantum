@@ -28,7 +28,11 @@
       aria-selected={index === highlighted ? 'true' : 'false'}
       onclick={() => handleClick(item)}
     >
-      <div class="icon"></div>
+      {#if item.icon}
+        <img class="icon" src={item.icon} alt="" loading="lazy" onerror={() => (item.icon = undefined)} />
+      {:else}
+        <div class="icon"></div>
+      {/if}
       <div class="title">{item.title}</div>
       {#if item.subtitle}
         <div class="subtitle">{item.subtitle}</div>
