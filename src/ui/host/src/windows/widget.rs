@@ -232,17 +232,15 @@ impl WidgetWindow {
                         }
                         // On a theme reload, also push the freshly resolved
                         // tokens into the live `#quantum-tokens` stylesheet so
-                        // the page recolors without a reload. The window does
-                        // not trust the event payload's CSS — it re-resolves
-                        // from the theme store (which `ReloadThemeUseCase` and
-                        // the file watcher both update before publishing), so a
-                        // theme switch and an in-place token edit are handled
-                        // identically. `resolved_tokens()` is sync and safe to
-                        // call off the GTK thread.
+                        // the page recolors without a reload. The window
+                        // re-resolves from the theme store rather than trusting
+                        // the event payload, so a theme switch (where
+                        // `ThemeStore::reload` updates the active theme) and an
+                        // in-place token edit (where the watcher only
+                        // invalidates the cache) are handled identically.
                         if env.channel == "theme.reloaded" {
-                            let tokens = theme_store_for_notify.resolved_tokens();
-                            let css = quantum_domain::tokens_to_css(&tokens);
-                            let push = json_to_js_expression(&crate::scheme::token_push_js(&css));
+                            let push =
+                                crate::windows::theme_reload_push_js(&theme_store_for_notify);
                             if js_tx.send(push).is_err() {
                                 break;
                             }

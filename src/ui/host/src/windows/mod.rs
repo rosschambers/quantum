@@ -13,7 +13,23 @@ use tokio::sync::broadcast;
 use gtk4::gdk;
 use quantum_domain::{ports::ThemeStore, EventEnvelope};
 
+use crate::bridge::json_to_js_expression;
 use crate::dispatcher::IpcDispatcher;
+
+/// Build the batched JavaScript statement that pushes the theme store's
+/// current resolved tokens into a live `#quantum-tokens` stylesheet.
+///
+/// Shared by [`WidgetWindow`] and [`PanelWindow`]: on a `theme.reloaded`
+/// event each re-resolves tokens from the store (rather than trusting the
+/// event payload's CSS) so a theme switch and an in-place token edit are
+/// handled identically. `resolved_tokens()` is synchronous and safe to call
+/// off the GTK thread, so this runs inside the Tokio event-subscriber task.
+/// The result is already passed through `json_to_js_expression`, so it can be
+/// sent straight down the window's JS mpsc/batch channel.
+pub(crate) fn theme_reload_push_js(store: &Arc<dyn ThemeStore>) -> String {
+    let css = quantum_domain::tokens_to_css(&store.resolved_tokens());
+    json_to_js_expression(&crate::scheme::token_push_js(&css))
+}
 
 /// The shared host context every window constructor needs: the GTK
 /// application to attach to, the IPC dispatcher and theme store, the Tokio

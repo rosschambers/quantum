@@ -300,8 +300,30 @@ impl ThemeStore {
     /// tokens. A missing or unparseable config leaves the active theme as-is
     /// but still invalidates the cache.
     pub async fn reload(&self) -> Result<(), DomainError> {
-        let config_path = Self::config_path();
-        if let Ok(text) = std::fs::read_to_string(&config_path) {
+        match Self::config_path() {
+            Some(path) => self.reload_from_config_path(&path).await,
+            None => {
+                // No discoverable config directory: keep the current theme but
+                // still drop memoized tokens, matching the "always invalidate"
+                // behavior of the success path.
+                self.invalidate_token_cache();
+                Ok(())
+            }
+        }
+    }
+
+    /// Reload the active theme from a specific `config.toml` path.
+    ///
+    /// Split out from [`reload`](Self::reload) so the re-read logic can be
+    /// tested against a temporary config file without mutating the
+    /// process-global `XDG_CONFIG_HOME`/`HOME` environment, which would race
+    /// other tests. A missing or unparseable file leaves the active theme
+    /// unchanged; the token cache is always invalidated.
+    async fn reload_from_config_path(
+        &self,
+        config_path: &std::path::Path,
+    ) -> Result<(), DomainError> {
+        if let Ok(text) = std::fs::read_to_string(config_path) {
             if let Some(theme) = active_theme_from_config_str(&text) {
                 *self.active_theme.write().await = theme;
             }
@@ -311,13 +333,14 @@ impl ThemeStore {
     }
 
     /// Path to the user config file, `~/.config/quantum/config.toml`.
-    /// Honours `XDG_CONFIG_HOME`, matching how `themes_dir` and the config
-    /// crate locate the config directory.
-    fn config_path() -> PathBuf {
-        let config_home = std::env::var("XDG_CONFIG_HOME")
-            .unwrap_or_else(|_| format!("{}/.config", std::env::var("HOME").unwrap_or_default()));
-
-        PathBuf::from(config_home).join("quantum/config.toml")
+    ///
+    /// Uses `dirs::config_dir()` (which honours `XDG_CONFIG_HOME`, falling
+    /// back to `$HOME/.config` on Linux), matching the file watcher in this
+    /// same module. Returns `None` when no config directory can be located so
+    /// the caller never silently reads from a bogus path like
+    /// `/.config/quantum/config.toml`.
+    fn config_path() -> Option<PathBuf> {
+        dirs::config_dir().map(|d| d.join("quantum/config.toml"))
     }
 
     /// Load a file from a theme, checking disk first then falling back to
@@ -685,6 +708,67 @@ mod tests {
     #[test]
     fn active_theme_from_malformed_config_is_none() {
         assert_eq!(active_theme_from_config_str("[general\nbroken"), None);
+    }
+
+    #[tokio::test]
+    async fn reload_switches_active_theme_from_config() {
+        use std::fs;
+        use tempfile::tempdir;
+
+        // Point themes_dir at a directory with no theme overrides so token
+        // resolution falls through to the embedded palettes, then start on
+        // the default theme.
+        let tmp = tempdir().expect("tempdir");
+        let missing_themes = tmp.path().join("themes");
+        let store = ThemeStore::with_themes_dir(missing_themes, Some("default".to_string()));
+
+        // Sanity: default theme resolves to the embedded default palette.
+        assert_eq!(
+            store.resolved_tokens().get("color-bg"),
+            Some(&"#1e1e2e".to_string()),
+        );
+
+        // Write a config.toml that selects sycamore and reload from that exact
+        // path (the path-seam avoids mutating XDG_CONFIG_HOME, which is
+        // process-global and would race other tests).
+        let config_path = tmp.path().join("config.toml");
+        fs::write(&config_path, "[general]\nactive_theme = \"sycamore\"\n").expect("write config");
+
+        store
+            .reload_from_config_path(&config_path)
+            .await
+            .expect("reload succeeds");
+
+        // The active theme switched live: tokens now come from the embedded
+        // sycamore palette (#292520), not the default (#1e1e2e).
+        assert_eq!(
+            store.resolved_tokens().get("color-bg"),
+            Some(&"#292520".to_string()),
+            "reload must switch the active theme to the config's active_theme",
+        );
+    }
+
+    #[tokio::test]
+    async fn reload_keeps_theme_when_config_missing() {
+        use tempfile::tempdir;
+
+        let tmp = tempdir().expect("tempdir");
+        let missing_themes = tmp.path().join("themes");
+        let store = ThemeStore::with_themes_dir(missing_themes, Some("sycamore".to_string()));
+
+        // Point at a config path that does not exist: the active theme must
+        // stay put and the call must still succeed.
+        let absent_config = tmp.path().join("does-not-exist.toml");
+        store
+            .reload_from_config_path(&absent_config)
+            .await
+            .expect("reload succeeds even with no config");
+
+        assert_eq!(
+            store.resolved_tokens().get("color-bg"),
+            Some(&"#292520".to_string()),
+            "a missing config must leave the active theme unchanged",
+        );
     }
 
     #[test]
