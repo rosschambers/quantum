@@ -1,3 +1,5 @@
+# Sycamore is a color-only theme; non-color tokens inherit the component CSS var() fallbacks.
+
 [colors]
 color-bg = "#292520"
 color-bg-alt = "#3b3630"

@@ -303,26 +303,20 @@ impl ThemeStore {
             return None;
         }
 
-        // First try disk override if not the default theme
-        if theme_name != "default" {
-            let disk_path = self.themes_dir.join(theme_name).join(path);
-            if let Ok(data) = std::fs::read(&disk_path) {
-                return Some(data);
-            }
+        // Disk override: themes_dir/<theme>/<path> for any theme, including
+        // default (themes_dir/default/ is just this branch when theme is
+        // "default"). A non-default theme must never consult the default
+        // theme's disk override — doing so leaked the default palette into
+        // sycamore whenever a user had themes_dir/default/tokens.toml.
+        let disk_path = self.themes_dir.join(theme_name).join(path);
+        if let Ok(data) = std::fs::read(&disk_path) {
+            return Some(data);
         }
 
-        // Try user's override of default theme
-        let user_override = self.themes_dir.join("default").join(path);
-        if user_override.exists() {
-            if let Ok(data) = std::fs::read(&user_override) {
-                return Some(data);
-            }
-        }
-
-        // Fall back to an embedded theme. Disk sources above always win, so
-        // a user copy at themes_dir/<theme>/ shadows the embedded one. Both
-        // "default" and "sycamore" resolve here; unknown theme names have no
-        // embedded directory and return None.
+        // Fall back to an embedded theme. The disk source above always wins,
+        // so a user copy at themes_dir/<theme>/ shadows the embedded one.
+        // Both "default" and "sycamore" resolve here; unknown theme names
+        // have no embedded directory and return None.
         let embedded = embedded_theme(theme_name)?;
         self.get_embedded_file(embedded, path)
     }
@@ -1075,6 +1069,35 @@ mod tests {
             tokens.get("color-bg"),
             Some(&"#abcabc".to_string()),
             "user disk sycamore must shadow the embedded palette"
+        );
+    }
+
+    #[test]
+    fn default_disk_override_does_not_leak_into_sycamore() {
+        use std::fs;
+        use tempfile::tempdir;
+
+        // A user with a default-theme override on disk but no sycamore
+        // override must still see the embedded sycamore palette when sycamore
+        // is active. Regression test: the default-disk-override block used to
+        // run for every theme, so it served themes_dir/default/tokens.toml
+        // before the embedded sycamore fallback was reached.
+        let tmp = tempdir().expect("tempdir");
+        let themes_dir = tmp.path().join("themes");
+        let default_dir = themes_dir.join("default");
+        fs::create_dir_all(&default_dir).expect("mkdir");
+        fs::write(
+            default_dir.join("tokens.toml"),
+            "[colors]\ncolor-bg = \"#010203\"\n",
+        )
+        .expect("write default override");
+
+        let store = ThemeStore::with_themes_dir(themes_dir, Some("sycamore".to_string()));
+        let tokens = store.resolved_tokens();
+        assert_eq!(
+            tokens.get("color-bg"),
+            Some(&"#292520".to_string()),
+            "default disk override must not leak into the sycamore theme"
         );
     }
 
