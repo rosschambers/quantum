@@ -28,7 +28,7 @@
     .bar-button-cluster {
         display: inline-flex;
         align-items: stretch;
-        background: hsla(230, 14%, 22%, 0.8);
+        background: var(--color-surface, hsla(230, 14%, 22%, 0.8));
         border: 1px solid rgba(255, 255, 255, 0.06);
         border-radius: 10px;
         overflow: hidden;
@@ -41,6 +41,6 @@
        here instead of on the buttons so we can flip them off in one
        place if we ever drop dividers. */
     .bar-button-cluster :global(.cluster-button + .cluster-button) {
-        border-left: 1px solid rgba(255, 255, 255, 0.32);
+        border-left: 1px solid var(--color-divider, rgba(255, 255, 255, 0.32));
     }
 </style>

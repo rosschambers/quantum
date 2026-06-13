@@ -8,6 +8,12 @@ color-muted = "#6c7086"
 color-border = "#313244"
 color-bg-alt = "#313244"
 color-fg-alt = "#a6adc8"
+color-surface = "hsla(230, 14%, 22%, 0.8)"
+color-surface-hover = "hsla(230, 14%, 42%, 1)"
+color-overlay-backdrop = "rgba(0, 0, 0, 0.5)"
+color-bar-bg = "rgba(30, 30, 46, 0.85)"
+color-shadow = "rgba(0, 0, 0, 0.6)"
+color-divider = "rgba(255, 255, 255, 0.32)"
 
 [typography]
 font-sans = "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif"

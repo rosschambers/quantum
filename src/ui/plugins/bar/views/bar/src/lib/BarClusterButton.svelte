@@ -51,7 +51,7 @@
     }
     .cluster-button:hover:not(:disabled),
     .cluster-button:focus-visible {
-        background: hsla(230, 14%, 42%, 1);
+        background: var(--color-surface-hover, hsla(230, 14%, 42%, 1));
         outline: none;
     }
 

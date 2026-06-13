@@ -54,7 +54,7 @@
         align-items: center;
         justify-content: center;
         gap: 6px;
-        background: hsla(230, 14%, 22%, 0.8);
+        background: var(--color-surface, hsla(230, 14%, 22%, 0.8));
         border: 1px solid rgba(255, 255, 255, 0.06);
         border-radius: 10px;
         padding: 4px 10px;
@@ -68,7 +68,7 @@
     }
     .bar-button:hover:not(:disabled),
     .bar-button:focus-visible {
-        background: hsla(230, 14%, 42%, 1);
+        background: var(--color-surface-hover, hsla(230, 14%, 42%, 1));
         color: var(--color-fg, #cdd6f4);
         outline: none;
     }

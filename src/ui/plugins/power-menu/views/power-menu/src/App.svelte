@@ -271,7 +271,7 @@
     .backdrop {
         position: fixed;
         inset: 0;
-        background: rgba(0, 0, 0, 0.5);
+        background: var(--color-overlay-backdrop, rgba(0, 0, 0, 0.5));
         backdrop-filter: blur(4px);
         display: flex;
         align-items: center;
@@ -283,7 +283,7 @@
         border-radius: 12px;
         padding: 18px 20px;
         width: 420px;
-        box-shadow: 0 14px 40px rgba(0, 0, 0, 0.6);
+        box-shadow: 0 14px 40px var(--color-shadow, rgba(0, 0, 0, 0.6));
         border: 1px solid var(--color-border, #45475a);
     }
     .tier-primary {
