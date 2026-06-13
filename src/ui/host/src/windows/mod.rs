@@ -6,6 +6,34 @@ pub mod widget;
 pub use panel::PanelWindow;
 pub use widget::WidgetWindow;
 
+use std::sync::Arc;
+use tokio::runtime::Handle;
+use tokio::sync::broadcast;
+
+use gtk4::gdk;
+use quantum_domain::{ports::ThemeStore, EventEnvelope};
+
+use crate::dispatcher::IpcDispatcher;
+
+/// The shared host context every window constructor needs: the GTK
+/// application to attach to, the IPC dispatcher and theme store, the Tokio
+/// runtime handle and broadcast sender for event forwarding, and the optional
+/// monitor to pin the surface to.
+///
+/// Bundling these into one value keeps the per-window constructors down to a
+/// handful of window-specific arguments. The struct is single-threaded by
+/// construction (it carries non-`Send` GTK types) and is consumed by each
+/// `new` call, mirroring how the constructors already move their `Arc` clones
+/// and the `Handle`/`Sender` into the window.
+pub(crate) struct WindowContext<'a> {
+    pub app: &'a gtk4::Application,
+    pub dispatcher: Arc<dyn IpcDispatcher>,
+    pub theme_store: Arc<dyn ThemeStore>,
+    pub runtime: Handle,
+    pub event_tx: broadcast::Sender<EventEnvelope>,
+    pub monitor: Option<gdk::Monitor>,
+}
+
 /// Resolve the `quantum://` URI a view loads from its canonical name.
 ///
 /// Plugin views take the shape `plugin/<plugin>/<view>` and resolve to

@@ -14,7 +14,7 @@ use gtk4::prelude::*;
 
 use crate::dispatcher::IpcDispatcher;
 use crate::messages::WindowRequest;
-use crate::windows::{PanelWindow, WidgetWindow};
+use crate::windows::{PanelWindow, WidgetWindow, WindowContext};
 
 use tracing::warn;
 
@@ -22,6 +22,53 @@ use tracing::warn;
 const DEFAULT_PANEL_WIDTH: i32 = 480;
 /// Default panel height in pixels when a panel descriptor omits `height`.
 const DEFAULT_PANEL_HEIGHT: i32 = 320;
+
+/// Resolved panel construction parameters derived from a [`ViewDescriptor`].
+/// `overlay` selects fullscreen-overlay treatment versus a fixed-size centered
+/// panel; `width`/`height` size the centered panel (and are ignored by the
+/// overlay path, which spans the whole output).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct PanelParams {
+    pub overlay: bool,
+    pub width: i32,
+    pub height: i32,
+}
+
+/// Resolved widget construction parameters derived from a [`ViewDescriptor`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct WidgetParams {
+    pub anchor: ViewAnchor,
+    pub height: Option<u32>,
+}
+
+/// Map a panel/overlay descriptor to its concrete window parameters.
+///
+/// `ViewKind::Overlay` sets `overlay = true`; any other kind (the caller only
+/// passes panels and overlays here) sets `overlay = false`. Missing
+/// `width`/`height` fall back to [`DEFAULT_PANEL_WIDTH`]/[`DEFAULT_PANEL_HEIGHT`].
+pub(crate) fn panel_params(descriptor: &ViewDescriptor) -> PanelParams {
+    PanelParams {
+        overlay: matches!(descriptor.kind, ViewKind::Overlay),
+        width: descriptor
+            .width
+            .map(|w| w as i32)
+            .unwrap_or(DEFAULT_PANEL_WIDTH),
+        height: descriptor
+            .height
+            .map(|h| h as i32)
+            .unwrap_or(DEFAULT_PANEL_HEIGHT),
+    }
+}
+
+/// Map a widget descriptor to its concrete window parameters (anchor and the
+/// optional exclusive-zone height, both passed straight through to
+/// [`WidgetWindow::new`]).
+pub(crate) fn widget_params(descriptor: &ViewDescriptor) -> WidgetParams {
+    WidgetParams {
+        anchor: descriptor.anchor,
+        height: descriptor.height,
+    }
+}
 
 /// Static deprecation alias map: legacy bare view names to their canonical
 /// `plugin/<plugin>/<view>` names. Returns `Some(canonical)` on a hit so the
@@ -179,6 +226,20 @@ impl ManagedWindowConstructor {
             .filter_map(Result::ok)
             .find(|m| crate::windows::widget::monitor_name(m).as_deref() == Some(name))
     }
+
+    /// Build the shared [`WindowContext`] for a single construction, cloning
+    /// the host-context fields the windows consume and bundling in the
+    /// resolved monitor.
+    fn window_context(&self, monitor: Option<gdk::Monitor>) -> WindowContext<'_> {
+        WindowContext {
+            app: &self.app,
+            dispatcher: self.dispatcher.clone(),
+            theme_store: self.theme_store.clone(),
+            runtime: self.runtime.clone(),
+            event_tx: self.event_tx.clone(),
+            monitor,
+        }
+    }
 }
 
 impl WindowConstructor for ManagedWindowConstructor {
@@ -202,10 +263,12 @@ impl WindowConstructor for ManagedWindowConstructor {
 
         // A descriptor in the catalog drives dispatch; absent one, fall back
         // to the legacy default WidgetWindow behavior so theme-hosted widgets
-        // and manifest-less plugins keep working.
+        // and manifest-less plugins keep working. Both helpers only read self,
+        // so they take `&self` and the borrow of `self.catalog` for the
+        // descriptor can coexist with them.
         match self.catalog.get(&canonical) {
             Some(descriptor) => {
-                Some(self.construct_from_descriptor(&canonical, &descriptor.clone(), monitor))
+                Some(self.construct_from_descriptor(&canonical, descriptor, monitor))
             }
             None => self.construct_fallback(&canonical, monitor),
         }
@@ -214,63 +277,36 @@ impl WindowConstructor for ManagedWindowConstructor {
 
 impl ManagedWindowConstructor {
     /// Build a window from an explicit [`ViewDescriptor`], dispatching on its
-    /// declared `kind`.
+    /// declared `kind`. The descriptor-to-parameter mapping lives in the pure
+    /// [`panel_params`]/[`widget_params`] functions so it can be unit-tested
+    /// without GTK.
     fn construct_from_descriptor(
-        &mut self,
+        &self,
         canonical: &str,
         descriptor: &ViewDescriptor,
         monitor: Option<gdk::Monitor>,
     ) -> ManagedWindow {
+        let ctx = self.window_context(monitor);
         match descriptor.kind {
-            ViewKind::Widget => ManagedWindow::Widget(WidgetWindow::new(
-                &self.app,
-                canonical.to_string(),
-                descriptor.anchor,
-                descriptor.height,
-                self.dispatcher.clone(),
-                self.theme_store.clone(),
-                self.runtime.clone(),
-                self.event_tx.clone(),
-                monitor,
-            )),
-            ViewKind::Panel => ManagedWindow::Panel(PanelWindow::new(
-                &self.app,
-                canonical.to_string(),
-                false,
-                descriptor
-                    .width
-                    .map(|w| w as i32)
-                    .unwrap_or(DEFAULT_PANEL_WIDTH),
-                descriptor
-                    .height
-                    .map(|h| h as i32)
-                    .unwrap_or(DEFAULT_PANEL_HEIGHT),
-                self.dispatcher.clone(),
-                self.theme_store.clone(),
-                self.runtime.clone(),
-                self.event_tx.clone(),
-                monitor,
-            )),
-            ViewKind::Overlay => ManagedWindow::Panel(PanelWindow::new(
-                &self.app,
-                canonical.to_string(),
-                true,
-                // Overlays span the whole output; width/height are unused
-                // but pass the descriptor's values (or defaults) anyway.
-                descriptor
-                    .width
-                    .map(|w| w as i32)
-                    .unwrap_or(DEFAULT_PANEL_WIDTH),
-                descriptor
-                    .height
-                    .map(|h| h as i32)
-                    .unwrap_or(DEFAULT_PANEL_HEIGHT),
-                self.dispatcher.clone(),
-                self.theme_store.clone(),
-                self.runtime.clone(),
-                self.event_tx.clone(),
-                monitor,
-            )),
+            ViewKind::Widget => {
+                let params = widget_params(descriptor);
+                ManagedWindow::Widget(WidgetWindow::new(
+                    ctx,
+                    canonical.to_string(),
+                    params.anchor,
+                    params.height,
+                ))
+            }
+            ViewKind::Panel | ViewKind::Overlay => {
+                let params = panel_params(descriptor);
+                ManagedWindow::Panel(PanelWindow::new(
+                    ctx,
+                    canonical.to_string(),
+                    params.overlay,
+                    params.width,
+                    params.height,
+                ))
+            }
         }
     }
 
@@ -283,7 +319,7 @@ impl ManagedWindowConstructor {
     ///   the theme URL (the clock widget path), exactly as before.
     /// - Anything else is genuinely unknown and yields `None`.
     fn construct_fallback(
-        &mut self,
+        &self,
         canonical: &str,
         monitor: Option<gdk::Monitor>,
     ) -> Option<ManagedWindow> {
@@ -294,15 +330,10 @@ impl ManagedWindowConstructor {
         let is_theme_widget = matches!(canonical.split_once('/'), Some(("widgets", _)));
         if is_plugin || is_theme_widget {
             Some(ManagedWindow::Widget(WidgetWindow::new(
-                &self.app,
+                self.window_context(monitor),
                 canonical.to_string(),
                 ViewAnchor::None,
                 None,
-                self.dispatcher.clone(),
-                self.theme_store.clone(),
-                self.runtime.clone(),
-                self.event_tx.clone(),
-                monitor,
             )))
         } else {
             None
@@ -428,6 +459,107 @@ mod tests {
     use super::*;
     use std::cell::Cell;
     use std::rc::Rc;
+
+    #[test]
+    fn panel_params_panel_kind_is_not_overlay_with_declared_size() {
+        let descriptor = ViewDescriptor {
+            kind: ViewKind::Panel,
+            width: Some(600),
+            height: Some(420),
+            ..ViewDescriptor::default()
+        };
+        assert_eq!(
+            panel_params(&descriptor),
+            PanelParams {
+                overlay: false,
+                width: 600,
+                height: 420,
+            }
+        );
+    }
+
+    #[test]
+    fn panel_params_panel_kind_falls_back_to_defaults_when_size_missing() {
+        let descriptor = ViewDescriptor {
+            kind: ViewKind::Panel,
+            ..ViewDescriptor::default()
+        };
+        assert_eq!(
+            panel_params(&descriptor),
+            PanelParams {
+                overlay: false,
+                width: DEFAULT_PANEL_WIDTH,
+                height: DEFAULT_PANEL_HEIGHT,
+            }
+        );
+    }
+
+    #[test]
+    fn panel_params_overlay_kind_sets_overlay_flag() {
+        // The power-menu overlay declares no width/height, so it should pick
+        // up the defaults while flipping the overlay flag on.
+        let descriptor = ViewDescriptor {
+            kind: ViewKind::Overlay,
+            ..ViewDescriptor::default()
+        };
+        assert_eq!(
+            panel_params(&descriptor),
+            PanelParams {
+                overlay: true,
+                width: DEFAULT_PANEL_WIDTH,
+                height: DEFAULT_PANEL_HEIGHT,
+            }
+        );
+    }
+
+    #[test]
+    fn panel_params_overlay_kind_keeps_declared_size() {
+        let descriptor = ViewDescriptor {
+            kind: ViewKind::Overlay,
+            width: Some(440),
+            height: Some(320),
+            ..ViewDescriptor::default()
+        };
+        assert_eq!(
+            panel_params(&descriptor),
+            PanelParams {
+                overlay: true,
+                width: 440,
+                height: 320,
+            }
+        );
+    }
+
+    #[test]
+    fn widget_params_passes_anchor_and_height_through() {
+        let descriptor = ViewDescriptor {
+            kind: ViewKind::Widget,
+            anchor: ViewAnchor::Top,
+            height: Some(32),
+            ..ViewDescriptor::default()
+        };
+        assert_eq!(
+            widget_params(&descriptor),
+            WidgetParams {
+                anchor: ViewAnchor::Top,
+                height: Some(32),
+            }
+        );
+    }
+
+    #[test]
+    fn widget_params_defaults_to_no_anchor_and_no_height() {
+        // A manifest-less widget (default descriptor) anchors nowhere and
+        // leaves the height unset, matching the background-layer fallback.
+        let descriptor = ViewDescriptor::default();
+        assert_eq!(
+            widget_params(&descriptor),
+            WidgetParams {
+                anchor: ViewAnchor::None,
+                height: None,
+            }
+        );
+    }
 
     struct FakeWindow {
         shown: Rc<Cell<bool>>,

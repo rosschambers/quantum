@@ -1,16 +1,11 @@
 //! Panel window with gtk4-layer-shell anchoring.
 
 use crate::bridge::json_to_js_expression;
-use crate::dispatcher::IpcDispatcher;
+use crate::windows::WindowContext;
 use gtk4::gdk;
 use gtk4::gio;
 use gtk4::prelude::*;
 use gtk4_layer_shell::{Edge, KeyboardMode, Layer, LayerShell};
-use quantum_domain::ports::ThemeStore;
-use quantum_domain::EventEnvelope;
-use std::sync::Arc;
-use tokio::runtime::Handle;
-use tokio::sync::broadcast;
 use webkit6::{prelude::*, WebView};
 
 /// Pick the GDK monitor that fullscreen-overlay panels should anchor
@@ -61,25 +56,31 @@ fn use_layer_shell() -> bool {
 impl PanelWindow {
     /// Create a new panel window.
     ///
-    /// `canonical_name` is the `plugin/<plugin>/<view>` (or theme) name used
-    /// to build the load URL and the layer-shell namespace. `overlay` selects
-    /// fullscreen-overlay treatment (all four edges anchored, exclusive
-    /// keyboard, transparent surface) versus a fixed-size centered panel;
-    /// `width`/`height` size the centered panel and are ignored for overlays,
-    /// which span the whole output.
-    #[allow(clippy::too_many_arguments)]
-    pub fn new(
-        app: &gtk4::Application,
+    /// `ctx` carries the shared host context (application, dispatcher, theme
+    /// store, runtime, event sender, target monitor). `canonical_name` is the
+    /// `plugin/<plugin>/<view>` (or theme) name used to build the load URL and
+    /// the layer-shell namespace. `overlay` selects fullscreen-overlay
+    /// treatment (all four edges anchored, exclusive keyboard, transparent
+    /// surface) versus a fixed-size centered panel; `width`/`height` size the
+    /// centered panel and are ignored for overlays, which span the whole
+    /// output.
+    pub(crate) fn new(
+        ctx: WindowContext<'_>,
         canonical_name: impl Into<String>,
         overlay: bool,
         width: i32,
         height: i32,
-        dispatcher: Arc<dyn IpcDispatcher>,
-        _theme_store: Arc<dyn ThemeStore>,
-        runtime: Handle,
-        event_tx: broadcast::Sender<EventEnvelope>,
-        monitor: Option<gdk::Monitor>,
     ) -> Self {
+        // The theme store is consumed by the quantum:// scheme handler
+        // registered on the GTK default context, not used directly here.
+        let WindowContext {
+            app,
+            dispatcher,
+            theme_store: _theme_store,
+            runtime,
+            event_tx,
+            monitor,
+        } = ctx;
         let view_name: String = canonical_name.into();
         let layer_shell = use_layer_shell();
 

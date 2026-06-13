@@ -1,17 +1,13 @@
 //! Widget window - background-layer window for clock and other widgets.
 
 use crate::bridge::json_to_js_expression;
-use crate::dispatcher::IpcDispatcher;
+use crate::windows::WindowContext;
 use gtk4::gdk;
 use gtk4::gio;
 use gtk4::glib;
 use gtk4::prelude::*;
 use gtk4_layer_shell::{Edge, KeyboardMode, Layer, LayerShell};
-use quantum_domain::ports::ThemeStore;
-use quantum_domain::{EventEnvelope, ViewAnchor};
-use std::sync::Arc;
-use tokio::runtime::Handle;
-use tokio::sync::broadcast;
+use quantum_domain::ViewAnchor;
 use webkit6::{prelude::*, WebView};
 
 /// Default bar height in CSS pixels. Matches the value in
@@ -46,23 +42,29 @@ pub struct WidgetWindow {
 impl WidgetWindow {
     /// Create a new widget window.
     ///
-    /// `anchor` selects the layout: [`ViewAnchor::Top`] produces a bar-style
-    /// top-anchored surface with an exclusive zone of `height` (defaulting to
-    /// [`BAR_HEIGHT`] when `None`); [`ViewAnchor::None`] (and `Bottom`, which
-    /// widgets do not yet special-case) produces a background-layer, top-right
-    /// widget like the clock.
-    #[allow(clippy::too_many_arguments)]
-    pub fn new(
-        app: &gtk4::Application,
+    /// `ctx` carries the shared host context (application, dispatcher, theme
+    /// store, runtime, event sender, target monitor). `anchor` selects the
+    /// layout: [`ViewAnchor::Top`] produces a bar-style top-anchored surface
+    /// with an exclusive zone of `height` (defaulting to [`BAR_HEIGHT`] when
+    /// `None`); [`ViewAnchor::None`] (and `Bottom`, which widgets do not yet
+    /// special-case) produces a background-layer, top-right widget like the
+    /// clock.
+    pub(crate) fn new(
+        ctx: WindowContext<'_>,
         view_name: String,
         anchor: ViewAnchor,
         height: Option<u32>,
-        dispatcher: Arc<dyn IpcDispatcher>,
-        _theme_store: Arc<dyn ThemeStore>,
-        runtime: Handle,
-        event_tx: broadcast::Sender<EventEnvelope>,
-        monitor: Option<gdk::Monitor>,
     ) -> Self {
+        // The theme store is consumed by the quantum:// scheme handler
+        // registered on the GTK default context, not used directly here.
+        let WindowContext {
+            app,
+            dispatcher,
+            theme_store: _theme_store,
+            runtime,
+            event_tx,
+            monitor,
+        } = ctx;
         let window = gtk4::ApplicationWindow::builder()
             .application(app)
             .decorated(false)
