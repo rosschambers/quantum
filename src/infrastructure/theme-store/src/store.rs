@@ -13,6 +13,25 @@ use quantum_domain::EventBus;
 static DEFAULT_THEME: include_dir::Dir<'_> =
     include_dir::include_dir!("$CARGO_MANIFEST_DIR/../../ui/themes/default");
 
+// Embed the sycamore theme, a warm eww-derived palette shipped alongside
+// the default. Like the default it is baked into the binary, but a user
+// theme at ~/.config/quantum/themes/sycamore/ shadows it because disk
+// lookups run before the embedded fallback in `get_file_exact`.
+static SYCAMORE_THEME: include_dir::Dir<'_> =
+    include_dir::include_dir!("$CARGO_MANIFEST_DIR/../../ui/themes/sycamore");
+
+/// Resolve a theme name to its embedded directory, if one exists. Used as
+/// the last fallback in `get_file_exact` after every disk source misses,
+/// so first-party themes ship in the binary while still being shadowable
+/// by user copies on disk.
+fn embedded_theme(theme_name: &str) -> Option<&'static include_dir::Dir<'static>> {
+    match theme_name {
+        "default" => Some(&DEFAULT_THEME),
+        "sycamore" => Some(&SYCAMORE_THEME),
+        _ => None,
+    }
+}
+
 /// Resolved view from embedded or disk sources.
 #[derive(Debug, Clone)]
 pub struct ResolvedViewData {
@@ -300,12 +319,12 @@ impl ThemeStore {
             }
         }
 
-        // Fall back to embedded default
-        if theme_name == "default" {
-            self.get_embedded_file(&DEFAULT_THEME, path)
-        } else {
-            None
-        }
+        // Fall back to an embedded theme. Disk sources above always win, so
+        // a user copy at themes_dir/<theme>/ shadows the embedded one. Both
+        // "default" and "sycamore" resolve here; unknown theme names have no
+        // embedded directory and return None.
+        let embedded = embedded_theme(theme_name)?;
+        self.get_embedded_file(embedded, path)
     }
 
     /// Search for a file in an embedded directory by full path.
@@ -992,6 +1011,71 @@ mod tests {
         assert!(store
             .get_plugin_file("epsilon", "views/main/index.html")
             .is_none());
+    }
+
+    #[test]
+    fn resolved_tokens_differ_between_default_and_sycamore() {
+        use tempfile::tempdir;
+
+        // Point themes_dir at a directory with no sycamore subdirectory so
+        // disk lookups miss and the embedded sycamore palette is consulted.
+        let tmp = tempdir().expect("tempdir");
+        let missing_themes = tmp.path().join("themes");
+        assert!(
+            !missing_themes.exists(),
+            "precondition: themes dir must not exist so disk misses"
+        );
+
+        let default_store =
+            ThemeStore::with_themes_dir(missing_themes.clone(), Some("default".to_string()));
+        let default_tokens = default_store.resolved_tokens();
+        assert_eq!(
+            default_tokens.get("color-bg"),
+            Some(&"#1e1e2e".to_string()),
+            "default theme resolves the Catppuccin background"
+        );
+
+        let sycamore_store =
+            ThemeStore::with_themes_dir(missing_themes, Some("sycamore".to_string()));
+        let sycamore_tokens = sycamore_store.resolved_tokens();
+        assert_eq!(
+            sycamore_tokens.get("color-bg"),
+            Some(&"#292520".to_string()),
+            "sycamore resolves the warm eww-derived background from the embedded theme"
+        );
+
+        assert_ne!(
+            default_tokens.get("color-bg"),
+            sycamore_tokens.get("color-bg"),
+            "switching active theme must change color-bg"
+        );
+    }
+
+    #[test]
+    fn user_disk_sycamore_shadows_embedded() {
+        use std::fs;
+        use tempfile::tempdir;
+
+        // A user-supplied sycamore theme on disk must take precedence over
+        // the embedded one, mirroring the disk-shadows-embedded behavior for
+        // plugins and the default theme override.
+        let tmp = tempdir().expect("tempdir");
+        let themes_dir = tmp.path().join("themes");
+        let sycamore_dir = themes_dir.join("sycamore");
+        fs::create_dir_all(&sycamore_dir).expect("mkdir");
+        fs::write(
+            sycamore_dir.join("tokens.toml"),
+            "[colors]\ncolor-bg = \"#abcabc\"\n",
+        )
+        .expect("write user sycamore tokens");
+
+        let store = ThemeStore::with_themes_dir(themes_dir, Some("sycamore".to_string()));
+        let tokens = store.resolved_tokens();
+        assert_eq!(
+            tokens.get("color-bg"),
+            Some(&"#abcabc".to_string()),
+            "user disk sycamore must shadow the embedded palette"
+        );
     }
 
     #[test]

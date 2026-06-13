@@ -1,0 +1,18 @@
+[colors]
+color-bg = "#292520"
+color-bg-alt = "#3b3630"
+color-border = "#4a443e"
+color-fg = "#e8e4d8"
+color-fg-alt = "#d8d4c8"
+color-accent = "#a5a483"
+color-muted = "#8a8578"
+color-error = "#af4e3c"
+color-surface = "rgba(59, 54, 48, 0.8)"
+color-surface-hover = "#4a443e"
+color-overlay-backdrop = "rgba(20, 17, 14, 0.55)"
+color-bar-bg = "rgba(41, 37, 32, 0.85)"
+color-shadow = "rgba(10, 8, 6, 0.6)"
+color-divider = "rgba(232, 228, 216, 0.25)"
+
+[radius]
+radius-lg = "6px"
