@@ -134,7 +134,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 print_response(&result, cli.json);
             }
             ThemeCommand::Switch { theme } => {
-                let result = call_daemon(&socket_path, "theme.set", json!({ "theme": theme })).await?;
+                let result =
+                    call_daemon(&socket_path, "theme.set", json!({ "theme": theme })).await?;
                 print_response(&result, cli.json);
             }
         },

@@ -15,7 +15,7 @@ pub use open_view::OpenViewUseCase;
 pub use query_provider::QueryProviderUseCase;
 pub use reload_plugins::ReloadPluginsUseCase;
 pub use reload_theme::ReloadThemeUseCase;
-pub use set_theme::SetThemeUseCase;
 pub use schedule_action::{ScheduleActionUseCase, ScheduleId, ScheduledJobSummary};
 pub use search::{SearchResponse, SearchUseCase};
+pub use set_theme::SetThemeUseCase;
 pub use subscribe_provider::SubscribeProviderUseCase;

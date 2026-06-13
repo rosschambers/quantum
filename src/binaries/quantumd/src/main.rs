@@ -14,8 +14,7 @@ use tracing_subscriber::EnvFilter;
 use quantum_application::{
     ApplicationError, Dispatcher as AppDispatcher, LaunchActionUseCase, ListProvidersUseCase,
     OpenViewUseCase, QueryProviderUseCase, ReloadPluginsUseCase, ReloadThemeUseCase,
-    SetThemeUseCase,
-    ScheduleActionUseCase, SearchUseCase, SubscribeProviderUseCase,
+    ScheduleActionUseCase, SearchUseCase, SetThemeUseCase, SubscribeProviderUseCase,
 };
 use quantum_config::{Config, ConfigStore};
 use quantum_domain::{DomainError, EventBus, ProviderId, ProviderSource};

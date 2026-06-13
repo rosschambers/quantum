@@ -81,7 +81,11 @@ mod tests {
 
     #[async_trait]
     impl EventBus for FakeEventBus {
-        async fn publish(&self, event: &str, _payload: &str) -> std::result::Result<(), DomainError> {
+        async fn publish(
+            &self,
+            event: &str,
+            _payload: &str,
+        ) -> std::result::Result<(), DomainError> {
             if self.should_fail {
                 Err(DomainError::ActionFailed {
                     reason: "publish failed".to_string(),
