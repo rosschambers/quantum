@@ -82,6 +82,11 @@ enum SystemCommand {
 enum ThemeCommand {
     /// Reload the theme
     Reload,
+    /// Switch to a different theme
+    Switch {
+        /// Theme name
+        theme: String,
+    },
 }
 
 #[tokio::main]
@@ -126,6 +131,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         Commands::Theme { command } => match command {
             ThemeCommand::Reload => {
                 let result = call_daemon(&socket_path, "theme.reload", json!({})).await?;
+                print_response(&result, cli.json);
+            }
+            ThemeCommand::Switch { theme } => {
+                let result = call_daemon(&socket_path, "theme.set", json!({ "theme": theme })).await?;
                 print_response(&result, cli.json);
             }
         },
