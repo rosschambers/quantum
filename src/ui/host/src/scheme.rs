@@ -287,6 +287,29 @@ pub fn inject_tokens(html: &str, tokens: &std::collections::HashMap<String, Stri
     html.replace("/* QUANTUM_TOKENS */", &css)
 }
 
+/// Build a JavaScript statement that replaces the live token stylesheet's
+/// content with `css`.
+///
+/// Pages embed `<style id="quantum-tokens">...</style>`. At serve time
+/// [`inject_tokens`] fills it; for a live theme reload the daemon instead
+/// pushes this statement into an already-open WebView so the page recolors
+/// without a reload.
+///
+/// The statement is guarded: it looks the element up and only assigns when it
+/// exists, mirroring the `__quantum_notify` guard used elsewhere, because the
+/// reload event can arrive before the page has finished parsing its `<head>`.
+/// `css` is JSON-encoded with `serde_json::to_string`, producing a quoted,
+/// fully escaped JavaScript string literal (newlines, quotes, and backslashes
+/// in token values are handled), so the CSS text can never break out of the
+/// literal or inject script.
+pub fn token_push_js(css: &str) -> String {
+    let quoted = serde_json::to_string(css).unwrap_or_else(|_| "\"\"".to_string());
+    format!(
+        "var __quantum_tokens_el = document.getElementById('quantum-tokens'); \
+         if (__quantum_tokens_el) {{ __quantum_tokens_el.textContent = {quoted}; }}"
+    )
+}
+
 #[cfg(test)]
 mod inject_tests {
     use super::*;
@@ -307,6 +330,25 @@ mod inject_tests {
         let html = "<html><body>no placeholder</body></html>";
         let out = inject_tokens(html, &HashMap::new());
         assert_eq!(out, html);
+    }
+
+    #[test]
+    fn token_push_js_guards_missing_element() {
+        let js = token_push_js(":root {}\n");
+        assert!(js.contains("getElementById('quantum-tokens')"));
+        assert!(js.contains("if (__quantum_tokens_el)"));
+        assert!(js.contains("textContent"));
+    }
+
+    #[test]
+    fn token_push_js_json_encodes_css() {
+        // A newline and a double quote must be escaped so the CSS sits
+        // inside a single valid JavaScript string literal.
+        let js = token_push_js(":root {\n  --x: \"q\";\n}\n");
+        assert!(js.contains("\\n"));
+        assert!(js.contains("\\\""));
+        // The raw newline must not survive into the emitted statement.
+        assert!(!js.contains("\n  --x"));
     }
 
     #[test]

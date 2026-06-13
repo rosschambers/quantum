@@ -21,7 +21,7 @@ impl ReloadThemeUseCase {
             .await
             .map_err(crate::ApplicationError::Domain)?;
         self.event_bus
-            .publish("theme_reloaded", "{}")
+            .publish("theme.reloaded", "{}")
             .await
             .map_err(crate::ApplicationError::Domain)?;
 
@@ -119,7 +119,7 @@ mod tests {
         assert!(result.is_ok());
         assert!(*reload_called.lock().unwrap());
         assert_eq!(events.lock().unwrap().len(), 1);
-        assert_eq!(events.lock().unwrap()[0], "theme_reloaded");
+        assert_eq!(events.lock().unwrap()[0], "theme.reloaded");
     }
 
     #[tokio::test]

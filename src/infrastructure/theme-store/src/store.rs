@@ -125,6 +125,24 @@ fn parse_tokens_table(parsed: toml::Table) -> HashMap<String, String> {
     tokens
 }
 
+/// Extract `[general].active_theme` from the text of a `config.toml`.
+///
+/// Returns `None` when the file does not parse as TOML, has no `[general]`
+/// table, or that table has no string `active_theme` key. The caller keeps
+/// the current active theme in that case rather than guessing. This mirrors
+/// the shape of `quantum_infrastructure_config::GeneralConfig` but is parsed
+/// independently so the theme store does not depend on the config crate just
+/// to read one key.
+fn active_theme_from_config_str(toml_text: &str) -> Option<String> {
+    let table = toml::from_str::<toml::Table>(toml_text).ok()?;
+    table
+        .get("general")?
+        .as_table()?
+        .get("active_theme")?
+        .as_str()
+        .map(|s| s.to_string())
+}
+
 /// Theme store for loading and cascading themes.
 pub struct ThemeStore {
     themes_dir: PathBuf,
@@ -273,10 +291,33 @@ impl ThemeStore {
         Ok(())
     }
 
-    /// Reload the current theme.
+    /// Reload the active theme from disk.
+    ///
+    /// Re-reads `~/.config/quantum/config.toml` and, if it names a different
+    /// `active_theme`, switches to it. The token cache is always cleared so
+    /// the next `resolved_tokens()` re-reads `tokens.toml` from disk — this
+    /// covers both a theme switch and an in-place edit of the current theme's
+    /// tokens. A missing or unparseable config leaves the active theme as-is
+    /// but still invalidates the cache.
     pub async fn reload(&self) -> Result<(), DomainError> {
-        // For now, just re-confirm the active theme exists
+        let config_path = Self::config_path();
+        if let Ok(text) = std::fs::read_to_string(&config_path) {
+            if let Some(theme) = active_theme_from_config_str(&text) {
+                *self.active_theme.write().await = theme;
+            }
+        }
+        self.invalidate_token_cache();
         Ok(())
+    }
+
+    /// Path to the user config file, `~/.config/quantum/config.toml`.
+    /// Honours `XDG_CONFIG_HOME`, matching how `themes_dir` and the config
+    /// crate locate the config directory.
+    fn config_path() -> PathBuf {
+        let config_home = std::env::var("XDG_CONFIG_HOME")
+            .unwrap_or_else(|_| format!("{}/.config", std::env::var("HOME").unwrap_or_default()));
+
+        PathBuf::from(config_home).join("quantum/config.toml")
     }
 
     /// Load a file from a theme, checking disk first then falling back to
@@ -622,6 +663,28 @@ mod tests {
         assert_eq!(tokens.get("color-bg"), Some(&"#abc".to_string()));
         assert_eq!(tokens.get("font-sans"), Some(&"Bar".to_string()));
         assert_eq!(tokens.len(), 2);
+    }
+
+    #[test]
+    fn active_theme_read_from_config() {
+        let input = "[general]\nactive_theme = \"sycamore\"\n";
+        assert_eq!(
+            active_theme_from_config_str(input),
+            Some("sycamore".to_string())
+        );
+    }
+
+    #[test]
+    fn active_theme_absent_yields_none() {
+        // No [general] table at all.
+        assert_eq!(active_theme_from_config_str("[other]\nx = 1\n"), None);
+        // [general] present but no active_theme key.
+        assert_eq!(active_theme_from_config_str("[general]\n"), None);
+    }
+
+    #[test]
+    fn active_theme_from_malformed_config_is_none() {
+        assert_eq!(active_theme_from_config_str("[general\nbroken"), None);
     }
 
     #[test]

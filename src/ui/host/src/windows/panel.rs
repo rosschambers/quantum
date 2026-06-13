@@ -71,12 +71,14 @@ impl PanelWindow {
         width: i32,
         height: i32,
     ) -> Self {
-        // The theme store is consumed by the quantum:// scheme handler
-        // registered on the GTK default context, not used directly here.
+        // The theme store backs the quantum:// scheme handler registered on
+        // the GTK default context, and is also cloned into the event
+        // subscriber below so a `theme.reloaded` event can push freshly
+        // resolved tokens into this already-open WebView.
         let WindowContext {
             app,
             dispatcher,
-            theme_store: _theme_store,
+            theme_store,
             runtime,
             event_tx,
             monitor,
@@ -226,6 +228,7 @@ impl PanelWindow {
         // touches GTK objects; the GLib side never blocks on broadcast recv.
         let (js_tx, mut js_rx) = tokio::sync::mpsc::unbounded_channel::<String>();
         let mut event_rx = event_tx.subscribe();
+        let theme_store_for_notify = theme_store.clone();
         runtime.spawn(async move {
             loop {
                 match event_rx.recv().await {
@@ -246,6 +249,21 @@ impl PanelWindow {
                         if js_tx.send(js).is_err() {
                             // GLib forwarder has gone away — webview dropped.
                             break;
+                        }
+                        // On a theme reload, also push the freshly resolved
+                        // tokens into the live `#quantum-tokens` stylesheet so
+                        // the page recolors without a reload. The window
+                        // re-resolves from the theme store rather than trusting
+                        // the event payload, so a theme switch and an in-place
+                        // token edit are handled identically. `resolved_tokens()`
+                        // is sync and safe to call off the GTK thread.
+                        if env.channel == "theme.reloaded" {
+                            let tokens = theme_store_for_notify.resolved_tokens();
+                            let css = quantum_domain::tokens_to_css(&tokens);
+                            let push = json_to_js_expression(&crate::scheme::token_push_js(&css));
+                            if js_tx.send(push).is_err() {
+                                break;
+                            }
                         }
                     }
                     Err(tokio::sync::broadcast::error::RecvError::Lagged(skipped)) => {
