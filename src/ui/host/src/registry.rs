@@ -5,7 +5,9 @@ use std::sync::Arc;
 use tokio::runtime::Handle;
 use tokio::sync::broadcast;
 
-use quantum_domain::{ports::ThemeStore, EventEnvelope, WindowMode};
+use quantum_domain::{
+    ports::ThemeStore, EventEnvelope, ViewAnchor, ViewDescriptor, ViewKind, WindowMode,
+};
 
 use gtk4::gdk;
 use gtk4::prelude::*;
@@ -15,6 +17,40 @@ use crate::messages::WindowRequest;
 use crate::windows::{PanelWindow, WidgetWindow};
 
 use tracing::warn;
+
+/// Default panel width in pixels when a panel descriptor omits `width`.
+const DEFAULT_PANEL_WIDTH: i32 = 480;
+/// Default panel height in pixels when a panel descriptor omits `height`.
+const DEFAULT_PANEL_HEIGHT: i32 = 320;
+
+/// Static deprecation alias map: legacy bare view names to their canonical
+/// `plugin/<plugin>/<view>` names. Returns `Some(canonical)` on a hit so the
+/// caller can decide whether to emit a deprecation warning. Bare names only
+/// (the `@<monitor>` suffix is split off before this is consulted).
+fn resolve_alias(bare: &str) -> Option<&'static str> {
+    match bare {
+        "widgets/bar" => Some("plugin/bar/bar"),
+        "launcher" => Some("plugin/launcher/launcher"),
+        "widgets/power-menu" => Some("plugin/power-menu/power-menu"),
+        "widgets/power-profile-menu" => Some("plugin/power-profile-menu/power-profile-menu"),
+        _ => None,
+    }
+}
+
+/// Resolve a bare legacy name to its canonical form, emitting a deprecation
+/// warning on every alias hit. Names that are not aliases pass through
+/// unchanged. Used at construction time; [`canonical_view_key`] resolves the
+/// same alias silently to avoid log spam on high-frequency requests like the
+/// bar's `set_height` ticks.
+fn resolve_alias_warning(bare: &str) -> String {
+    match resolve_alias(bare) {
+        Some(canonical) => {
+            warn!("deprecated view name '{bare}'; use canonical name '{canonical}' instead");
+            canonical.to_string()
+        }
+        None => bare.to_string(),
+    }
+}
 
 /// Split a view-name key on the first `@`. Returns `(prefix, suffix)`
 /// where `suffix` is the optional monitor name. Pure function, no GTK
@@ -29,33 +65,48 @@ pub(crate) fn split_view_key(view: &str) -> (&str, Option<&str>) {
 
 /// Canonicalize a view key for window-map storage.
 ///
-/// For most views the storage key is the full view string — the
-/// `widgets/bar@<monitor>` pattern stores one window per monitor and
-/// must keep its suffix. But for single-instance panels (the
-/// power-menu, the launcher), the `@<monitor>` suffix is only used at
-/// construction time to pick which monitor the surface anchors to;
-/// subsequent show/hide/toggle requests against the same logical view
-/// should hit the same stored window regardless of which monitor's
-/// bar (or no bar) triggered them.
+/// Two transformations make the storage key stable regardless of how a
+/// caller addressed the view:
 ///
-/// Without this stripping, opening the power-menu from a per-monitor
-/// bar registered the window under e.g. `widgets/power-menu@DP-1`,
-/// but the page's `view.hide` call uses the bare `widgets/power-menu`
-/// — the registry then fails to find the window to hide, and the
-/// menu becomes undismissable.
-pub(crate) fn canonical_view_key(view: &str) -> String {
-    let (prefix, _suffix) = split_view_key(view);
-    match prefix {
-        // Per-monitor: one window per monitor; keep the suffix.
-        "widgets/bar" => view.to_string(),
-        // Single-instance views (panels): drop the suffix.
-        "launcher" | "widgets/power-menu" | "widgets/power-profile-menu" => prefix.to_string(),
-        // Plugin views: one instance per plugin/view combination; keep
-        // whatever the caller asked for (no suffix expected today).
-        other if other.starts_with("plugin/") => view.to_string(),
-        // Other widget views: one instance per name; keep the suffix
-        // (no semantic difference today, but doesn't break anything).
-        _ => view.to_string(),
+/// 1. **Alias resolution.** Legacy bare names (`launcher`,
+///    `widgets/power-menu`, ...) are rewritten to their canonical
+///    `plugin/<plugin>/<view>` form. This means an Open via the legacy
+///    name and a Close via the canonical name (or vice versa) land on the
+///    same stored window.
+/// 2. **Single-instance suffix stripping.** Single-instance views (panels
+///    and overlays by default) drop their `@<monitor>` suffix: the suffix
+///    is only used at construction time to pick which monitor the surface
+///    anchors to. Per-monitor widgets (the bar) keep the suffix so each
+///    monitor's surface is its own window.
+///
+/// Whether a view is single-instance is read from its [`ViewDescriptor`]
+/// via [`ViewDescriptor::effective_single_instance`]. A name with no
+/// catalog entry keeps its suffix (today's default), so theme-hosted
+/// widgets like the clock are unaffected.
+///
+/// Without alias resolution + suffix stripping, opening the power-menu from
+/// a per-monitor bar registered the window under e.g.
+/// `widgets/power-menu@DP-1`, but the page's `view.hide` call uses the
+/// bare canonical name — the registry then failed to find the window to
+/// hide, and the menu became undismissable.
+pub(crate) fn canonical_view_key(view: &str, catalog: &crate::ViewCatalog) -> String {
+    let (prefix, suffix) = split_view_key(view);
+    let canonical = match resolve_alias(prefix) {
+        Some(canonical) => canonical.to_string(),
+        None => prefix.to_string(),
+    };
+    let single_instance = catalog
+        .get(&canonical)
+        .map(ViewDescriptor::effective_single_instance)
+        .unwrap_or(false);
+    match (single_instance, suffix) {
+        // Single-instance: drop the suffix so every request for this
+        // logical view hits the same stored window.
+        (true, _) => canonical,
+        // Per-monitor / catalog-miss with a suffix: keep the suffix so
+        // each monitor's surface is its own window.
+        (false, Some(s)) => format!("{canonical}@{s}"),
+        (false, None) => canonical,
     }
 }
 
@@ -92,16 +143,20 @@ pub struct ManagedWindowConstructor {
     theme_store: Arc<dyn ThemeStore>,
     runtime: Handle,
     event_tx: broadcast::Sender<EventEnvelope>,
+    catalog: crate::ViewCatalog,
 }
 
 impl ManagedWindowConstructor {
-    /// Create a new window constructor.
+    /// Create a new window constructor. The `catalog` supplies the
+    /// [`ViewDescriptor`] for each canonical view name so `construct`
+    /// dispatches on declared window semantics instead of hardcoded names.
     pub fn new(
         app: gtk4::Application,
         dispatcher: Arc<dyn IpcDispatcher>,
         theme_store: Arc<dyn ThemeStore>,
         runtime: Handle,
         event_tx: broadcast::Sender<EventEnvelope>,
+        catalog: crate::ViewCatalog,
     ) -> Self {
         Self {
             app,
@@ -109,6 +164,7 @@ impl ManagedWindowConstructor {
             theme_store,
             runtime,
             event_tx,
+            catalog,
         }
     }
 
@@ -129,73 +185,127 @@ impl WindowConstructor for ManagedWindowConstructor {
     type Window = ManagedWindow;
 
     fn construct(&mut self, view: &str) -> Option<Self::Window> {
-        let (view_name, monitor_name_opt) = split_view_key(view);
+        let (prefix, monitor_name_opt) = split_view_key(view);
+        // Resolve the legacy alias (warning on every hit) before any catalog
+        // lookup or URL building so the rest of the flow only ever deals in
+        // canonical `plugin/<plugin>/<view>` names.
+        let canonical = resolve_alias_warning(prefix);
         let monitor = monitor_name_opt.and_then(|name| {
             let resolved = self.find_monitor(name);
             if resolved.is_none() {
                 tracing::warn!(
-                    "widget {view}: requested monitor {name} not found; using compositor default"
+                    "view {canonical}: requested monitor {name} not found; using compositor default"
                 );
             }
             resolved
         });
 
-        match view_name {
-            "launcher" => Some(ManagedWindow::Panel(PanelWindow::new(
+        // A descriptor in the catalog drives dispatch; absent one, fall back
+        // to the legacy default WidgetWindow behavior so theme-hosted widgets
+        // and manifest-less plugins keep working.
+        match self.catalog.get(&canonical) {
+            Some(descriptor) => {
+                Some(self.construct_from_descriptor(&canonical, &descriptor.clone(), monitor))
+            }
+            None => self.construct_fallback(&canonical, monitor),
+        }
+    }
+}
+
+impl ManagedWindowConstructor {
+    /// Build a window from an explicit [`ViewDescriptor`], dispatching on its
+    /// declared `kind`.
+    fn construct_from_descriptor(
+        &mut self,
+        canonical: &str,
+        descriptor: &ViewDescriptor,
+        monitor: Option<gdk::Monitor>,
+    ) -> ManagedWindow {
+        match descriptor.kind {
+            ViewKind::Widget => ManagedWindow::Widget(WidgetWindow::new(
                 &self.app,
-                "launcher",
+                canonical.to_string(),
+                descriptor.anchor,
+                descriptor.height,
                 self.dispatcher.clone(),
                 self.theme_store.clone(),
                 self.runtime.clone(),
                 self.event_tx.clone(),
+                monitor,
+            )),
+            ViewKind::Panel => ManagedWindow::Panel(PanelWindow::new(
+                &self.app,
+                canonical.to_string(),
+                false,
+                descriptor
+                    .width
+                    .map(|w| w as i32)
+                    .unwrap_or(DEFAULT_PANEL_WIDTH),
+                descriptor
+                    .height
+                    .map(|h| h as i32)
+                    .unwrap_or(DEFAULT_PANEL_HEIGHT),
+                self.dispatcher.clone(),
+                self.theme_store.clone(),
+                self.runtime.clone(),
+                self.event_tx.clone(),
+                monitor,
+            )),
+            ViewKind::Overlay => ManagedWindow::Panel(PanelWindow::new(
+                &self.app,
+                canonical.to_string(),
+                true,
+                // Overlays span the whole output; width/height are unused
+                // but pass the descriptor's values (or defaults) anyway.
+                descriptor
+                    .width
+                    .map(|w| w as i32)
+                    .unwrap_or(DEFAULT_PANEL_WIDTH),
+                descriptor
+                    .height
+                    .map(|h| h as i32)
+                    .unwrap_or(DEFAULT_PANEL_HEIGHT),
+                self.dispatcher.clone(),
+                self.theme_store.clone(),
+                self.runtime.clone(),
+                self.event_tx.clone(),
+                monitor,
+            )),
+        }
+    }
+
+    /// Construct a window for a canonical name that has no catalog entry.
+    ///
+    /// - `plugin/...` names get a default WidgetWindow loading the plugin URL
+    ///   (the moon-distance / manifest-less plugin path: anchor none, default
+    ///   height).
+    /// - Theme-hosted `widgets/...` names get a default WidgetWindow loading
+    ///   the theme URL (the clock widget path), exactly as before.
+    /// - Anything else is genuinely unknown and yields `None`.
+    fn construct_fallback(
+        &mut self,
+        canonical: &str,
+        monitor: Option<gdk::Monitor>,
+    ) -> Option<ManagedWindow> {
+        let is_plugin = canonical.starts_with("plugin/");
+        // Detect a theme-hosted widget (the only remaining one is the clock)
+        // by splitting the first path segment, so the alias map stays the
+        // single source of the legacy-name string literals.
+        let is_theme_widget = matches!(canonical.split_once('/'), Some(("widgets", _)));
+        if is_plugin || is_theme_widget {
+            Some(ManagedWindow::Widget(WidgetWindow::new(
+                &self.app,
+                canonical.to_string(),
+                ViewAnchor::None,
                 None,
-            ))),
-            "widgets/power-menu" => Some(ManagedWindow::Panel(PanelWindow::new(
-                &self.app,
-                "widgets/power-menu",
                 self.dispatcher.clone(),
                 self.theme_store.clone(),
                 self.runtime.clone(),
                 self.event_tx.clone(),
                 monitor,
-            ))),
-            "widgets/power-profile-menu" => Some(ManagedWindow::Panel(PanelWindow::new(
-                &self.app,
-                "widgets/power-profile-menu",
-                self.dispatcher.clone(),
-                self.theme_store.clone(),
-                self.runtime.clone(),
-                self.event_tx.clone(),
-                monitor,
-            ))),
-            other if other.starts_with("widgets/") => {
-                Some(ManagedWindow::Widget(WidgetWindow::new(
-                    &self.app,
-                    view_name.to_string(),
-                    self.dispatcher.clone(),
-                    self.theme_store.clone(),
-                    self.runtime.clone(),
-                    self.event_tx.clone(),
-                    monitor,
-                )))
-            }
-            other if other.starts_with("plugin/") => {
-                // Plugin views look like `plugin/<plugin-name>/<view-name>`.
-                // The window itself is a regular WidgetWindow; only the
-                // URL it loads is different (see `WidgetWindow::new`,
-                // which detects the `plugin/` prefix and emits a
-                // `quantum://plugin/...` URL instead of a theme URL).
-                Some(ManagedWindow::Widget(WidgetWindow::new(
-                    &self.app,
-                    view_name.to_string(),
-                    self.dispatcher.clone(),
-                    self.theme_store.clone(),
-                    self.runtime.clone(),
-                    self.event_tx.clone(),
-                    monitor,
-                )))
-            }
-            _ => None,
+            )))
+        } else {
+            None
         }
     }
 }
@@ -239,8 +349,8 @@ pub struct WindowRegistry<C: WindowConstructor> {
 
 impl<C: WindowConstructor> WindowRegistry<C> {
     /// Create a new window registry. The `catalog` maps canonical plugin
-    /// view names to their declared window descriptors; dispatch through
-    /// the catalog lands in a follow-up change.
+    /// view names to their declared window descriptors and is consulted by
+    /// [`canonical_view_key`] to decide single-instance suffix stripping.
     pub fn new(constructor: C, catalog: crate::ViewCatalog) -> Self {
         Self {
             constructor,
@@ -262,7 +372,7 @@ impl<C: WindowConstructor> WindowRegistry<C> {
         match req {
             WindowRequest::Open { view, mode } => {
                 tracing::debug!("WindowRegistry::handle view={} mode={:?}", view, mode);
-                let key = canonical_view_key(&view);
+                let key = canonical_view_key(&view, &self.catalog);
                 let window = match self.windows.entry(key) {
                     std::collections::hash_map::Entry::Occupied(e) => e.into_mut(),
                     std::collections::hash_map::Entry::Vacant(v) => {
@@ -285,7 +395,7 @@ impl<C: WindowConstructor> WindowRegistry<C> {
                     view,
                     height
                 );
-                let key = canonical_view_key(&view);
+                let key = canonical_view_key(&view, &self.catalog);
                 if let Some(window) = self.windows.get_mut(&key) {
                     window.set_height(height);
                 } else {
@@ -293,7 +403,10 @@ impl<C: WindowConstructor> WindowRegistry<C> {
                 }
             }
             WindowRequest::Close { view } => {
-                match self.windows.remove(&canonical_view_key(&view)) {
+                match self
+                    .windows
+                    .remove(&canonical_view_key(&view, &self.catalog))
+                {
                     Some(mut window) => {
                         // Hide before drop so the layer-shell surface is
                         // released cleanly. The window's Drop releases the
@@ -332,6 +445,11 @@ mod tests {
         }
     }
 
+    /// A `FakeCtor` that mirrors `ManagedWindowConstructor`'s dispatch
+    /// decision (alias-resolve, then construct for any canonical name that
+    /// would yield a real window; `None` for genuinely unknown names)
+    /// without touching GTK. It records construct calls so tests can assert
+    /// reuse / reconstruction.
     struct FakeCtor {
         construct_count: Rc<Cell<usize>>,
         shown: Rc<Cell<bool>>,
@@ -341,12 +459,20 @@ mod tests {
         type Window = FakeWindow;
 
         fn construct(&mut self, view: &str) -> Option<FakeWindow> {
-            // Mirror ManagedWindowConstructor: strip the @<monitor>
-            // suffix before matching the view name so callers can pass
-            // either "launcher" or "launcher@DP-1" and get the same
-            // window.
-            let (view_name, _monitor) = split_view_key(view);
-            if view_name == "launcher" {
+            // Mirror ManagedWindowConstructor: split the @<monitor> suffix,
+            // resolve the legacy alias, then decide whether a window would be
+            // built. Catalog-driven dispatch (Widget/Panel/Overlay) and the
+            // plugin/theme/none fallback all collapse here to "is a window
+            // built at all": plugin/* and widgets/* names build one, anything
+            // else does not.
+            let (prefix, _monitor) = split_view_key(view);
+            let canonical = match resolve_alias(prefix) {
+                Some(c) => c.to_string(),
+                None => prefix.to_string(),
+            };
+            let builds_window = canonical.starts_with("plugin/")
+                || matches!(canonical.split_once('/'), Some(("widgets", _)));
+            if builds_window {
                 self.construct_count.set(self.construct_count.get() + 1);
                 Some(FakeWindow {
                     shown: self.shown.clone(),
@@ -357,24 +483,80 @@ mod tests {
         }
     }
 
+    /// A catalog carrying the four first-party descriptors keyed by their
+    /// canonical names, so `canonical_view_key` can consult
+    /// `effective_single_instance`.
+    fn first_party_catalog() -> crate::ViewCatalog {
+        crate::ViewCatalog::from_plugins(vec![
+            (
+                "plugin/bar/bar".to_string(),
+                ViewDescriptor {
+                    kind: ViewKind::Widget,
+                    per_monitor: true,
+                    auto_show: true,
+                    anchor: ViewAnchor::Top,
+                    height: Some(32),
+                    ..ViewDescriptor::default()
+                },
+            ),
+            (
+                "plugin/launcher/launcher".to_string(),
+                ViewDescriptor {
+                    kind: ViewKind::Panel,
+                    width: Some(600),
+                    height: Some(420),
+                    ..ViewDescriptor::default()
+                },
+            ),
+            (
+                "plugin/power-menu/power-menu".to_string(),
+                ViewDescriptor {
+                    kind: ViewKind::Overlay,
+                    ..ViewDescriptor::default()
+                },
+            ),
+            (
+                "plugin/power-profile-menu/power-profile-menu".to_string(),
+                ViewDescriptor {
+                    kind: ViewKind::Overlay,
+                    ..ViewDescriptor::default()
+                },
+            ),
+        ])
+    }
+
+    fn fake_ctor(count: &Rc<Cell<usize>>, shown: &Rc<Cell<bool>>) -> FakeCtor {
+        FakeCtor {
+            construct_count: count.clone(),
+            shown: shown.clone(),
+        }
+    }
+
+    #[test]
+    fn resolve_alias_maps_legacy_names_to_canonical() {
+        assert_eq!(resolve_alias("widgets/bar"), Some("plugin/bar/bar"));
+        assert_eq!(resolve_alias("launcher"), Some("plugin/launcher/launcher"));
+        assert_eq!(
+            resolve_alias("widgets/power-menu"),
+            Some("plugin/power-menu/power-menu")
+        );
+        assert_eq!(
+            resolve_alias("widgets/power-profile-menu"),
+            Some("plugin/power-profile-menu/power-profile-menu")
+        );
+        // Non-alias names pass through as misses.
+        assert_eq!(resolve_alias("widgets/clock"), None);
+        assert_eq!(resolve_alias("plugin/bar/bar"), None);
+        assert_eq!(resolve_alias("nope"), None);
+    }
+
     #[test]
     fn registry_exposes_its_view_catalog() {
-        use quantum_domain::{ViewDescriptor, ViewKind};
-        let catalog = crate::ViewCatalog::from_plugins(vec![(
-            "plugin/bar/bar".to_string(),
-            ViewDescriptor {
-                kind: ViewKind::Panel,
-                ..ViewDescriptor::default()
-            },
-        )]);
         let reg = WindowRegistry::new(
-            FakeCtor {
-                construct_count: Rc::new(Cell::new(0)),
-                shown: Rc::new(Cell::new(false)),
-            },
-            catalog,
+            fake_ctor(&Rc::new(Cell::new(0)), &Rc::new(Cell::new(false))),
+            first_party_catalog(),
         );
-        let descriptor = reg.catalog().get("plugin/bar/bar");
+        let descriptor = reg.catalog().get("plugin/launcher/launcher");
         assert_eq!(descriptor.map(|d| d.kind), Some(ViewKind::Panel));
         assert!(reg.catalog().get("plugin/unknown/view").is_none());
     }
@@ -383,15 +565,9 @@ mod tests {
     fn first_request_constructs_window() {
         let count = Rc::new(Cell::new(0));
         let shown = Rc::new(Cell::new(false));
-        let mut reg = WindowRegistry::new(
-            FakeCtor {
-                construct_count: count.clone(),
-                shown: shown.clone(),
-            },
-            crate::ViewCatalog::from_plugins(vec![]),
-        );
+        let mut reg = WindowRegistry::new(fake_ctor(&count, &shown), first_party_catalog());
         reg.handle(WindowRequest::Open {
-            view: "launcher".into(),
+            view: "plugin/launcher/launcher".into(),
             mode: WindowMode::Show,
         });
         assert_eq!(count.get(), 1);
@@ -402,23 +578,42 @@ mod tests {
     fn second_request_reuses_window() {
         let count = Rc::new(Cell::new(0));
         let shown = Rc::new(Cell::new(false));
-        let mut reg = WindowRegistry::new(
-            FakeCtor {
-                construct_count: count.clone(),
-                shown: shown.clone(),
-            },
-            crate::ViewCatalog::from_plugins(vec![]),
-        );
+        let mut reg = WindowRegistry::new(fake_ctor(&count, &shown), first_party_catalog());
         reg.handle(WindowRequest::Open {
-            view: "launcher".into(),
+            view: "plugin/launcher/launcher".into(),
             mode: WindowMode::Show,
         });
         reg.handle(WindowRequest::Open {
-            view: "launcher".into(),
+            view: "plugin/launcher/launcher".into(),
             mode: WindowMode::Toggle,
         });
         assert_eq!(count.get(), 1);
         assert!(!shown.get()); // toggled off
+    }
+
+    #[test]
+    fn legacy_alias_open_and_canonical_close_hit_same_window() {
+        // Open via the deprecated `launcher` alias, then close via the
+        // canonical `plugin/launcher/launcher` name. Both must resolve to the
+        // same storage key or the close would silently miss.
+        let count = Rc::new(Cell::new(0));
+        let shown = Rc::new(Cell::new(false));
+        let mut reg = WindowRegistry::new(fake_ctor(&count, &shown), first_party_catalog());
+        reg.handle(WindowRequest::Open {
+            view: "launcher".into(),
+            mode: WindowMode::Show,
+        });
+        assert_eq!(count.get(), 1);
+        reg.handle(WindowRequest::Close {
+            view: "plugin/launcher/launcher".into(),
+        });
+        // Reopen via the canonical name reconstructs, proving the close
+        // removed the entry the alias-keyed open inserted.
+        reg.handle(WindowRequest::Open {
+            view: "plugin/launcher/launcher".into(),
+            mode: WindowMode::Show,
+        });
+        assert_eq!(count.get(), 2);
     }
 
     #[test]
@@ -449,44 +644,33 @@ mod tests {
     fn unknown_view_does_not_panic() {
         let count = Rc::new(Cell::new(0));
         let shown = Rc::new(Cell::new(false));
-        let mut reg = WindowRegistry::new(
-            FakeCtor {
-                construct_count: count,
-                shown,
-            },
-            crate::ViewCatalog::from_plugins(vec![]),
-        );
+        let mut reg = WindowRegistry::new(fake_ctor(&count, &shown), first_party_catalog());
         reg.handle(WindowRequest::Open {
             view: "nope".into(),
             mode: WindowMode::Show,
         });
         // If we reach here without panic, the test passes.
+        assert_eq!(count.get(), 0, "no window built for unknown view");
     }
 
     #[test]
     fn close_removes_window_from_registry() {
         let count = Rc::new(Cell::new(0));
         let shown = Rc::new(Cell::new(false));
-        let mut reg = WindowRegistry::new(
-            FakeCtor {
-                construct_count: count.clone(),
-                shown: shown.clone(),
-            },
-            crate::ViewCatalog::from_plugins(vec![]),
-        );
+        let mut reg = WindowRegistry::new(fake_ctor(&count, &shown), first_party_catalog());
         reg.handle(WindowRequest::Open {
-            view: "launcher".into(),
+            view: "plugin/launcher/launcher".into(),
             mode: WindowMode::Show,
         });
         assert_eq!(count.get(), 1, "window was constructed");
         reg.handle(WindowRequest::Close {
-            view: "launcher".into(),
+            view: "plugin/launcher/launcher".into(),
         });
         // Re-opening should reconstruct (counter increments again),
         // which is the observable signal that Close actually removed
         // the entry from the windows map.
         reg.handle(WindowRequest::Open {
-            view: "launcher".into(),
+            view: "plugin/launcher/launcher".into(),
             mode: WindowMode::Show,
         });
         assert_eq!(count.get(), 2, "window was reconstructed after close");
@@ -497,69 +681,91 @@ mod tests {
     fn close_for_unknown_view_does_not_panic() {
         let count = Rc::new(Cell::new(0));
         let shown = Rc::new(Cell::new(false));
-        let mut reg = WindowRegistry::new(
-            FakeCtor {
-                construct_count: count,
-                shown,
-            },
-            crate::ViewCatalog::from_plugins(vec![]),
-        );
+        let mut reg = WindowRegistry::new(fake_ctor(&count, &shown), first_party_catalog());
         // No prior Open; the registry is empty.
         reg.handle(WindowRequest::Close {
-            view: "launcher".into(),
+            view: "plugin/launcher/launcher".into(),
         });
         // If we reach here without panic, the test passes.
     }
 
     #[test]
     fn canonical_view_key_strips_at_suffix_for_single_instance_panels() {
+        let catalog = first_party_catalog();
+        // Overlay (power-menu): single-instance -> suffix dropped, and the
+        // legacy alias resolves to the canonical name.
         assert_eq!(
-            canonical_view_key("widgets/power-menu"),
-            "widgets/power-menu"
+            canonical_view_key("plugin/power-menu/power-menu", &catalog),
+            "plugin/power-menu/power-menu"
         );
         assert_eq!(
-            canonical_view_key("widgets/power-menu@eDP-1"),
-            "widgets/power-menu"
+            canonical_view_key("plugin/power-menu/power-menu@eDP-1", &catalog),
+            "plugin/power-menu/power-menu"
         );
         assert_eq!(
-            canonical_view_key("widgets/power-menu@DP-1"),
-            "widgets/power-menu"
+            canonical_view_key("widgets/power-menu@DP-1", &catalog),
+            "plugin/power-menu/power-menu"
         );
-        assert_eq!(canonical_view_key("launcher"), "launcher");
-        assert_eq!(canonical_view_key("launcher@eDP-1"), "launcher");
+        // Panel (launcher): single-instance -> suffix dropped.
+        assert_eq!(
+            canonical_view_key("plugin/launcher/launcher", &catalog),
+            "plugin/launcher/launcher"
+        );
+        assert_eq!(
+            canonical_view_key("launcher@eDP-1", &catalog),
+            "plugin/launcher/launcher"
+        );
     }
 
     #[test]
     fn canonical_view_key_preserves_at_suffix_for_per_monitor_bar() {
-        // The bar is per-monitor: each monitor's bar is its own window.
-        assert_eq!(canonical_view_key("widgets/bar"), "widgets/bar");
-        assert_eq!(canonical_view_key("widgets/bar@eDP-1"), "widgets/bar@eDP-1");
-        assert_eq!(canonical_view_key("widgets/bar@DP-1"), "widgets/bar@DP-1");
+        let catalog = first_party_catalog();
+        // The bar is a per-monitor widget: each monitor's bar is its own
+        // window, so the suffix is kept. The legacy alias resolves first.
+        assert_eq!(
+            canonical_view_key("plugin/bar/bar", &catalog),
+            "plugin/bar/bar"
+        );
+        assert_eq!(
+            canonical_view_key("plugin/bar/bar@eDP-1", &catalog),
+            "plugin/bar/bar@eDP-1"
+        );
+        assert_eq!(
+            canonical_view_key("widgets/bar@DP-1", &catalog),
+            "plugin/bar/bar@DP-1"
+        );
+    }
+
+    #[test]
+    fn canonical_view_key_keeps_suffix_for_catalog_miss() {
+        // Theme-hosted widgets (the clock) have no catalog entry, so the
+        // suffix is kept (today's default) and the name passes through
+        // unchanged.
+        let catalog = first_party_catalog();
+        assert_eq!(
+            canonical_view_key("widgets/clock", &catalog),
+            "widgets/clock"
+        );
+        assert_eq!(
+            canonical_view_key("widgets/clock@eDP-1", &catalog),
+            "widgets/clock@eDP-1"
+        );
     }
 
     #[test]
     fn single_instance_panel_open_with_at_suffix_can_be_closed_by_bare_name() {
-        // Regression: opening a single-instance panel with an @suffix
-        // (e.g. launcher@DP-1 or widgets/power-menu@DP-1) used to
-        // register the window under the full key, but the page's
-        // view.hide call uses the bare name. Without canonicalization
-        // the registry couldn't find the window to hide, making the
-        // panel undismissable.
-        //
-        // Uses launcher because FakeCtor only constructs for that view
-        // name; both launcher and widgets/power-menu hit the same
-        // canonical_view_key code path.
+        // Regression: opening a single-instance panel with an @suffix used to
+        // register the window under the full key, but the page's view.hide
+        // call uses the bare name. Without descriptor-driven canonicalization
+        // the registry couldn't find the window to hide, making the panel
+        // undismissable. Reworked against descriptors: the catalog marks the
+        // launcher single-instance, so the suffix is dropped at both open and
+        // close.
         let count = Rc::new(Cell::new(0));
         let shown = Rc::new(Cell::new(false));
-        let mut reg = WindowRegistry::new(
-            FakeCtor {
-                construct_count: count.clone(),
-                shown: shown.clone(),
-            },
-            crate::ViewCatalog::from_plugins(vec![]),
-        );
+        let mut reg = WindowRegistry::new(fake_ctor(&count, &shown), first_party_catalog());
         reg.handle(WindowRequest::Open {
-            view: "launcher@DP-1".into(),
+            view: "plugin/launcher/launcher@DP-1".into(),
             mode: WindowMode::Show,
         });
         // Should have constructed exactly one window.
@@ -568,13 +774,13 @@ mod tests {
 
         // Now close it using the BARE name (what the page calls).
         reg.handle(WindowRequest::Close {
-            view: "launcher".into(),
+            view: "plugin/launcher/launcher".into(),
         });
 
         // Reopen it: should construct a fresh window since the prior
         // one was closed.
         reg.handle(WindowRequest::Open {
-            view: "launcher@eDP-1".into(),
+            view: "plugin/launcher/launcher@eDP-1".into(),
             mode: WindowMode::Show,
         });
         assert_eq!(count.get(), 2);

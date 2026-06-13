@@ -60,35 +60,35 @@ fn use_layer_shell() -> bool {
 
 impl PanelWindow {
     /// Create a new panel window.
+    ///
+    /// `canonical_name` is the `plugin/<plugin>/<view>` (or theme) name used
+    /// to build the load URL and the layer-shell namespace. `overlay` selects
+    /// fullscreen-overlay treatment (all four edges anchored, exclusive
+    /// keyboard, transparent surface) versus a fixed-size centered panel;
+    /// `width`/`height` size the centered panel and are ignored for overlays,
+    /// which span the whole output.
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         app: &gtk4::Application,
-        view_name: impl Into<String>,
+        canonical_name: impl Into<String>,
+        overlay: bool,
+        width: i32,
+        height: i32,
         dispatcher: Arc<dyn IpcDispatcher>,
         _theme_store: Arc<dyn ThemeStore>,
         runtime: Handle,
         event_tx: broadcast::Sender<EventEnvelope>,
         monitor: Option<gdk::Monitor>,
     ) -> Self {
-        let view_name: String = view_name.into();
+        let view_name: String = canonical_name.into();
         let layer_shell = use_layer_shell();
 
-        // The power-menu is a fullscreen overlay: it anchors all four
-        // edges of the active output so the page's own backdrop covers
-        // the whole screen, click-outside dismissal reaches the modal
-        // card, and the surrounding "bars above and below the card"
-        // (artefacts of a fixed-size centered surface) disappear. Other
-        // panels (launcher today) stay as fixed-size centered surfaces.
-        let is_fullscreen_overlay = matches!(
-            view_name.as_str(),
-            "widgets/power-menu" | "widgets/power-profile-menu"
-        );
-
-        let (width, height) = match view_name.as_str() {
-            "launcher" => (600, 420),
-            "widgets/power-menu" => (440, 320),
-            "widgets/power-profile-menu" => (440, 320),
-            _ => (480, 320),
-        };
+        // An overlay anchors all four edges of the active output so the
+        // page's own backdrop covers the whole screen, click-outside
+        // dismissal reaches the modal card, and the surrounding "bars above
+        // and below the card" (artefacts of a fixed-size centered surface)
+        // disappear. Plain panels stay as fixed-size centered surfaces.
+        let is_fullscreen_overlay = overlay;
 
         let mut builder = gtk4::ApplicationWindow::builder().application(app);
 
@@ -206,7 +206,7 @@ impl PanelWindow {
             false
         });
 
-        let url = format!("quantum://theme/default/views/{}/index.html", view_name);
+        let url = crate::windows::resolve_view_uri(&view_name);
         webview.load_uri(&url);
         window.set_child(Some(&webview));
 

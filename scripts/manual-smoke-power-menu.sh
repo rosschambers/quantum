@@ -2,7 +2,7 @@
 # Manual smoke test for the centered power-menu panel + scheduled actions.
 #
 # Builds the daemon binaries on the host (nix-shell), restarts the
-# daemon, opens the centered widgets/power-menu view, and walks the
+# daemon, opens the centered plugin/power-menu/power-menu view, and walks the
 # user through each interaction. Does NOT actually shut down /
 # suspend / reboot. The lock command can be overridden in
 # ~/.config/quantum/config.toml to `lock_command = "echo locked"` so
@@ -31,7 +31,7 @@ DAEMON_PID=$!
 sleep 4
 
 echo "[4/4] Open the power menu and prompt..."
-nix-shell --run "./target/debug/quantumctl call view.show '{\"name\":\"widgets/power-menu\"}'"
+nix-shell --run "./target/debug/quantumctl call view.show '{\"name\":\"plugin/power-menu/power-menu\"}'"
 sleep 2
 
 cat <<'EOF'
@@ -49,7 +49,7 @@ Verify each interaction:
 1.  HIDE
     - Click outside the card (on the dim backdrop). Menu closes.
       Re-open via the bar's power icon or:
-        quantumctl call view.show '{"name":"widgets/power-menu"}'
+        quantumctl call view.show '{"name":"plugin/power-menu/power-menu"}'
     - Press Escape. Menu closes.
     - Click the close button (top-right \u00d7). Menu closes.
 

@@ -628,26 +628,13 @@ mod tests {
         );
     }
 
-    #[test]
-    fn embedded_launcher_view_resolves() {
-        let store = ThemeStore::new(None);
-        // Check that launcher view files exist in embedded bundle
-        // Try the full path
-        let dist_file = store.get_file("default", "views/launcher/dist/index.html");
-
-        // If that fails, verify at least some embedded files exist
-        if let Some(content_bytes) = dist_file {
-            let content = String::from_utf8(content_bytes).expect("valid utf8");
-            assert!(!content.is_empty(), "index.html should have content");
-        } else {
-            // Fallback: check tokens.toml exists as a sanity check
-            let tokens = store.get_file("default", "tokens.toml");
-            assert!(
-                tokens.is_some(),
-                "embedded default theme should have tokens.toml"
-            );
-        }
-    }
+    // The former `embedded_launcher_view_resolves` test was deleted: the
+    // launcher moved out of the default theme into the first-party
+    // `plugin/launcher/launcher`, so its theme-path assertion no longer
+    // matched anything and silently degraded to asserting tokens.toml exists.
+    // Embedded plugin view resolution (the honest replacement) is covered by
+    // `get_plugin_file_embedded_resolves_with_dist_insertion` and friends
+    // below, which exercise `get_plugin_file` against an embedded fixture.
 
     #[test]
     fn get_file_rejects_dotdot() {

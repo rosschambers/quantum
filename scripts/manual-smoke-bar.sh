@@ -18,7 +18,7 @@ DAEMON_PID=$!
 sleep 4
 
 echo "[4/4] Show bar widget..."
-nix-shell --run "./target/debug/quantumctl show widgets/bar"
+nix-shell --run "./target/debug/quantumctl show plugin/bar/bar"
 sleep 2
 
 echo

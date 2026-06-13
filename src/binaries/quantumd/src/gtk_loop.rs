@@ -100,6 +100,7 @@ pub fn run(
             theme_store_for_activate.clone(),
             runtime.clone(),
             event_tx_for_activate.clone(),
+            view_catalog.clone(),
         );
         let registry = Rc::new(RefCell::new(WindowRegistry::new(
             ctor,

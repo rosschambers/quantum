@@ -21,11 +21,19 @@ impl ViewCatalog {
     /// Build a catalog from pre-flattened `(canonical name, descriptor)`
     /// tuples. The daemon produces these from its merged plugin list; the
     /// canonical name is expected to already be in `plugin/<plugin>/<view>`
-    /// form. Later tuples with a duplicate name overwrite earlier ones.
+    /// form. Later tuples with a duplicate name overwrite earlier ones; each
+    /// overwrite logs a warning since it usually signals two plugins (or two
+    /// views) claiming the same canonical name.
     pub fn from_plugins(entries: Vec<(String, ViewDescriptor)>) -> Self {
-        Self {
-            descriptors: entries.into_iter().collect(),
+        let mut descriptors: HashMap<String, ViewDescriptor> = HashMap::new();
+        for (name, descriptor) in entries {
+            if descriptors.insert(name.clone(), descriptor).is_some() {
+                tracing::warn!(
+                    "duplicate view name '{name}' in catalog; later entry overwrites the earlier one"
+                );
+            }
         }
+        Self { descriptors }
     }
 
     /// Look up the descriptor for a canonical view name.

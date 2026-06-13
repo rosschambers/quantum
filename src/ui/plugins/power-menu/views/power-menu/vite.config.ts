@@ -4,8 +4,8 @@ import path from "path";
 
 export default defineConfig({
   plugins: [svelte()],
-  // See launcher/vite.config.ts for why we use relative base instead of
-  // a quantum:// URL.
+  // See ../../../launcher/views/launcher/vite.config.ts for why we use a
+  // relative base instead of a quantum:// URL.
   base: "./",
   build: {
     outDir: "dist",

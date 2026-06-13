@@ -8,7 +8,7 @@ use gtk4::glib;
 use gtk4::prelude::*;
 use gtk4_layer_shell::{Edge, KeyboardMode, Layer, LayerShell};
 use quantum_domain::ports::ThemeStore;
-use quantum_domain::EventEnvelope;
+use quantum_domain::{EventEnvelope, ViewAnchor};
 use std::sync::Arc;
 use tokio::runtime::Handle;
 use tokio::sync::broadcast;
@@ -35,14 +35,28 @@ pub struct WidgetWindow {
     window: gtk4::ApplicationWindow,
     #[allow(dead_code)]
     webview: WebView,
-    is_bar: bool,
+    /// Whether this widget anchors as a top bar (Layer::Top, anchored
+    /// top/left/right, reserving an exclusive zone) and may grow at runtime
+    /// via `set_height`. Derived from `anchor == ViewAnchor::Top`. Non-anchored
+    /// widgets (clock, manifest-less plugins) sit on the background layer and
+    /// ignore runtime resize requests.
+    top_anchored: bool,
 }
 
 impl WidgetWindow {
     /// Create a new widget window.
+    ///
+    /// `anchor` selects the layout: [`ViewAnchor::Top`] produces a bar-style
+    /// top-anchored surface with an exclusive zone of `height` (defaulting to
+    /// [`BAR_HEIGHT`] when `None`); [`ViewAnchor::None`] (and `Bottom`, which
+    /// widgets do not yet special-case) produces a background-layer, top-right
+    /// widget like the clock.
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         app: &gtk4::Application,
         view_name: String,
+        anchor: ViewAnchor,
+        height: Option<u32>,
         dispatcher: Arc<dyn IpcDispatcher>,
         _theme_store: Arc<dyn ThemeStore>,
         runtime: Handle,
@@ -80,27 +94,30 @@ impl WidgetWindow {
             window.set_monitor(m);
         }
 
-        // Determine layout based on view name.
-        // TODO: Long-term, this should be per-view config in theme.toml.
-        let is_bar = view_name == "widgets/bar" || view_name.starts_with("widgets/bar/");
+        // Layout is driven by the descriptor's anchor: a top-anchored widget
+        // is a bar; everything else sits on the background layer. The exclusive
+        // zone / initial height come from the descriptor's `height` (falling
+        // back to BAR_HEIGHT).
+        let top_anchored = anchor == ViewAnchor::Top;
+        let bar_height = height.map(|h| h as i32).unwrap_or(BAR_HEIGHT);
 
-        if is_bar {
+        if top_anchored {
             // Bar widget: top layer, full width.
             //
             // Surface starts the same height as the visible bar
-            // (BAR_HEIGHT) so the unused area below cannot intercept
+            // (bar_height) so the unused area below cannot intercept
             // input. Apps cover that area normally and remain clickable.
             // When the frontend opens a popover it calls the
             // `view.set_height` IPC method to grow the surface; the
-            // exclusive zone stays at BAR_HEIGHT so other windows do
+            // exclusive zone stays at bar_height so other windows do
             // not reflow.
             window.set_layer(Layer::Top);
             window.set_anchor(Edge::Top, true);
             window.set_anchor(Edge::Left, true);
             window.set_anchor(Edge::Right, true);
             window.set_keyboard_mode(KeyboardMode::None);
-            window.set_exclusive_zone(BAR_HEIGHT);
-            window.set_default_height(BAR_HEIGHT);
+            window.set_exclusive_zone(bar_height);
+            window.set_default_height(bar_height);
         } else {
             // Other widgets (clock, etc.): background layer, top-right.
             window.set_layer(Layer::Background);
@@ -171,26 +188,9 @@ impl WidgetWindow {
             }
         }
 
-        // Resolve the URL depending on whether this is a theme view or
-        // a plugin view. Plugin view names take the shape
-        // `plugin/<plugin-name>/<view-name>` and resolve to
-        // `quantum://plugin/<plugin-name>/views/<view-name>/index.html`
-        // (the scheme handler routes those to ~/.config/quantum/plugins/...
-        // through `ThemeStore::get_plugin_file`). Theme views stay on the
-        // existing `quantum://theme/default/views/<name>/index.html`
-        // route.
-        let uri = if let Some(plugin_path) = view_name.strip_prefix("plugin/") {
-            // plugin_path is "<plugin-name>/<view-name>"; split once.
-            if let Some((plugin, view)) = plugin_path.split_once('/') {
-                format!("quantum://plugin/{}/views/{}/index.html", plugin, view)
-            } else {
-                // Malformed plugin view key; fall back to a theme lookup
-                // that will 404 cleanly rather than panicking.
-                format!("quantum://theme/default/views/{}/index.html", view_name)
-            }
-        } else {
-            format!("quantum://theme/default/views/{}/index.html", view_name)
-        };
+        // Resolve the URL: plugin views load `quantum://plugin/...`, theme
+        // views load `quantum://theme/...` (see `resolve_view_uri`).
+        let uri = crate::windows::resolve_view_uri(&view_name);
         webview.load_uri(&uri);
         window.set_child(Some(&webview));
 
@@ -266,7 +266,7 @@ impl WidgetWindow {
         Self {
             window,
             webview,
-            is_bar,
+            top_anchored,
         }
     }
 }
@@ -286,10 +286,10 @@ impl crate::registry::WindowOps for WidgetWindow {
     }
 
     fn set_height(&mut self, height: u32) {
-        // Only the bar widget is meant to resize at runtime. Other
-        // widgets ignore the request to avoid accidental geometry
+        // Only top-anchored (bar) widgets are meant to resize at runtime.
+        // Other widgets ignore the request to avoid accidental geometry
         // changes from misuse of the IPC method.
-        if !self.is_bar {
+        if !self.top_anchored {
             tracing::debug!("set_height ignored for non-bar widget");
             return;
         }
