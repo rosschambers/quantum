@@ -659,7 +659,7 @@ mod tests {
         // were silently discarded and every user fell back to white-on-black.
         assert_eq!(tokens.get("color-bg"), Some(&"#1e1e2e".to_string()));
         assert_eq!(tokens.get("color-fg"), Some(&"#cdd6f4".to_string()));
-        assert_eq!(tokens.get("color-accent"), Some(&"#89b4fa".to_string()));
+        assert_eq!(tokens.get("color-accent"), Some(&"#a6e3a1".to_string()));
         assert_eq!(tokens.get("font-size-base"), Some(&"14px".to_string()));
         assert_eq!(tokens.get("space-1"), Some(&"0.25rem".to_string()));
         assert_eq!(tokens.get("radius-sm"), Some(&"2px".to_string()));

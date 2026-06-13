@@ -175,7 +175,7 @@ invalid syntax
         };
 
         let config = store.get_config().await;
-        assert_eq!(config.general.active_theme, Some("default".to_string()));
+        assert_eq!(config.general.active_theme, Some("sycamore".to_string()));
     }
 
     #[tokio::test]
