@@ -9,7 +9,7 @@ pub use error::{ApplicationError, Result};
 pub use use_cases::{
     LaunchActionUseCase, ListProvidersUseCase, OpenViewUseCase, QueryProviderUseCase,
     ReloadPluginsUseCase, ReloadThemeUseCase, ScheduleActionUseCase, ScheduleId,
-    ScheduledJobSummary, SearchResponse, SearchUseCase, SubscribeProviderUseCase,
+    ScheduledJobSummary, SearchResponse, SearchUseCase, SetThemeUseCase, SubscribeProviderUseCase,
 };
 
 pub fn version() -> &'static str {

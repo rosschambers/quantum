@@ -1,7 +1,7 @@
 use crate::{
     ApplicationError, LaunchActionUseCase, ListProvidersUseCase, OpenViewUseCase,
     QueryProviderUseCase, ReloadPluginsUseCase, ReloadThemeUseCase, Result, ScheduleActionUseCase,
-    SearchUseCase, SubscribeProviderUseCase,
+    SearchUseCase, SetThemeUseCase, SubscribeProviderUseCase,
 };
 use quantum_domain::{DomainError, WindowMode};
 use serde::de::DeserializeOwned;
@@ -14,6 +14,7 @@ pub struct Dispatcher {
     launch_action: Arc<LaunchActionUseCase>,
     list_providers: Arc<ListProvidersUseCase>,
     reload_theme: Arc<ReloadThemeUseCase>,
+    set_theme: Arc<SetThemeUseCase>,
     open_view: Arc<OpenViewUseCase>,
     subscribe_provider: Arc<SubscribeProviderUseCase>,
     query_provider: Arc<QueryProviderUseCase>,
@@ -46,6 +47,7 @@ impl Dispatcher {
         launch_action: Arc<LaunchActionUseCase>,
         list_providers: Arc<ListProvidersUseCase>,
         reload_theme: Arc<ReloadThemeUseCase>,
+        set_theme: Arc<SetThemeUseCase>,
         open_view: Arc<OpenViewUseCase>,
         subscribe_provider: Arc<SubscribeProviderUseCase>,
         query_provider: Arc<QueryProviderUseCase>,
@@ -57,6 +59,7 @@ impl Dispatcher {
             launch_action,
             list_providers,
             reload_theme,
+            set_theme,
             open_view,
             subscribe_provider,
             query_provider,
@@ -80,6 +83,7 @@ impl Dispatcher {
             "view.hide" => self.handle_view(params, WindowMode::Hide).await,
             "view.set_height" => self.handle_view_set_height(params).await,
             "theme.reload" => self.handle_theme_reload(params).await,
+            "theme.set" => self.handle_theme_set(params).await,
             "plugin.reload" => self.handle_plugin_reload(params).await,
             "system.status" => self.handle_system_status(params).await,
             _ => Err(ApplicationError::Domain(DomainError::Unsupported(
@@ -139,6 +143,16 @@ impl Dispatcher {
 
     async fn handle_theme_reload(&self, _params: Option<&RawValue>) -> Result<Value> {
         self.reload_theme.execute().await?;
+        Ok(json!({}))
+    }
+
+    async fn handle_theme_set(&self, params: Option<&RawValue>) -> Result<Value> {
+        #[derive(serde::Deserialize)]
+        struct ThemeSetParams {
+            theme: String,
+        }
+        let params: ThemeSetParams = parse_params(params, "theme.set")?;
+        self.set_theme.execute(&params.theme).await?;
         Ok(json!({}))
     }
 
@@ -362,6 +376,10 @@ mod tests {
             Arc::new(FakeThemeStore),
             Arc::new(FakeEventBus),
         ));
+        let set_theme = Arc::new(SetThemeUseCase::new(
+            Arc::new(FakeThemeStore),
+            Arc::new(FakeEventBus),
+        ));
         let open_view = Arc::new(OpenViewUseCase::new(Arc::new(FakeWindowHost)));
         let subscribe_provider = Arc::new(SubscribeProviderUseCase::new(
             registry.clone(),
@@ -378,6 +396,7 @@ mod tests {
             launch_action,
             list_providers,
             reload_theme,
+            set_theme,
             open_view,
             subscribe_provider,
             query_provider,

@@ -14,6 +14,7 @@ use tracing_subscriber::EnvFilter;
 use quantum_application::{
     ApplicationError, Dispatcher as AppDispatcher, LaunchActionUseCase, ListProvidersUseCase,
     OpenViewUseCase, QueryProviderUseCase, ReloadPluginsUseCase, ReloadThemeUseCase,
+    SetThemeUseCase,
     ScheduleActionUseCase, SearchUseCase, SubscribeProviderUseCase,
 };
 use quantum_config::{Config, ConfigStore};
@@ -661,6 +662,10 @@ async fn setup_daemon(
         theme_store.clone() as Arc<dyn quantum_domain::ThemeStore>,
         event_bus.clone(),
     ));
+    let set_theme_use_case = Arc::new(SetThemeUseCase::new(
+        theme_store.clone() as Arc<dyn quantum_domain::ThemeStore>,
+        event_bus.clone(),
+    ));
     let subscribe_provider_use_case = Arc::new(SubscribeProviderUseCase::new(
         registry.clone(),
         event_bus.clone(),
@@ -708,6 +713,7 @@ async fn setup_daemon(
         launch_action_use_case,
         list_providers_use_case,
         reload_theme_use_case,
+        set_theme_use_case,
         open_view_use_case,
         subscribe_provider_use_case,
         query_provider_use_case,
