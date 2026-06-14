@@ -252,26 +252,39 @@ fn allowed_icon_roots() -> Vec<std::path::PathBuf> {
     roots
 }
 
-/// Read an icon file from disk, enforcing that its canonicalized path lives
-/// under one of `roots` and has an image extension. Returns `None` on any
-/// validation failure or read error. Split from `allowed_icon_roots` so tests
-/// can inject explicit roots.
+/// Read an icon file from disk, enforcing that it lives under one of `roots`
+/// and has an image extension. Returns `None` on any validation failure or
+/// read error. Split from `allowed_icon_roots` so tests can inject explicit
+/// roots.
+///
+/// Security model: we canonicalize the file's *parent directory* (not the file
+/// itself) and require that directory to sit under an allowed root. This
+/// resolves `..` traversal and directory symlinks — so an escape attempt still
+/// fails the prefix check — while deliberately NOT following the icon file's
+/// own symlink target. Icon files are very commonly symlinks into a separate
+/// content store (Nix `/nix/store`, Flatpak, distro alternatives); following
+/// the file link would resolve to a path outside every `.../icons` root and
+/// reject legitimate icons. The directory containing the link is what must be
+/// trusted, not the bytes it ultimately points at.
 fn read_icon_file_from(path: &str, roots: &[std::path::PathBuf]) -> Option<Vec<u8>> {
     let requested = std::path::Path::new(path);
     if !is_image_extension(requested) {
         return None;
     }
-    // Canonicalize to resolve any `..`/symlinks, then require the result to sit
-    // under an allowed root. A traversal that escapes the root fails here.
-    let canonical = std::fs::canonicalize(requested).ok()?;
-    if !is_image_extension(&canonical) {
-        return None;
-    }
-    let under_root = roots.iter().any(|root| canonical.starts_with(root));
+    let parent = requested.parent()?;
+    let file_name = requested.file_name()?;
+    // Canonicalize the directory so `..` segments and directory symlinks are
+    // resolved; a traversal that escapes every allowed root fails below.
+    let canonical_dir = std::fs::canonicalize(parent).ok()?;
+    let under_root = roots.iter().any(|root| canonical_dir.starts_with(root));
     if !under_root {
         return None;
     }
-    std::fs::read(&canonical).ok()
+    // Re-join the original file name onto the validated directory. Reading
+    // through this path still follows a file-level symlink (so the icon bytes
+    // load), but the trust decision was made on the directory.
+    let resolved = canonical_dir.join(file_name);
+    std::fs::read(&resolved).ok()
 }
 
 /// Serve an icon file requested via `quantum://icon/...`, using the
@@ -702,6 +715,26 @@ mod tests {
         assert!(read_icon_file_from(&escaping, &roots).is_none());
 
         let _ = std::fs::remove_file(&secret);
+    }
+
+    #[test]
+    fn read_icon_file_serves_symlinked_icon_into_external_store() {
+        // Regression: icon files are commonly symlinks into a separate content
+        // store (Nix /nix/store, Flatpak). The link TARGET lives outside every
+        // icon root, but the directory holding the link is trusted, so the icon
+        // must still load. Canonicalizing the file (old behaviour) followed the
+        // link out of root and rejected it.
+        let store = tempfile::tempdir().unwrap();
+        let target = store.path().join("real-firefox.png");
+        std::fs::write(&target, b"\x89PNG\r\n\x1a\n").unwrap();
+
+        let root = tempfile::tempdir().unwrap();
+        let link = root.path().join("firefox.png");
+        std::os::unix::fs::symlink(&target, &link).unwrap();
+
+        let roots = vec![std::fs::canonicalize(root.path()).unwrap()];
+        let bytes = read_icon_file_from(link.to_str().unwrap(), &roots);
+        assert_eq!(bytes.as_deref(), Some(&b"\x89PNG\r\n\x1a\n"[..]));
     }
 
     #[test]
