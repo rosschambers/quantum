@@ -45,7 +45,9 @@ impl UsageStore {
         let data_home = std::env::var("XDG_DATA_HOME").unwrap_or_else(|_| {
             format!("{}/.local/share", std::env::var("HOME").unwrap_or_default())
         });
-        PathBuf::from(data_home).join("quantum").join("app_usage.json")
+        PathBuf::from(data_home)
+            .join("quantum")
+            .join("app_usage.json")
     }
 
     /// Load the store from its default location.
@@ -108,10 +110,7 @@ impl UsageStore {
             // Known-before-unknown, then higher score first, then original
             // index to keep the sort stable and deterministic.
             b.2.cmp(&a.2)
-                .then(
-                    b.3.partial_cmp(&a.3)
-                        .unwrap_or(std::cmp::Ordering::Equal),
-                )
+                .then(b.3.partial_cmp(&a.3).unwrap_or(std::cmp::Ordering::Equal))
                 .then(a.0.cmp(&b.0))
         });
         scored.into_iter().map(|(_, id, _, _)| id.clone()).collect()

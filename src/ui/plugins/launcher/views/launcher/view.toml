@@ -1,3 +1,1 @@
-kind = "panel"
-width = 600
-height = 420
+kind = "overlay"

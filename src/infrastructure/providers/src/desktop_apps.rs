@@ -702,7 +702,11 @@ Type=Application"#,
         let query = Query::new("");
         let matches = provider.search(&query).await.unwrap();
 
-        assert_eq!(matches.len(), 2, "empty query should return the default apps");
+        assert_eq!(
+            matches.len(),
+            2,
+            "empty query should return the default apps"
+        );
     }
 
     /// An empty query respects the requested limit.

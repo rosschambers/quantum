@@ -88,14 +88,24 @@ pub fn register_quantum_scheme(context: &WebContext, theme_store: Arc<dyn ThemeS
 /// Parsed quantum URI path.
 #[derive(Debug, Clone)]
 enum QuantumPath {
-    Theme { name: String, path: String },
-    Assets { path: String },
-    Plugin { name: String, path: String },
+    Theme {
+        name: String,
+        path: String,
+    },
+    Assets {
+        path: String,
+    },
+    Plugin {
+        name: String,
+        path: String,
+    },
     /// An absolute filesystem path to an icon file, served via the
     /// `quantum://icon/<percent-encoded-absolute-path>` route. Icon files live
     /// outside the theme/plugin sandbox (e.g. `/usr/share/icons/...`), so this
     /// route reads from disk directly under strict root + extension checks.
-    Icon { path: String },
+    Icon {
+        path: String,
+    },
 }
 
 impl QuantumPath {
