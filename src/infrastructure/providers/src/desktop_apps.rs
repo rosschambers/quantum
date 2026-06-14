@@ -70,11 +70,19 @@ fn resolve_icon_path(icon: Option<&str>) -> Option<std::path::PathBuf> {
     freedesktop_icons::lookup(name).with_size(48).find()
 }
 
+/// Default number of usage-ranked apps shown for an empty query when the
+/// caller does not specify a limit.
+const DEFAULT_EMPTY_QUERY_LIMIT: usize = 12;
+
 /// Provider for desktop applications (*.desktop files).
 pub struct DesktopAppsProvider {
     id: ProviderId,
     apps: RwLock<Vec<AppInfo>>,
     executor: Arc<dyn ShellExecutor>,
+    /// Launch-usage tracking, used to rank the default apps shown on an empty
+    /// query and updated on every launch. Behind a Mutex because `invoke`
+    /// records launches through a shared `&self`.
+    usage: tokio::sync::Mutex<crate::app_usage::UsageStore>,
 }
 
 impl DesktopAppsProvider {
@@ -84,6 +92,7 @@ impl DesktopAppsProvider {
             id: ProviderId::from("desktop-apps"),
             apps: RwLock::new(Vec::new()),
             executor,
+            usage: tokio::sync::Mutex::new(crate::app_usage::UsageStore::load()),
         };
 
         provider.scan_apps().await?;
@@ -184,6 +193,24 @@ impl DesktopAppsProvider {
         Ok(())
     }
 
+    /// Build a [`Match`] for an app, resolving its icon to a concrete file
+    /// path. An unresolved icon yields no `IconRef` rather than a name the
+    /// webview cannot load.
+    fn match_from_app(&self, app: &AppInfo, score: f32) -> Match {
+        let icon = resolve_icon_path(app.icon.as_deref()).map(quantum_domain::IconRef::Path);
+        Match {
+            id: app.id.clone(),
+            provider: self.id.clone(),
+            title: app.name.clone(),
+            subtitle: app.generic_name.clone(),
+            icon,
+            score: MatchScore::new(score),
+            action: Action::Launch {
+                desktop_id: app.id.clone(),
+            },
+        }
+    }
+
     /// Strip desktop entry field codes from exec string.
     fn clean_exec(exec: &str) -> String {
         exec.split_whitespace()
@@ -208,6 +235,34 @@ impl ProviderSource for DesktopAppsProvider {
 
     async fn search(&self, q: &Query) -> Result<Vec<Match>, DomainError> {
         let apps = self.apps.read().await;
+
+        // Empty query: return a usage-ranked set of default apps rather than
+        // running the substring scorer (which would otherwise match every app
+        // via the `"".contains("")` accident). Apps with no launch history
+        // fall back to the existing alphabetical order of `apps`.
+        if q.text.trim().is_empty() {
+            let limit = q
+                .limit
+                .map(|l| l as usize)
+                .unwrap_or(DEFAULT_EMPTY_QUERY_LIMIT);
+            let ids: Vec<String> = apps.iter().map(|a| a.id.clone()).collect();
+            let ranked_ids = self.usage.lock().await.rank(&ids);
+            let mut matches: Vec<Match> = ranked_ids
+                .iter()
+                .take(limit)
+                .filter_map(|id| apps.iter().find(|a| &a.id == id))
+                .map(|app| self.match_from_app(app, 1.0))
+                .collect();
+            // Preserve the ranked order: the launcher renders matches as-is,
+            // but downstream aggregation may re-sort by score, so give earlier
+            // (more relevant) defaults a marginally higher score.
+            let count = matches.len();
+            for (idx, m) in matches.iter_mut().enumerate() {
+                m.score = MatchScore::new(1.0 - (idx as f32 / count.max(1) as f32 * 0.001));
+            }
+            return Ok(matches);
+        }
+
         let query_lower = q.text.to_lowercase();
         let mut matches = Vec::new();
 
@@ -248,22 +303,7 @@ impl ProviderSource for DesktopAppsProvider {
             let combined_score = name_score.max(generic_score).max(keyword_score);
 
             if combined_score > 0.1 {
-                // Resolve the icon name to a concrete file path. An
-                // unresolved name yields no IconRef rather than a name the
-                // webview cannot load.
-                let icon = resolve_icon_path(app.icon.as_deref())
-                    .map(quantum_domain::IconRef::Path);
-                matches.push(Match {
-                    id: app.id.clone(),
-                    provider: self.id.clone(),
-                    title: app.name.clone(),
-                    subtitle: app.generic_name.clone(),
-                    icon,
-                    score: MatchScore::new(combined_score),
-                    action: Action::Launch {
-                        desktop_id: app.id.clone(),
-                    },
-                });
+                matches.push(self.match_from_app(app, combined_score));
             }
         }
 
@@ -297,6 +337,12 @@ impl ProviderSource for DesktopAppsProvider {
 
                     if !command.is_empty() {
                         self.executor.spawn_detached(&command).await?;
+                        // Record the launch for usage-ranked defaults. A
+                        // persistence failure is logged, not fatal: the launch
+                        // itself already succeeded.
+                        if let Err(err) = self.usage.lock().await.record(desktop_id) {
+                            tracing::warn!("failed to persist app usage: {err}");
+                        }
                         return Ok(ActionOutcome {
                             message: Some(format!("Launched {}", app.name)),
                         });
@@ -317,6 +363,21 @@ impl ProviderSource for DesktopAppsProvider {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A usage store backed by a throwaway temp file so tests never touch the
+    /// real `$XDG_DATA_HOME` and never share state with each other.
+    fn test_usage() -> tokio::sync::Mutex<crate::app_usage::UsageStore> {
+        let mut path = std::env::temp_dir();
+        path.push(format!(
+            "quantum-test-usage-{}-{}.json",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or(0)
+        ));
+        tokio::sync::Mutex::new(crate::app_usage::UsageStore::with_path(path))
+    }
 
     struct FakeExecutor {
         spawned: Arc<RwLock<Vec<Vec<String>>>>,
@@ -377,6 +438,7 @@ Type=Application"#;
             id: ProviderId::from("test"),
             apps: RwLock::new(Vec::new()),
             executor,
+            usage: test_usage(),
         };
 
         provider
@@ -417,6 +479,7 @@ Type=Application"#,
             id: ProviderId::from("test"),
             apps: RwLock::new(Vec::new()),
             executor,
+            usage: test_usage(),
         };
 
         // Manually scan the temp directory
@@ -460,6 +523,7 @@ Type=Application"#,
                 None,
             )]),
             executor,
+            usage: test_usage(),
         };
 
         let query = Query::new("browser");
@@ -499,6 +563,7 @@ Type=Application"#,
                 ),
             ]),
             executor,
+            usage: test_usage(),
         };
 
         let query = Query::new("browser");
@@ -527,6 +592,7 @@ Type=Application"#,
                 Some("definitely-not-a-real-icon-name-xyz123".to_string()),
             )]),
             executor,
+            usage: test_usage(),
         };
 
         let query = Query::new("firefox");
@@ -589,6 +655,7 @@ Type=Application"#,
                 Some(icon.to_str().unwrap().to_string()),
             )]),
             executor,
+            usage: test_usage(),
         };
 
         let query = Query::new("quantum");
@@ -601,6 +668,119 @@ Type=Application"#,
             }
             other => panic!("expected IconRef::Path, got {other:?}"),
         }
+    }
+
+    /// An empty query returns a non-empty, bounded list of default apps when
+    /// apps exist, rather than nothing or every app via the substring scorer.
+    #[tokio::test]
+    async fn empty_query_returns_default_apps() {
+        let executor = Arc::new(FakeExecutor::new());
+        let provider = DesktopAppsProvider {
+            id: ProviderId::from("test"),
+            apps: RwLock::new(vec![
+                AppInfo::new(
+                    "firefox".to_string(),
+                    "Firefox".to_string(),
+                    None,
+                    vec![],
+                    "firefox".to_string(),
+                    None,
+                ),
+                AppInfo::new(
+                    "chromium".to_string(),
+                    "Chromium".to_string(),
+                    None,
+                    vec![],
+                    "chromium".to_string(),
+                    None,
+                ),
+            ]),
+            executor,
+            usage: test_usage(),
+        };
+
+        let query = Query::new("");
+        let matches = provider.search(&query).await.unwrap();
+
+        assert_eq!(matches.len(), 2, "empty query should return the default apps");
+    }
+
+    /// An empty query respects the requested limit.
+    #[tokio::test]
+    async fn empty_query_respects_limit() {
+        let executor = Arc::new(FakeExecutor::new());
+        let apps: Vec<AppInfo> = (0..5)
+            .map(|i| {
+                AppInfo::new(
+                    format!("app{i}"),
+                    format!("App {i}"),
+                    None,
+                    vec![],
+                    format!("app{i}"),
+                    None,
+                )
+            })
+            .collect();
+        let provider = DesktopAppsProvider {
+            id: ProviderId::from("test"),
+            apps: RwLock::new(apps),
+            executor,
+            usage: test_usage(),
+        };
+
+        let query = Query {
+            text: String::new(),
+            providers: vec![],
+            limit: Some(2),
+        };
+        let matches = provider.search(&query).await.unwrap();
+
+        assert_eq!(matches.len(), 2, "empty query should honor the limit");
+    }
+
+    /// Recording a launch moves that app to the front of the empty-query
+    /// default results.
+    #[tokio::test]
+    async fn recorded_launch_moves_app_to_front_of_defaults() {
+        let executor = Arc::new(FakeExecutor::new());
+        let provider = DesktopAppsProvider {
+            id: ProviderId::from("test"),
+            // Alphabetical order would put "alpha" first.
+            apps: RwLock::new(vec![
+                AppInfo::new(
+                    "alpha".to_string(),
+                    "Alpha".to_string(),
+                    None,
+                    vec![],
+                    "alpha".to_string(),
+                    None,
+                ),
+                AppInfo::new(
+                    "zeta".to_string(),
+                    "Zeta".to_string(),
+                    None,
+                    vec![],
+                    "zeta".to_string(),
+                    None,
+                ),
+            ]),
+            executor: executor.clone(),
+            usage: test_usage(),
+        };
+
+        // Launch zeta so it gains usage history.
+        provider
+            .invoke(&Action::Launch {
+                desktop_id: "zeta".to_string(),
+            })
+            .await
+            .unwrap();
+
+        let matches = provider.search(&Query::new("")).await.unwrap();
+        assert_eq!(
+            matches[0].id, "zeta",
+            "the recently launched app should rank first in defaults"
+        );
     }
 
     #[tokio::test]
@@ -617,6 +797,7 @@ Type=Application"#,
                 None,
             )]),
             executor,
+            usage: test_usage(),
         };
 
         let query = Query::new("xyz123nonexistent");
@@ -725,6 +906,7 @@ Type=Application"#,
                 None,
             )]),
             executor: executor.clone(),
+            usage: test_usage(),
         };
 
         let action = Action::Launch {
