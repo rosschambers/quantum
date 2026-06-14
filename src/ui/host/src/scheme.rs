@@ -46,6 +46,7 @@ pub fn register_quantum_scheme(context: &WebContext, theme_store: Arc<dyn ThemeS
             QuantumPath::Theme { name, path } => theme_store.get_file(&name, &path),
             QuantumPath::Assets { path } => theme_store.get_asset(&path),
             QuantumPath::Plugin { name, path } => theme_store.get_plugin_file(&name, &path),
+            QuantumPath::Icon { path } => read_icon_file(&path),
         };
 
         let Some(bytes_data) = bytes else {
@@ -90,6 +91,11 @@ enum QuantumPath {
     Theme { name: String, path: String },
     Assets { path: String },
     Plugin { name: String, path: String },
+    /// An absolute filesystem path to an icon file, served via the
+    /// `quantum://icon/<percent-encoded-absolute-path>` route. Icon files live
+    /// outside the theme/plugin sandbox (e.g. `/usr/share/icons/...`), so this
+    /// route reads from disk directly under strict root + extension checks.
+    Icon { path: String },
 }
 
 impl QuantumPath {
@@ -98,6 +104,7 @@ impl QuantumPath {
             QuantumPath::Theme { path, .. } => path.clone(),
             QuantumPath::Assets { path } => path.clone(),
             QuantumPath::Plugin { path, .. } => path.clone(),
+            QuantumPath::Icon { path } => path.clone(),
         }
     }
 }
@@ -153,8 +160,114 @@ fn parse_quantum_uri(uri: &str) -> Option<QuantumPath> {
                 path: rest.join("/"),
             })
         }
+        // The icon route carries the absolute path as a single percent-encoded
+        // segment. We decode it here; root + extension + traversal validation
+        // happens at serve time in `read_icon_file`.
+        ["icon", encoded] if !encoded.is_empty() => {
+            percent_decode(encoded).map(|path| QuantumPath::Icon { path })
+        }
         _ => None,
     }
+}
+
+/// Decode a percent-encoded string (`%XX` byte escapes). Returns `None` if a
+/// `%` is not followed by two hex digits, or if the decoded bytes are not
+/// valid UTF-8. Plus signs are left as-is (this is a path segment, not a query
+/// string).
+fn percent_decode(input: &str) -> Option<String> {
+    let bytes = input.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        match bytes[i] {
+            b'%' => {
+                if i + 2 >= bytes.len() {
+                    return None;
+                }
+                let hi = (bytes[i + 1] as char).to_digit(16)?;
+                let lo = (bytes[i + 2] as char).to_digit(16)?;
+                out.push((hi * 16 + lo) as u8);
+                i += 3;
+            }
+            b => {
+                out.push(b);
+                i += 1;
+            }
+        }
+    }
+    String::from_utf8(out).ok()
+}
+
+/// Return true when `path` has a known raster/vector image extension.
+fn is_image_extension(path: &std::path::Path) -> bool {
+    path.extension()
+        .and_then(|e| e.to_str())
+        .map(|e| {
+            matches!(
+                e.to_ascii_lowercase().as_str(),
+                "png" | "svg" | "jpg" | "jpeg" | "webp" | "gif" | "xpm" | "bmp" | "ico"
+            )
+        })
+        .unwrap_or(false)
+}
+
+/// The directories icon files are allowed to be served from. Computed from
+/// `XDG_DATA_HOME`/`XDG_DATA_DIRS` (each with an `/icons` suffix) plus the
+/// standard system locations and the user's `~/.icons`.
+fn allowed_icon_roots() -> Vec<std::path::PathBuf> {
+    let mut roots: Vec<std::path::PathBuf> = Vec::new();
+    let mut push_canonical = |p: std::path::PathBuf| {
+        if let Ok(c) = std::fs::canonicalize(&p) {
+            if !roots.contains(&c) {
+                roots.push(c);
+            }
+        }
+    };
+
+    if let Ok(home) = std::env::var("HOME") {
+        push_canonical(std::path::PathBuf::from(&home).join(".icons"));
+        push_canonical(std::path::PathBuf::from(&home).join(".local/share/icons"));
+    }
+    if let Ok(data_home) = std::env::var("XDG_DATA_HOME") {
+        push_canonical(std::path::PathBuf::from(data_home).join("icons"));
+    }
+    let data_dirs = std::env::var("XDG_DATA_DIRS")
+        .unwrap_or_else(|_| "/usr/local/share:/usr/share".to_string());
+    for dir in data_dirs.split(':') {
+        push_canonical(std::path::PathBuf::from(dir).join("icons"));
+    }
+    push_canonical(std::path::PathBuf::from("/usr/share/icons"));
+    push_canonical(std::path::PathBuf::from("/usr/local/share/icons"));
+    push_canonical(std::path::PathBuf::from("/usr/share/pixmaps"));
+    roots
+}
+
+/// Read an icon file from disk, enforcing that its canonicalized path lives
+/// under one of `roots` and has an image extension. Returns `None` on any
+/// validation failure or read error. Split from `allowed_icon_roots` so tests
+/// can inject explicit roots.
+fn read_icon_file_from(path: &str, roots: &[std::path::PathBuf]) -> Option<Vec<u8>> {
+    let requested = std::path::Path::new(path);
+    if !is_image_extension(requested) {
+        return None;
+    }
+    // Canonicalize to resolve any `..`/symlinks, then require the result to sit
+    // under an allowed root. A traversal that escapes the root fails here.
+    let canonical = std::fs::canonicalize(requested).ok()?;
+    if !is_image_extension(&canonical) {
+        return None;
+    }
+    let under_root = roots.iter().any(|root| canonical.starts_with(root));
+    if !under_root {
+        return None;
+    }
+    std::fs::read(&canonical).ok()
+}
+
+/// Serve an icon file requested via `quantum://icon/...`, using the
+/// system-derived allowed roots.
+fn read_icon_file(path: &str) -> Option<Vec<u8>> {
+    read_icon_file_from(path, &allowed_icon_roots())
 }
 
 /// Map a path's file extension to a MIME type. The extension is lowercased
@@ -495,6 +608,100 @@ mod tests {
         // bypass naive `..` filters while still resolving to the same path.
         assert!(parse_quantum_uri("quantum://theme/default/./views/launcher/index.html").is_none());
         assert!(parse_quantum_uri("quantum://assets/./icons/app.png").is_none());
+    }
+
+    #[test]
+    fn parse_quantum_uri_icon_path() {
+        // The absolute icon path is percent-encoded into a single segment.
+        let uri = "quantum://icon/%2Fusr%2Fshare%2Ficons%2Fhicolor%2F48x48%2Fapps%2Ffirefox.png";
+        let parsed = parse_quantum_uri(uri).expect("parse");
+        match parsed {
+            QuantumPath::Icon { path } => {
+                assert_eq!(path, "/usr/share/icons/hicolor/48x48/apps/firefox.png");
+            }
+            _ => panic!("expected Icon variant"),
+        }
+    }
+
+    #[test]
+    fn parse_quantum_uri_icon_rejects_empty() {
+        assert!(parse_quantum_uri("quantum://icon/").is_none());
+        assert!(parse_quantum_uri("quantum://icon").is_none());
+    }
+
+    #[test]
+    fn percent_decode_basic() {
+        assert_eq!(percent_decode("/usr/share").as_deref(), Some("/usr/share"));
+        assert_eq!(
+            percent_decode("%2Fusr%2Fshare%2Fa.png").as_deref(),
+            Some("/usr/share/a.png")
+        );
+        // A space encoded as %20.
+        assert_eq!(percent_decode("a%20b").as_deref(), Some("a b"));
+    }
+
+    #[test]
+    fn percent_decode_rejects_truncated_or_invalid() {
+        assert!(percent_decode("%2").is_none());
+        assert!(percent_decode("%").is_none());
+        assert!(percent_decode("%zz").is_none());
+    }
+
+    #[test]
+    fn is_image_extension_accepts_known_types() {
+        assert!(is_image_extension(std::path::Path::new("a.png")));
+        assert!(is_image_extension(std::path::Path::new("a.SVG")));
+        assert!(is_image_extension(std::path::Path::new("a.jpeg")));
+        assert!(is_image_extension(std::path::Path::new("a.xpm")));
+        assert!(!is_image_extension(std::path::Path::new("a.txt")));
+        assert!(!is_image_extension(std::path::Path::new("a")));
+    }
+
+    #[test]
+    fn read_icon_file_serves_in_root_image() {
+        let root = tempfile::tempdir().unwrap();
+        let icon = root.path().join("firefox.png");
+        std::fs::write(&icon, b"\x89PNG\r\n\x1a\n").unwrap();
+        let roots = vec![std::fs::canonicalize(root.path()).unwrap()];
+
+        let bytes = read_icon_file_from(icon.to_str().unwrap(), &roots);
+        assert_eq!(bytes.as_deref(), Some(&b"\x89PNG\r\n\x1a\n"[..]));
+    }
+
+    #[test]
+    fn read_icon_file_rejects_out_of_root() {
+        let root = tempfile::tempdir().unwrap();
+        let other = tempfile::tempdir().unwrap();
+        let icon = other.path().join("evil.png");
+        std::fs::write(&icon, b"x").unwrap();
+        let roots = vec![std::fs::canonicalize(root.path()).unwrap()];
+
+        assert!(read_icon_file_from(icon.to_str().unwrap(), &roots).is_none());
+    }
+
+    #[test]
+    fn read_icon_file_rejects_traversal_escape() {
+        // A path that uses .. to climb out of the allowed root must fail the
+        // post-canonicalization prefix check.
+        let root = tempfile::tempdir().unwrap();
+        let secret = root.path().parent().unwrap().join("secret.png");
+        std::fs::write(&secret, b"x").unwrap();
+        let roots = vec![std::fs::canonicalize(root.path()).unwrap()];
+
+        let escaping = format!("{}/../secret.png", root.path().to_str().unwrap());
+        assert!(read_icon_file_from(&escaping, &roots).is_none());
+
+        let _ = std::fs::remove_file(&secret);
+    }
+
+    #[test]
+    fn read_icon_file_rejects_non_image_extension() {
+        let root = tempfile::tempdir().unwrap();
+        let txt = root.path().join("passwd.txt");
+        std::fs::write(&txt, b"secret").unwrap();
+        let roots = vec![std::fs::canonicalize(root.path()).unwrap()];
+
+        assert!(read_icon_file_from(txt.to_str().unwrap(), &roots).is_none());
     }
 
     #[test]
