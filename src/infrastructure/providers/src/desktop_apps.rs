@@ -219,12 +219,20 @@ impl ProviderSource for DesktopAppsProvider {
             let combined_score = name_score.max(generic_score).max(keyword_score);
 
             if combined_score > 0.1 {
+                // Resolve the app's icon: try Icon= field first, fall back to
+                // the desktop entry name (which is typically the icon name).
+                let icon_name = match &app.id {
+                    id if id.ends_with(".desktop") => id.trim_end_matches(".desktop"),
+                    id => id,
+                };
                 matches.push(Match {
                     id: app.id.clone(),
                     provider: self.id.clone(),
                     title: app.name.clone(),
                     subtitle: app.generic_name.clone(),
-                    icon: None, // Icons can be loaded separately
+                    icon: Some(quantum_domain::IconRef::Name(
+                        icon_name.to_string(),
+                    )),
                     score: MatchScore::new(combined_score),
                     action: Action::Launch {
                         desktop_id: app.id.clone(),

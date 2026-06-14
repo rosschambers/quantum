@@ -1,5 +1,5 @@
 <script lang="ts">
-  import type { Match } from './types';
+  import type { Match, IconRef } from './types';
 
   interface Props {
     items: Match[];
@@ -11,6 +11,29 @@
 
   function handleClick(item: Match) {
     onSelect(item);
+  }
+
+  /** Resolve an IconRef to a URL string, or undefined. */
+  function resolveIcon(icon: string | IconRef | undefined): string | undefined {
+    if (!icon) {
+      return undefined;
+    }
+    if (typeof icon === 'string') {
+      return icon;
+    }
+    if (icon.kind === 'name') {
+      // Use the freedesktop icon theme URI scheme which is
+      // supported by most browsers on Linux.
+      // Try multiple standard paths that browsers support.
+      return `gnome-icon-theme/${icon.data}`;
+    }
+    if (icon.kind === 'path') {
+      return `file://${icon.data}`;
+    }
+    if (icon.kind === 'data_uri') {
+      return icon.data;
+    }
+    return undefined;
   }
 </script>
 
@@ -28,8 +51,8 @@
       aria-selected={index === highlighted ? 'true' : 'false'}
       onclick={() => handleClick(item)}
     >
-      {#if item.icon}
-        <img class="icon" src={item.icon} alt="" loading="lazy" onerror={() => (item.icon = undefined)} />
+      {#if resolveIcon(item.icon)}
+        <img class="icon" src={resolveIcon(item.icon)} alt="" loading="lazy" onerror={() => (item.icon = undefined)} />
       {:else}
         <div class="icon"></div>
       {/if}

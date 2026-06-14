@@ -121,10 +121,10 @@ input::placeholder {
   width: 1.5rem;
   height: 1.5rem;
   margin-right: var(--space-2);
+  margin-top: 0.15rem;
   background: var(--color-muted);
   border-radius: var(--radius-sm);
   vertical-align: middle;
-  object-fit: cover;
 }
 
 .match-item .icon img {
@@ -139,14 +139,15 @@ input::placeholder {
   display: block;
   font-weight: 500;
   margin: 0;
-  padding-left: var(--space-4);
+  padding-left: calc(1.5rem + var(--space-2));
 }
 
 .match-item .subtitle {
   display: block;
   font-size: var(--font-size-sm);
   color: var(--color-muted);
-  margin: var(--space-1) 0 0 var(--space-4);
+  margin: var(--space-1) 0 0 var(--space-2);
+  padding-left: calc(1.5rem + var(--space-2));
 }
 
 .match-item.highlighted .title {
