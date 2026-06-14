@@ -5,6 +5,7 @@ pub mod error;
 pub mod registry;
 pub mod shell;
 
+pub mod app_usage;
 pub mod audio;
 pub mod battery;
 pub mod bluetooth;
