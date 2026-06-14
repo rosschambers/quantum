@@ -213,6 +213,33 @@ describe('App.svelte', () => {
     expect(input.getAttribute('aria-activedescendant')).toBe('match-apps-1');
   });
 
+  it('hides view when the backdrop is clicked', async () => {
+    mockCall.mockResolvedValue({ matches: [] });
+
+    render(App);
+    const backdrop = document.querySelector('.backdrop') as HTMLElement;
+    expect(backdrop).not.toBeNull();
+
+    // A click whose target is the backdrop itself dismisses the launcher.
+    await fireEvent.click(backdrop);
+
+    await waitFor(() => {
+      expect(mockCall).toHaveBeenCalledWith('view.hide', { name: 'launcher' });
+    });
+  });
+
+  it('does not hide view when the card is clicked', async () => {
+    mockCall.mockResolvedValue({ matches: [] });
+
+    render(App);
+    const card = document.querySelector('.card') as HTMLElement;
+    expect(card).not.toBeNull();
+
+    await fireEvent.click(card);
+
+    expect(mockCall).not.toHaveBeenCalledWith('view.hide', { name: 'launcher' });
+  });
+
   it('hides view on Escape', async () => {
     const user = userEvent.setup();
     mockCall.mockResolvedValue({ matches: [] });

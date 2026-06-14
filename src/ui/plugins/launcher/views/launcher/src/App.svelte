@@ -102,6 +102,14 @@
     }
   }
 
+  function onBackdropClick(event: MouseEvent) {
+    // Only dismiss when the click lands on the backdrop itself, not on the
+    // card or its children (which bubble up to this handler).
+    if (event.target === event.currentTarget) {
+      client.call('view.hide', { name: 'launcher' }).catch(console.error);
+    }
+  }
+
   async function invokeAction(match: Match) {
     try {
       await client.call('action.invoke', {
@@ -144,30 +152,35 @@
   });
 </script>
 
-<div class="search-container">
-  <SearchInput
-    value={searchText}
-    onInput={handleSearch}
-    onKeyDown={handleKeyDown}
-    expanded={matches.length > 0}
-    activeDescendant={activeDescendant}
-  />
-</div>
+<!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
+<div class="backdrop" onclick={onBackdropClick}>
+  <div class="card" role="dialog" aria-label="Application launcher">
+    <div class="search-container">
+      <SearchInput
+        value={searchText}
+        onInput={handleSearch}
+        onKeyDown={handleKeyDown}
+        expanded={matches.length > 0}
+        activeDescendant={activeDescendant}
+      />
+    </div>
 
-<div class="results-container">
-  {#if isLoading}
-    <div class="loading">Searching...</div>
-  {:else if matches.length === 0 && searchText.trim()}
-    <div class="empty-state">No results found</div>
-  {:else if matches.length > 0}
-    <Results
-      items={matches}
-      highlighted={highlightedIndex}
-      onSelect={invokeAction}
-    />
-  {:else}
-    <div class="empty-state">Start typing to search...</div>
-  {/if}
+    <div class="results-container">
+      {#if isLoading}
+        <div class="loading">Searching...</div>
+      {:else if matches.length === 0 && searchText.trim()}
+        <div class="empty-state">No results found</div>
+      {:else if matches.length > 0}
+        <Results
+          items={matches}
+          highlighted={highlightedIndex}
+          onSelect={invokeAction}
+        />
+      {:else}
+        <div class="empty-state">Start typing to search...</div>
+      {/if}
+    </div>
+  </div>
 </div>
 
 <style>
