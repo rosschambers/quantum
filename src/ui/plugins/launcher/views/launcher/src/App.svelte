@@ -2,7 +2,7 @@
   // Consuming real @quantum/client APIs for search, action.invoke, and view.hide.
   // In browser, the client auto-detects WebKit bridge. In tests, it's mocked.
   import { createClient } from '@quantum/client';
-  import { onMount } from 'svelte';
+  import { onMount, untrack } from 'svelte';
   import SearchInput from './lib/SearchInput.svelte';
   import Results from './lib/Results.svelte';
   import type { Match } from './lib/types';
@@ -26,53 +26,22 @@
       clearTimeout(lastSearchTimeout);
     }
 
-    if (!text.trim()) {
-      matches = [];
-      highlightedIndex = 0;
-      return;
-    }
+    // An empty query fetches the default (usage-ranked) apps. Pin it to the
+    // desktop-apps provider so other providers (shell-command, window
+    // switcher) don't fire on empty input. A non-empty query fans out to all
+    // providers.
+    const trimmed = text.trim();
+    const providers = trimmed ? [] : ['desktop-apps'];
 
     isLoading = true;
     lastSearchTimeout = window.setTimeout(async () => {
       try {
         const response = await client.call('search', {
           text,
-          providers: [],
+          providers,
         });
 
-        matches = response.matches || [];
-        highlightedIndex = 0;
-      } catch (error) {
-        console.error('Search failed:', error);
-        matches = [];
-      } finally {
-        isLoading = false;
-      }
-    }, 50);
-  }
-
-  function handleSearchInput(text: string) {
-    searchText = text;
-
-    if (lastSearchTimeout !== undefined) {
-      clearTimeout(lastSearchTimeout);
-    }
-
-    if (!text.trim()) {
-      matches = [];
-      highlightedIndex = 0;
-      return;
-    }
-
-    isLoading = true;
-    lastSearchTimeout = window.setTimeout(async () => {
-      try {
-        const response = await client.call('search', {
-          text,
-          providers: [],
-        });
-
-        matches = response.matches || [];
+        matches = response?.matches || [];
         highlightedIndex = 0;
       } catch (error) {
         console.error('Search failed:', error);
@@ -150,6 +119,13 @@
     });
     return () => unsubscribe?.();
   });
+
+  $effect(() => {
+    // On open, the launcher mounts fresh with an empty query: fetch the
+    // default (usage-ranked) apps so something useful shows before any typing.
+    // `untrack` keeps this a one-shot setup with no tracked dependencies.
+    untrack(() => handleSearch(''));
+  });
 </script>
 
 <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
@@ -166,18 +142,18 @@
     </div>
 
     <div class="results-container">
-      {#if isLoading}
-        <div class="loading">Searching...</div>
-      {:else if matches.length === 0 && searchText.trim()}
-        <div class="empty-state">No results found</div>
-      {:else if matches.length > 0}
+      {#if matches.length > 0}
         <Results
           items={matches}
           highlighted={highlightedIndex}
           onSelect={invokeAction}
         />
+      {:else if isLoading}
+        <div class="loading">Searching...</div>
+      {:else if searchText.trim()}
+        <div class="empty-state">No results found</div>
       {:else}
-        <div class="empty-state">Start typing to search...</div>
+        <div class="empty-state">No applications found</div>
       {/if}
     </div>
   </div>

@@ -29,6 +29,20 @@ describe('App.svelte', () => {
     // Note: focus management in testing environment is limited, so we verify input exists
   });
 
+  it('fetches default apps on mount with an empty query pinned to desktop-apps', async () => {
+    mockCall.mockResolvedValue({ matches: [] });
+
+    render(App);
+    await act();
+
+    await waitFor(() => {
+      expect(mockCall).toHaveBeenCalledWith('search', {
+        text: '',
+        providers: ['desktop-apps'],
+      });
+    });
+  });
+
   it('triggers search on input with debounce', async () => {
     const user = userEvent.setup();
     mockCall.mockResolvedValue({ matches: [] });
