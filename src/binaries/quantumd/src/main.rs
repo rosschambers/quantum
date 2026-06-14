@@ -27,7 +27,7 @@ use quantum_providers::{
     HyprlandWindowsProvider, InMemoryProviderRegistry, LogindBrightnessProvider, MprisProvider,
     NetworkManagerProvider, PluginScriptProvider, PowerProfilesDaemonProvider, ProcStatsProvider,
     ProvidersError, PulseAudioProvider, ShellCommandProvider, SystemPowerProvider,
-    TokioShellExecutor, UpowerBatteryProvider,
+    TokioShellExecutor, UpowerBatteryProvider, WifiProvider,
 };
 use quantum_theme::ThemeStore;
 use quantum_ui::{DummyWindowHost, IpcDispatcher as UiIpcDispatcher};
@@ -555,7 +555,7 @@ async fn setup_daemon(
         .as_ref()
         .and_then(|sp| sp.lock_command.clone());
     let runtime_handle = tokio::runtime::Handle::current();
-    let (battery, network, bluez, ppd, brightness, audio, sysp) = tokio::join!(
+    let (battery, network, bluez, ppd, brightness, audio, sysp, wifi) = tokio::join!(
         UpowerBatteryProvider::connect(),
         NetworkManagerProvider::connect(),
         BluezProvider::connect(),
@@ -563,6 +563,7 @@ async fn setup_daemon(
         LogindBrightnessProvider::connect(runtime_handle.clone()),
         PulseAudioProvider::connect(runtime_handle.clone()),
         SystemPowerProvider::connect(lock_command_cfg),
+        WifiProvider::connect(),
     );
     register_or_warn(&registry, "UpowerBatteryProvider", battery).await;
     register_or_warn(&registry, "NetworkManagerProvider", network).await;
@@ -571,6 +572,7 @@ async fn setup_daemon(
     register_or_warn(&registry, "LogindBrightnessProvider", brightness).await;
     register_or_warn(&registry, "PulseAudioProvider", audio).await;
     register_or_warn(&registry, "SystemPowerProvider", sysp).await;
+    register_or_warn(&registry, "WifiProvider", wifi).await;
 
     // Plugins: walk ~/.config/quantum/plugins/, merge over the embedded
     // first-party catalog (user plugins shadow embedded ones by name),
@@ -690,6 +692,7 @@ async fn setup_daemon(
         "brightness",
         "audio",
         "system_power",
+        "wifi",
     ] {
         let _ = subscribe_provider_use_case.execute(id.into()).await;
     }
