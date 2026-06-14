@@ -4,11 +4,20 @@
 //! `nmcli -t -f`, writes that check exit status, change-gated streaming,
 //! and command-gated scanning so the overlay only scans while open.
 
+use async_trait::async_trait;
+use futures::stream::BoxStream;
 use quantum_domain::{
-    DomainError, Ipv4Method, SavedNetwork, WifiBand, WifiConnectionDetails, WifiNetwork,
-    WifiSecurity,
+    Action, ActionOutcome, DomainError, Ipv4Method, Match, ProviderId, ProviderSource, Query,
+    SavedNetwork, WifiBand, WifiConnectionDetails, WifiNetwork, WifiSecurity, WifiState,
 };
 use std::collections::HashMap;
+use std::process::Stdio;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
+use tokio::process::Command;
+use tokio::sync::{Mutex, Notify};
+
+use crate::error::ProvidersError;
 
 /// Map an nmcli SECURITY field to WifiSecurity.
 pub(crate) fn map_security(field: &str) -> WifiSecurity {
@@ -93,8 +102,7 @@ pub(crate) fn parse_scan_list(raw: &str) -> Vec<WifiNetwork> {
         } else {
             ssid
         };
-        best
-            .entry(key)
+        best.entry(key)
             .and_modify(|existing| {
                 if net.signal_percent > existing.signal_percent {
                     let was_active = existing.active;
@@ -391,6 +399,368 @@ pub(crate) fn parse_wifi_action(payload: &serde_json::Value) -> Result<WifiActio
     }
 }
 
+/// Shared scan/session state for the WiFi provider.
+///
+/// The overlay drives scanning explicitly: `OpenSession` flips `active` on so
+/// the streaming task (Task 7) starts periodic rescans, and `CloseSession`
+/// flips it off and drops the cached state. `notify` lets any write command
+/// wake the streaming task immediately so the next emitted `WifiState` reflects
+/// the change without waiting for the next poll tick. `last` caches the most
+/// recently emitted state for change-gating.
+struct ScanSession {
+    active: AtomicBool,
+    notify: Notify,
+    last: Mutex<Option<WifiState>>,
+}
+
+impl Default for ScanSession {
+    fn default() -> Self {
+        Self {
+            active: AtomicBool::new(false),
+            notify: Notify::new(),
+            last: Mutex::new(None),
+        }
+    }
+}
+
+/// WiFi management provider using `nmcli` shell commands.
+///
+/// Reads are served by the streaming `subscribe` (Task 7); this struct owns the
+/// write side: every `invoke` either flips session/scan flags or runs an
+/// `nmcli` command, then notifies the streaming task so the overlay sees the
+/// effect quickly.
+pub struct WifiProvider {
+    id: ProviderId,
+    available: bool,
+    scan: Arc<ScanSession>,
+}
+
+impl WifiProvider {
+    /// Probe for `nmcli` and build the provider.
+    ///
+    /// Never errors on a missing `nmcli`: it records `available = false` so
+    /// `invoke` returns `Unsupported` rather than failing construction, mirroring
+    /// the audio provider's behaviour when `pactl` is absent.
+    pub async fn connect() -> Result<Self, ProvidersError> {
+        let available = which::which("nmcli").is_ok();
+        Ok(Self {
+            id: ProviderId::from("wifi"),
+            available,
+            scan: Arc::new(ScanSession::default()),
+        })
+    }
+
+    /// Execute a parsed WiFi command, running the matching `nmcli` invocation
+    /// and notifying the streaming task so the next emitted state reflects it.
+    async fn execute(&self, command: WifiAction) -> Result<ActionOutcome, DomainError> {
+        match command {
+            WifiAction::OpenSession => {
+                self.scan.active.store(true, Ordering::SeqCst);
+                self.scan.notify.notify_one();
+                Ok(ActionOutcome { message: None })
+            }
+            WifiAction::CloseSession => {
+                self.scan.active.store(false, Ordering::SeqCst);
+                {
+                    let mut last = self.scan.last.lock().await;
+                    *last = None;
+                }
+                self.scan.notify.notify_one();
+                Ok(ActionOutcome { message: None })
+            }
+            WifiAction::Rescan => {
+                run_nmcli(&["device", "wifi", "rescan"])
+                    .await
+                    .map_err(map_nmcli_error)?;
+                self.scan.notify.notify_one();
+                Ok(ActionOutcome { message: None })
+            }
+            WifiAction::SetRadio(enabled) => {
+                let state = if enabled { "on" } else { "off" };
+                run_nmcli(&["radio", "wifi", state])
+                    .await
+                    .map_err(map_nmcli_error)?;
+                self.scan.notify.notify_one();
+                Ok(ActionOutcome { message: None })
+            }
+            WifiAction::Connect {
+                ssid,
+                bssid: _,
+                password,
+            } => {
+                let result = connect_to_network(&ssid, password.as_deref(), false).await;
+                self.scan.notify.notify_one();
+                result.map_err(map_connect_error)?;
+                Ok(ActionOutcome { message: None })
+            }
+            WifiAction::ConnectHidden { ssid, password } => {
+                let result = connect_to_network(&ssid, password.as_deref(), true).await;
+                self.scan.notify.notify_one();
+                result.map_err(map_connect_error)?;
+                Ok(ActionOutcome { message: None })
+            }
+            WifiAction::Disconnect => {
+                let outcome = disconnect_active_wifi().await.map_err(map_nmcli_error)?;
+                self.scan.notify.notify_one();
+                Ok(outcome)
+            }
+            WifiAction::Forget { id } => {
+                run_nmcli(&["connection", "delete", "uuid", &id])
+                    .await
+                    .map_err(map_nmcli_error)?;
+                self.scan.notify.notify_one();
+                Ok(ActionOutcome { message: None })
+            }
+            WifiAction::SetAutoconnect { id, enabled } => {
+                let value = if enabled { "yes" } else { "no" };
+                run_nmcli(&[
+                    "connection",
+                    "modify",
+                    "uuid",
+                    &id,
+                    "connection.autoconnect",
+                    value,
+                ])
+                .await
+                .map_err(map_nmcli_error)?;
+                self.scan.notify.notify_one();
+                Ok(ActionOutcome { message: None })
+            }
+            WifiAction::SetIpv4 {
+                id,
+                method,
+                address,
+                gateway,
+                prefix,
+            } => {
+                set_ipv4(&id, method, address.as_deref(), gateway.as_deref(), prefix)
+                    .await
+                    .map_err(map_nmcli_error)?;
+                self.scan.notify.notify_one();
+                Ok(ActionOutcome { message: None })
+            }
+            WifiAction::SetDns { id, servers } => {
+                let joined = servers.join(",");
+                run_nmcli(&["connection", "modify", "uuid", &id, "ipv4.dns", &joined])
+                    .await
+                    .map_err(map_nmcli_error)?;
+                run_nmcli(&["connection", "up", "uuid", &id])
+                    .await
+                    .map_err(map_nmcli_error)?;
+                self.scan.notify.notify_one();
+                Ok(ActionOutcome { message: None })
+            }
+            WifiAction::SetMetered { id, metered } => {
+                let value = if metered { "yes" } else { "no" };
+                run_nmcli(&[
+                    "connection",
+                    "modify",
+                    "uuid",
+                    &id,
+                    "connection.metered",
+                    value,
+                ])
+                .await
+                .map_err(map_nmcli_error)?;
+                self.scan.notify.notify_one();
+                Ok(ActionOutcome { message: None })
+            }
+            WifiAction::FetchDetails { ssid } => {
+                // Parsed for validation / future stream enrichment; the stream
+                // is the primary channel, so the outcome carries no payload.
+                let _ = fetch_details(&ssid).await.map_err(map_nmcli_error)?;
+                self.scan.notify.notify_one();
+                Ok(ActionOutcome { message: None })
+            }
+        }
+    }
+}
+
+#[async_trait]
+impl ProviderSource for WifiProvider {
+    fn id(&self) -> &ProviderId {
+        &self.id
+    }
+
+    async fn search(&self, _query: &Query) -> Result<Vec<Match>, DomainError> {
+        Ok(vec![])
+    }
+
+    async fn invoke(&self, action: &Action) -> Result<ActionOutcome, DomainError> {
+        if !self.available {
+            return Err(DomainError::Unsupported(
+                "wifi provider unavailable".to_string(),
+            ));
+        }
+        match action {
+            Action::Custom { kind, payload } if kind == "wifi" => {
+                let command = parse_wifi_action(payload)?;
+                self.execute(command).await
+            }
+            _ => Err(DomainError::Unsupported(
+                "wifi provider only handles custom actions with kind='wifi'".to_string(),
+            )),
+        }
+    }
+
+    fn subscribe(&self) -> Option<BoxStream<'static, serde_json::Value>> {
+        // Placeholder: Task 7 replaces this with the change-gated,
+        // session-driven streaming implementation.
+        None
+    }
+}
+
+/// Run an `nmcli` invocation with no shell, each argument passed as a separate
+/// argv item. Returns stdout on a zero exit code; otherwise returns a
+/// `ServiceUnavailable` carrying the trimmed stderr (or `Spawn` if the process
+/// could not be started at all).
+async fn run_nmcli(args: &[&str]) -> Result<String, ProvidersError> {
+    let output = Command::new("nmcli")
+        .args(args)
+        .stdin(Stdio::null())
+        .output()
+        .await
+        .map_err(|e| ProvidersError::Spawn(e.to_string()))?;
+    if output.status.success() {
+        Ok(String::from_utf8_lossy(&output.stdout).into_owned())
+    } else {
+        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        Err(ProvidersError::ServiceUnavailable(stderr))
+    }
+}
+
+/// Connect to a scanned or new network keyed on SSID (no profile UUID exists
+/// yet). Appends `password <pw>` when a password is supplied and `hidden yes`
+/// for hidden networks.
+async fn connect_to_network(
+    ssid: &str,
+    password: Option<&str>,
+    hidden: bool,
+) -> Result<String, ProvidersError> {
+    let mut args: Vec<&str> = vec!["device", "wifi", "connect", ssid];
+    if let Some(pw) = password {
+        args.push("password");
+        args.push(pw);
+    }
+    if hidden {
+        args.push("hidden");
+        args.push("yes");
+    }
+    run_nmcli(&args).await
+}
+
+/// Bring down the active wireless connection.
+///
+/// Finds the active 802-11-wireless connection's UUID via
+/// `nmcli -t -f UUID,TYPE,DEVICE connection show --active` and runs
+/// `connection down uuid <uuid>`. Returns an informational `ActionOutcome` when
+/// there is no active wifi connection rather than erroring.
+async fn disconnect_active_wifi() -> Result<ActionOutcome, ProvidersError> {
+    let raw = run_nmcli(&[
+        "-t",
+        "-f",
+        "UUID,TYPE,DEVICE",
+        "connection",
+        "show",
+        "--active",
+    ])
+    .await?;
+    let uuid = raw
+        .lines()
+        .filter(|l| !l.trim().is_empty())
+        .map(split_terse_line)
+        .find(|fields| fields.len() >= 2 && fields[1] == "802-11-wireless")
+        .map(|fields| fields[0].clone());
+    match uuid {
+        Some(uuid) => {
+            run_nmcli(&["connection", "down", "uuid", &uuid]).await?;
+            Ok(ActionOutcome { message: None })
+        }
+        None => Ok(ActionOutcome {
+            message: Some("no active wifi connection".to_string()),
+        }),
+    }
+}
+
+/// Modify the IPv4 method (and, for manual, address/gateway) of a saved
+/// connection by UUID, then re-apply it with `connection up uuid <id>`.
+async fn set_ipv4(
+    id: &str,
+    method: Ipv4Method,
+    address: Option<&str>,
+    gateway: Option<&str>,
+    prefix: Option<u8>,
+) -> Result<(), ProvidersError> {
+    let method_value = match method {
+        Ipv4Method::Auto => "auto",
+        Ipv4Method::Manual => "manual",
+    };
+    let mut args: Vec<String> = vec![
+        "connection".to_string(),
+        "modify".to_string(),
+        "uuid".to_string(),
+        id.to_string(),
+        "ipv4.method".to_string(),
+        method_value.to_string(),
+    ];
+    if matches!(method, Ipv4Method::Manual) {
+        if let (Some(address), Some(prefix)) = (address, prefix) {
+            args.push("ipv4.addresses".to_string());
+            args.push(format!("{address}/{prefix}"));
+        }
+        if let Some(gateway) = gateway {
+            args.push("ipv4.gateway".to_string());
+            args.push(gateway.to_string());
+        }
+    }
+    let modify_args: Vec<&str> = args.iter().map(String::as_str).collect();
+    run_nmcli(&modify_args).await?;
+    run_nmcli(&["connection", "up", "uuid", id]).await?;
+    Ok(())
+}
+
+/// Fetch and parse connection details keyed by SSID/connection name. nmcli
+/// accepts the connection name in `connection show`, and the frontend passes
+/// the SSID, so keying by SSID here is acceptable.
+async fn fetch_details(ssid: &str) -> Result<WifiConnectionDetails, ProvidersError> {
+    let raw = run_nmcli(&[
+        "-t",
+        "-f",
+        "IP4.ADDRESS,IP4.GATEWAY,IP4.DNS,GENERAL.HWADDR,ipv4.method,connection.metered",
+        "connection",
+        "show",
+        ssid,
+    ])
+    .await?;
+    Ok(parse_details(&raw))
+}
+
+/// Map a generic `nmcli` failure to a `DomainError`. A spawn failure means the
+/// binary is effectively unusable, so it surfaces as `Unsupported`; a non-zero
+/// exit surfaces as `ActionFailed` carrying the cleaned stderr text.
+fn map_nmcli_error(error: ProvidersError) -> DomainError {
+    match error {
+        ProvidersError::Spawn(message) => DomainError::Unsupported(message),
+        other => DomainError::ActionFailed {
+            reason: other.to_string(),
+        },
+    }
+}
+
+/// Map a `device wifi connect` failure to a `DomainError`, recognising the
+/// wrong-password signatures nmcli emits and collapsing them to a stable
+/// `incorrect_password` reason the frontend can branch on.
+fn map_connect_error(error: ProvidersError) -> DomainError {
+    let message = error.to_string();
+    let lowered = message.to_lowercase();
+    if lowered.contains("secrets were required") || lowered.contains("no secrets provided") {
+        return DomainError::ActionFailed {
+            reason: "incorrect_password".to_string(),
+        };
+    }
+    map_nmcli_error(error)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -433,8 +803,14 @@ mod tests {
 
     #[test]
     fn parses_set_ipv4_manual() {
-        match parse_wifi_action(&json!({"command":"set_ipv4","id":"Net","method":"manual","address":"10.0.0.2","gateway":"10.0.0.1","prefix":24})) {
-            Ok(WifiAction::SetIpv4 { method: Ipv4Method::Manual, prefix: Some(24), .. }) => {}
+        match parse_wifi_action(
+            &json!({"command":"set_ipv4","id":"Net","method":"manual","address":"10.0.0.2","gateway":"10.0.0.1","prefix":24}),
+        ) {
+            Ok(WifiAction::SetIpv4 {
+                method: Ipv4Method::Manual,
+                prefix: Some(24),
+                ..
+            }) => {}
             _ => panic!("expected manual SetIpv4"),
         }
     }
@@ -461,8 +837,12 @@ mod tests {
 
     #[test]
     fn parses_set_dns() {
-        match parse_wifi_action(&json!({"command":"set_dns","id":"Net","servers":["1.1.1.1","9.9.9.9"]})) {
-            Ok(WifiAction::SetDns { servers, .. }) => assert_eq!(servers, vec!["1.1.1.1", "9.9.9.9"]),
+        match parse_wifi_action(
+            &json!({"command":"set_dns","id":"Net","servers":["1.1.1.1","9.9.9.9"]}),
+        ) {
+            Ok(WifiAction::SetDns { servers, .. }) => {
+                assert_eq!(servers, vec!["1.1.1.1", "9.9.9.9"])
+            }
             _ => panic!("expected SetDns"),
         }
     }
@@ -577,5 +957,33 @@ HomeNet:AA\\:AA\\:AA\\:AA\\:AA\\:02:40:WPA2:2412:yes:*";
         assert_eq!(home.len(), 1);
         assert_eq!(home[0].signal_percent, 90);
         assert!(home[0].active);
+    }
+
+    #[tokio::test]
+    async fn invoke_on_unavailable_provider_is_unsupported() {
+        let provider = WifiProvider {
+            id: quantum_domain::ProviderId::from("wifi"),
+            available: false,
+            scan: std::sync::Arc::new(ScanSession::default()),
+        };
+        let action = quantum_domain::Action::Custom {
+            kind: "wifi".to_string(),
+            payload: serde_json::json!({"command":"open_session"}),
+        };
+        assert!(provider.invoke(&action).await.is_err());
+    }
+
+    #[tokio::test]
+    async fn invoke_rejects_foreign_kind() {
+        let provider = WifiProvider {
+            id: quantum_domain::ProviderId::from("wifi"),
+            available: true,
+            scan: std::sync::Arc::new(ScanSession::default()),
+        };
+        let action = quantum_domain::Action::Custom {
+            kind: "audio".to_string(),
+            payload: serde_json::json!({"command":"open_session"}),
+        };
+        assert!(provider.invoke(&action).await.is_err());
     }
 }
