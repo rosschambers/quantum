@@ -19,6 +19,11 @@ use tokio::sync::{Mutex, Notify};
 
 use crate::error::ProvidersError;
 
+/// nmcli connection TYPE literal for WiFi profiles. Used to filter `connection
+/// show` output to wireless rows in both saved-list parsing and active-connection
+/// lookup; kept as one constant so the two call sites cannot drift apart.
+const WIRELESS_TYPE: &str = "802-11-wireless";
+
 /// Map an nmcli SECURITY field to WifiSecurity.
 pub(crate) fn map_security(field: &str) -> WifiSecurity {
     if field.is_empty() {
@@ -157,7 +162,7 @@ pub(crate) fn parse_saved_list(raw: &str) -> Vec<SavedNetwork> {
         if fields.len() < 4 {
             continue;
         }
-        if fields[2] != "802-11-wireless" {
+        if fields[2] != WIRELESS_TYPE {
             continue;
         }
         out.push(SavedNetwork {
@@ -533,9 +538,7 @@ impl WifiProvider {
                 gateway,
                 prefix,
             } => {
-                set_ipv4(&id, method, address.as_deref(), gateway.as_deref(), prefix)
-                    .await
-                    .map_err(map_nmcli_error)?;
+                set_ipv4(&id, method, address.as_deref(), gateway.as_deref(), prefix).await?;
                 self.scan.notify.notify_one();
                 Ok(ActionOutcome { message: None })
             }
@@ -544,9 +547,7 @@ impl WifiProvider {
                 run_nmcli(&["connection", "modify", "uuid", &id, "ipv4.dns", &joined])
                     .await
                     .map_err(map_nmcli_error)?;
-                run_nmcli(&["connection", "up", "uuid", &id])
-                    .await
-                    .map_err(map_nmcli_error)?;
+                apply_connection(&id).await?;
                 self.scan.notify.notify_one();
                 Ok(ActionOutcome { message: None })
             }
@@ -611,9 +612,12 @@ impl ProviderSource for WifiProvider {
 }
 
 /// Run an `nmcli` invocation with no shell, each argument passed as a separate
-/// argv item. Returns stdout on a zero exit code; otherwise returns a
-/// `ServiceUnavailable` carrying the trimmed stderr (or `Spawn` if the process
-/// could not be started at all).
+/// argv item. Returns stdout on a zero exit code. On a non-zero exit it returns
+/// a `ProvidersError` carrying the captured stderr — this signals a failed
+/// command, not a transport or availability condition; callers remap it with
+/// `map_nmcli_error` to `DomainError::ActionFailed`. If the process could not be
+/// started at all it returns `ProvidersError::Spawn`, which `map_nmcli_error`
+/// turns into `DomainError::Unsupported`.
 async fn run_nmcli(args: &[&str]) -> Result<String, ProvidersError> {
     let output = Command::new("nmcli")
         .args(args)
@@ -669,7 +673,7 @@ async fn disconnect_active_wifi() -> Result<ActionOutcome, ProvidersError> {
         .lines()
         .filter(|l| !l.trim().is_empty())
         .map(split_terse_line)
-        .find(|fields| fields.len() >= 2 && fields[1] == "802-11-wireless")
+        .find(|fields| fields.len() >= 2 && fields[1] == WIRELESS_TYPE)
         .map(|fields| fields[0].clone());
     match uuid {
         Some(uuid) => {
@@ -684,13 +688,18 @@ async fn disconnect_active_wifi() -> Result<ActionOutcome, ProvidersError> {
 
 /// Modify the IPv4 method (and, for manual, address/gateway) of a saved
 /// connection by UUID, then re-apply it with `connection up uuid <id>`.
+///
+/// The modify step maps failures with the normal `map_nmcli_error` rule. The
+/// re-apply step maps via `apply_connection`, which produces a distinguishable
+/// "settings saved but failed to apply" error so a caller can tell the profile
+/// was changed even though it did not activate.
 async fn set_ipv4(
     id: &str,
     method: Ipv4Method,
     address: Option<&str>,
     gateway: Option<&str>,
     prefix: Option<u8>,
-) -> Result<(), ProvidersError> {
+) -> Result<(), DomainError> {
     let method_value = match method {
         Ipv4Method::Auto => "auto",
         Ipv4Method::Manual => "manual",
@@ -714,9 +723,8 @@ async fn set_ipv4(
         }
     }
     let modify_args: Vec<&str> = args.iter().map(String::as_str).collect();
-    run_nmcli(&modify_args).await?;
-    run_nmcli(&["connection", "up", "uuid", id]).await?;
-    Ok(())
+    run_nmcli(&modify_args).await.map_err(map_nmcli_error)?;
+    apply_connection(id).await
 }
 
 /// Fetch and parse connection details keyed by SSID/connection name. nmcli
@@ -759,6 +767,21 @@ fn map_connect_error(error: ProvidersError) -> DomainError {
         };
     }
     map_nmcli_error(error)
+}
+
+/// Re-apply a saved connection by UUID with `connection up uuid <id>`, used
+/// after a successful `connection modify`. A failure here means the profile was
+/// already mutated on disk but could not be brought up, so the returned error
+/// says so explicitly rather than presenting an opaque failure that hides the
+/// fact that the saved settings changed. nmcli has no transactional batch, so
+/// no rollback is attempted.
+async fn apply_connection(id: &str) -> Result<(), DomainError> {
+    run_nmcli(&["connection", "up", "uuid", id])
+        .await
+        .map(|_| ())
+        .map_err(|error| DomainError::ActionFailed {
+            reason: format!("settings saved but failed to apply: {error}"),
+        })
 }
 
 #[cfg(test)]
