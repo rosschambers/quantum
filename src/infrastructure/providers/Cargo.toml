@@ -21,6 +21,7 @@ futures.workspace = true
 async-stream = "0.3"
 tokio-stream = { version = "0.1", features = ["sync"] }
 freedesktop-desktop-entry = "0.4"
+freedesktop-icons = "0.4"
 nucleo-matcher = "0.3"
 libc = "0.2"
 which = "8"

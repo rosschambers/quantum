@@ -21,6 +21,9 @@ struct AppInfo {
     name: String,
     generic_name: Option<String>,
     exec: String,
+    /// The desktop entry's `Icon=` value (a freedesktop icon name or an
+    /// absolute path). Resolved to a concrete file path at search time.
+    icon: Option<String>,
     name_lower: String,
     generic_name_lower: Option<String>,
     keywords_lower: Vec<String>,
@@ -33,6 +36,7 @@ impl AppInfo {
         generic_name: Option<String>,
         keywords: Vec<String>,
         exec: String,
+        icon: Option<String>,
     ) -> Self {
         let name_lower = name.to_lowercase();
         let generic_name_lower = generic_name.as_ref().map(|s| s.to_lowercase());
@@ -42,11 +46,28 @@ impl AppInfo {
             name,
             generic_name,
             exec,
+            icon,
             name_lower,
             generic_name_lower,
             keywords_lower,
         }
     }
+}
+
+/// Resolve a desktop entry icon reference to a concrete file path.
+///
+/// If `icon` is already an absolute path that exists on disk, it is returned
+/// as-is. Otherwise it is treated as a freedesktop icon name and looked up
+/// against the installed icon themes (preferring a 48px raster size). Returns
+/// `None` when nothing resolves, so callers emit no `IconRef` rather than a
+/// name the webview cannot load.
+fn resolve_icon_path(icon: Option<&str>) -> Option<std::path::PathBuf> {
+    let name = icon?;
+    let as_path = std::path::Path::new(name);
+    if as_path.is_absolute() && as_path.exists() {
+        return Some(as_path.to_path_buf());
+    }
+    freedesktop_icons::lookup(name).with_size(48).find()
 }
 
 /// Provider for desktop applications (*.desktop files).
@@ -133,6 +154,13 @@ impl DesktopAppsProvider {
                                 let exec = de.exec().unwrap_or_default().to_string();
 
                                 if let Some(name) = path.file_stem().and_then(|s| s.to_str()) {
+                                    // Prefer the entry's declared Icon= key;
+                                    // fall back to the desktop file stem, which
+                                    // is conventionally also the icon name.
+                                    let icon = de
+                                        .icon()
+                                        .map(|s| s.to_string())
+                                        .or_else(|| Some(name.to_string()));
                                     by_id.entry(name.to_string()).or_insert_with(|| {
                                         AppInfo::new(
                                             name.to_string(),
@@ -140,6 +168,7 @@ impl DesktopAppsProvider {
                                             generic_name,
                                             keywords,
                                             exec,
+                                            icon,
                                         )
                                     });
                                 }
@@ -219,20 +248,17 @@ impl ProviderSource for DesktopAppsProvider {
             let combined_score = name_score.max(generic_score).max(keyword_score);
 
             if combined_score > 0.1 {
-                // Resolve the app's icon: try Icon= field first, fall back to
-                // the desktop entry name (which is typically the icon name).
-                let icon_name = match &app.id {
-                    id if id.ends_with(".desktop") => id.trim_end_matches(".desktop"),
-                    id => id,
-                };
+                // Resolve the icon name to a concrete file path. An
+                // unresolved name yields no IconRef rather than a name the
+                // webview cannot load.
+                let icon = resolve_icon_path(app.icon.as_deref())
+                    .map(quantum_domain::IconRef::Path);
                 matches.push(Match {
                     id: app.id.clone(),
                     provider: self.id.clone(),
                     title: app.name.clone(),
                     subtitle: app.generic_name.clone(),
-                    icon: Some(quantum_domain::IconRef::Name(
-                        icon_name.to_string(),
-                    )),
+                    icon,
                     score: MatchScore::new(combined_score),
                     action: Action::Launch {
                         desktop_id: app.id.clone(),
@@ -431,6 +457,7 @@ Type=Application"#,
                     "Explorer".to_string(),
                 ],
                 "firefox".to_string(),
+                None,
             )]),
             executor,
         };
@@ -460,6 +487,7 @@ Type=Application"#,
                     None,
                     vec!["Browser".to_string()],
                     "firefox".to_string(),
+                    None,
                 ),
                 AppInfo::new(
                     "browser-chooser".to_string(),
@@ -467,6 +495,7 @@ Type=Application"#,
                     None,
                     vec![],
                     "chooser".to_string(),
+                    None,
                 ),
             ]),
             executor,
@@ -481,6 +510,99 @@ Type=Application"#,
         );
     }
 
+    /// An app whose icon name cannot be resolved against any installed icon
+    /// theme must yield `icon: None` in the produced `Match` — never a bogus
+    /// `IconRef::Name` that the webview cannot load.
+    #[tokio::test]
+    async fn search_unresolvable_icon_yields_none() {
+        let executor = Arc::new(FakeExecutor::new());
+        let provider = DesktopAppsProvider {
+            id: ProviderId::from("test"),
+            apps: RwLock::new(vec![AppInfo::new(
+                "firefox".to_string(),
+                "Firefox".to_string(),
+                Some("Web Browser".to_string()),
+                vec![],
+                "firefox".to_string(),
+                Some("definitely-not-a-real-icon-name-xyz123".to_string()),
+            )]),
+            executor,
+        };
+
+        let query = Query::new("firefox");
+        let matches = provider.search(&query).await.unwrap();
+
+        assert_eq!(matches.len(), 1);
+        assert!(
+            matches[0].icon.is_none(),
+            "unresolvable icon name must produce no IconRef, got {:?}",
+            matches[0].icon
+        );
+    }
+
+    /// `resolve_icon_path` returns an absolute path verbatim when the file
+    /// exists on disk. This exercises our own resolution branch
+    /// deterministically; the icon-name -> theme-file lookup is delegated to
+    /// the `freedesktop-icons` crate and depends on process-global system
+    /// state, so it is not asserted here.
+    #[test]
+    fn resolve_icon_path_returns_existing_absolute_path() {
+        let dir = tempfile::tempdir().unwrap();
+        let icon = dir.path().join("quantum-test-icon.png");
+        std::fs::write(&icon, b"\x89PNG\r\n\x1a\n").unwrap();
+
+        let resolved = resolve_icon_path(Some(icon.to_str().unwrap()));
+        assert_eq!(resolved.as_deref(), Some(icon.as_path()));
+    }
+
+    /// An absolute path that does not exist is not returned verbatim; it
+    /// falls through to a (failing) name lookup and yields None.
+    #[test]
+    fn resolve_icon_path_rejects_missing_absolute_path() {
+        let resolved = resolve_icon_path(Some("/nonexistent/quantum/icon-xyz123.png"));
+        assert!(resolved.is_none());
+    }
+
+    /// `None` icon input resolves to `None`.
+    #[test]
+    fn resolve_icon_path_none_input_yields_none() {
+        assert!(resolve_icon_path(None).is_none());
+    }
+
+    /// An app carrying an absolute, existing icon path produces
+    /// `IconRef::Path` pointing at that file.
+    #[tokio::test]
+    async fn search_app_with_absolute_icon_path_yields_path() {
+        let dir = tempfile::tempdir().unwrap();
+        let icon = dir.path().join("quantum-test-icon.png");
+        std::fs::write(&icon, b"\x89PNG\r\n\x1a\n").unwrap();
+
+        let executor = Arc::new(FakeExecutor::new());
+        let provider = DesktopAppsProvider {
+            id: ProviderId::from("test"),
+            apps: RwLock::new(vec![AppInfo::new(
+                "quantum-test".to_string(),
+                "Quantum Test".to_string(),
+                None,
+                vec![],
+                "quantum-test".to_string(),
+                Some(icon.to_str().unwrap().to_string()),
+            )]),
+            executor,
+        };
+
+        let query = Query::new("quantum");
+        let matches = provider.search(&query).await.unwrap();
+
+        assert_eq!(matches.len(), 1);
+        match &matches[0].icon {
+            Some(quantum_domain::IconRef::Path(p)) => {
+                assert_eq!(p, &icon, "resolved icon path mismatch");
+            }
+            other => panic!("expected IconRef::Path, got {other:?}"),
+        }
+    }
+
     #[tokio::test]
     async fn search_no_results() {
         let executor = Arc::new(FakeExecutor::new());
@@ -492,6 +614,7 @@ Type=Application"#,
                 Some("Web Browser".to_string()),
                 vec![],
                 "firefox".to_string(),
+                None,
             )]),
             executor,
         };
@@ -599,6 +722,7 @@ Type=Application"#,
                 Some("Web Browser".to_string()),
                 vec![],
                 "firefox %u".to_string(),
+                None,
             )]),
             executor: executor.clone(),
         };
