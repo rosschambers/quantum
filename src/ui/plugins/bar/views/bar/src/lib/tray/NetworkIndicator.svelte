@@ -32,17 +32,11 @@
         return () => unsubscribe?.();
     });
 
-    async function launchConnectionEditor(): Promise<void> {
+    async function openWifiMenu(): Promise<void> {
         try {
-            await client.call('action.invoke', {
-                provider: 'shell',
-                action: {
-                    kind: 'shell',
-                    data: { command: ['nm-connection-editor'], terminal: false },
-                },
-            });
+            await client.call('view.show', { name: 'widgets/wifi-menu' });
         } catch (err) {
-            console.error('nm-connection-editor launch failed:', err);
+            console.error('open wifi menu failed:', err);
         }
     }
 
@@ -60,7 +54,7 @@
     <BarButton
         ariaLabel="Network"
         title={tooltipFor(state)}
-        onclick={launchConnectionEditor}
+        onclick={openWifiMenu}
     >
         <span
             class="network-icon"

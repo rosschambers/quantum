@@ -114,7 +114,7 @@ describe('NetworkIndicator', () => {
 		expect(btn!.title).toContain('full');
 	});
 
-	it('click invokes shell_command to launch nm-connection-editor', async () => {
+	it('click opens the wifi-menu overlay', async () => {
 		const { client, emit } = mockClient();
 		const { container } = render(NetworkIndicator, { props: { client } });
 		await emit({
@@ -132,12 +132,6 @@ describe('NetworkIndicator', () => {
 		expect(btn).not.toBeNull();
 		await fireEvent.click(btn!);
 		await tick();
-		expect(client.call).toHaveBeenCalledWith('action.invoke', {
-			provider: 'shell',
-			action: {
-				kind: 'shell',
-				data: { command: ['nm-connection-editor'], terminal: false },
-			},
-		});
+		expect(client.call).toHaveBeenCalledWith('view.show', { name: 'widgets/wifi-menu' });
 	});
 });
