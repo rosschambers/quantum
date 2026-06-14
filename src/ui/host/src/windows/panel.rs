@@ -53,6 +53,15 @@ fn use_layer_shell() -> bool {
         .unwrap_or(false)
 }
 
+/// Decide whether this panel surface uses layer-shell. Overlays always do
+/// (they dim the whole screen and dismiss on Escape, so they cannot lock the
+/// user out); plain panels only when `QUANTUM_LAYER_SHELL` is set. Pulled out
+/// as a pure function so the (env, overlay) decision matrix can be unit-tested
+/// without constructing a GTK window.
+fn should_use_layer_shell(env_flag: bool, is_overlay: bool) -> bool {
+    env_flag || is_overlay
+}
+
 impl PanelWindow {
     /// Create a new panel window.
     ///
@@ -84,7 +93,6 @@ impl PanelWindow {
             monitor,
         } = ctx;
         let view_name: String = canonical_name.into();
-        let layer_shell = use_layer_shell();
 
         // An overlay anchors all four edges of the active output so the
         // page's own backdrop covers the whole screen, click-outside
@@ -92,6 +100,12 @@ impl PanelWindow {
         // and below the card" (artefacts of a fixed-size centered surface)
         // disappear. Plain panels stay as fixed-size centered surfaces.
         let is_fullscreen_overlay = overlay;
+
+        // Overlays always use layer-shell regardless of the env flag; plain
+        // panels stay gated behind it. The struct's `layer_shell` field below
+        // is set from this combined value so `show`/`hide` keyboard handling
+        // stays consistent with whether `init_layer_shell` actually ran.
+        let layer_shell = should_use_layer_shell(use_layer_shell(), is_fullscreen_overlay);
 
         let mut builder = gtk4::ApplicationWindow::builder().application(app);
 
@@ -347,5 +361,27 @@ impl crate::registry::WindowOps for PanelWindow {
         } else {
             self.show();
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::should_use_layer_shell;
+
+    #[test]
+    fn overlay_always_uses_layer_shell() {
+        // An overlay dims the whole screen and dismisses on Escape, so it
+        // cannot lock the user out: it uses layer-shell whether or not the
+        // env flag is set.
+        assert!(should_use_layer_shell(false, true));
+        assert!(should_use_layer_shell(true, true));
+    }
+
+    #[test]
+    fn plain_panel_respects_env_flag() {
+        // A plain (non-overlay) panel only uses layer-shell when the env
+        // flag opts in, preserving the lockout-safety default.
+        assert!(!should_use_layer_shell(false, false));
+        assert!(should_use_layer_shell(true, false));
     }
 }
