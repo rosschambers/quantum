@@ -5,7 +5,8 @@
 //! and command-gated scanning so the overlay only scans while open.
 
 use quantum_domain::{
-    Ipv4Method, SavedNetwork, WifiBand, WifiConnectionDetails, WifiNetwork, WifiSecurity,
+    DomainError, Ipv4Method, SavedNetwork, WifiBand, WifiConnectionDetails, WifiNetwork,
+    WifiSecurity,
 };
 use std::collections::HashMap;
 
@@ -211,9 +212,236 @@ pub(crate) fn parse_details(raw: &str) -> WifiConnectionDetails {
     }
 }
 
+/// A typed WiFi command parsed from the JSON payload the frontend sends through
+/// `action.invoke`. Each variant maps to a snake_case `command` string.
+pub(crate) enum WifiAction {
+    OpenSession,
+    CloseSession,
+    Rescan,
+    SetRadio(bool),
+    Connect {
+        ssid: String,
+        bssid: Option<String>,
+        password: Option<String>,
+    },
+    Disconnect,
+    Forget {
+        id: String,
+    },
+    ConnectHidden {
+        ssid: String,
+        password: Option<String>,
+    },
+    SetAutoconnect {
+        id: String,
+        enabled: bool,
+    },
+    SetIpv4 {
+        id: String,
+        method: Ipv4Method,
+        address: Option<String>,
+        gateway: Option<String>,
+        prefix: Option<u8>,
+    },
+    SetDns {
+        id: String,
+        servers: Vec<String>,
+    },
+    SetMetered {
+        id: String,
+        metered: bool,
+    },
+    FetchDetails {
+        ssid: String,
+    },
+}
+
+/// Read a required string field, erroring with Unsupported when absent or not a
+/// string.
+fn required_str(payload: &serde_json::Value, key: &str) -> Result<String, DomainError> {
+    payload
+        .get(key)
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string())
+        .ok_or_else(|| {
+            DomainError::Unsupported(format!("missing or non-string '{key}' in wifi action"))
+        })
+}
+
+/// Read an optional string field, returning None when absent or not a string.
+fn optional_str(payload: &serde_json::Value, key: &str) -> Option<String> {
+    payload
+        .get(key)
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string())
+}
+
+/// Read a required boolean field, erroring with Unsupported when absent or not a
+/// boolean.
+fn required_bool(payload: &serde_json::Value, key: &str) -> Result<bool, DomainError> {
+    payload.get(key).and_then(|v| v.as_bool()).ok_or_else(|| {
+        DomainError::Unsupported(format!("missing or non-bool '{key}' in wifi action"))
+    })
+}
+
+/// Read a required array-of-strings field, erroring with Unsupported when the
+/// field is absent, not an array, or contains a non-string element.
+fn required_string_array(
+    payload: &serde_json::Value,
+    key: &str,
+) -> Result<Vec<String>, DomainError> {
+    let array = payload.get(key).and_then(|v| v.as_array()).ok_or_else(|| {
+        DomainError::Unsupported(format!("missing or non-array '{key}' in wifi action"))
+    })?;
+    let mut out = Vec::with_capacity(array.len());
+    for element in array {
+        let value = element.as_str().ok_or_else(|| {
+            DomainError::Unsupported(format!("non-string element in '{key}' array"))
+        })?;
+        out.push(value.to_string());
+    }
+    Ok(out)
+}
+
+/// Parse the IPv4 method string into an Ipv4Method, erroring with Unsupported on
+/// anything other than "auto" or "manual".
+fn parse_ipv4_method(payload: &serde_json::Value) -> Result<Ipv4Method, DomainError> {
+    match required_str(payload, "method")?.as_str() {
+        "auto" => Ok(Ipv4Method::Auto),
+        "manual" => Ok(Ipv4Method::Manual),
+        other => Err(DomainError::Unsupported(format!(
+            "unknown ipv4 method: {other}"
+        ))),
+    }
+}
+
+/// Parse a WiFi action from a JSON payload.
+///
+/// Reads the snake_case `command` string and builds the matching variant,
+/// enforcing required versus optional fields. Missing or unknown commands and
+/// missing or wrong-typed required arguments return `DomainError::Unsupported`.
+pub(crate) fn parse_wifi_action(payload: &serde_json::Value) -> Result<WifiAction, DomainError> {
+    let command = payload
+        .get("command")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| {
+            DomainError::Unsupported("missing or non-string command in wifi action".to_string())
+        })?;
+
+    match command {
+        "open_session" => Ok(WifiAction::OpenSession),
+        "close_session" => Ok(WifiAction::CloseSession),
+        "rescan" => Ok(WifiAction::Rescan),
+        "set_radio" => Ok(WifiAction::SetRadio(required_bool(payload, "enabled")?)),
+        "connect" => Ok(WifiAction::Connect {
+            ssid: required_str(payload, "ssid")?,
+            bssid: optional_str(payload, "bssid"),
+            password: optional_str(payload, "password"),
+        }),
+        "disconnect" => Ok(WifiAction::Disconnect),
+        "forget" => Ok(WifiAction::Forget {
+            id: required_str(payload, "id")?,
+        }),
+        "connect_hidden" => Ok(WifiAction::ConnectHidden {
+            ssid: required_str(payload, "ssid")?,
+            password: optional_str(payload, "password"),
+        }),
+        "set_autoconnect" => Ok(WifiAction::SetAutoconnect {
+            id: required_str(payload, "id")?,
+            enabled: required_bool(payload, "enabled")?,
+        }),
+        "set_ipv4" => Ok(WifiAction::SetIpv4 {
+            id: required_str(payload, "id")?,
+            method: parse_ipv4_method(payload)?,
+            address: optional_str(payload, "address"),
+            gateway: optional_str(payload, "gateway"),
+            prefix: payload
+                .get("prefix")
+                .and_then(|v| v.as_u64())
+                .map(|n| n as u8),
+        }),
+        "set_dns" => Ok(WifiAction::SetDns {
+            id: required_str(payload, "id")?,
+            servers: required_string_array(payload, "servers")?,
+        }),
+        "set_metered" => Ok(WifiAction::SetMetered {
+            id: required_str(payload, "id")?,
+            metered: required_bool(payload, "metered")?,
+        }),
+        "fetch_details" => Ok(WifiAction::FetchDetails {
+            ssid: required_str(payload, "ssid")?,
+        }),
+        other => Err(DomainError::Unsupported(format!(
+            "unknown wifi command: {other}"
+        ))),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn parses_connect_with_password() {
+        match parse_wifi_action(&json!({"command":"connect","ssid":"Net","password":"pw"})) {
+            Ok(WifiAction::Connect { ssid, password, .. }) => {
+                assert_eq!(ssid, "Net");
+                assert_eq!(password.as_deref(), Some("pw"));
+            }
+            _ => panic!("expected Connect"),
+        }
+    }
+
+    #[test]
+    fn parses_connect_without_password() {
+        match parse_wifi_action(&json!({"command":"connect","ssid":"Net"})) {
+            Ok(WifiAction::Connect { password: None, .. }) => {}
+            _ => panic!("expected Connect with no password"),
+        }
+    }
+
+    #[test]
+    fn parses_session_and_radio_commands() {
+        assert!(matches!(
+            parse_wifi_action(&json!({"command":"open_session"})),
+            Ok(WifiAction::OpenSession)
+        ));
+        assert!(matches!(
+            parse_wifi_action(&json!({"command":"close_session"})),
+            Ok(WifiAction::CloseSession)
+        ));
+        assert!(matches!(
+            parse_wifi_action(&json!({"command":"set_radio","enabled":true})),
+            Ok(WifiAction::SetRadio(true))
+        ));
+    }
+
+    #[test]
+    fn parses_set_ipv4_manual() {
+        match parse_wifi_action(&json!({"command":"set_ipv4","id":"Net","method":"manual","address":"10.0.0.2","gateway":"10.0.0.1","prefix":24})) {
+            Ok(WifiAction::SetIpv4 { method: Ipv4Method::Manual, prefix: Some(24), .. }) => {}
+            _ => panic!("expected manual SetIpv4"),
+        }
+    }
+
+    #[test]
+    fn parses_set_dns() {
+        match parse_wifi_action(&json!({"command":"set_dns","id":"Net","servers":["1.1.1.1","9.9.9.9"]})) {
+            Ok(WifiAction::SetDns { servers, .. }) => assert_eq!(servers, vec!["1.1.1.1", "9.9.9.9"]),
+            _ => panic!("expected SetDns"),
+        }
+    }
+
+    #[test]
+    fn rejects_unknown_and_missing_command() {
+        assert!(parse_wifi_action(&json!({"command":"frobnicate"})).is_err());
+        assert!(parse_wifi_action(&json!({})).is_err());
+        assert!(parse_wifi_action(&json!({"command":"forget"})).is_err()); // missing id
+        assert!(
+            parse_wifi_action(&json!({"command":"set_ipv4","id":"Net","method":"bogus"})).is_err()
+        ); // bad method
+    }
 
     #[test]
     fn map_security_classifies_fields() {
