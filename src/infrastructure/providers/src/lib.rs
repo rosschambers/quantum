@@ -42,3 +42,4 @@ pub use power_profile::PowerProfilesDaemonProvider;
 pub use proc_stats::ProcStatsProvider;
 pub use shell_command::ShellCommandProvider;
 pub use system_power::SystemPowerProvider;
+pub use wifi::WifiProvider;

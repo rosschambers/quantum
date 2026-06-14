@@ -7,8 +7,8 @@
 use async_trait::async_trait;
 use futures::stream::BoxStream;
 use quantum_domain::{
-    Action, ActionOutcome, DomainError, Ipv4Method, Match, ProviderId, ProviderSource, Query,
-    SavedNetwork, WifiBand, WifiConnectionDetails, WifiNetwork, WifiSecurity, WifiState,
+    Action, ActionOutcome, ActiveWifi, DomainError, Ipv4Method, Match, ProviderId, ProviderSource,
+    Query, SavedNetwork, WifiBand, WifiConnectionDetails, WifiNetwork, WifiSecurity, WifiState,
 };
 use std::collections::HashMap;
 use std::process::Stdio;
@@ -460,12 +460,12 @@ impl WifiProvider {
     async fn execute(&self, command: WifiAction) -> Result<ActionOutcome, DomainError> {
         match command {
             WifiAction::OpenSession => {
-                self.scan.active.store(true, Ordering::SeqCst);
+                self.scan.active.store(true, Ordering::Relaxed);
                 self.scan.notify.notify_one();
                 Ok(ActionOutcome { message: None })
             }
             WifiAction::CloseSession => {
-                self.scan.active.store(false, Ordering::SeqCst);
+                self.scan.active.store(false, Ordering::Relaxed);
                 {
                     let mut last = self.scan.last.lock().await;
                     *last = None;
@@ -569,11 +569,140 @@ impl WifiProvider {
             WifiAction::FetchDetails { ssid } => {
                 // Parsed for validation / future stream enrichment; the stream
                 // is the primary channel, so the outcome carries no payload.
+                // This is a read-only operation that changes no state, so the
+                // streaming task is deliberately NOT notified — waking it to
+                // re-poll would be wasteful.
                 let _ = fetch_details(&ssid).await.map_err(map_nmcli_error)?;
-                self.scan.notify.notify_one();
                 Ok(ActionOutcome { message: None })
             }
         }
+    }
+
+    /// Build the change-gated streaming body.
+    ///
+    /// Emits the current `WifiState` once immediately, then loops selecting on
+    /// either an explicit `notify` (raised by write commands) or a 5-second
+    /// poll tick. On each wake it rebuilds the state, compares against the last
+    /// emitted state in `scan.last`, and yields only when something changed.
+    /// The loop never terminates: a failed nmcli read defaults rather than
+    /// erroring, so the stream stays alive for the lifetime of the subscriber.
+    fn event_driven_stream(&self) -> BoxStream<'static, serde_json::Value> {
+        let scan = self.scan.clone();
+        Box::pin(async_stream::stream! {
+            // Emit the current state once so a fresh subscriber sees real data
+            // without waiting for the first poll tick or write command.
+            let initial = build_state(&scan).await;
+            {
+                let mut last = scan.last.lock().await;
+                *last = Some(initial.clone());
+            }
+            yield serde_json::to_value(&initial).unwrap_or(serde_json::Value::Null);
+
+            let mut ticker = tokio::time::interval(std::time::Duration::from_secs(5));
+            ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+            // The first tick completes immediately; consume it so the loop
+            // below does not double-emit on entry.
+            ticker.tick().await;
+
+            loop {
+                tokio::select! {
+                    _ = scan.notify.notified() => {}
+                    _ = ticker.tick() => {}
+                }
+
+                let new_state = build_state(&scan).await;
+                let mut last = scan.last.lock().await;
+                if last.as_ref() != Some(&new_state) {
+                    *last = Some(new_state.clone());
+                    drop(last);
+                    yield serde_json::to_value(&new_state)
+                        .unwrap_or(serde_json::Value::Null);
+                }
+            }
+        })
+    }
+}
+
+/// Build the full `WifiState` from live `nmcli` reads.
+///
+/// Always reads the radio flag, the active-connection signal, and the saved
+/// profile list. The scan list is read ONLY while a session is open
+/// (`scan.active`), so the overlay does not force periodic rescans in the
+/// background. Cross-references the scan and saved lists to set each network's
+/// `saved` flag and each saved profile's `in_range` flag, and derives the
+/// `active` connection from the in-use scan row.
+///
+/// Every individual read defaults on error (empty list / false), so this
+/// function never panics and never returns an error; a totally failed rebuild
+/// degrades to an empty-but-available state rather than terminating the stream.
+async fn build_state(scan: &ScanSession) -> WifiState {
+    let radio_enabled = match run_nmcli(&["radio", "wifi"]).await {
+        Ok(raw) => parse_radio(&raw),
+        Err(_) => false,
+    };
+
+    let mut saved = match run_nmcli(&[
+        "-t",
+        "-f",
+        "NAME,UUID,TYPE,AUTOCONNECT",
+        "connection",
+        "show",
+    ])
+    .await
+    {
+        Ok(raw) => parse_saved_list(&raw),
+        Err(_) => Vec::new(),
+    };
+
+    let scanning = scan.active.load(Ordering::Relaxed);
+
+    let mut networks = if scanning {
+        match run_nmcli(&[
+            "-t",
+            "-f",
+            "SSID,BSSID,SIGNAL,SECURITY,FREQ,ACTIVE,IN-USE",
+            "device",
+            "wifi",
+            "list",
+        ])
+        .await
+        {
+            Ok(raw) => parse_scan_list(&raw),
+            Err(_) => Vec::new(),
+        }
+    } else {
+        Vec::new()
+    };
+
+    // Cross-reference: mark scanned networks that have a saved profile, and
+    // mark saved profiles that are currently in range.
+    for network in &mut networks {
+        network.saved =
+            !network.ssid.is_empty() && saved.iter().any(|profile| profile.ssid == network.ssid);
+    }
+    for profile in &mut saved {
+        profile.in_range = networks.iter().any(|network| network.ssid == profile.ssid);
+    }
+
+    // Derive the active connection from the in-use scan row. Details are left
+    // None and fetched on demand via the FetchDetails command.
+    let active = networks
+        .iter()
+        .find(|network| network.active)
+        .map(|network| ActiveWifi {
+            ssid: network.ssid.clone(),
+            signal_percent: network.signal_percent,
+            security: network.security,
+            details: None,
+        });
+
+    WifiState {
+        available: true,
+        radio_enabled,
+        scanning,
+        active,
+        networks,
+        saved,
     }
 }
 
@@ -605,9 +734,14 @@ impl ProviderSource for WifiProvider {
     }
 
     fn subscribe(&self) -> Option<BoxStream<'static, serde_json::Value>> {
-        // Placeholder: Task 7 replaces this with the change-gated,
-        // session-driven streaming implementation.
-        None
+        // When nmcli is missing the provider can never produce real state, so
+        // fall back to the legacy default-then-pending stream exactly as the
+        // audio provider does when pactl is absent.
+        if !self.available {
+            #[allow(deprecated)]
+            return Some(quantum_dbus::common::unavailable_stream::<WifiState>());
+        }
+        Some(self.event_driven_stream())
     }
 }
 
@@ -1008,5 +1142,33 @@ HomeNet:AA\\:AA\\:AA\\:AA\\:AA\\:02:40:WPA2:2412:yes:*";
             payload: serde_json::json!({"command":"open_session"}),
         };
         assert!(provider.invoke(&action).await.is_err());
+    }
+
+    #[tokio::test]
+    async fn unavailable_provider_stream_yields_default_then_pends() {
+        use futures::StreamExt;
+        let provider = WifiProvider {
+            id: quantum_domain::ProviderId::from("wifi"),
+            available: false,
+            scan: std::sync::Arc::new(ScanSession::default()),
+        };
+        let mut stream = provider.subscribe().expect("stream");
+        let first = stream.next().await.expect("one item");
+        let state: WifiState = serde_json::from_value(first).expect("WifiState");
+        assert!(!state.available);
+    }
+
+    #[tokio::test]
+    #[ignore = "requires real nmcli"]
+    async fn available_provider_emits_within_2s() {
+        use futures::StreamExt;
+        use std::time::Duration;
+        let provider = WifiProvider::connect().await.expect("connect");
+        let mut stream = provider.subscribe().expect("stream");
+        let v = tokio::time::timeout(Duration::from_secs(2), stream.next())
+            .await
+            .expect("within 2s")
+            .expect("some");
+        let _state: WifiState = serde_json::from_value(v).expect("WifiState");
     }
 }
