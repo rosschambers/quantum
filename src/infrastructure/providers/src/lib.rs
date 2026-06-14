@@ -21,6 +21,7 @@ pub mod power_profile;
 pub mod proc_stats;
 pub mod shell_command;
 pub mod system_power;
+pub mod wifi;
 
 pub use error::ProvidersError;
 pub use registry::InMemoryProviderRegistry;
