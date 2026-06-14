@@ -163,6 +163,95 @@ pub struct AudioSink {
     pub muted: bool,
 }
 
+/// Security type of a WiFi network. Distinguishes WPA versions for the
+/// text label; the connect flow treats all personal variants identically.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum WifiSecurity {
+    Open,
+    Wpa,
+    Wpa2,
+    Wpa3,
+    Other,
+}
+
+/// WiFi frequency band.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum WifiBand {
+    TwoFour,
+    Five,
+    Six,
+    Unknown,
+}
+
+/// IPv4 configuration method for a saved connection.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Ipv4Method {
+    Auto,
+    Manual,
+}
+
+/// Read-only details of the active connection (advanced details panel).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub struct WifiConnectionDetails {
+    pub ip_address: Option<String>,
+    pub gateway: Option<String>,
+    pub dns: Vec<String>,
+    pub mac: Option<String>,
+    pub frequency_mhz: Option<u32>,
+    pub ipv4_method: Ipv4Method,
+    pub metered: bool,
+}
+
+/// The currently-connected WiFi network.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub struct ActiveWifi {
+    pub ssid: String,
+    pub signal_percent: u8,
+    pub security: WifiSecurity,
+    pub details: Option<WifiConnectionDetails>,
+}
+
+/// One row in the scan list. Empty `ssid` means a hidden network.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub struct WifiNetwork {
+    pub ssid: String,
+    pub bssid: String,
+    pub signal_percent: u8,
+    pub security: WifiSecurity,
+    pub band: WifiBand,
+    pub saved: bool,
+    pub active: bool,
+}
+
+/// A stored connection profile (saved-networks list).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub struct SavedNetwork {
+    pub id: String,
+    pub ssid: String,
+    pub security: WifiSecurity,
+    pub autoconnect: bool,
+    pub in_range: bool,
+}
+
+/// Full WiFi state the overlay renders from.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub struct WifiState {
+    pub available: bool,
+    pub radio_enabled: bool,
+    pub scanning: bool,
+    pub active: Option<ActiveWifi>,
+    pub networks: Vec<WifiNetwork>,
+    pub saved: Vec<SavedNetwork>,
+}
+
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct BrightnessState {
     pub available: bool,
@@ -432,5 +521,54 @@ mod tests {
         let v = serde_json::to_value(&s).unwrap();
         let back: MonitorActiveWindowState = serde_json::from_value(v).unwrap();
         assert_eq!(s, back);
+    }
+
+    #[test]
+    fn wifi_state_round_trips_through_serde() {
+        let state = WifiState {
+            available: true,
+            radio_enabled: true,
+            scanning: true,
+            active: Some(ActiveWifi {
+                ssid: "Skynet_5G".to_string(),
+                signal_percent: 92,
+                security: WifiSecurity::Wpa3,
+                details: None,
+            }),
+            networks: vec![WifiNetwork {
+                ssid: "Skynet_5G".to_string(),
+                bssid: "a1:b2:c3:d4:e5:f6".to_string(),
+                signal_percent: 92,
+                security: WifiSecurity::Wpa3,
+                band: WifiBand::Five,
+                saved: true,
+                active: true,
+            }],
+            saved: vec![SavedNetwork {
+                id: "Skynet_5G".to_string(),
+                ssid: "Skynet_5G".to_string(),
+                security: WifiSecurity::Wpa3,
+                autoconnect: true,
+                in_range: true,
+            }],
+        };
+        let json = serde_json::to_string(&state).expect("serialize");
+        let back: WifiState = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(state, back);
+    }
+
+    #[test]
+    fn wifi_band_two_four_serializes_snake_case() {
+        let json = serde_json::to_string(&WifiBand::TwoFour).expect("serialize");
+        assert_eq!(json, "\"two_four\"");
+    }
+
+    #[test]
+    fn wifi_state_default_is_unavailable_and_empty() {
+        let d = WifiState::default();
+        assert!(!d.available);
+        assert!(!d.radio_enabled);
+        assert!(d.networks.is_empty());
+        assert!(d.saved.is_empty());
     }
 }
