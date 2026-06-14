@@ -136,9 +136,11 @@ pub(crate) fn parse_radio(raw: &str) -> bool {
 }
 
 /// Parse `nmcli -t -f NAME,UUID,TYPE,AUTOCONNECT connection show` output into
-/// saved wireless profiles, keeping only `802-11-wireless` rows. The `ssid`,
-/// `security`, and `in_range` fields default here and are filled in later by
-/// the provider from the scan list.
+/// saved wireless profiles, keeping only `802-11-wireless` rows. The `id` is
+/// the stable NetworkManager UUID (used as an opaque handle for
+/// `nmcli connection {up,delete,modify} uuid <id>`), while `ssid` is the
+/// connection NAME used for display. The `security` and `in_range` fields
+/// default here and are filled in later by the provider from the scan list.
 pub(crate) fn parse_saved_list(raw: &str) -> Vec<SavedNetwork> {
     let mut out = Vec::new();
     for line in raw.lines().filter(|l| !l.trim().is_empty()) {
@@ -149,10 +151,9 @@ pub(crate) fn parse_saved_list(raw: &str) -> Vec<SavedNetwork> {
         if fields[2] != "802-11-wireless" {
             continue;
         }
-        let name = fields[0].clone();
         out.push(SavedNetwork {
-            id: name.clone(),
-            ssid: name,
+            id: fields[1].clone(),
+            ssid: fields[0].clone(),
             security: WifiSecurity::Other,
             autoconnect: fields[3].eq_ignore_ascii_case("yes"),
             in_range: false,
@@ -275,11 +276,12 @@ Wired connection 1:uuid-2:802-3-ethernet:yes
 Office-Floor3:uuid-3:802-11-wireless:no";
         let saved = parse_saved_list(raw);
         assert_eq!(saved.len(), 2);
-        let skynet = saved.iter().find(|s| s.id == "Skynet_5G").unwrap();
+        let skynet = saved.iter().find(|s| s.ssid == "Skynet_5G").unwrap();
         assert!(skynet.autoconnect);
-        assert_eq!(skynet.ssid, "Skynet_5G");
-        let office = saved.iter().find(|s| s.id == "Office-Floor3").unwrap();
+        assert_eq!(skynet.id, "uuid-1");
+        let office = saved.iter().find(|s| s.ssid == "Office-Floor3").unwrap();
         assert!(!office.autoconnect);
+        assert_eq!(office.id, "uuid-3");
     }
 
     #[test]
