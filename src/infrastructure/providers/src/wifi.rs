@@ -303,6 +303,23 @@ fn required_string_array(
     Ok(out)
 }
 
+/// Parse an optional IPv4 prefix length. Absent -> None. Present must be an
+/// integer in 0..=32; anything else is rejected.
+fn optional_prefix(payload: &serde_json::Value) -> Result<Option<u8>, DomainError> {
+    match payload.get("prefix") {
+        None => Ok(None),
+        Some(value) => value
+            .as_u64()
+            .filter(|n| *n <= 32)
+            .map(|n| Some(n as u8))
+            .ok_or_else(|| {
+                DomainError::Unsupported(
+                    "prefix must be an integer in 0..=32 in wifi action".to_string(),
+                )
+            }),
+    }
+}
+
 /// Parse the IPv4 method string into an Ipv4Method, erroring with Unsupported on
 /// anything other than "auto" or "manual".
 fn parse_ipv4_method(payload: &serde_json::Value) -> Result<Ipv4Method, DomainError> {
@@ -355,10 +372,7 @@ pub(crate) fn parse_wifi_action(payload: &serde_json::Value) -> Result<WifiActio
             method: parse_ipv4_method(payload)?,
             address: optional_str(payload, "address"),
             gateway: optional_str(payload, "gateway"),
-            prefix: payload
-                .get("prefix")
-                .and_then(|v| v.as_u64())
-                .map(|n| n as u8),
+            prefix: optional_prefix(payload)?,
         }),
         "set_dns" => Ok(WifiAction::SetDns {
             id: required_str(payload, "id")?,
@@ -422,6 +436,26 @@ mod tests {
         match parse_wifi_action(&json!({"command":"set_ipv4","id":"Net","method":"manual","address":"10.0.0.2","gateway":"10.0.0.1","prefix":24})) {
             Ok(WifiAction::SetIpv4 { method: Ipv4Method::Manual, prefix: Some(24), .. }) => {}
             _ => panic!("expected manual SetIpv4"),
+        }
+    }
+
+    #[test]
+    fn rejects_out_of_range_prefix() {
+        assert!(parse_wifi_action(
+            &json!({"command":"set_ipv4","id":"Net","method":"manual","prefix":300})
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn set_ipv4_without_prefix_is_none() {
+        match parse_wifi_action(&json!({"command":"set_ipv4","id":"Net","method":"auto"})) {
+            Ok(WifiAction::SetIpv4 {
+                prefix: None,
+                method: Ipv4Method::Auto,
+                ..
+            }) => {}
+            _ => panic!("expected auto SetIpv4 with no prefix"),
         }
     }
 
