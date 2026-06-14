@@ -24,9 +24,16 @@
         event.stopPropagation();
         onSettings?.();
     }
+
+    function onRowKeyDown(event: KeyboardEvent): void {
+        if (event.key === 'Enter' || event.key === ' ') {
+            // Space would otherwise scroll the list.
+            event.preventDefault();
+            onSelect();
+        }
+    }
 </script>
 
-<!-- svelte-ignore a11y_click_events_have_key_events -->
 <div
     class="net"
     class:active={network.active}
@@ -34,6 +41,7 @@
     role="button"
     tabindex="0"
     onclick={onSelect}
+    onkeydown={onRowKeyDown}
 >
     <span class="signal"><Signal percent={network.signal_percent} /></span>
     <span class="meta">

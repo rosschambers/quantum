@@ -35,6 +35,7 @@
         <input
             type={showPassword ? 'text' : 'password'}
             placeholder="Network password"
+            aria-label="Network password"
             bind:value={password}
             onkeydown={onKeyDown}
             autofocus

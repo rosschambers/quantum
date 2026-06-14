@@ -3,8 +3,11 @@
 
     /**
      * Read-only connection details for the active network. Requests a
-     * fresh detail fetch on mount via the parent's callback, then
-     * renders whatever the live state currently carries.
+     * detail fetch once per distinct network, then renders whatever the
+     * live state currently carries. The parent reassigns `state`
+     * wholesale on every stream tick, so `active` is a fresh object each
+     * push; guarding on the ssid string keeps repeated pushes for the
+     * same network from re-requesting details.
      */
     interface Props {
         active: ActiveWifi;
@@ -14,8 +17,13 @@
 
     const { active, onBack, onFetch }: Props = $props();
 
+    let lastFetchedSsid: string | null = $state(null);
+
     $effect(() => {
-        onFetch(active.ssid);
+        if (active.ssid !== lastFetchedSsid) {
+            lastFetchedSsid = active.ssid;
+            onFetch(active.ssid);
+        }
     });
 
     function valueOrDash(value: string | number | null): string {

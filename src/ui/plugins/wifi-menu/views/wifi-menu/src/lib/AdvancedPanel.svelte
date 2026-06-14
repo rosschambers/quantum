@@ -4,10 +4,15 @@
     /**
      * Per-network advanced settings. Exposes the five backend controls:
      * auto-connect, metered, IPv4 method (auto/manual with address,
-     * gateway, prefix), custom DNS servers, and forget. Each control
-     * issues its command immediately through the parent's `send`-style
-     * callbacks rather than batching behind a save button, so the live
-     * state stream stays the source of truth.
+     * gateway, prefix), custom DNS servers, and forget.
+     *
+     * SavedNetwork carries no current metered/IPv4/DNS values, so those
+     * fields start blank and must NOT be written back implicitly. The
+     * auto-connect and metered toggles fire immediately because a toggle
+     * is a deliberate user action with a known target value. The IPv4
+     * and DNS sections only send their command when the user clicks the
+     * explicit Apply button, so merely opening and closing the panel
+     * never clobbers a network's real configuration with blank defaults.
      */
     interface Props {
         network: SavedNetwork;
@@ -59,12 +64,18 @@
 
     function selectMethod(method: Ipv4Method): void {
         ipv4Method = method;
-        if (method === 'auto') {
-            onSetIpv4(network.id, 'auto', null, null, null);
-        }
     }
 
-    function applyManualIpv4(): void {
+    /**
+     * Explicit IPv4 apply. For automatic mode this sends a clean
+     * auto config; for manual mode it sends whatever the user typed.
+     * Only ever runs on a deliberate button click.
+     */
+    function applyIpv4(): void {
+        if (ipv4Method === 'auto') {
+            onSetIpv4(network.id, 'auto', null, null, null);
+            return;
+        }
         const parsedPrefix = prefix.trim() === '' ? null : Number(prefix);
         onSetIpv4(
             network.id,
@@ -75,6 +86,7 @@
         );
     }
 
+    /** Explicit DNS apply. Only ever runs on a deliberate button click. */
     function applyDns(): void {
         const servers = dns
             .split(',')
@@ -147,7 +159,6 @@
                 placeholder="192.168.1.50"
                 bind:value={address}
                 disabled={ipv4Method === 'auto'}
-                onblur={applyManualIpv4}
             />
         </div>
         <div class="field">
@@ -158,7 +169,6 @@
                 placeholder="24"
                 bind:value={prefix}
                 disabled={ipv4Method === 'auto'}
-                onblur={applyManualIpv4}
             />
         </div>
         <div class="field">
@@ -169,24 +179,28 @@
                 placeholder="192.168.1.1"
                 bind:value={gateway}
                 disabled={ipv4Method === 'auto'}
-                onblur={applyManualIpv4}
             />
         </div>
+        <button type="button" class="btn" data-action="apply-ipv4" onclick={applyIpv4}>
+            Apply IPv4
+        </button>
     </div>
 
     <div class="adv-section-title">DNS</div>
     <div class="form">
         <div class="field">
-            <label for="dns-servers">Custom DNS servers (comma separated)</label>
+            <label for="dns-servers">Set custom DNS servers (comma separated)</label>
             <input
                 id="dns-servers"
                 type="text"
-                placeholder="1.1.1.1, 9.9.9.9"
+                placeholder="Set custom DNS (comma separated)"
                 bind:value={dns}
                 data-action="dns"
-                onblur={applyDns}
             />
         </div>
+        <button type="button" class="btn" data-action="apply-dns" onclick={applyDns}>
+            Apply DNS
+        </button>
     </div>
 
     <div class="form">

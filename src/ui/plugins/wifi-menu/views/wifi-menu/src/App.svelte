@@ -51,6 +51,18 @@
         });
     }
 
+    /**
+     * Fire a command whose failure has no inline UI surface and log any
+     * rejection, matching the house pattern in power-menu rather than
+     * swallowing errors silently. Commands that drive inline status
+     * (connect) handle their own rejections separately.
+     */
+    function sendFireAndForget(payload: Record<string, unknown>): void {
+        send(payload).catch((error) => {
+            console.error(`wifi ${String(payload.command)} failed:`, error);
+        });
+    }
+
     $effect(() => {
         client
             .call('provider.query', { id: WIFI_PROVIDER })
@@ -61,9 +73,9 @@
         const off = client.subscribe(WIFI_CHANNEL, (p: unknown) => {
             state = p as WifiState;
         });
-        send({ command: 'open_session' }).catch(() => {});
+        sendFireAndForget({ command: 'open_session' });
         return () => {
-            send({ command: 'close_session' }).catch(() => {});
+            sendFireAndForget({ command: 'close_session' });
             off?.();
             client.close();
         };
@@ -144,15 +156,15 @@
     }
 
     function toggleRadio(): void {
-        send({ command: 'set_radio', enabled: !state.radio_enabled }).catch(() => {});
+        sendFireAndForget({ command: 'set_radio', enabled: !state.radio_enabled });
     }
 
     function rescan(): void {
-        send({ command: 'rescan' }).catch(() => {});
+        sendFireAndForget({ command: 'rescan' });
     }
 
     function onForget(id: string): void {
-        send({ command: 'forget', id }).catch(() => {});
+        sendFireAndForget({ command: 'forget', id });
         if (advancedNetwork && advancedNetwork.id === id) {
             advancedNetwork = null;
             panel = 'saved';
@@ -177,16 +189,16 @@
     function onHiddenSubmit(ssid: string, password: string): void {
         const payload: Record<string, unknown> = { command: 'connect_hidden', ssid };
         if (password.trim() !== '') payload.password = password;
-        send(payload).catch(() => {});
+        sendFireAndForget(payload);
         hiddenOpen = false;
     }
 
     function onSetAutoconnect(id: string, enabled: boolean): void {
-        send({ command: 'set_autoconnect', id, enabled }).catch(() => {});
+        sendFireAndForget({ command: 'set_autoconnect', id, enabled });
     }
 
     function onSetMetered(id: string, metered: boolean): void {
-        send({ command: 'set_metered', id, metered }).catch(() => {});
+        sendFireAndForget({ command: 'set_metered', id, metered });
     }
 
     function onSetIpv4(
@@ -200,15 +212,15 @@
         if (address !== null) payload.address = address;
         if (gateway !== null) payload.gateway = gateway;
         if (prefix !== null) payload.prefix = prefix;
-        send(payload).catch(() => {});
+        sendFireAndForget(payload);
     }
 
     function onSetDns(id: string, servers: string[]): void {
-        send({ command: 'set_dns', id, servers }).catch(() => {});
+        sendFireAndForget({ command: 'set_dns', id, servers });
     }
 
     function onFetchDetails(ssid: string): void {
-        send({ command: 'fetch_details', ssid }).catch(() => {});
+        sendFireAndForget({ command: 'fetch_details', ssid });
     }
 
     function selectTab(next: 'available' | 'saved'): void {
@@ -307,7 +319,7 @@
                     {#if state.networks.length === 0}
                         <div class="empty">Searching for networks...</div>
                     {/if}
-                    {#each state.networks as network (network.bssid)}
+                    {#each state.networks as network (rowKey(network))}
                         <NetworkRow
                             {network}
                             status={status[rowKey(network)] ?? null}

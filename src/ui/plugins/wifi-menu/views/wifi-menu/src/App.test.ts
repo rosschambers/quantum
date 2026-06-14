@@ -12,6 +12,9 @@ let mockState: WifiState;
 let mockCallSpy = vi.fn();
 let mockSubscribeSpy = vi.fn();
 let capturedSubscribeCallback: ((payload: unknown) => void) | null = null;
+/* When set, the mock rejects connect commands with this value so the
+ * error-classification path can be exercised. */
+let connectRejection: unknown | null = null;
 
 function radioOnState(): WifiState {
     return {
@@ -91,6 +94,14 @@ vi.mock('@quantum/client', () => ({
             if (method === 'provider.query' && (params as { id?: string })?.id === 'wifi') {
                 return Promise.resolve(mockState);
             }
+            if (method === 'action.invoke' && connectRejection !== null) {
+                const command = (
+                    params as { action?: { data?: { payload?: { command?: string } } } }
+                ).action?.data?.payload?.command;
+                if (command === 'connect') {
+                    return Promise.reject(connectRejection);
+                }
+            }
             return Promise.resolve(undefined);
         },
         subscribe: (...args: unknown[]) => {
@@ -110,6 +121,7 @@ beforeEach(() => {
     mockCallSpy = vi.fn();
     mockSubscribeSpy = vi.fn();
     capturedSubscribeCallback = null;
+    connectRejection = null;
     mockState = radioOnState();
 });
 
@@ -273,5 +285,66 @@ describe('WifiMenu App', () => {
         const action = lastCommand('forget');
         expect(action).toBeDefined();
         expect(action!.data!.payload).toEqual({ command: 'forget', id: 'Office-Floor3' });
+    });
+
+    it('shows "Incorrect password" when the connect call rejects with that reason', async () => {
+        // Daemon-style rejection: the JSON-RPC error carries the reason.
+        connectRejection = { code: -32000, message: 'connect failed: incorrect_password' };
+
+        const { container, queryByText } = render(App);
+        await settle();
+
+        // Expand the password form for a secured, unsaved network.
+        const row = container.querySelector('[data-bssid="d1"]') as HTMLElement;
+        await fireEvent.click(row);
+        await tick();
+        await tick();
+
+        const input = container.querySelector('.pwform input') as HTMLInputElement;
+        await fireEvent.input(input, { target: { value: 'wrongpass' } });
+        await tick();
+
+        const submit = container.querySelector('.pwform .btn') as HTMLButtonElement;
+        await fireEvent.click(submit);
+        await settle();
+
+        // The form stays open and surfaces the incorrect-password error
+        // in its own error element (the row also flags it inline).
+        const form = container.querySelector('.pwform');
+        expect(form).not.toBeNull();
+        const formError = form!.querySelector('.pwerror') as HTMLElement;
+        expect(formError).not.toBeNull();
+        expect(formError.textContent?.toLowerCase()).toContain('incorrect password');
+    });
+
+    it('re-renders the network list when a new WifiState arrives on the stream', async () => {
+        const { container } = render(App);
+        await settle();
+
+        // The pushed network is not present in the initial fixture.
+        expect(container.querySelector('[data-bssid="z9"]')).toBeNull();
+        expect(capturedSubscribeCallback).not.toBeNull();
+
+        const updated = radioOnState();
+        updated.active = null;
+        updated.networks = [
+            {
+                ssid: 'FreshlyAppeared',
+                bssid: 'z9',
+                signal_percent: 70,
+                security: 'wpa2',
+                band: 'five',
+                saved: false,
+                active: false,
+            },
+        ];
+        capturedSubscribeCallback!(updated);
+        await settle();
+
+        const freshRow = container.querySelector('[data-bssid="z9"]');
+        expect(freshRow).not.toBeNull();
+        expect(freshRow?.textContent).toContain('FreshlyAppeared');
+        // The old fixture rows are gone.
+        expect(container.querySelector('[data-bssid="c1"]')).toBeNull();
     });
 });
