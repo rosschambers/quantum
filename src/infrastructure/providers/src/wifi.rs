@@ -4,7 +4,9 @@
 //! `nmcli -t -f`, writes that check exit status, change-gated streaming,
 //! and command-gated scanning so the overlay only scans while open.
 
-use quantum_domain::{WifiBand, WifiNetwork, WifiSecurity};
+use quantum_domain::{
+    Ipv4Method, SavedNetwork, WifiBand, WifiConnectionDetails, WifiNetwork, WifiSecurity,
+};
 use std::collections::HashMap;
 
 /// Map an nmcli SECURITY field to WifiSecurity.
@@ -108,6 +110,106 @@ pub(crate) fn parse_scan_list(raw: &str) -> Vec<WifiNetwork> {
     out
 }
 
+/// Unescape an nmcli `-t` value, turning `\:` into `:` and `\\` into `\`.
+/// Used for single values (not whole lines) where the key has already been
+/// separated on the first colon.
+fn unescape_terse(s: &str) -> String {
+    let mut out = String::new();
+    let mut chars = s.chars().peekable();
+    while let Some(c) = chars.next() {
+        if c == '\\' {
+            if let Some(&next) = chars.peek() {
+                out.push(next);
+                chars.next();
+            }
+        } else {
+            out.push(c);
+        }
+    }
+    out
+}
+
+/// Parse `nmcli radio wifi` output into a boolean. True only for the trimmed,
+/// case-insensitive literal `enabled`.
+pub(crate) fn parse_radio(raw: &str) -> bool {
+    raw.trim().eq_ignore_ascii_case("enabled")
+}
+
+/// Parse `nmcli -t -f NAME,UUID,TYPE,AUTOCONNECT connection show` output into
+/// saved wireless profiles, keeping only `802-11-wireless` rows. The `ssid`,
+/// `security`, and `in_range` fields default here and are filled in later by
+/// the provider from the scan list.
+pub(crate) fn parse_saved_list(raw: &str) -> Vec<SavedNetwork> {
+    let mut out = Vec::new();
+    for line in raw.lines().filter(|l| !l.trim().is_empty()) {
+        let fields = split_terse_line(line);
+        if fields.len() < 4 {
+            continue;
+        }
+        if fields[2] != "802-11-wireless" {
+            continue;
+        }
+        let name = fields[0].clone();
+        out.push(SavedNetwork {
+            id: name.clone(),
+            ssid: name,
+            security: WifiSecurity::Other,
+            autoconnect: fields[3].eq_ignore_ascii_case("yes"),
+            in_range: false,
+        });
+    }
+    out
+}
+
+/// Parse `nmcli -t` key:value output for a connection into details. Handles
+/// indexed keys like `IP4.ADDRESS[1]`, collects `IP4.DNS[n]` in order, and
+/// unescapes the colon-laden `GENERAL.HWADDR` value. `frequency_mhz` is filled
+/// later by the provider from the scan row, so it defaults to None.
+pub(crate) fn parse_details(raw: &str) -> WifiConnectionDetails {
+    let mut ip_address: Option<String> = None;
+    let mut gateway: Option<String> = None;
+    let mut dns: Vec<String> = Vec::new();
+    let mut mac: Option<String> = None;
+    let mut ipv4_method = Ipv4Method::Auto;
+    let mut metered = false;
+
+    for line in raw.lines().filter(|l| !l.trim().is_empty()) {
+        let Some((key, raw_value)) = line.split_once(':') else {
+            continue;
+        };
+        let value = unescape_terse(raw_value);
+        if key.starts_with("IP4.ADDRESS") {
+            if ip_address.is_none() {
+                ip_address = Some(value);
+            }
+        } else if key == "IP4.GATEWAY" {
+            gateway = Some(value);
+        } else if key.starts_with("IP4.DNS") {
+            dns.push(value);
+        } else if key == "GENERAL.HWADDR" {
+            mac = Some(value);
+        } else if key == "ipv4.method" {
+            ipv4_method = if value == "auto" {
+                Ipv4Method::Auto
+            } else {
+                Ipv4Method::Manual
+            };
+        } else if key == "connection.metered" {
+            metered = value == "yes" || value == "1";
+        }
+    }
+
+    WifiConnectionDetails {
+        ip_address,
+        gateway,
+        dns,
+        mac,
+        frequency_mhz: None,
+        ipv4_method,
+        metered,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -156,5 +258,60 @@ CoffeeShopFree:AA\\:BB\\:CC\\:DD\\:EE\\:FF:55::2437:no:
         assert_eq!(open.security, WifiSecurity::Open);
         // Hidden network retained with empty SSID.
         assert!(nets.iter().any(|n| n.ssid.is_empty()));
+    }
+
+    #[test]
+    fn parse_radio_reads_enabled() {
+        assert!(parse_radio("enabled\n"));
+        assert!(!parse_radio("disabled\n"));
+        assert!(parse_radio("ENABLED"));
+    }
+
+    #[test]
+    fn parse_saved_list_filters_wireless() {
+        let raw = "\
+Skynet_5G:uuid-1:802-11-wireless:yes
+Wired connection 1:uuid-2:802-3-ethernet:yes
+Office-Floor3:uuid-3:802-11-wireless:no";
+        let saved = parse_saved_list(raw);
+        assert_eq!(saved.len(), 2);
+        let skynet = saved.iter().find(|s| s.id == "Skynet_5G").unwrap();
+        assert!(skynet.autoconnect);
+        assert_eq!(skynet.ssid, "Skynet_5G");
+        let office = saved.iter().find(|s| s.id == "Office-Floor3").unwrap();
+        assert!(!office.autoconnect);
+    }
+
+    #[test]
+    fn parse_details_extracts_fields() {
+        let raw = "\
+IP4.ADDRESS[1]:192.168.1.42/24
+IP4.GATEWAY:192.168.1.1
+IP4.DNS[1]:1.1.1.1
+IP4.DNS[2]:9.9.9.9
+GENERAL.HWADDR:3C\\:22\\:FB\\:1A\\:8E\\:00
+ipv4.method:auto
+connection.metered:no";
+        let d = parse_details(raw);
+        assert_eq!(d.ip_address.as_deref(), Some("192.168.1.42/24"));
+        assert_eq!(d.gateway.as_deref(), Some("192.168.1.1"));
+        assert_eq!(d.dns, vec!["1.1.1.1", "9.9.9.9"]);
+        assert_eq!(d.mac.as_deref(), Some("3C:22:FB:1A:8E:00"));
+        assert_eq!(d.ipv4_method, Ipv4Method::Auto);
+        assert!(!d.metered);
+    }
+
+    #[test]
+    fn parse_scan_list_active_propagates_from_weaker_row() {
+        // The strongest row is NOT active; a weaker duplicate is active.
+        // The collapsed row must keep the strongest signal AND be active.
+        let raw = "\
+HomeNet:AA\\:AA\\:AA\\:AA\\:AA\\:01:90:WPA2:5180:no:
+HomeNet:AA\\:AA\\:AA\\:AA\\:AA\\:02:40:WPA2:2412:yes:*";
+        let nets = parse_scan_list(raw);
+        let home: Vec<_> = nets.iter().filter(|n| n.ssid == "HomeNet").collect();
+        assert_eq!(home.len(), 1);
+        assert_eq!(home[0].signal_percent, 90);
+        assert!(home[0].active);
     }
 }
