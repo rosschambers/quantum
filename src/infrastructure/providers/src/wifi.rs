@@ -490,16 +490,18 @@ impl WifiProvider {
             }
             WifiAction::Connect {
                 ssid,
-                bssid: _,
+                bssid,
                 password,
             } => {
-                let result = connect_to_network(&ssid, password.as_deref(), false).await;
+                let result =
+                    connect_to_network(&ssid, bssid.as_deref(), password.as_deref(), false).await;
                 self.scan.notify.notify_one();
                 result.map_err(map_connect_error)?;
                 Ok(ActionOutcome { message: None })
             }
             WifiAction::ConnectHidden { ssid, password } => {
-                let result = connect_to_network(&ssid, password.as_deref(), true).await;
+                // Hidden connects do not pin a BSSID.
+                let result = connect_to_network(&ssid, None, password.as_deref(), true).await;
                 self.scan.notify.notify_one();
                 result.map_err(map_connect_error)?;
                 Ok(ActionOutcome { message: None })
@@ -586,6 +588,13 @@ impl WifiProvider {
     /// emitted state in `scan.last`, and yields only when something changed.
     /// The loop never terminates: a failed nmcli read defaults rather than
     /// erroring, so the stream stays alive for the lifetime of the subscriber.
+    ///
+    /// Assumes a single subscriber: the daemon's `SubscribeProviderUseCase`
+    /// calls `subscribe()` once per provider and fans out to clients via the
+    /// broadcast `EventBus`, so the shared `ScanSession` (one `Notify`, one
+    /// `last` change-gate) is correct for that single-stream usage. Calling
+    /// `subscribe()` more than once would have the two streams race on the
+    /// shared `last` gate and split notifications.
     fn event_driven_stream(&self) -> BoxStream<'static, serde_json::Value> {
         let scan = self.scan.clone();
         Box::pin(async_stream::stream! {
@@ -625,12 +634,10 @@ impl WifiProvider {
 
 /// Build the full `WifiState` from live `nmcli` reads.
 ///
-/// Always reads the radio flag, the active-connection signal, and the saved
-/// profile list. The scan list is read ONLY while a session is open
-/// (`scan.active`), so the overlay does not force periodic rescans in the
-/// background. Cross-references the scan and saved lists to set each network's
-/// `saved` flag and each saved profile's `in_range` flag, and derives the
-/// `active` connection from the in-use scan row.
+/// Always reads the radio flag and the saved profile list. The scan list is
+/// read ONLY while a session is open (`scan.active`), so the overlay does not
+/// force periodic rescans in the background. Delegates the cross-referencing
+/// and active-row derivation to the pure `assemble_state` helper.
 ///
 /// Every individual read defaults on error (empty list / false), so this
 /// function never panics and never returns an error; a totally failed rebuild
@@ -641,7 +648,7 @@ async fn build_state(scan: &ScanSession) -> WifiState {
         Err(_) => false,
     };
 
-    let mut saved = match run_nmcli(&[
+    let saved = match run_nmcli(&[
         "-t",
         "-f",
         "NAME,UUID,TYPE,AUTOCONNECT",
@@ -656,7 +663,7 @@ async fn build_state(scan: &ScanSession) -> WifiState {
 
     let scanning = scan.active.load(Ordering::Relaxed);
 
-    let mut networks = if scanning {
+    let networks = if scanning {
         match run_nmcli(&[
             "-t",
             "-f",
@@ -674,28 +681,33 @@ async fn build_state(scan: &ScanSession) -> WifiState {
         Vec::new()
     };
 
-    // Cross-reference: mark scanned networks that have a saved profile, and
-    // mark saved profiles that are currently in range.
-    for network in &mut networks {
-        network.saved =
-            !network.ssid.is_empty() && saved.iter().any(|profile| profile.ssid == network.ssid);
-    }
-    for profile in &mut saved {
-        profile.in_range = networks.iter().any(|network| network.ssid == profile.ssid);
-    }
+    assemble_state(radio_enabled, scanning, networks, saved)
+}
 
-    // Derive the active connection from the in-use scan row. Details are left
-    // None and fetched on demand via the FetchDetails command.
-    let active = networks
-        .iter()
-        .find(|network| network.active)
-        .map(|network| ActiveWifi {
-            ssid: network.ssid.clone(),
-            signal_percent: network.signal_percent,
-            security: network.security,
-            details: None,
-        });
-
+/// Assemble a WifiState from already-read parts. Pure (no I/O) so the
+/// cross-reference and active-derivation logic is unit-testable.
+/// - `network.saved` is true when its (non-empty) SSID matches a saved profile's ssid.
+/// - `saved.in_range` is true when its (non-empty) ssid appears in the scan list.
+/// - `active` is derived from the in-use scan row (details left None).
+fn assemble_state(
+    radio_enabled: bool,
+    scanning: bool,
+    mut networks: Vec<WifiNetwork>,
+    mut saved: Vec<SavedNetwork>,
+) -> WifiState {
+    for network in networks.iter_mut() {
+        network.saved = !network.ssid.is_empty() && saved.iter().any(|s| s.ssid == network.ssid);
+    }
+    for profile in saved.iter_mut() {
+        profile.in_range =
+            !profile.ssid.is_empty() && networks.iter().any(|n| n.ssid == profile.ssid);
+    }
+    let active = networks.iter().find(|n| n.active).map(|n| ActiveWifi {
+        ssid: n.ssid.clone(),
+        signal_percent: n.signal_percent,
+        security: n.security,
+        details: None,
+    });
     WifiState {
         available: true,
         radio_enabled,
@@ -767,15 +779,23 @@ async fn run_nmcli(args: &[&str]) -> Result<String, ProvidersError> {
     }
 }
 
-/// Connect to a scanned or new network keyed on SSID (no profile UUID exists
-/// yet). Appends `password <pw>` when a password is supplied and `hidden yes`
-/// for hidden networks.
-async fn connect_to_network(
-    ssid: &str,
-    password: Option<&str>,
+/// Build the `nmcli device wifi connect` argument vector. Pure (no I/O) so the
+/// bssid/password/hidden wiring is unit-testable. Pins to a specific access
+/// point with `bssid <BSSID>` when a non-empty bssid is supplied, appends
+/// `password <pw>` when a password is supplied, and `hidden yes` for hidden
+/// networks. Each token is a separate argv item; nmcli accepts the optional
+/// arguments as independent `name value` pairs.
+fn connect_args<'a>(
+    ssid: &'a str,
+    bssid: Option<&'a str>,
+    password: Option<&'a str>,
     hidden: bool,
-) -> Result<String, ProvidersError> {
+) -> Vec<&'a str> {
     let mut args: Vec<&str> = vec!["device", "wifi", "connect", ssid];
+    if let Some(bssid) = bssid.filter(|value| !value.is_empty()) {
+        args.push("bssid");
+        args.push(bssid);
+    }
     if let Some(pw) = password {
         args.push("password");
         args.push(pw);
@@ -784,6 +804,19 @@ async fn connect_to_network(
         args.push("hidden");
         args.push("yes");
     }
+    args
+}
+
+/// Connect to a scanned or new network keyed on SSID (no profile UUID exists
+/// yet). When `bssid` is supplied and non-empty the connection is pinned to
+/// that specific access point.
+async fn connect_to_network(
+    ssid: &str,
+    bssid: Option<&str>,
+    password: Option<&str>,
+    hidden: bool,
+) -> Result<String, ProvidersError> {
+    let args = connect_args(ssid, bssid, password, hidden);
     run_nmcli(&args).await
 }
 
@@ -1142,6 +1175,134 @@ HomeNet:AA\\:AA\\:AA\\:AA\\:AA\\:02:40:WPA2:2412:yes:*";
             payload: serde_json::json!({"command":"open_session"}),
         };
         assert!(provider.invoke(&action).await.is_err());
+    }
+
+    #[test]
+    fn assemble_state_cross_references_saved_and_in_range() {
+        let networks = vec![
+            WifiNetwork {
+                ssid: "HomeNet".into(),
+                bssid: "b1".into(),
+                signal_percent: 80,
+                security: WifiSecurity::Wpa2,
+                band: WifiBand::Five,
+                saved: false,
+                active: true,
+            },
+            WifiNetwork {
+                ssid: "Cafe".into(),
+                bssid: "b2".into(),
+                signal_percent: 50,
+                security: WifiSecurity::Open,
+                band: WifiBand::TwoFour,
+                saved: false,
+                active: false,
+            },
+        ];
+        let saved = vec![
+            SavedNetwork {
+                id: "uuid-home".into(),
+                ssid: "HomeNet".into(),
+                security: WifiSecurity::Other,
+                autoconnect: true,
+                in_range: false,
+            },
+            SavedNetwork {
+                id: "uuid-office".into(),
+                ssid: "Office".into(),
+                security: WifiSecurity::Other,
+                autoconnect: false,
+                in_range: false,
+            },
+        ];
+        let state = assemble_state(true, true, networks, saved);
+        // HomeNet is saved (matches a profile); Cafe is not.
+        assert!(
+            state
+                .networks
+                .iter()
+                .find(|n| n.ssid == "HomeNet")
+                .unwrap()
+                .saved
+        );
+        assert!(
+            !state
+                .networks
+                .iter()
+                .find(|n| n.ssid == "Cafe")
+                .unwrap()
+                .saved
+        );
+        // HomeNet profile is in range; Office is not.
+        assert!(
+            state
+                .saved
+                .iter()
+                .find(|s| s.ssid == "HomeNet")
+                .unwrap()
+                .in_range
+        );
+        assert!(
+            !state
+                .saved
+                .iter()
+                .find(|s| s.ssid == "Office")
+                .unwrap()
+                .in_range
+        );
+        // active derived from the in-use row.
+        assert_eq!(state.active.as_ref().unwrap().ssid, "HomeNet");
+        assert_eq!(state.active.as_ref().unwrap().signal_percent, 80);
+    }
+
+    #[test]
+    fn assemble_state_no_active_row_yields_none() {
+        let networks = vec![WifiNetwork {
+            ssid: "Cafe".into(),
+            bssid: "b2".into(),
+            signal_percent: 50,
+            security: WifiSecurity::Open,
+            band: WifiBand::TwoFour,
+            saved: false,
+            active: false,
+        }];
+        let state = assemble_state(true, true, networks, vec![]);
+        assert!(state.active.is_none());
+    }
+
+    #[test]
+    fn connect_args_pins_bssid_when_present() {
+        let args = connect_args("HomeNet", Some("AA:BB:CC:DD:EE:FF"), Some("pw"), false);
+        assert_eq!(
+            args,
+            vec![
+                "device",
+                "wifi",
+                "connect",
+                "HomeNet",
+                "bssid",
+                "AA:BB:CC:DD:EE:FF",
+                "password",
+                "pw",
+            ]
+        );
+    }
+
+    #[test]
+    fn connect_args_omits_bssid_when_absent_or_empty() {
+        let none = connect_args("HomeNet", None, None, false);
+        assert_eq!(none, vec!["device", "wifi", "connect", "HomeNet"]);
+        let empty = connect_args("HomeNet", Some(""), None, false);
+        assert_eq!(empty, vec!["device", "wifi", "connect", "HomeNet"]);
+    }
+
+    #[test]
+    fn connect_args_appends_hidden_yes() {
+        let args = connect_args("HomeNet", None, Some("pw"), true);
+        assert_eq!(
+            args,
+            vec!["device", "wifi", "connect", "HomeNet", "password", "pw", "hidden", "yes",]
+        );
     }
 
     #[tokio::test]
