@@ -1,10 +1,13 @@
 /// D-Bus notification provider.
 /// Bridges org.freedesktop.Notifications signals into the event bus.
 
+use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use futures::StreamExt;
 use tokio::sync::{broadcast, RwLock};
 use async_trait::async_trait;
+use zbus::SignalMatch;
+use zbus::fdo::MatchRule;
 
 use quantum_domain::error::DomainError;
 use quantum_domain::match_result::{IconRef, Match};
@@ -16,15 +19,12 @@ use serde_json::{self, Value as JsonValue};
 #[derive(Debug, Clone)]
 pub struct DbusNotification {
     pub app_name: String,
-    /// Icon can be an absolute path or a theme icon name. Empty means no icon.
     pub icon: String,
-    /// The ID returned by the notification server. 0 means "create new".
     pub id: u32,
     pub summary: String,
     pub body: String,
-    /// List of (action_name, action_value) pairs.
     pub actions: Vec<(String, String)>,
-    pub hints: std::collections::HashMap<String, JsonValue>,
+    pub hints: HashMap<String, JsonValue>,
 }
 
 /// Manages in-memory notification state with automatic D-Bus bridging.
@@ -77,7 +77,8 @@ impl NotificationsProvider {
             let mut next = self.inner.next_id.lock().unwrap();
             *next += 1;
             store.push(DbusNotification {
-                app_name, icon: icon.unwrap_or_default(), id: 0, summary, body, actions: Vec::new(), hints: std::collections::HashMap::new(),
+                app_name, icon: icon.unwrap_or_default(), id: 0, summary, body,
+                actions: Vec::new(), hints: HashMap::new(),
             });
         }
         let _ = self.inner.tx.send(NotificationEvent::Created {
@@ -103,30 +104,113 @@ impl NotificationsProvider {
         let inner = self.inner.clone();
         tokio::task::spawn(async move {
             if let Ok(conn) = zbus::Connection::session().await {
-                conn.match_signal(|msg| {
-                    msg.interface().is_some_and(|iface| iface == "org.freedesktop.Notifications")
-                        && msg.member().is_some_and(|m| m == "Notify")
-                }).on_await(async move |signal: zbus::Message| {
-                    let body = signal.body();
-                    let app_name: String = <&str>::try_from(body.read::<zbus::zvariant::Value>().ok()).unwrap_or_default().to_string();
-                    let db_id: u32 = <u32>::try_from(body.read::<zbus::zvariant::Value>().ok()).unwrap_or(0);
-                    let icon: String = <&str>::try_from(body.read::<zbus::zvariant::Value>().ok()).map(|s| s.to_string()).unwrap_or_default();
-                    let summary: String = <&str>::try_from(body.read::<zbus::zvariant::Value>().ok()).map(|s| s.to_string()).unwrap_or_default();
-                    let body_str: String = <&str>::try_from(body.read::<zbus::zvariant::Value>().ok()).map(|s| s.to_string()).unwrap_or_default();
+                let match_rule = SignalMatch::match_signal(
+                    Some("org.freedesktop.Notifications"),
+                    None,
+                    Some("Notify"),
+                );
+                conn.match_signal(match_rule).on_await(async move |signal: zbus::Message<'_>| {
+                    // Use signal.iterator() to read parameters.
+                    let mut it = signal.iter();
 
-                    let notification = DbusNotification { app_name, icon, id: db_id, summary, body: body_str, actions: Vec::new(), hints: std::collections::HashMap::new() };
-                    let mut store_guard = inner.store.write().await;
+                    // Extract app_name.
+                    let app_name = if let Ok(val) = it.next().map(|m| m.deserialize()) {
+                        match val {
+                            Ok((v, _)) => String::from(&*v),
+                            Err(_) => "Unknown".to_string(),
+                        }
+                    } else {
+                        "Unknown".to_string()
+                    };
+
+                    // Extract icon path/name.
+                    let icon = if let Ok(val) = it.next().map(|m| m.deserialize()) {
+                        match val {
+                            Ok((v, _)) => String::from(&*v),
+                            Err(_) => "application-default-icon".to_string(),
+                        }
+                    } else {
+                        "application-default-icon".to_string()
+                    };
+
+                    // Extract id.
+                    let db_id: u32 = if let Ok(val) = it.next().map(|m| m.deserialize()) {
+                        match val {
+                            Ok((v, _)) => <u32>::from(&*v),
+                            Err(_) => 0,
+                        }
+                    } else {
+                        0
+                    };
+
+                    // Extract summary.
+                    let summary = if let Ok(val) = it.next().map(|m| m.deserialize()) {
+                        match val {
+                            Ok((v, _)) => String::from(&*v),
+                            Err(_) => "".to_string(),
+                        }
+                    } else {
+                        "".to_string()
+                    };
+
+                    // Extract body.
+                    let body = if let Ok(val) = it.next().map(|m| m.deserialize()) {
+                        match val {
+                            Ok((v, _)) => String::from(&*v),
+                            Err(_) => "".to_string(),
+                        }
+                    } else {
+                        "".to_string()
+                    };
+
+                    // Extract remaining items as actions.
+                    let mut actions: Vec<(String, String)> = Vec::new();
+                    for item in it.by_ref() {
+                        if let Ok(val) = item.deserialize::<zbus::zvariant::Value>() {
+                            if let Ok(array) = val.downcast_ref::<Vec<(&str, zbus::zvariant::Value)>>() {
+                                for (k, v) in array {
+                                    actions.push((k.to_string(), String::from(&**v)));
+                                }
+                            }
+                        }
+                    }
+
+                    // Build hints from signature.
+                    let mut hints: HashMap<String, JsonValue> = HashMap::new();
+                    let sig = signal.signature().to_string();
+                    if sig.contains("{sv}") {
+                        // Parse dict of string-to-value.
+                        for item in it.by_ref() {
+                            if let Ok(val) = item.deserialize::<zbus::zvariant::Dict<&str, zbus::zvariant::Value>>() {
+                                for (k, v) in val {
+                                    hints.insert(k.to_string(), serde_json::to_value(v).unwrap_or(JsonValue::Null));
+                                }
+                            }
+                        }
+                    }
+
+                    let notification = DbusNotification {
+                        app_name, icon, id: db_id, summary, body, actions, hints,
+                    };
+
+                    // Insert or update.
+                    let mut sg = inner.store.write().await;
                     if db_id != 0 {
-                        if let Some(pos) = store_guard.iter().position(|n| n.id == db_id) {
-                            store_guard[pos] = notification;
+                        if let Some(pos) = sg.iter().position(|n| n.id == db_id) {
+                            sg[pos] = notification;
                             let _ = inner.tx.send(NotificationEvent::Updated { id: db_id });
                             return;
                         }
                     }
                     let mut next_id = inner.next_id.lock().unwrap();
                     *next_id += 1;
-                    store_guard.push(notification);
-                    let _ = inner.tx.send(NotificationEvent::Created { id: *next_id, timeout_ms: None });
+                    let new_notification = DbusNotification {
+                        app_name, icon, id: *next_id, summary, body, actions, hints,
+                    };
+                    sg.push(new_notification);
+                    let _ = inner.tx.send(NotificationEvent::Created {
+                        id: *next_id, timeout_ms: None,
+                    });
                 }).await.map_err(|e| tracing::warn!("D-Bus match error: {}", e));
             } else {
                 tracing::info!("NotificationsProvider could not connect to session bus");
@@ -153,7 +237,7 @@ impl ProviderSource for NotificationsProvider {
                 score: 0.9,
                 action: Action::Custom {
                     kind: "notifications.dismiss".to_string(),
-                    payload: serde_json::json!({ "id": n.id, "app_name": &n.app_name, "summary": &n.summary }),
+                    payload: serde_json::json!({ "id": n.id, "app_name": &n.app_name }),
                 },
             }).collect())
     }
