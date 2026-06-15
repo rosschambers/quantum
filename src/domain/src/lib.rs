@@ -6,6 +6,7 @@ pub mod error;
 pub mod event_bus;
 pub mod ids;
 pub mod match_result;
+pub mod notifications;
 pub mod ports;
 pub mod query;
 pub mod score;
@@ -14,6 +15,7 @@ pub mod view_descriptor;
 pub mod window_mode;
 
 pub use action::Action;
+pub use notifications::{Notification, NotificationEvent, NotificationUrgency};
 pub use bar_state::{
     ActiveWifi, ActiveWindowState, AudioSink, AudioState, BatteryChargeState, BluetoothDevice,
     BluetoothState, BrightnessDisplay, BrightnessState, Ipv4Method, MonitorActiveWindowState,

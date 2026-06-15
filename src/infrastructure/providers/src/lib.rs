@@ -22,6 +22,7 @@ pub mod proc_stats;
 pub mod shell_command;
 pub mod system_power;
 pub mod wifi;
+pub mod notifications;
 
 pub use error::ProvidersError;
 pub use registry::InMemoryProviderRegistry;
@@ -37,6 +38,7 @@ pub use hyprland_active_window::HyprlandActiveWindowProvider;
 pub use hyprland_windows::HyprlandWindowsProvider;
 pub use mpris::MprisProvider;
 pub use network::NetworkManagerProvider;
+pub use notifications::NotificationsProvider;
 pub use plugin_script::PluginScriptProvider;
 pub use power_profile::PowerProfilesDaemonProvider;
 pub use proc_stats::ProcStatsProvider;
