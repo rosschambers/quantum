@@ -1,0 +1,20 @@
+[plugin]
+name = "notification-center"
+version = "0.1.0"
+type = "widget"
+
+[entrypoint]
+file = "views/center/index.html"
+script = "views/center/main.js"
+style = "views/center/style.css"
+
+[settings]
+# Whether to show the widget anchored at top-right (like a persistent bar indicator).
+anchored = true
+# Position when showing as toast.
+toast-position = "top-right"
+# Auto-dismiss for notifications with timeout_ms == 0.
+default_timeout = 5000
+
+[widget]
+single_instance = false

@@ -1,0 +1,51 @@
+/* Notification Center Widget Styles */
+.widget-container {
+    position: absolute;
+    top: 24px;
+    right: 24px;
+    width: 360px;
+    max-height: 500px;
+    overflow: hidden;
+    z-index: 999;
+}
+
+.widget-container.collapsed .widget-header { opacity: 0; height: 0; padding-top: 0; padding-bottom: 0; }
+.widget-container.expanded .widget-list { max-height: 500px; overflow-y: auto; }
+
+/* Notification card styles */
+.notification-card {
+    margin-bottom: 6px;
+    padding: 12px 14px;
+    background: #171720;
+    cursor: pointer;
+    display: flex;
+    align-items: flex-start;
+    gap: 10px;
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
+    transition: all 0.25s;
+}
+
+/* Urgency accent lines */
+.notification-card.system { border-left-color: #e74c3c; }
+.notification-card.provider { border-left-color: #6c5ce7; }
+.notification-card.critical { border-left-color: #f39c12; }
+
+.notification-card:hover { background: rgba(255, 255, 255, 0.06); }
+
+/* Toast animation */
+.notification-card.toast-in {
+    animation: slideIn 0.3s ease forwards;
+}
+
+@keyframes slideIn {
+    from { opacity: 0; transform: translateX(20px); }
+    to { opacity: 1; transform: translateX(0); }
+}
+
+.notification-card.toast-out {
+    animation: slideOut 0.25s ease forwards;
+}
+
+@keyframes slideOut {
+    to { opacity: 0; transform: translateY(8px) scale(0.96); }
+}

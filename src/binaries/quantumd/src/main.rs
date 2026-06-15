@@ -25,7 +25,7 @@ use quantum_ipc::{
 use quantum_providers::{
     BluezProvider, DeclarativeShellProvider, DesktopAppsProvider, HyprlandActiveWindowProvider,
     HyprlandWindowsProvider, InMemoryProviderRegistry, LogindBrightnessProvider, MprisProvider,
-    NetworkManagerProvider, PluginScriptProvider, PowerProfilesDaemonProvider, ProcStatsProvider,
+    NetworkManagerProvider, NotificationsProvider, PluginScriptProvider, PowerProfilesDaemonProvider, ProcStatsProvider,
     ProvidersError, PulseAudioProvider, ShellCommandProvider, SystemPowerProvider,
     TokioShellExecutor, UpowerBatteryProvider, WifiProvider,
 };
@@ -573,6 +573,10 @@ async fn setup_daemon(
     register_or_warn(&registry, "PulseAudioProvider", audio).await;
     register_or_warn(&registry, "SystemPowerProvider", sysp).await;
     register_or_warn(&registry, "WifiProvider", wifi).await;
+
+    // Notifications provider: bridges D-Bus org.freedesktop.Notifications into the event bus.
+    let notifications = Arc::new(NotificationsProvider::new());
+    register_or_warn(&registry, "notifications", notifications.clone()).await;
 
     // Plugins: walk ~/.config/quantum/plugins/, merge over the embedded
     // first-party catalog (user plugins shadow embedded ones by name),

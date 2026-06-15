@@ -1,0 +1,759 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Quantum Notification View Explorer</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    background: #1a1a2e;
+    color: #cdd6f4;
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+  }
+  .header {
+    padding: 20px 24px;
+    border-bottom: 1px solid rgba(255,255,255,0.06);
+    background: rgba(30,30,46,0.8);
+  }
+  .header h1 {
+    font-size: 18px;
+    font-weight: 600;
+    margin-bottom: 4px;
+  }
+  .header p {
+    font-size: 13px;
+    color: #a6adc8;
+  }
+  .controls {
+    display: flex;
+    gap: 8px;
+    padding: 16px 24px;
+    border-bottom: 1px solid rgba(255,255,255,0.06);
+  }
+  .control-btn {
+    padding: 8px 20px;
+    border: 1px solid rgba(255,255,255,0.12);
+    background: rgba(30,30,46,0.6);
+    color: #cdd6f4;
+    border-radius: 8px;
+    cursor: pointer;
+    font-size: 13px;
+    font-weight: 500;
+    transition: all 0.15s ease;
+  }
+  .control-btn:hover {
+    background: rgba(30,30,46,1);
+    border-color: rgba(255,255,255,0.2);
+  }
+  .control-btn.active {
+    background: #89b4fa;
+    color: #1e1e2e;
+    border-color: #89b4fa;
+  }
+  .preview {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 40px;
+    position: relative;
+  }
+  .preview-inner {
+    position: relative;
+    width: 900px;
+    height: 600px;
+    background: #0f0f1a;
+    border-radius: 12px;
+    overflow: hidden;
+    box-shadow: 0 20px 60px rgba(0,0,0,0.5);
+  }
+  .preview-bar {
+    height: 32px;
+    background: rgba(30,30,46,0.9);
+    border-bottom: 1px solid rgba(255,255,255,0.1);
+    display: flex;
+    align-items: center;
+    padding: 0 12px;
+    gap: 8px;
+    position: relative;
+    z-index: 10;
+  }
+  .bar-icon {
+    width: 20px;
+    height: 20px;
+    background: rgba(255,255,255,0.15);
+    border-radius: 4px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 10px;
+  }
+  .bar-btn {
+    width: 24px;
+    height: 24px;
+    background: rgba(137,180,250,0.3);
+    border-radius: 6px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 12px;
+    cursor: pointer;
+    position: relative;
+  }
+  .bar-btn.open {
+    background: rgba(137,180,250,0.5);
+  }
+  .bar-btn .badge {
+    position: absolute;
+    top: -2px;
+    right: -2px;
+    width: 10px;
+    height: 10px;
+    background: #f38ba8;
+    border-radius: 50%;
+    border: 2px solid rgba(30,30,46,0.8);
+  }
+  .preview-content {
+    position: relative;
+    height: calc(100% - 32px);
+    padding: 20px;
+    overflow: hidden;
+  }
+  .notification {
+    background: rgba(30,30,46,0.95);
+    border: 1px solid rgba(255,255,255,0.1);
+    border-radius: 10px;
+    padding: 14px 16px;
+    margin-bottom: 10px;
+    transition: all 0.3s ease;
+    cursor: pointer;
+    backdrop-filter: blur(10px);
+  }
+  .notification:hover {
+    background: rgba(40,40,60,0.95);
+    border-color: rgba(137,180,250,0.3);
+  }
+  .notification.app {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+  .notification .app-icon {
+    width: 36px;
+    height: 36px;
+    background: #89b4fa;
+    border-radius: 8px;
+    flex-shrink: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 16px;
+    font-weight: 600;
+    color: #1e1e2e;
+  }
+  .notification .app-info {
+    flex: 1;
+    min-width: 0;
+  }
+  .notification .app-name {
+    font-size: 11px;
+    color: #a6adc8;
+    margin-bottom: 2px;
+  }
+  .notification .app-title {
+    font-size: 14px;
+    font-weight: 600;
+    margin-bottom: 2px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .notification .app-body {
+    font-size: 12px;
+    color: #cdd6f4;
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+  }
+  .notification .dismiss {
+    width: 24px;
+    height: 24px;
+    background: rgba(255,255,255,0.1);
+    border-radius: 6px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 14px;
+    color: #a6adc8;
+    cursor: pointer;
+    flex-shrink: 0;
+  }
+  .notification .dismiss:hover {
+    background: rgba(243,139,168,0.3);
+    color: #f38ba8;
+  }
+  .notification .time {
+    font-size: 10px;
+    color: #585b70;
+    margin-top: 6px;
+  }
+  /* Option A: Popover */
+  .option-a .notification {
+    position: absolute;
+    left: 20px;
+    right: 20px;
+  }
+  .option-a .notification:nth-child(1) { top: 10px; }
+  .option-a .notification:nth-child(2) { top: 70px; }
+  .option-a .notification:nth-child(3) { top: 130px; }
+  .option-a .notification:nth-child(4) { top: 190px; }
+  /* Option B: Full window */
+  .option-b .notification-list {
+    position: absolute;
+    left: 20px;
+    right: 20px;
+    top: 20px;
+    bottom: 20px;
+    overflow-y: auto;
+    padding-right: 10px;
+  }
+  .option-b .notification-list::-webkit-scrollbar {
+    width: 6px;
+  }
+  .option-b .notification-list::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  .option-b .notification-list::-webkit-scrollbar-thumb {
+    background: rgba(255,255,255,0.15);
+    border-radius: 3px;
+  }
+  /* Option C: Drawer */
+  .option-c .notification-drawer {
+    position: absolute;
+    left: 20px;
+    right: 20px;
+    bottom: 0;
+    background: rgba(20,20,35,0.98);
+    border-top: 1px solid rgba(137,180,250,0.3);
+    border-radius: 12px 12px 0 0;
+    padding: 16px 20px;
+    max-height: 300px;
+    overflow-y: auto;
+    transition: transform 0.3s ease;
+  }
+  .option-c .drawer-handle {
+    width: 40px;
+    height: 4px;
+    background: rgba(255,255,255,0.2);
+    border-radius: 2px;
+    margin: 0 auto 16px;
+  }
+  .option-c .drawer-title {
+    font-size: 16px;
+    font-weight: 600;
+    margin-bottom: 12px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+  }
+  .option-c .drawer-clear {
+    font-size: 12px;
+    color: #89b4fa;
+    cursor: pointer;
+  }
+  .option-c .drawer-clear:hover {
+    text-decoration: underline;
+  }
+  .option-c .notification {
+    margin-bottom: 10px;
+  }
+  .option-c .notification:last-child {
+    margin-bottom: 0;
+  }
+  /* Toast notifications */
+  .toast {
+    position: absolute;
+    right: 30px;
+    background: rgba(30,30,46,0.98);
+    border: 1px solid rgba(255,255,255,0.12);
+    border-radius: 10px;
+    padding: 14px 16px;
+    margin-bottom: 10px;
+    box-shadow: 0 8px 32px rgba(0,0,0,0.4);
+    animation: toastIn 0.4s ease-out;
+    max-width: 360px;
+  }
+  .toast .toast-app {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+  .toast .toast-icon {
+    width: 32px;
+    height: 32px;
+    background: #89b4fa;
+    border-radius: 8px;
+    flex-shrink: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 14px;
+    font-weight: 600;
+    color: #1e1e2e;
+  }
+  .toast .toast-title {
+    font-size: 13px;
+    font-weight: 600;
+    margin-bottom: 2px;
+  }
+  .toast .toast-body {
+    font-size: 12px;
+    color: #cdd6f4;
+  }
+  .toast .toast-progress {
+    position: absolute;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    height: 3px;
+    background: rgba(255,255,255,0.1);
+    border-radius: 0 0 10px 10px;
+  }
+  .toast .toast-progress-bar {
+    height: 100%;
+    background: #89b4fa;
+    border-radius: 2px;
+    animation: toastProgress 5s linear;
+  }
+  @keyframes toastIn {
+    from {
+      opacity: 0;
+      transform: translateY(20px) scale(0.95);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0) scale(1);
+    }
+  }
+  @keyframes toastProgress {
+    from { width: 100%; }
+    to { width: 0%; }
+  }
+  /* Labels */
+  .option-label {
+    position: absolute;
+    top: 12px;
+    left: 16px;
+    font-size: 11px;
+    font-weight: 600;
+    color: #585b70;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+  }
+  /* Description panel */
+  .description {
+    position: absolute;
+    bottom: 12px;
+    left: 16px;
+    right: 16px;
+    padding: 12px 16px;
+    background: rgba(30,30,46,0.9);
+    border-radius: 8px;
+    font-size: 13px;
+    line-height: 1.5;
+    color: #cdd6f4;
+    backdrop-filter: blur(10px);
+  }
+  .description strong {
+    color: #89b4fa;
+  }
+  /* Legend */
+  .legend {
+    display: flex;
+    gap: 16px;
+    padding: 12px 24px;
+    border-top: 1px solid rgba(255,255,255,0.06);
+    font-size: 12px;
+  }
+  .legend-item {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    color: #a6adc8;
+  }
+  .legend-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+  }
+  .legend-dot.blue { background: #89b4fa; }
+  .legend-dot.pink { background: #f38ba8; }
+  .legend-dot.green { background: #a6e3a1; }
+  /* Toast button */
+  .toast-btn {
+    position: absolute;
+    top: 16px;
+    right: 16px;
+    padding: 6px 14px;
+    background: rgba(137,180,250,0.2);
+    border: 1px solid rgba(137,180,250,0.3);
+    border-radius: 6px;
+    color: #89b4fa;
+    font-size: 12px;
+    cursor: pointer;
+    z-index: 20;
+    transition: all 0.15s ease;
+  }
+  .toast-btn:hover {
+    background: rgba(137,180,250,0.3);
+  }
+  /* Desktop background */
+  .desktop-bg {
+    position: absolute;
+    inset: 0;
+    background: linear-gradient(135deg, #1e1e2e 0%, #181825 50%, #11111b 100%);
+    z-index: 0;
+  }
+  .desktop-window {
+    position: absolute;
+    background: rgba(30,30,46,0.6);
+    border-radius: 8px;
+    backdrop-filter: blur(10px);
+  }
+  .desktop-window:nth-child(2) {
+    left: 60px;
+    top: 80px;
+    width: 400px;
+    height: 300px;
+    border: 1px solid rgba(255,255,255,0.08);
+  }
+  .desktop-window:nth-child(3) {
+    left: 500px;
+    top: 150px;
+    width: 300px;
+    height: 200px;
+    border: 1px solid rgba(255,255,255,0.08);
+  }
+  /* Option A: Popover specific */
+  .option-a .popover-container {
+    position: absolute;
+    left: 20px;
+    right: 20px;
+  }
+  .option-a .popover-container .notification {
+    position: relative;
+    margin-bottom: 10px;
+  }
+  .option-a .popover-container .notification:nth-child(4) {
+    margin-bottom: 0;
+  }
+  /* Option B: Full window specific */
+  .option-b .window-header {
+    position: absolute;
+    top: 0;
+    left: 20px;
+    right: 20px;
+    padding: 12px 16px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    background: rgba(20,20,35,0.95);
+    border-bottom: 1px solid rgba(255,255,255,0.08);
+  }
+  .option-b .window-header h3 {
+    font-size: 14px;
+    font-weight: 600;
+  }
+  .option-b .window-header .count {
+    font-size: 12px;
+    color: #a6adc8;
+    background: rgba(255,255,255,0.1);
+    padding: 2px 8px;
+    border-radius: 4px;
+  }
+  /* Option C: Drawer specific */
+  .option-c .drawer-container {
+    position: absolute;
+    left: 20px;
+    right: 20px;
+    bottom: 0;
+    background: rgba(20,20,35,0.98);
+    border-top: 1px solid rgba(137,180,250,0.3);
+    border-radius: 12px 12px 0 0;
+    padding: 16px 20px 24px;
+    max-height: 350px;
+    overflow-y: auto;
+    transform: translateY(0);
+    transition: transform 0.4s cubic-bezier(0.16, 1, 0.3, 1);
+  }
+  .option-c .drawer-container::-webkit-scrollbar {
+    width: 6px;
+  }
+  .option-c .drawer-container::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  .option-c .drawer-container::-webkit-scrollbar-thumb {
+    background: rgba(255,255,255,0.15);
+    border-radius: 3px;
+  }
+  /* Option B: Full window with scroll */
+  .option-b .window-content {
+    position: absolute;
+    top: 56px;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    overflow-y: auto;
+    padding: 16px;
+  }
+  .option-b .window-content::-webkit-scrollbar {
+    width: 6px;
+  }
+  .option-b .window-content::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  .option-b .window-content::-webkit-scrollbar-thumb {
+    background: rgba(255,255,255,0.15);
+    border-radius: 3px;
+  }
+  .option-b .notification {
+    margin-bottom: 10px;
+  }
+  .option-b .notification:last-child {
+    margin-bottom: 0;
+  }
+</style>
+</head>
+<body>
+<div class="header">
+  <h1>Quantum Notifications — View Explorer</h1>
+  <p>Click to switch between notification view options. Each shows how the view would look on the bar.</p>
+</div>
+<div class="controls">
+  <button class="control-btn" onclick="setOption('a')">A) Popover (compact)</button>
+  <button class="control-btn" onclick="setOption('b')">B) Full window</button>
+  <button class="control-btn" onclick="setOption('c')">C) Drawer</button>
+  <button class="control-btn" onclick="setOption('d')">D) Toasts</button>
+</div>
+<div class="preview">
+  <div class="preview-inner" id="preview">
+    <div class="desktop-bg"></div>
+    <div class="desktop-window"></div>
+    <div class="desktop-window"></div>
+    <div class="preview-bar">
+      <div class="bar-icon">📊</div>
+      <div class="bar-icon">🎵</div>
+      <div class="bar-icon">🔊</div>
+      <div class="bar-icon">☀️</div>
+      <div class="bar-icon">📶</div>
+      <div class="bar-btn" id="notif-btn" onclick="toggleView()">
+        🔔
+        <div class="badge" id="badge"></div>
+      </div>
+      <div class="bar-icon" style="margin-left: auto;">12:34</div>
+    </div>
+    <div class="preview-content" id="preview-content">
+    </div>
+    <button class="toast-btn" onclick="addToast()">+ New Notification</button>
+  </div>
+</div>
+<div class="legend">
+  <div class="legend-item"><div class="legend-dot blue"></div> Accent / active</div>
+  <div class="legend-item"><div class="legend-dot pink"></div> Badge / urgent</div>
+  <div class="legend-item"><div class="legend-dot green"></div> Success / info</div>
+</div>
+<script>
+const state = {
+  option: 'a',
+  notifCount: 4,
+  toasts: []
+};
+
+const notifications = [
+  {
+    app: 'Firefox',
+    icon: 'F',
+    iconColor: '#f38ba8',
+    title: 'New message from Alice',
+    body: 'Hey, did you see the new quantum design doc? It looks really solid now.',
+    time: '2m ago'
+  },
+  {
+    app: 'Discord',
+    icon: 'D',
+    iconColor: '#89b4fa',
+    title: 'quantum-dev updated',
+    body: 'ixiri: added notifications to the bar widget\n\nfeat: add notification provider',
+    time: '5m ago'
+  },
+  {
+    app: 'Spotify',
+    icon: 'S',
+    iconColor: '#a6e3a1',
+    title: 'Now playing: Midnight City',
+    body: 'M83 • Hurry Up, We\'re Dreaming',
+    time: '12m ago'
+  },
+  {
+    app: 'System',
+    icon: '⚙',
+    iconColor: '#fab387',
+    title: 'Package updates available',
+    body: '12 packages can be updated. Run `sudo pacman -Syu` to apply.',
+    time: '30m ago'
+  }
+];
+
+const descriptions = {
+  a: '<strong>Popover (compact)</strong> — Overlays above the bar. Shows 3-4 recent notifications in a compact card. Dismiss with swipe or click. Best for quick glances without losing focus.',
+  b: '<strong>Full window</strong> — Opens as a dedicated overlay window. Shows full notification history with scroll. Each notification is fully clickable (open app, dismiss, reply). Best when notifications are important to interact with.',
+  c: '<strong>Drawer</strong> — Slides up from the bottom of the bar. Shows recent notifications in a compact list with a "clear all" button. Best balance of visibility and screen real estate.',
+  d: '<strong>Toasts</strong> — Temporary popups that appear at the top-right and fade out after ~5 seconds. Each new notification stacks below the previous. Best for non-urgent, ephemeral notifications.'
+};
+
+function setOption(opt) {
+  state.option = opt;
+  document.querySelectorAll('.control-btn').forEach(btn => {
+    btn.classList.toggle('active', btn.textContent[0] === opt.toUpperCase());
+  });
+  render();
+}
+
+function toggleView() {
+  const btn = document.getElementById('notif-btn');
+  btn.classList.toggle('open');
+  const badge = document.getElementById('badge');
+  badge.style.opacity = state.notifCount > 0 ? '1' : '0';
+}
+
+function addToast() {
+  const toasts = document.querySelectorAll('.toast');
+  toasts.forEach(t => t.style.transform = `translateY(-80px)`);
+  
+  const t = notifications[Math.floor(Math.random() * notifications.length)];
+  const toast = document.createElement('div');
+  toast.className = 'toast';
+  toast.innerHTML = `
+    <div class="toast-app">
+      <div class="toast-icon" style="background: ${t.iconColor}">${t.icon}</div>
+      <div>
+        <div class="toast-title">${t.title}</div>
+        <div class="toast-body">${t.body}</div>
+      </div>
+    </div>
+    <div class="toast-progress"><div class="toast-progress-bar"></div></div>
+  `;
+  document.getElementById('preview-content').appendChild(toast);
+  
+  setTimeout(() => {
+    toast.style.opacity = '0';
+    toast.style.transform = 'translateY(-20px)';
+    setTimeout(() => toast.remove(), 300);
+  }, 5000);
+}
+
+function render() {
+  const content = document.getElementById('preview-content');
+  const btn = document.getElementById('notif-btn');
+  const badge = document.getElementById('badge');
+  
+  btn.classList.toggle('open', state.option !== 'd');
+  badge.style.opacity = state.option === 'd' ? '0' : (state.notifCount > 0 ? '1' : '0');
+  
+  let html = `<div class="option-label">${state.option.toUpperCase()}</div>`;
+  
+  if (state.option === 'a') {
+    html += `<div class="popover-container">`;
+    notifications.forEach(n => {
+      html += `
+        <div class="notification app">
+          <div class="app-icon" style="background: ${n.iconColor}">${n.icon}</div>
+          <div class="app-info">
+            <div class="app-name">${n.app}</div>
+            <div class="app-title">${n.title}</div>
+            <div class="app-body">${n.body}</div>
+          </div>
+          <div class="dismiss">✕</div>
+        </div>`;
+    });
+    html += `</div>
+    <div class="description">${descriptions.a}</div>`;
+  } else if (state.option === 'b') {
+    html += `
+      <div class="window-header">
+        <h3>Notifications</h3>
+        <span class="count">${notifications.length} items</span>
+      </div>
+      <div class="window-content">
+        ${notifications.map(n => `
+          <div class="notification app">
+            <div class="app-icon" style="background: ${n.iconColor}">${n.icon}</div>
+            <div class="app-info">
+              <div class="app-name">${n.app}</div>
+              <div class="app-title">${n.title}</div>
+              <div class="app-body">${n.body}</div>
+              <div class="time">${n.time}</div>
+            </div>
+            <div class="dismiss">✕</div>
+          </div>`).join('')}
+      </div>
+      <div class="description">${descriptions.b}</div>`;
+  } else if (state.option === 'c') {
+    html += `
+      <div class="drawer-container">
+        <div class="drawer-handle"></div>
+        <div class="drawer-title">
+          <span>Notifications</span>
+          <span class="drawer-clear">Clear all</span>
+        </div>
+        ${notifications.map(n => `
+          <div class="notification app">
+            <div class="app-icon" style="background: ${n.iconColor}">${n.icon}</div>
+            <div class="app-info">
+              <div class="app-name">${n.app}</div>
+              <div class="app-title">${n.title}</div>
+              <div class="app-body">${n.body}</div>
+            </div>
+            <div class="dismiss">✕</div>
+          </div>`).join('')}
+      </div>
+      <div class="description">${descriptions.c}</div>`;
+  } else {
+    html += `
+      <div class="toast" style="top: 20px;">
+        <div class="toast-app">
+          <div class="toast-icon" style="background: #f38ba8">F</div>
+          <div>
+            <div class="toast-title">New message from Alice</div>
+            <div class="toast-body">Hey, did you see the new quantum design doc?</div>
+          </div>
+        </div>
+        <div class="toast-progress"><div class="toast-progress-bar"></div></div>
+      </div>
+      <div class="toast" style="top: 90px;">
+        <div class="toast-app">
+          <div class="toast-icon" style="background: #89b4fa">D</div>
+          <div>
+            <div class="toast-title">quantum-dev updated</div>
+            <div class="toast-body">ixiri: added notifications to the bar widget</div>
+          </div>
+        </div>
+        <div class="toast-progress"><div class="toast-progress-bar"></div></div>
+      </div>
+      <div class="description">${descriptions.d}</div>`;
+  }
+  
+  content.innerHTML = html;
+}
+
+// Initialize
+render();
+document.querySelector('.control-btn').classList.add('active');
+</script>
+</body>
+</html>
