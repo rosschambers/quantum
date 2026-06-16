@@ -41,6 +41,7 @@
             <NetworkIndicator {client} />
             <BluetoothIndicator {client} />
             <BatteryIndicator {client} />
+            <NotificationIndicator {client} />
         </div>
         <div class="divider" aria-hidden="true"></div>
         <div class="group">
@@ -48,7 +49,6 @@
         </div>
         <div class="divider" aria-hidden="true"></div>
         <div class="group">
-            <NotificationIndicator {client} />
             <PowerMenuIndicator {client} />
         </div>
     </div>
