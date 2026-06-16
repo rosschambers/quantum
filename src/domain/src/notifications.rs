@@ -1,5 +1,5 @@
-/// Notification types for the domain layer.
-/// No imports from other workspace crates.
+//! Notification types for the domain layer.
+//! No imports from other workspace crates.
 
 use serde::{Deserialize, Serialize};
 
@@ -38,18 +38,13 @@ impl Notification {
 }
 
 /// Urgency levels for notifications.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "lowercase")]
 pub enum NotificationUrgency {
     Low,
+    #[default]
     Normal,
     Critical,
-}
-
-impl Default for NotificationUrgency {
-    fn default() -> Self {
-        Self::Normal
-    }
 }
 
 /// Events emitted by the notification system.
