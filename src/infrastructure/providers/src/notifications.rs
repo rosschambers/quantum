@@ -171,7 +171,7 @@ impl NotificationsProvider {
     /// notification daemon and keeps the connection alive for the process
     /// lifetime by storing it in the shared inner state.
     pub async fn start_dbus(&self) {
-        use zbus::fdo::RequestNameFlags;
+        use zbus::fdo::{RequestNameFlags, RequestNameReply};
 
         let server = NotificationServer::new(self.inner.clone());
         let conn = match zbus::connection::Builder::session()
@@ -190,21 +190,45 @@ impl NotificationsProvider {
             }
         };
 
-        if let Err(error) = conn
+        let reply = match conn
             .request_name_with_flags(
                 "org.freedesktop.Notifications",
                 RequestNameFlags::ReplaceExisting | RequestNameFlags::AllowReplacement,
             )
             .await
         {
-            tracing::warn!("notifications: could not claim org.freedesktop.Notifications: {error}");
+            Ok(reply) => reply,
+            Err(error) => {
+                tracing::warn!("notifications: could not claim org.freedesktop.Notifications: {error}");
+                return;
+            }
+        };
+
+        // Keep the connection alive regardless so we receive ownership later if
+        // the current daemon exits (we requested queueing, not DoNotQueue).
+        if self.inner.conn.set(conn).is_err() {
+            tracing::warn!("notifications: D-Bus server already started");
             return;
         }
 
-        if self.inner.conn.set(conn).is_err() {
-            tracing::warn!("notifications: D-Bus server already started");
-        } else {
-            tracing::info!("notifications: serving org.freedesktop.Notifications");
+        match reply {
+            RequestNameReply::PrimaryOwner | RequestNameReply::AlreadyOwner => {
+                tracing::info!("notifications: serving org.freedesktop.Notifications");
+            }
+            RequestNameReply::InQueue => {
+                tracing::warn!(
+                    "notifications: another notification daemon owns \
+                     org.freedesktop.Notifications and did not allow replacement; \
+                     stop it (for example dunst, mako, swaync) so Quantum can take over. \
+                     Quantum is queued and will take over if it exits."
+                );
+            }
+            RequestNameReply::Exists => {
+                tracing::warn!(
+                    "notifications: org.freedesktop.Notifications is owned by another \
+                     daemon that refused replacement; stop it so Quantum can take over."
+                );
+            }
         }
     }
 }
