@@ -120,7 +120,7 @@ pub(crate) fn parse_scan_list(raw: &str) -> Vec<WifiNetwork> {
             .or_insert(net);
     }
     let mut out: Vec<WifiNetwork> = best.into_values().collect();
-    out.sort_by(|a, b| b.signal_percent.cmp(&a.signal_percent));
+    out.sort_by_key(|n| std::cmp::Reverse(n.signal_percent));
     out
 }
 
