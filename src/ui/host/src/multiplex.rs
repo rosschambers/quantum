@@ -19,12 +19,57 @@ use std::collections::HashSet;
 use std::rc::Rc;
 
 use gtk4::gdk;
+use gtk4::gdk::prelude::MonitorExt;
 use gtk4::gio;
 use gtk4::prelude::{Cast, DisplayExt, ListModelExt, ListModelExtManual, ObjectExt};
 use tokio::sync::mpsc::UnboundedSender;
 
 use crate::messages::WindowRequest;
 use quantum_domain::WindowMode;
+
+/// Split an iterator of optional monitor names into the distinct set of
+/// present names and the count of entries that had no name yet (monitors
+/// whose Wayland connector has not arrived). Pure so the readiness logic is
+/// unit-tested without a live `gdk::Display`.
+fn partition_monitor_names(
+    names: impl IntoIterator<Item = Option<String>>,
+) -> (HashSet<String>, usize) {
+    let mut present = HashSet::new();
+    let mut unready = 0usize;
+    for maybe_name in names {
+        match maybe_name {
+            Some(name) => {
+                present.insert(name);
+            }
+            None => unready += 1,
+        }
+    }
+    (present, unready)
+}
+
+/// Connect a `notify::connector` handler to `monitor` when it has no
+/// connector name yet, so the multiplexer re-syncs (and spawns the deferred
+/// per-monitor window) the moment the Wayland connector arrives. Monitors
+/// that already have a connector need no handler — `sync` already accounts
+/// for them. Idempotent at the `sync` level: even if the handler fires more
+/// than once, `diff_emit` only opens windows that are not already tracked.
+fn wire_connector_arrival(
+    monitor: &gdk::Monitor,
+    multiplexer: &Rc<RefCell<ViewMultiplexer>>,
+    monitors: &gio::ListModel,
+) {
+    if crate::windows::widget::monitor_name(monitor).is_some() {
+        return;
+    }
+    let multiplexer_for_notify = Rc::clone(multiplexer);
+    let monitors_for_notify = monitors.clone();
+    monitor.connect_connector_notify(move |_monitor| {
+        multiplexer_for_notify
+            .borrow_mut()
+            .sync(&monitors_for_notify);
+    });
+    tracing::info!("monitor has no connector name yet; subscribed to notify::connector to spawn its bar once the name arrives");
+}
 
 /// Tracks which `<canonical-view>@<monitor>` windows are currently open and
 /// emits `WindowRequest`s to keep that set in sync with the live monitor
@@ -86,12 +131,26 @@ impl ViewMultiplexer {
     /// of `gdk::Monitor` and runs the diff. Used both for the initial
     /// sync and on every `items-changed` signal.
     fn sync(&mut self, monitors: &gio::ListModel) {
-        let current: HashSet<String> = monitors
+        let names: Vec<Option<String>> = monitors
             .iter::<gdk::Monitor>()
             .filter_map(Result::ok)
-            .filter_map(|monitor| crate::windows::widget::monitor_name(&monitor))
+            .enumerate()
+            .map(|(index, monitor)| {
+                let name = crate::windows::widget::monitor_name(&monitor);
+                if name.is_none() {
+                    tracing::warn!(
+                        "monitor at index {index} present without connector name yet; \
+                         deferring bar spawn until notify::connector"
+                    );
+                }
+                name
+            })
             .collect();
-        self.diff_emit(current);
+        let (present, unready) = partition_monitor_names(names);
+        if unready > 0 {
+            tracing::warn!("{unready} monitor(s) not yet ready; bars for them are deferred");
+        }
+        self.diff_emit(present);
     }
 
     /// Installs the multiplexer on a `gdk::Display`. `views` is the set of
@@ -119,13 +178,29 @@ impl ViewMultiplexer {
         // Initial sync against whatever monitors are already present.
         multiplexer.borrow_mut().sync(&monitors);
 
+        // Wire connector-arrival for any monitor already present without a
+        // connector name, so a startup race does not leave a bar unspawned.
+        for monitor in monitors.iter::<gdk::Monitor>().filter_map(Result::ok) {
+            wire_connector_arrival(&monitor, &multiplexer, &monitors);
+        }
+
         // Subscribe to live updates. The closure captures an
         // `Rc<RefCell<_>>` clone so the multiplexer stays alive as
         // long as the signal is connected.
         let multiplexer_for_signal = Rc::clone(&multiplexer);
         let signal_id =
-            monitors.connect_items_changed(move |list_model, _position, _removed, _added| {
+            monitors.connect_items_changed(move |list_model, position, _removed, added| {
                 multiplexer_for_signal.borrow_mut().sync(list_model);
+                // A monitor can enter the list before its Wayland connector
+                // name arrives; wire each newly added monitor so its bar
+                // still spawns once the name is populated.
+                for offset in 0..added {
+                    if let Some(object) = list_model.item(position + offset) {
+                        if let Ok(monitor) = object.downcast::<gdk::Monitor>() {
+                            wire_connector_arrival(&monitor, &multiplexer_for_signal, list_model);
+                        }
+                    }
+                }
             });
 
         ViewMultiplexerHandle {
@@ -137,8 +212,19 @@ impl ViewMultiplexer {
 }
 
 /// Owns the `items-changed` signal connection and the
-/// `Rc<RefCell<ViewMultiplexer>>`. Drop disconnects the signal so the
-/// multiplexer stops reacting to monitor changes.
+/// `Rc<RefCell<ViewMultiplexer>>`. Drop disconnects the `items-changed`
+/// signal so the multiplexer stops reacting to monitor add/remove.
+///
+/// Note: this does NOT disconnect the per-monitor `notify::connector`
+/// handlers wired by `wire_connector_arrival` for monitors that appeared
+/// without a connector name. Each of those handlers holds its own
+/// `Rc<RefCell<ViewMultiplexer>>` clone, so the multiplexer is kept alive
+/// (and a late connector arrival still re-runs `sync`) for as long as those
+/// monitors remain connected, even after this handle is dropped. That is
+/// acceptable because the daemon installs exactly one multiplexer for its
+/// entire lifetime and never drops the handle early; a connector handler is
+/// released when GDK drops its monitor (on disconnect). Do not rely on
+/// handle drop to fully quiesce the multiplexer.
 pub struct ViewMultiplexerHandle {
     display: gdk::Display,
     signal_id: Option<glib::SignalHandlerId>,
@@ -334,6 +420,35 @@ mod tests {
         assert_eq!(multiplexer.active_views.len(), 2);
         assert!(multiplexer.active_views.contains("plugin/bar/bar@DP-1"));
         assert!(multiplexer.active_views.contains("plugin/clock/clock@DP-1"));
+    }
+
+    #[test]
+    fn partition_reports_unready_count() {
+        let (names, unready) = partition_monitor_names(vec![
+            Some("DP-1".to_string()),
+            None,
+            Some("HDMI-A-1".to_string()),
+        ]);
+        assert_eq!(unready, 1);
+        assert_eq!(names.len(), 2);
+        assert!(names.contains("DP-1"));
+        assert!(names.contains("HDMI-A-1"));
+    }
+
+    #[test]
+    fn partition_all_ready_has_zero_unready() {
+        let (names, unready) =
+            partition_monitor_names(vec![Some("DP-1".to_string()), Some("DP-2".to_string())]);
+        assert_eq!(unready, 0);
+        assert_eq!(names.len(), 2);
+    }
+
+    #[test]
+    fn partition_collapses_duplicate_names() {
+        let (names, unready) =
+            partition_monitor_names(vec![Some("DP-1".to_string()), Some("DP-1".to_string())]);
+        assert_eq!(unready, 0);
+        assert_eq!(names.len(), 1);
     }
 
     #[test]
