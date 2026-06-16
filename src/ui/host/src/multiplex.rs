@@ -26,6 +26,26 @@ use tokio::sync::mpsc::UnboundedSender;
 use crate::messages::WindowRequest;
 use quantum_domain::WindowMode;
 
+/// Split an iterator of optional monitor names into the distinct set of
+/// present names and the count of entries that had no name yet (monitors
+/// whose Wayland connector has not arrived). Pure so the readiness logic is
+/// unit-tested without a live `gdk::Display`.
+fn partition_monitor_names(
+    names: impl IntoIterator<Item = Option<String>>,
+) -> (HashSet<String>, usize) {
+    let mut present = HashSet::new();
+    let mut unready = 0usize;
+    for name in names {
+        match name {
+            Some(n) => {
+                present.insert(n);
+            }
+            None => unready += 1,
+        }
+    }
+    (present, unready)
+}
+
 /// Tracks which `<canonical-view>@<monitor>` windows are currently open and
 /// emits `WindowRequest`s to keep that set in sync with the live monitor
 /// list. The diff is intentionally pure (`diff_emit`) so the bulk of the
@@ -86,30 +106,26 @@ impl ViewMultiplexer {
     /// of `gdk::Monitor` and runs the diff. Used both for the initial
     /// sync and on every `items-changed` signal.
     fn sync(&mut self, monitors: &gio::ListModel) {
-        let mut current: HashSet<String> = HashSet::new();
-        let mut unnamed = 0usize;
-        for (index, monitor) in monitors
+        let names: Vec<Option<String>> = monitors
             .iter::<gdk::Monitor>()
             .filter_map(Result::ok)
             .enumerate()
-        {
-            match crate::windows::widget::monitor_name(&monitor) {
-                Some(name) => {
-                    current.insert(name);
-                }
-                None => {
-                    unnamed += 1;
+            .map(|(index, monitor)| {
+                let name = crate::windows::widget::monitor_name(&monitor);
+                if name.is_none() {
                     tracing::warn!(
                         "monitor at index {index} present without connector name yet; \
                          deferring bar spawn until notify::connector"
                     );
                 }
-            }
+                name
+            })
+            .collect();
+        let (present, unready) = partition_monitor_names(names);
+        if unready > 0 {
+            tracing::warn!("{unready} monitor(s) not yet ready; bars for them are deferred");
         }
-        if unnamed > 0 {
-            tracing::warn!("{unnamed} monitor(s) not yet ready; bars for them are deferred");
-        }
-        self.diff_emit(current);
+        self.diff_emit(present);
     }
 
     /// Installs the multiplexer on a `gdk::Display`. `views` is the set of
@@ -352,6 +368,35 @@ mod tests {
         assert_eq!(multiplexer.active_views.len(), 2);
         assert!(multiplexer.active_views.contains("plugin/bar/bar@DP-1"));
         assert!(multiplexer.active_views.contains("plugin/clock/clock@DP-1"));
+    }
+
+    #[test]
+    fn partition_reports_unready_count() {
+        let (names, unready) = partition_monitor_names(vec![
+            Some("DP-1".to_string()),
+            None,
+            Some("HDMI-A-1".to_string()),
+        ]);
+        assert_eq!(unready, 1);
+        assert_eq!(names.len(), 2);
+        assert!(names.contains("DP-1"));
+        assert!(names.contains("HDMI-A-1"));
+    }
+
+    #[test]
+    fn partition_all_ready_has_zero_unready() {
+        let (names, unready) =
+            partition_monitor_names(vec![Some("DP-1".to_string()), Some("DP-2".to_string())]);
+        assert_eq!(unready, 0);
+        assert_eq!(names.len(), 2);
+    }
+
+    #[test]
+    fn partition_collapses_duplicate_names() {
+        let (names, unready) =
+            partition_monitor_names(vec![Some("DP-1".to_string()), Some("DP-1".to_string())]);
+        assert_eq!(unready, 0);
+        assert_eq!(names.len(), 1);
     }
 
     #[test]
