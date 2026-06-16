@@ -3,3 +3,5 @@ packages:
   - 'plugins/*/views/*'
   - 'themes/*/views/*'
   - 'themes/*/views/*/*'
+onlyBuiltDependencies:
+  - esbuild
