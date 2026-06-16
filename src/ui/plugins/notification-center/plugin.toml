@@ -3,11 +3,6 @@ name = "notification-center"
 version = "0.1.0"
 type = "widget"
 
-[entrypoint]
-file = "views/center/index.html"
-script = "views/center/main.js"
-style = "views/center/style.css"
-
 [settings]
 # Whether to show the widget anchored at top-right (like a persistent bar indicator).
 anchored = true
