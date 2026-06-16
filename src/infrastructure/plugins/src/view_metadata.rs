@@ -3,7 +3,7 @@
 //! ignored so future keys do not break older daemons.
 
 use crate::error::PluginsError;
-use quantum_domain::{ViewAnchor, ViewDescriptor, ViewKind};
+use quantum_domain::{ViewAnchor, ViewDescriptor, ViewKind, ViewPosition};
 use serde::Deserialize;
 
 pub fn parse_view_toml(text: &str) -> Result<ViewDescriptor, PluginsError> {
@@ -17,6 +17,7 @@ pub fn parse_view_toml(text: &str) -> Result<ViewDescriptor, PluginsError> {
         per_monitor: Option<bool>,
         auto_show: Option<bool>,
         anchor: Option<String>,
+        position: Option<String>,
         height: Option<u32>,
         width: Option<u32>,
         single_instance: Option<bool>,
@@ -51,11 +52,25 @@ pub fn parse_view_toml(text: &str) -> Result<ViewDescriptor, PluginsError> {
         }
     };
 
+    let position = match raw.position.as_deref() {
+        None => defaults.position,
+        Some("center") => ViewPosition::Center,
+        Some("top_right") => ViewPosition::TopRight,
+        Some("top_left") => ViewPosition::TopLeft,
+        Some("top_center") => ViewPosition::TopCenter,
+        Some(other) => {
+            return Err(PluginsError::ConfigParse(format!(
+                "invalid position '{other}': expected one of center, top_right, top_left, top_center"
+            )));
+        }
+    };
+
     Ok(ViewDescriptor {
         kind,
         per_monitor: raw.per_monitor.unwrap_or(defaults.per_monitor),
         auto_show: raw.auto_show.unwrap_or(defaults.auto_show),
         anchor,
+        position,
         height: raw.height,
         width: raw.width,
         single_instance: raw.single_instance,
@@ -65,7 +80,7 @@ pub fn parse_view_toml(text: &str) -> Result<ViewDescriptor, PluginsError> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use quantum_domain::{ViewAnchor, ViewKind};
+    use quantum_domain::{ViewAnchor, ViewKind, ViewPosition};
 
     #[test]
     fn empty_input_returns_default_descriptor() {
@@ -98,6 +113,7 @@ single_instance = false
                 per_monitor: true,
                 auto_show: true,
                 anchor: ViewAnchor::Top,
+                position: ViewPosition::Center,
                 height: Some(32),
                 width: Some(600),
                 single_instance: Some(false),
@@ -156,6 +172,33 @@ single_instance = false
         );
         assert!(
             message.contains("anchor"),
+            "error must name the field: {message}"
+        );
+        assert!(matches!(err, PluginsError::ConfigParse(_)));
+    }
+
+    #[test]
+    fn position_top_right_parses() {
+        let descriptor = parse_view_toml("position = \"top_right\"\n").expect("valid position");
+        assert_eq!(descriptor.position, quantum_domain::ViewPosition::TopRight);
+    }
+
+    #[test]
+    fn position_defaults_to_center() {
+        let descriptor = parse_view_toml("kind = \"widget\"\n").expect("missing position is valid");
+        assert_eq!(descriptor.position, quantum_domain::ViewPosition::Center);
+    }
+
+    #[test]
+    fn invalid_position_names_the_bad_value() {
+        let err = parse_view_toml("position = \"bottom_left\"\n").expect_err("invalid position");
+        let message = format!("{err}");
+        assert!(
+            message.contains("bottom_left"),
+            "error must name the bad value: {message}"
+        );
+        assert!(
+            message.contains("position"),
             "error must name the field: {message}"
         );
         assert!(matches!(err, PluginsError::ConfigParse(_)));
