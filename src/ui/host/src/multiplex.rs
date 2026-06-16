@@ -35,10 +35,10 @@ fn partition_monitor_names(
 ) -> (HashSet<String>, usize) {
     let mut present = HashSet::new();
     let mut unready = 0usize;
-    for name in names {
-        match name {
-            Some(n) => {
-                present.insert(n);
+    for maybe_name in names {
+        match maybe_name {
+            Some(name) => {
+                present.insert(name);
             }
             None => unready += 1,
         }
