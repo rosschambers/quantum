@@ -321,6 +321,11 @@ impl ManagedWindowConstructor {
                     params.height,
                 ))
             }
+            ViewKind::Toast => ManagedWindow::Widget(WidgetWindow::new_toast(
+                ctx,
+                canonical.to_string(),
+                descriptor.position,
+            )),
         }
     }
 

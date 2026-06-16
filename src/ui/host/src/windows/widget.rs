@@ -1,13 +1,17 @@
 //! Widget window - background-layer window for clock and other widgets.
 
 use crate::bridge::json_to_js_expression;
+use crate::dispatcher::IpcDispatcher;
 use crate::windows::WindowContext;
 use gtk4::gdk;
 use gtk4::gio;
 use gtk4::glib;
 use gtk4::prelude::*;
 use gtk4_layer_shell::{Edge, KeyboardMode, Layer, LayerShell};
-use quantum_domain::ViewAnchor;
+use quantum_domain::{ports::ThemeStore, EventEnvelope, ViewAnchor, ViewPosition};
+use std::sync::Arc;
+use tokio::runtime::Handle;
+use tokio::sync::broadcast;
 use webkit6::{prelude::*, WebView};
 
 /// Default bar height in CSS pixels. Matches the value in
@@ -133,153 +137,17 @@ impl WidgetWindow {
 
         window.set_namespace(&format!("quantum-widget-{}", view_name.replace('/', "-")));
 
-        // Create and embed WebView
-        let webview = webkit6::WebView::new();
-
-        // Transparent WebView background so the layer-shell surface's
-        // overflow region stays see-through. Without this WebKit paints
-        // opaque white over the entire surface, defeating the purpose of
-        // sizing the bar surface larger than its visible chrome.
-        let transparent = gdk::RGBA::new(0.0, 0.0, 0.0, 0.0);
-        webkit6::prelude::WebViewExt::set_background_color(&webview, &transparent);
-
-        // Pipe JS console + enable developer inspector (gated by env var).
-        let settings: webkit6::Settings =
-            webkit6::prelude::WebViewExt::settings(&webview).unwrap_or_default();
-        settings.set_enable_write_console_messages_to_stdout(true);
-        settings
-            .set_enable_developer_extras(std::env::var("QUANTUM_INSPECTOR").as_deref() == Ok("1"));
-        webkit6::prelude::WebViewExt::set_settings(&webview, &settings);
-
-        webview.connect_load_failed(|_view, event, uri, err| {
-            tracing::error!(
-                "widget WebView load_failed: event={:?} uri={} err={}",
-                event,
-                uri,
-                err
-            );
-            false
-        });
-
-        // If this window is pinned to a specific monitor, expose that
-        // monitor's Wayland connector name to the Svelte view as
-        // `window.__quantum_monitor` before any page script runs. The
-        // ActiveWindow widget reads it to filter Hyprland events to
-        // the bar's own output. Inject on LoadEvent::Committed: at that
-        // point the document object exists but no page script has run.
-        if let Some(m) = monitor.as_ref() {
-            if let Some(name) = monitor_name(m) {
-                // Quote the name as a valid JS string literal. The
-                // Wayland connector names we see in practice ("DP-1",
-                // "eDP-1", "HDMI-A-1") don't need escaping, but going
-                // through serde_json::to_string covers
-                // backslashes/quotes/control characters defensively.
-                let quoted = serde_json::to_string(&name).unwrap_or_else(|_| "null".into());
-                let js = format!("window.__quantum_monitor = {};", quoted);
-                let webview_for_handler = webview.clone();
-                webview.connect_load_changed(move |_view, event| {
-                    if event == webkit6::LoadEvent::Committed {
-                        webkit6::prelude::WebViewExt::evaluate_javascript(
-                            &webview_for_handler,
-                            &js,
-                            None,
-                            None,
-                            gtk4::gio::Cancellable::NONE,
-                            |_| {},
-                        );
-                    }
-                });
-            }
-        }
-
-        // Resolve the URL: plugin views load `quantum://plugin/...`, theme
-        // views load `quantum://theme/...` (see `resolve_view_uri`).
-        let uri = crate::windows::resolve_view_uri(&view_name);
-        webview.load_uri(&uri);
-        window.set_child(Some(&webview));
-
-        // Register the bridge to wire JS messages to the dispatcher.
-        crate::bridge::register_bridge(&webview, dispatcher, runtime.clone());
-
-        // Subscribe to broadcast events and forward them to the WebView as
-        // `window.__quantum_notify(channel, payload)` calls.
-        let (js_tx, mut js_rx) = tokio::sync::mpsc::unbounded_channel::<String>();
-        let mut event_rx = event_tx.subscribe();
-        let theme_store_for_notify = theme_store.clone();
-        runtime.spawn(async move {
-            loop {
-                match event_rx.recv().await {
-                    Ok(env) => {
-                        let channel =
-                            serde_json::to_string(&env.channel).unwrap_or_else(|_| "\"\"".into());
-                        // `env.payload` is `Box<RawValue>` carrying raw JSON
-                        // text. `.get()` returns that text without any
-                        // re-serialization, which is exactly what we need to
-                        // inline into the `window.__quantum_notify` call.
-                        let payload = env.payload.get();
-                        // Guard against notifications arriving before the JS
-                        // client has installed `window.__quantum_notify`. This
-                        // happens at daemon startup because providers begin
-                        // publishing immediately while the WebView is still
-                        // loading its bundle.
-                        let raw = format!(
-                            "if (typeof window.__quantum_notify === 'function') {{ window.__quantum_notify({channel}, {payload}); }}"
-                        );
-                        let js = json_to_js_expression(&raw);
-                        if js_tx.send(js).is_err() {
-                            // GLib forwarder has gone away — webview dropped.
-                            break;
-                        }
-                        // On a theme reload, also push the freshly resolved
-                        // tokens into the live `#quantum-tokens` stylesheet so
-                        // the page recolors without a reload. The window
-                        // re-resolves from the theme store rather than trusting
-                        // the event payload, so a theme switch (where
-                        // `ThemeStore::reload` updates the active theme) and an
-                        // in-place token edit (where the watcher only
-                        // invalidates the cache) are handled identically.
-                        if env.channel == "theme.reloaded" {
-                            let push =
-                                crate::windows::theme_reload_push_js(&theme_store_for_notify);
-                            if js_tx.send(push).is_err() {
-                                break;
-                            }
-                        }
-                    }
-                    Err(tokio::sync::broadcast::error::RecvError::Lagged(skipped)) => {
-                        tracing::warn!(
-                            "widget notify subscription lagged: {skipped} events dropped"
-                        );
-                    }
-                    Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
-                }
-            }
-        });
-
-        let webview_for_notify = webview.clone();
-        glib::MainContext::default().spawn_local(async move {
-            // Coalesce per main-loop turn: when the first item arrives, drain
-            // any others already queued and submit a single
-            // `evaluate_javascript` call. Each item is a self-contained
-            // `if (...) { window.__quantum_notify(...); }` statement, so
-            // joining with `;` is syntactically safe. This cuts the JIT
-            // entry rate by the burst size when providers fan out (mpris
-            // position ticks, workspace events, audio level changes).
-            while let Some(first) = js_rx.recv().await {
-                let mut batch = first;
-                while let Ok(more) = js_rx.try_recv() {
-                    batch.push(';');
-                    batch.push_str(&more);
-                }
-                webview_for_notify.evaluate_javascript(
-                    &batch,
-                    None,
-                    None,
-                    None::<&gio::Cancellable>,
-                    |_| {},
-                );
-            }
-        });
+        // Create and embed the WebView, wire the bridge, and start
+        // forwarding broadcast events. Shared with `new_toast`.
+        let webview = build_webview(
+            &window,
+            &view_name,
+            dispatcher,
+            theme_store,
+            runtime,
+            event_tx,
+            monitor.as_ref(),
+        );
 
         window.set_visible(true);
 
@@ -289,6 +157,257 @@ impl WidgetWindow {
             top_anchored,
         }
     }
+
+    /// Create a toast window: a small, non-modal `Layer::Overlay` surface
+    /// anchored per `position`, constructed hidden and shown on demand via
+    /// `view.show`.
+    ///
+    /// Unlike [`WidgetWindow::new`], the toast never reserves an exclusive
+    /// zone, takes no keyboard focus, and is not top-anchored (so runtime
+    /// `set_height` requests are ignored). It reuses the same transparent
+    /// background and WebView/bridge/event-forwarding setup.
+    pub(crate) fn new_toast(
+        ctx: WindowContext<'_>,
+        view_name: String,
+        position: ViewPosition,
+    ) -> Self {
+        let WindowContext {
+            app,
+            dispatcher,
+            theme_store,
+            runtime,
+            event_tx,
+            monitor,
+        } = ctx;
+        let window = gtk4::ApplicationWindow::builder()
+            .application(app)
+            .decorated(false)
+            .build();
+
+        // Transparent background, mirroring `new`: a window-scoped CSS
+        // provider so the layer-shell surface's overflow region passes
+        // through instead of GTK's opaque theme background.
+        let css = gtk4::CssProvider::new();
+        css.load_from_string("window.background, window { background: transparent; }");
+        gtk4::style_context_add_provider_for_display(
+            &gtk4::prelude::WidgetExt::display(&window),
+            &css,
+            gtk4::STYLE_PROVIDER_PRIORITY_APPLICATION,
+        );
+
+        window.init_layer_shell();
+
+        // Pin to the target monitor before anchor configuration so the
+        // compositor places the surface on the right output the first time.
+        if let Some(m) = monitor.as_ref() {
+            window.set_monitor(m);
+        }
+
+        // Toasts live on the overlay layer, anchored per `position`, with no
+        // exclusive zone and no keyboard focus.
+        window.set_layer(Layer::Overlay);
+        match position {
+            ViewPosition::TopRight => {
+                window.set_anchor(Edge::Top, true);
+                window.set_anchor(Edge::Right, true);
+            }
+            ViewPosition::TopLeft => {
+                window.set_anchor(Edge::Top, true);
+                window.set_anchor(Edge::Left, true);
+            }
+            ViewPosition::TopCenter => {
+                window.set_anchor(Edge::Top, true);
+            }
+            ViewPosition::Center => {
+                window.set_anchor(Edge::Top, true);
+            }
+        }
+        window.set_keyboard_mode(KeyboardMode::None);
+        window.set_exclusive_zone(0);
+
+        window.set_namespace(&format!("quantum-toast-{}", view_name.replace('/', "-")));
+
+        let webview = build_webview(
+            &window,
+            &view_name,
+            dispatcher,
+            theme_store,
+            runtime,
+            event_tx,
+            monitor.as_ref(),
+        );
+
+        // Shown on demand via `view.show`; constructed hidden so a toast
+        // surface never flashes before its content is requested.
+        window.set_visible(false);
+
+        Self {
+            window,
+            webview,
+            // Toasts are never top-anchored: runtime `set_height` is ignored.
+            top_anchored: false,
+        }
+    }
+}
+
+/// Create the WebView for a widget-style window, configure it, wire the
+/// IPC bridge, embed it in `window`, and start forwarding broadcast events
+/// to `window.__quantum_notify`. Shared by [`WidgetWindow::new`] and
+/// [`WidgetWindow::new_toast`].
+#[allow(clippy::too_many_arguments)]
+fn build_webview(
+    window: &gtk4::ApplicationWindow,
+    view_name: &str,
+    dispatcher: Arc<dyn IpcDispatcher>,
+    theme_store: Arc<dyn ThemeStore>,
+    runtime: Handle,
+    event_tx: broadcast::Sender<EventEnvelope>,
+    monitor: Option<&gdk::Monitor>,
+) -> WebView {
+    let webview = webkit6::WebView::new();
+
+    // Transparent WebView background so the layer-shell surface's
+    // overflow region stays see-through. Without this WebKit paints
+    // opaque white over the entire surface, defeating the purpose of
+    // sizing the bar surface larger than its visible chrome.
+    let transparent = gdk::RGBA::new(0.0, 0.0, 0.0, 0.0);
+    webkit6::prelude::WebViewExt::set_background_color(&webview, &transparent);
+
+    // Pipe JS console + enable developer inspector (gated by env var).
+    let settings: webkit6::Settings =
+        webkit6::prelude::WebViewExt::settings(&webview).unwrap_or_default();
+    settings.set_enable_write_console_messages_to_stdout(true);
+    settings.set_enable_developer_extras(std::env::var("QUANTUM_INSPECTOR").as_deref() == Ok("1"));
+    webkit6::prelude::WebViewExt::set_settings(&webview, &settings);
+
+    webview.connect_load_failed(|_view, event, uri, err| {
+        tracing::error!(
+            "widget WebView load_failed: event={:?} uri={} err={}",
+            event,
+            uri,
+            err
+        );
+        false
+    });
+
+    // If this window is pinned to a specific monitor, expose that
+    // monitor's Wayland connector name to the Svelte view as
+    // `window.__quantum_monitor` before any page script runs. The
+    // ActiveWindow widget reads it to filter Hyprland events to
+    // the bar's own output. Inject on LoadEvent::Committed: at that
+    // point the document object exists but no page script has run.
+    if let Some(m) = monitor {
+        if let Some(name) = monitor_name(m) {
+            // Quote the name as a valid JS string literal. The
+            // Wayland connector names we see in practice ("DP-1",
+            // "eDP-1", "HDMI-A-1") don't need escaping, but going
+            // through serde_json::to_string covers
+            // backslashes/quotes/control characters defensively.
+            let quoted = serde_json::to_string(&name).unwrap_or_else(|_| "null".into());
+            let js = format!("window.__quantum_monitor = {};", quoted);
+            let webview_for_handler = webview.clone();
+            webview.connect_load_changed(move |_view, event| {
+                if event == webkit6::LoadEvent::Committed {
+                    webkit6::prelude::WebViewExt::evaluate_javascript(
+                        &webview_for_handler,
+                        &js,
+                        None,
+                        None,
+                        gtk4::gio::Cancellable::NONE,
+                        |_| {},
+                    );
+                }
+            });
+        }
+    }
+
+    // Resolve the URL: plugin views load `quantum://plugin/...`, theme
+    // views load `quantum://theme/...` (see `resolve_view_uri`).
+    let uri = crate::windows::resolve_view_uri(view_name);
+    webview.load_uri(&uri);
+    window.set_child(Some(&webview));
+
+    // Register the bridge to wire JS messages to the dispatcher.
+    crate::bridge::register_bridge(&webview, dispatcher, runtime.clone());
+
+    // Subscribe to broadcast events and forward them to the WebView as
+    // `window.__quantum_notify(channel, payload)` calls.
+    let (js_tx, mut js_rx) = tokio::sync::mpsc::unbounded_channel::<String>();
+    let mut event_rx = event_tx.subscribe();
+    let theme_store_for_notify = theme_store.clone();
+    runtime.spawn(async move {
+        loop {
+            match event_rx.recv().await {
+                Ok(env) => {
+                    let channel =
+                        serde_json::to_string(&env.channel).unwrap_or_else(|_| "\"\"".into());
+                    // `env.payload` is `Box<RawValue>` carrying raw JSON
+                    // text. `.get()` returns that text without any
+                    // re-serialization, which is exactly what we need to
+                    // inline into the `window.__quantum_notify` call.
+                    let payload = env.payload.get();
+                    // Guard against notifications arriving before the JS
+                    // client has installed `window.__quantum_notify`. This
+                    // happens at daemon startup because providers begin
+                    // publishing immediately while the WebView is still
+                    // loading its bundle.
+                    let raw = format!(
+                        "if (typeof window.__quantum_notify === 'function') {{ window.__quantum_notify({channel}, {payload}); }}"
+                    );
+                    let js = json_to_js_expression(&raw);
+                    if js_tx.send(js).is_err() {
+                        // GLib forwarder has gone away — webview dropped.
+                        break;
+                    }
+                    // On a theme reload, also push the freshly resolved
+                    // tokens into the live `#quantum-tokens` stylesheet so
+                    // the page recolors without a reload. The window
+                    // re-resolves from the theme store rather than trusting
+                    // the event payload, so a theme switch (where
+                    // `ThemeStore::reload` updates the active theme) and an
+                    // in-place token edit (where the watcher only
+                    // invalidates the cache) are handled identically.
+                    if env.channel == "theme.reloaded" {
+                        let push = crate::windows::theme_reload_push_js(&theme_store_for_notify);
+                        if js_tx.send(push).is_err() {
+                            break;
+                        }
+                    }
+                }
+                Err(tokio::sync::broadcast::error::RecvError::Lagged(skipped)) => {
+                    tracing::warn!("widget notify subscription lagged: {skipped} events dropped");
+                }
+                Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
+            }
+        }
+    });
+
+    let webview_for_notify = webview.clone();
+    glib::MainContext::default().spawn_local(async move {
+        // Coalesce per main-loop turn: when the first item arrives, drain
+        // any others already queued and submit a single
+        // `evaluate_javascript` call. Each item is a self-contained
+        // `if (...) { window.__quantum_notify(...); }` statement, so
+        // joining with `;` is syntactically safe. This cuts the JIT
+        // entry rate by the burst size when providers fan out (mpris
+        // position ticks, workspace events, audio level changes).
+        while let Some(first) = js_rx.recv().await {
+            let mut batch = first;
+            while let Ok(more) = js_rx.try_recv() {
+                batch.push(';');
+                batch.push_str(&more);
+            }
+            webview_for_notify.evaluate_javascript(
+                &batch,
+                None,
+                None,
+                None::<&gio::Cancellable>,
+                |_| {},
+            );
+        }
+    });
+
+    webview
 }
 
 impl crate::registry::WindowOps for WidgetWindow {
