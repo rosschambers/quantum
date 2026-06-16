@@ -33,9 +33,10 @@ pub fn parse_view_toml(text: &str) -> Result<ViewDescriptor, PluginsError> {
         Some("widget") => ViewKind::Widget,
         Some("panel") => ViewKind::Panel,
         Some("overlay") => ViewKind::Overlay,
+        Some("toast") => ViewKind::Toast,
         Some(other) => {
             return Err(PluginsError::ConfigParse(format!(
-                "invalid kind '{other}': expected one of widget, panel, overlay"
+                "invalid kind '{other}': expected one of widget, panel, overlay, toast"
             )));
         }
     };
@@ -133,6 +134,12 @@ single_instance = false
                 ..ViewDescriptor::default()
             }
         );
+    }
+
+    #[test]
+    fn kind_toast_parses() {
+        let descriptor = parse_view_toml("kind = \"toast\"\n").expect("valid toast kind");
+        assert_eq!(descriptor.kind, ViewKind::Toast);
     }
 
     #[test]
