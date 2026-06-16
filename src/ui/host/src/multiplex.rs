@@ -68,7 +68,7 @@ fn wire_connector_arrival(
             .borrow_mut()
             .sync(&monitors_for_notify);
     });
-    tracing::info!("waiting on notify::connector for a freshly added monitor");
+    tracing::info!("monitor has no connector name yet; subscribed to notify::connector to spawn its bar once the name arrives");
 }
 
 /// Tracks which `<canonical-view>@<monitor>` windows are currently open and
@@ -212,8 +212,19 @@ impl ViewMultiplexer {
 }
 
 /// Owns the `items-changed` signal connection and the
-/// `Rc<RefCell<ViewMultiplexer>>`. Drop disconnects the signal so the
-/// multiplexer stops reacting to monitor changes.
+/// `Rc<RefCell<ViewMultiplexer>>`. Drop disconnects the `items-changed`
+/// signal so the multiplexer stops reacting to monitor add/remove.
+///
+/// Note: this does NOT disconnect the per-monitor `notify::connector`
+/// handlers wired by `wire_connector_arrival` for monitors that appeared
+/// without a connector name. Each of those handlers holds its own
+/// `Rc<RefCell<ViewMultiplexer>>` clone, so the multiplexer is kept alive
+/// (and a late connector arrival still re-runs `sync`) for as long as those
+/// monitors remain connected, even after this handle is dropped. That is
+/// acceptable because the daemon installs exactly one multiplexer for its
+/// entire lifetime and never drops the handle early; a connector handler is
+/// released when GDK drops its monitor (on disconnect). Do not rely on
+/// handle drop to fully quiesce the multiplexer.
 pub struct ViewMultiplexerHandle {
     display: gdk::Display,
     signal_id: Option<glib::SignalHandlerId>,
