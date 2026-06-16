@@ -1,5 +1,3 @@
-use crate::notifications::{Notification, NotificationEvent};
-use futures::stream::BoxStream;
 use crate::{Action, DomainError, Match, ProviderId, Query};
 use async_trait::async_trait;
 use std::sync::Arc;
@@ -109,25 +107,6 @@ pub trait WindowHost: Send + Sync {
     /// popovers. Implementations that don't resize must explicitly
     /// return Ok(()).
     async fn set_view_height(&self, view: &str, height: u32) -> Result<(), DomainError>;
-}
-
-/// Port trait for notification sources.
-#[async_trait]
-pub trait NotificationSource: Send + Sync {
-    /// Subscribe to notification events (created, dismissed, updated).
-    fn subscribe(&self) -> BoxStream<'static, NotificationEvent>;
-    /// Get a snapshot of all active notifications.
-    async fn get_all(&self) -> Vec<Notification>;
-    /// Dismiss a notification by id.
-    async fn dismiss(&self, id: u32) -> Result<(), DomainError>;
-    /// Create a new notification from an internal source.
-    async fn notify(
-        &self,
-        app_name: &str,
-        summary: &str,
-        body: &str,
-        icon: Option<&str>,
-    ) -> Result<u32, DomainError>;
 }
 
 #[cfg(test)]
