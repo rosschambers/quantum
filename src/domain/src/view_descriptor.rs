@@ -15,6 +15,9 @@ pub enum ViewKind {
     Panel,
     /// A transient overlay window.
     Overlay,
+    /// A small, non-modal toast window anchored per `position` and shown
+    /// on demand.
+    Toast,
 }
 
 /// Which screen edge a view anchors to, if any.
@@ -82,7 +85,10 @@ impl ViewDescriptor {
     pub fn effective_single_instance(&self) -> bool {
         match self.single_instance {
             Some(explicit) => explicit,
-            None => matches!(self.kind, ViewKind::Panel | ViewKind::Overlay),
+            None => matches!(
+                self.kind,
+                ViewKind::Panel | ViewKind::Overlay | ViewKind::Toast
+            ),
         }
     }
 }
@@ -170,6 +176,20 @@ mod tests {
         assert_eq!(json, "\"overlay\"");
         let json = serde_json::to_string(&ViewAnchor::Bottom).unwrap();
         assert_eq!(json, "\"bottom\"");
+    }
+
+    #[test]
+    fn view_kind_toast_serializes() {
+        assert_eq!(serde_json::to_string(&ViewKind::Toast).unwrap(), "\"toast\"");
+    }
+
+    #[test]
+    fn toast_derives_single_instance_true() {
+        let descriptor = ViewDescriptor {
+            kind: ViewKind::Toast,
+            ..ViewDescriptor::default()
+        };
+        assert!(descriptor.effective_single_instance());
     }
 
     #[test]
