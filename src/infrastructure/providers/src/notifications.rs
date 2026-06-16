@@ -38,6 +38,7 @@ struct NotificationsInner {
 use quantum_domain::NotificationEvent;
 
 impl NotificationsInner {
+    #[allow(clippy::too_many_arguments)]
     async fn apply_notify(
         &self,
         app_name: String,
@@ -99,6 +100,12 @@ impl NotificationsInner {
     }
 }
 
+impl Default for NotificationsProvider {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl NotificationsProvider {
     pub fn new() -> Self {
         let (tx, _) = broadcast::channel::<NotificationEvent>(64);
@@ -129,10 +136,33 @@ impl NotificationsProvider {
     }
 
     pub async fn dismiss(&self, id: u32) -> Result<(), DomainError> {
-        let mut store = self.inner.store.write().await;
-        store.retain(|n| n.id != id);
+        {
+            let mut store = self.inner.store.write().await;
+            store.retain(|n| n.id != id);
+        }
         let _ = self.inner.tx.send(NotificationEvent::Dismissed { id });
+        if let Some(conn) = self.inner.conn.get() {
+            if let Ok(ctxt) = zbus::object_server::SignalContext::new(
+                conn,
+                "/org/freedesktop/Notifications",
+            ) {
+                let _ = NotificationServer::notification_closed(&ctxt, id, 2).await;
+            }
+        }
         Ok(())
+    }
+
+    /// Notify the originating application that the user invoked an action.
+    pub async fn invoke_action(&self, id: u32, action_key: &str) {
+        if let Some(conn) = self.inner.conn.get() {
+            if let Ok(ctxt) = zbus::object_server::SignalContext::new(
+                conn,
+                "/org/freedesktop/Notifications",
+            ) {
+                let _ =
+                    NotificationServer::action_invoked(&ctxt, id, action_key.to_string()).await;
+            }
+        }
     }
 
     pub async fn count(&self) -> usize { self.inner.store.read().await.len() }
@@ -268,6 +298,33 @@ impl NotificationServer {
             "1.2".to_string(),
         )
     }
+
+    async fn close_notification(
+        &self,
+        #[zbus(signal_context)] ctxt: zbus::object_server::SignalContext<'_>,
+        id: u32,
+    ) {
+        {
+            let mut store = self.inner.store.write().await;
+            store.retain(|n| n.id != id);
+        }
+        let _ = self.inner.tx.send(NotificationEvent::Dismissed { id });
+        let _ = Self::notification_closed(&ctxt, id, 3).await;
+    }
+
+    #[zbus(signal)]
+    async fn notification_closed(
+        ctxt: &zbus::object_server::SignalContext<'_>,
+        id: u32,
+        reason: u32,
+    ) -> zbus::Result<()>;
+
+    #[zbus(signal)]
+    async fn action_invoked(
+        ctxt: &zbus::object_server::SignalContext<'_>,
+        id: u32,
+        action_key: String,
+    ) -> zbus::Result<()>;
 }
 
 #[cfg(test)]
@@ -321,6 +378,17 @@ mod tests {
         assert_eq!(all[0].app_name, "Spotify");
         assert_eq!(all[0].summary, "Now playing");
         assert_eq!(all[0].actions, vec![("default".to_string(), "Open".to_string())]);
+    }
+
+    #[tokio::test]
+    async fn dismiss_succeeds_without_dbus_connection() {
+        let provider = NotificationsProvider::new();
+        let id = provider
+            .inner
+            .apply_notify("App".into(), "".into(), 0, "T".into(), "B".into(), Vec::new(), 0)
+            .await;
+        provider.dismiss(id).await.unwrap();
+        assert_eq!(provider.count().await, 0);
     }
 
     #[tokio::test]
