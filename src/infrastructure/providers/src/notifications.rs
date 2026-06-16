@@ -283,13 +283,51 @@ impl ProviderSource for NotificationsProvider {
                 icon: if n.icon.is_empty() { None } else { Some(IconRef::Name(n.icon.clone())) },
                 score: MatchScore::new(0.9),
                 action: quantum_domain::Action::Custom {
-                    kind: "notifications.dismiss".to_string(),
-                    payload: serde_json::json!({ "id": n.id, "app_name": &n.app_name }),
+                    kind: "notifications".to_string(),
+                    payload: serde_json::json!({ "command": "dismiss", "id": n.id }),
                 },
             }).collect())
     }
 
-    async fn invoke(&self, _action: &Action) -> Result<ActionOutcome, DomainError> { Ok(ActionOutcome { message: None }) }
+    async fn invoke(&self, action: &Action) -> Result<ActionOutcome, DomainError> {
+        let Action::Custom { kind, payload } = action else {
+            return Ok(ActionOutcome { message: None });
+        };
+        if kind != "notifications" {
+            return Ok(ActionOutcome { message: None });
+        }
+        let command = payload.get("command").and_then(serde_json::Value::as_str);
+        match command {
+            Some("dismiss") => {
+                match payload.get("id").and_then(serde_json::Value::as_u64) {
+                    Some(id) => {
+                        self.dismiss(id as u32).await?;
+                    }
+                    None => {
+                        tracing::warn!("notifications: dismiss command missing id");
+                    }
+                }
+            }
+            Some("action") => {
+                let id = payload.get("id").and_then(serde_json::Value::as_u64);
+                let action_key = payload.get("action_key").and_then(serde_json::Value::as_str);
+                match (id, action_key) {
+                    (Some(id), Some(action_key)) => {
+                        let id = id as u32;
+                        self.invoke_action(id, action_key).await;
+                        self.dismiss(id).await?;
+                    }
+                    _ => {
+                        tracing::warn!("notifications: action command missing id or action_key");
+                    }
+                }
+            }
+            other => {
+                tracing::warn!("notifications: unknown command {other:?}");
+            }
+        }
+        Ok(ActionOutcome { message: None })
+    }
 
     fn subscribe(&self) -> Option<futures::stream::BoxStream<'static, serde_json::Value>> {
         let rx = self.inner.tx.subscribe();
@@ -543,6 +581,40 @@ mod tests {
 
         hints.remove("urgency");
         assert_eq!(NotificationServer::urgency_from_hints(&hints), "normal");
+    }
+
+    #[tokio::test]
+    async fn invoke_dismiss_removes_notification() {
+        let provider = NotificationsProvider::new();
+        let id = provider
+            .inner
+            .apply_notify("App".into(), "".into(), 0, "T".into(), "B".into(), Vec::new(), 0, "normal".into())
+            .await;
+        assert_eq!(provider.count().await, 1);
+        let action = Action::Custom {
+            kind: "notifications".to_string(),
+            payload: serde_json::json!({ "command": "dismiss", "id": id }),
+        };
+        let outcome = provider.invoke(&action).await.unwrap();
+        assert!(outcome.message.is_none());
+        assert_eq!(provider.count().await, 0);
+    }
+
+    #[tokio::test]
+    async fn invoke_unknown_command_is_noop() {
+        let provider = NotificationsProvider::new();
+        let id = provider
+            .inner
+            .apply_notify("App".into(), "".into(), 0, "T".into(), "B".into(), Vec::new(), 0, "normal".into())
+            .await;
+        assert_eq!(provider.count().await, 1);
+        let action = Action::Custom {
+            kind: "notifications".to_string(),
+            payload: serde_json::json!({ "command": "frobnicate", "id": id }),
+        };
+        let outcome = provider.invoke(&action).await.unwrap();
+        assert!(outcome.message.is_none());
+        assert_eq!(provider.count().await, 1);
     }
 
     #[tokio::test]
