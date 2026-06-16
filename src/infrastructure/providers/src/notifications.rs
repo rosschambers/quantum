@@ -36,6 +36,68 @@ struct NotificationsInner {
 
 use quantum_domain::NotificationEvent;
 
+impl NotificationsInner {
+    async fn apply_notify(
+        &self,
+        app_name: String,
+        app_icon: String,
+        replaces_id: u32,
+        summary: String,
+        body: String,
+        actions: Vec<(String, String)>,
+        expire_timeout: i32,
+    ) -> u32 {
+        let timeout_ms = if expire_timeout > 0 {
+            Some(expire_timeout as u64)
+        } else {
+            None
+        };
+        let mut store = self.store.write().await;
+
+        if replaces_id != 0 {
+            if let Some(slot) = store.iter_mut().find(|n| n.id == replaces_id) {
+                slot.app_name = app_name;
+                slot.icon = app_icon;
+                slot.summary = summary;
+                slot.body = body;
+                slot.actions = actions;
+                let _ = self.tx.send(NotificationEvent::Updated { id: replaces_id });
+                return replaces_id;
+            }
+            store.push(DbusNotification {
+                app_name,
+                icon: app_icon,
+                id: replaces_id,
+                summary,
+                body,
+                actions,
+                hints: HashMap::new(),
+            });
+            let _ = self
+                .tx
+                .send(NotificationEvent::Created { id: replaces_id, timeout_ms });
+            return replaces_id;
+        }
+
+        let id = {
+            let mut next = self.next_id.lock().unwrap();
+            *next += 1;
+            *next
+        };
+        store.push(DbusNotification {
+            app_name,
+            icon: app_icon,
+            id,
+            summary,
+            body,
+            actions,
+            hints: HashMap::new(),
+        });
+        let _ = self.tx.send(NotificationEvent::Created { id, timeout_ms });
+        id
+    }
+}
+
 impl NotificationsProvider {
     pub fn new() -> Self {
         let (tx, _) = broadcast::channel::<NotificationEvent>(64);
@@ -112,6 +174,62 @@ impl ProviderSource for NotificationsProvider {
     }
 }
 
+/// D-Bus handler for `org.freedesktop.Notifications`. Shares the provider store.
+pub struct NotificationServer {
+    inner: Arc<NotificationsInner>,
+}
+
+impl NotificationServer {
+    pub fn new(inner: Arc<NotificationsInner>) -> Self {
+        Self { inner }
+    }
+
+    /// Convert the flat D-Bus actions list [key1, label1, key2, label2, ...]
+    /// into (key, label) pairs. A trailing unpaired entry is dropped.
+    fn pair_actions(actions: Vec<String>) -> Vec<(String, String)> {
+        let mut pairs = Vec::with_capacity(actions.len() / 2);
+        let mut iter = actions.into_iter();
+        while let (Some(key), Some(label)) = (iter.next(), iter.next()) {
+            pairs.push((key, label));
+        }
+        pairs
+    }
+}
+
+#[zbus::interface(name = "org.freedesktop.Notifications")]
+impl NotificationServer {
+    #[allow(clippy::too_many_arguments)]
+    async fn notify(
+        &self,
+        app_name: String,
+        replaces_id: u32,
+        app_icon: String,
+        summary: String,
+        body: String,
+        actions: Vec<String>,
+        _hints: std::collections::HashMap<String, zbus::zvariant::OwnedValue>,
+        expire_timeout: i32,
+    ) -> u32 {
+        let actions = Self::pair_actions(actions);
+        self.inner
+            .apply_notify(app_name, app_icon, replaces_id, summary, body, actions, expire_timeout)
+            .await
+    }
+
+    fn get_capabilities(&self) -> Vec<String> {
+        vec!["body".to_string(), "actions".to_string()]
+    }
+
+    fn get_server_information(&self) -> (String, String, String, String) {
+        (
+            "Quantum".to_string(),
+            "quantum".to_string(),
+            env!("CARGO_PKG_VERSION").to_string(),
+            "1.2".to_string(),
+        )
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -139,5 +257,46 @@ mod tests {
     fn subscribes_returns_stream() {
         let provider = NotificationsProvider::new();
         assert!(provider.subscribe().is_some());
+    }
+
+    #[tokio::test]
+    async fn apply_notify_creates_with_new_id() {
+        let provider = NotificationsProvider::new();
+        let id = provider
+            .inner
+            .apply_notify(
+                "Spotify".into(),
+                "spotify".into(),
+                0,
+                "Now playing".into(),
+                "Song title".into(),
+                vec![("default".into(), "Open".into())],
+                5000,
+            )
+            .await;
+        assert_eq!(id, 1);
+        let all = provider.get_all().await;
+        assert_eq!(all.len(), 1);
+        assert_eq!(all[0].id, 1);
+        assert_eq!(all[0].app_name, "Spotify");
+        assert_eq!(all[0].summary, "Now playing");
+        assert_eq!(all[0].actions, vec![("default".to_string(), "Open".to_string())]);
+    }
+
+    #[tokio::test]
+    async fn apply_notify_replaces_existing_id() {
+        let provider = NotificationsProvider::new();
+        let id = provider
+            .inner
+            .apply_notify("App".into(), "".into(), 0, "First".into(), "".into(), Vec::new(), 0)
+            .await;
+        let same = provider
+            .inner
+            .apply_notify("App".into(), "".into(), id, "Second".into(), "".into(), Vec::new(), 0)
+            .await;
+        assert_eq!(same, id);
+        let all = provider.get_all().await;
+        assert_eq!(all.len(), 1, "replace must not add a second entry");
+        assert_eq!(all[0].summary, "Second");
     }
 }
