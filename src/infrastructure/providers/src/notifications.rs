@@ -17,6 +17,8 @@ pub struct DbusNotification {
     pub id: u32,
     pub summary: String,
     pub body: String,
+    pub urgency: String,
+    pub timeout_ms: u64,
     pub actions: Vec<(String, String)>,
     pub hints: HashMap<String, serde_json::Value>,
 }
@@ -48,12 +50,14 @@ impl NotificationsInner {
         body: String,
         actions: Vec<(String, String)>,
         expire_timeout: i32,
+        urgency: String,
     ) -> u32 {
         let timeout_ms = if expire_timeout > 0 {
-            Some(expire_timeout as u64)
+            expire_timeout as u64
         } else {
-            None
+            0
         };
+        let event_timeout = if timeout_ms > 0 { Some(timeout_ms) } else { None };
         let mut store = self.store.write().await;
 
         if replaces_id != 0 {
@@ -62,6 +66,8 @@ impl NotificationsInner {
                 slot.icon = app_icon;
                 slot.summary = summary;
                 slot.body = body;
+                slot.urgency = urgency;
+                slot.timeout_ms = timeout_ms;
                 slot.actions = actions;
                 let _ = self.tx.send(NotificationEvent::Updated { id: replaces_id });
                 return replaces_id;
@@ -72,12 +78,14 @@ impl NotificationsInner {
                 id: replaces_id,
                 summary,
                 body,
+                urgency,
+                timeout_ms,
                 actions,
                 hints: HashMap::new(),
             });
             let _ = self
                 .tx
-                .send(NotificationEvent::Created { id: replaces_id, timeout_ms });
+                .send(NotificationEvent::Created { id: replaces_id, timeout_ms: event_timeout });
             return replaces_id;
         }
 
@@ -92,11 +100,37 @@ impl NotificationsInner {
             id,
             summary,
             body,
+            urgency,
+            timeout_ms,
             actions,
             hints: HashMap::new(),
         });
-        let _ = self.tx.send(NotificationEvent::Created { id, timeout_ms });
+        let _ = self.tx.send(NotificationEvent::Created { id, timeout_ms: event_timeout });
         id
+    }
+
+    /// Build a JSON snapshot of all active notifications for the event envelope.
+    async fn snapshot_json(&self) -> Vec<serde_json::Value> {
+        let store = self.store.read().await;
+        store
+            .iter()
+            .map(|n| {
+                serde_json::json!({
+                    "id": n.id,
+                    "app_name": n.app_name,
+                    "summary": n.summary,
+                    "body": n.body,
+                    "icon": if n.icon.is_empty() {
+                        serde_json::Value::Null
+                    } else {
+                        serde_json::Value::String(n.icon.clone())
+                    },
+                    "urgency": n.urgency,
+                    "timeout_ms": n.timeout_ms,
+                    "actions": n.actions,
+                })
+            })
+            .collect()
     }
 }
 
@@ -130,7 +164,7 @@ impl NotificationsProvider {
         } else {
             let mut next = self.inner.next_id.lock().unwrap();
             *next += 1;
-            store.push(DbusNotification { app_name, icon: icon.unwrap_or_default(), id: 0, summary, body, actions: Vec::new(), hints: HashMap::new() });
+            store.push(DbusNotification { app_name, icon: icon.unwrap_or_default(), id: 0, summary, body, urgency: "normal".to_string(), timeout_ms, actions: Vec::new(), hints: HashMap::new() });
         }
         let _ = self.inner.tx.send(NotificationEvent::Created { id: 0, timeout_ms: Some(timeout_ms) });
     }
@@ -259,12 +293,24 @@ impl ProviderSource for NotificationsProvider {
 
     fn subscribe(&self) -> Option<futures::stream::BoxStream<'static, serde_json::Value>> {
         let rx = self.inner.tx.subscribe();
-        Some(futures::stream::unfold(rx, |mut rx| async move {
-            match rx.recv().await {
-                Ok(event) => { let json = serde_json::to_value(&event).ok()?; Some((json, rx)) }
-                Err(_) => None,
-            }
-        }).boxed())
+        let inner = self.inner.clone();
+        Some(
+            futures::stream::unfold((rx, inner), |(mut rx, inner)| async move {
+                match rx.recv().await {
+                    Ok(event) => {
+                        let change = serde_json::to_value(&event).ok()?;
+                        let notifications = inner.snapshot_json().await;
+                        let envelope = serde_json::json!({
+                            "change": change,
+                            "notifications": notifications,
+                        });
+                        Some((envelope, (rx, inner)))
+                    }
+                    Err(_) => None,
+                }
+            })
+            .boxed(),
+        )
     }
 }
 
@@ -288,6 +334,21 @@ impl NotificationServer {
         }
         pairs
     }
+
+    /// Map the D-Bus `urgency` hint (a byte) to a string. 0 => low, 1 => normal,
+    /// 2 => critical; anything else or absent => normal.
+    fn urgency_from_hints(
+        hints: &std::collections::HashMap<String, zbus::zvariant::OwnedValue>,
+    ) -> String {
+        let level = hints
+            .get("urgency")
+            .and_then(|value| u8::try_from(value).ok());
+        match level {
+            Some(0) => "low".to_string(),
+            Some(2) => "critical".to_string(),
+            _ => "normal".to_string(),
+        }
+    }
 }
 
 #[zbus::interface(name = "org.freedesktop.Notifications")]
@@ -301,12 +362,22 @@ impl NotificationServer {
         summary: String,
         body: String,
         actions: Vec<String>,
-        _hints: std::collections::HashMap<String, zbus::zvariant::OwnedValue>,
+        hints: std::collections::HashMap<String, zbus::zvariant::OwnedValue>,
         expire_timeout: i32,
     ) -> u32 {
         let actions = Self::pair_actions(actions);
+        let urgency = Self::urgency_from_hints(&hints);
         self.inner
-            .apply_notify(app_name, app_icon, replaces_id, summary, body, actions, expire_timeout)
+            .apply_notify(
+                app_name,
+                app_icon,
+                replaces_id,
+                summary,
+                body,
+                actions,
+                expire_timeout,
+                urgency,
+            )
             .await
     }
 
@@ -393,6 +464,7 @@ mod tests {
                 "Song title".into(),
                 vec![("default".into(), "Open".into())],
                 5000,
+                "normal".into(),
             )
             .await;
         assert_eq!(id, 1);
@@ -409,10 +481,38 @@ mod tests {
         let provider = NotificationsProvider::new();
         let id = provider
             .inner
-            .apply_notify("App".into(), "".into(), 0, "T".into(), "B".into(), Vec::new(), 0)
+            .apply_notify("App".into(), "".into(), 0, "T".into(), "B".into(), Vec::new(), 0, "normal".into())
             .await;
         provider.dismiss(id).await.unwrap();
         assert_eq!(provider.count().await, 0);
+    }
+
+    #[tokio::test]
+    async fn subscribe_emits_envelope_with_snapshot() {
+        let provider = NotificationsProvider::new();
+        let mut stream = provider.subscribe().expect("stream");
+        provider
+            .inner
+            .apply_notify(
+                "Spotify".into(),
+                "spotify".into(),
+                0,
+                "Now playing".into(),
+                "Song".into(),
+                vec![("default".into(), "Open".into())],
+                5000,
+                "critical".into(),
+            )
+            .await;
+        let value = stream.next().await.expect("envelope");
+        assert_eq!(value["change"]["type"], "created");
+        let notifications = value["notifications"].as_array().expect("array");
+        assert_eq!(notifications.len(), 1);
+        assert_eq!(notifications[0]["app_name"], "Spotify");
+        assert_eq!(notifications[0]["urgency"], "critical");
+        assert_eq!(notifications[0]["timeout_ms"], 5000);
+        assert_eq!(notifications[0]["actions"][0][0], "default");
+        assert_eq!(notifications[0]["actions"][0][1], "Open");
     }
 
     #[tokio::test]
@@ -420,11 +520,11 @@ mod tests {
         let provider = NotificationsProvider::new();
         let id = provider
             .inner
-            .apply_notify("App".into(), "".into(), 0, "First".into(), "".into(), Vec::new(), 0)
+            .apply_notify("App".into(), "".into(), 0, "First".into(), "".into(), Vec::new(), 0, "normal".into())
             .await;
         let same = provider
             .inner
-            .apply_notify("App".into(), "".into(), id, "Second".into(), "".into(), Vec::new(), 0)
+            .apply_notify("App".into(), "".into(), id, "Second".into(), "".into(), Vec::new(), 0, "normal".into())
             .await;
         assert_eq!(same, id);
         let all = provider.get_all().await;
