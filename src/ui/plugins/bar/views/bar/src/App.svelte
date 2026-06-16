@@ -9,6 +9,7 @@
     import BrightnessIndicator from './lib/tray/BrightnessIndicator.svelte';
     import NetworkIndicator from './lib/tray/NetworkIndicator.svelte';
     import BarClock from './lib/BarClock.svelte';
+    import NotificationIndicator from './lib/tray/NotificationIndicator.svelte';
     import PowerMenuIndicator from './lib/tray/PowerMenuIndicator.svelte';
     import VolumeIndicator from './lib/tray/VolumeIndicator.svelte';
 
@@ -47,6 +48,7 @@
         </div>
         <div class="divider" aria-hidden="true"></div>
         <div class="group">
+            <NotificationIndicator {client} />
             <PowerMenuIndicator {client} />
         </div>
     </div>

@@ -40,6 +40,7 @@
         | 'balanced'
         | 'bolt'
         | 'power'
+        | 'bell'
         | 'cpu'
         | 'memory'
         | 'play'
@@ -131,6 +132,9 @@
     {:else if name === 'power'}
         <line x1="12" y1="3" x2="12" y2="12" />
         <path d="M7.5 6 Q3 10 4 15 Q6 22 12 21 Q18 22 20 15 Q21 10 16.5 6" />
+    {:else if name === 'bell'}
+        <path d="M6 9 Q6 3 12 3 Q18 3 18 9 Q18 14 20 17 L4 17 Q6 14 6 9 Z" />
+        <path d="M10 20 Q12 22 14 20" />
     {:else if name === 'cpu'}
         <rect x="6" y="6" width="12" height="12" rx="1.5" />
         <rect x="9" y="9" width="6" height="6" rx="0.5" fill={color} stroke="none" />
