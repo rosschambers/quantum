@@ -32,6 +32,7 @@ struct NotificationsInner {
     store: RwLock<Vec<DbusNotification>>,
     tx: broadcast::Sender<NotificationEvent>,
     next_id: Mutex<u32>,
+    conn: tokio::sync::OnceCell<zbus::Connection>,
 }
 
 use quantum_domain::NotificationEvent;
@@ -107,6 +108,7 @@ impl NotificationsProvider {
                 store: RwLock::new(Vec::new()),
                 tx,
                 next_id: Mutex::new(0),
+                conn: tokio::sync::OnceCell::new(),
             }),
         }
     }
@@ -135,8 +137,46 @@ impl NotificationsProvider {
 
     pub async fn count(&self) -> usize { self.inner.store.read().await.len() }
 
-    /// Start the D-Bus notification server. Filled in by later tasks.
-    pub async fn start_dbus(&self) {}
+    /// Become the org.freedesktop.Notifications server. Replaces any running
+    /// notification daemon and keeps the connection alive for the process
+    /// lifetime by storing it in the shared inner state.
+    pub async fn start_dbus(&self) {
+        use zbus::fdo::RequestNameFlags;
+
+        let server = NotificationServer::new(self.inner.clone());
+        let conn = match zbus::connection::Builder::session()
+            .and_then(|builder| builder.serve_at("/org/freedesktop/Notifications", server))
+        {
+            Ok(builder) => match builder.build().await {
+                Ok(conn) => conn,
+                Err(error) => {
+                    tracing::warn!("notifications: failed to build D-Bus connection: {error}");
+                    return;
+                }
+            },
+            Err(error) => {
+                tracing::warn!("notifications: failed to configure D-Bus server: {error}");
+                return;
+            }
+        };
+
+        if let Err(error) = conn
+            .request_name_with_flags(
+                "org.freedesktop.Notifications",
+                RequestNameFlags::ReplaceExisting | RequestNameFlags::AllowReplacement,
+            )
+            .await
+        {
+            tracing::warn!("notifications: could not claim org.freedesktop.Notifications: {error}");
+            return;
+        }
+
+        if self.inner.conn.set(conn).is_err() {
+            tracing::warn!("notifications: D-Bus server already started");
+        } else {
+            tracing::info!("notifications: serving org.freedesktop.Notifications");
+        }
+    }
 }
 
 #[async_trait]
@@ -180,7 +220,7 @@ pub struct NotificationServer {
 }
 
 impl NotificationServer {
-    pub fn new(inner: Arc<NotificationsInner>) -> Self {
+    fn new(inner: Arc<NotificationsInner>) -> Self {
         Self { inner }
     }
 
