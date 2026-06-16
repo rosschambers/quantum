@@ -574,9 +574,17 @@ async fn setup_daemon(
     register_or_warn(&registry, "SystemPowerProvider", sysp).await;
     register_or_warn(&registry, "WifiProvider", wifi).await;
 
-    // Notifications provider: bridges D-Bus org.freedesktop.Notifications into the event bus.
+    // Notifications provider: becomes the org.freedesktop.Notifications server
+    // and bridges incoming notifications into the event bus.
     let notifications = Arc::new(NotificationsProvider::new());
-    register_or_warn(&registry, "notifications", notifications.clone()).await;
+    registry
+        .register(
+            notifications.id().clone(),
+            notifications.clone() as Arc<dyn quantum_domain::ProviderSource>,
+        )
+        .await;
+    notifications.start_dbus().await;
+    info!("Registered NotificationsProvider");
 
     // Plugins: walk ~/.config/quantum/plugins/, merge over the embedded
     // first-party catalog (user plugins shadow embedded ones by name),
@@ -682,6 +690,9 @@ async fn setup_daemon(
         .execute("system.stats".into())
         .await;
     let _ = subscribe_provider_use_case.execute("mpris".into()).await;
+    let _ = subscribe_provider_use_case
+        .execute("notifications".into())
+        .await;
     if hypr_client_opt.is_some() {
         let _ = subscribe_provider_use_case
             .execute("hyprland.activewindow".into())
