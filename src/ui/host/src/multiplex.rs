@@ -86,11 +86,29 @@ impl ViewMultiplexer {
     /// of `gdk::Monitor` and runs the diff. Used both for the initial
     /// sync and on every `items-changed` signal.
     fn sync(&mut self, monitors: &gio::ListModel) {
-        let current: HashSet<String> = monitors
+        let mut current: HashSet<String> = HashSet::new();
+        let mut unnamed = 0usize;
+        for (index, monitor) in monitors
             .iter::<gdk::Monitor>()
             .filter_map(Result::ok)
-            .filter_map(|monitor| crate::windows::widget::monitor_name(&monitor))
-            .collect();
+            .enumerate()
+        {
+            match crate::windows::widget::monitor_name(&monitor) {
+                Some(name) => {
+                    current.insert(name);
+                }
+                None => {
+                    unnamed += 1;
+                    tracing::warn!(
+                        "monitor at index {index} present without connector name yet; \
+                         deferring bar spawn until notify::connector"
+                    );
+                }
+            }
+        }
+        if unnamed > 0 {
+            tracing::warn!("{unnamed} monitor(s) not yet ready; bars for them are deferred");
+        }
         self.diff_emit(current);
     }
 
