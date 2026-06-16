@@ -370,6 +370,45 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             });
         }
 
+        // Surface the toast overlay when a new notification arrives. The
+        // toast view hides itself once its last card clears, so this task only
+        // needs to show the window on a `created` change. The enriched
+        // `notifications.event` payload is `{ "change": <event>, "notifications": [...] }`.
+        let dispatcher_for_toast = setup.ipc_dispatcher.clone();
+        let mut toast_event_rx = setup.event_tx.subscribe();
+        worker.handle.spawn(async move {
+            loop {
+                match toast_event_rx.recv().await {
+                    Ok(env) => {
+                        if env.channel != "notifications.event" {
+                            continue;
+                        }
+                        let is_created = serde_json::from_str::<serde_json::Value>(env.payload.get())
+                            .ok()
+                            .and_then(|value| {
+                                value
+                                    .get("change")
+                                    .and_then(|change| change.get("type"))
+                                    .and_then(|kind| kind.as_str())
+                                    .map(|kind| kind == "created")
+                            })
+                            .unwrap_or(false);
+                        if is_created {
+                            let params =
+                                serde_json::json!({"name": "plugin/notification-center/toast"});
+                            if let Err(err) =
+                                dispatcher_for_toast.dispatch("view.show", params).await
+                            {
+                                tracing::warn!("auto-show toast failed: {:?}", err);
+                            }
+                        }
+                    }
+                    Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
+                    Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
+                }
+            }
+        });
+
         let view_catalog = quantum_ui::ViewCatalog::from_plugins(setup.view_catalog_entries);
         let _exit_code = crate::gtk_loop::run(
             &app,
