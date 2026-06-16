@@ -177,6 +177,43 @@ impl TimeOfDay {
     }
 }
 
+/// Seconds from "now" until the next instant whose weekday is in `days` and
+/// whose time-of-day equals `target`. Pure integer calendar arithmetic with no
+/// dependency on a real clock or timezone.
+///
+/// "Now" is described by `now_weekday` and `now_secs_into_day` (seconds elapsed
+/// since midnight today). Returns `None` when `days` is empty. Never returns 0:
+/// a target exactly equal to now rolls forward to the next occurrence, up to a
+/// full week (7 days) away when only today's weekday is included.
+pub fn seconds_until_next(
+    now_weekday: Weekday,
+    now_secs_into_day: u32,
+    days: &WeekdaySet,
+    target: TimeOfDay,
+) -> Option<u64> {
+    if days.is_empty() {
+        return None;
+    }
+
+    let target_secs = target.secs_into_day();
+    for day_offset in 0u64..=7 {
+        let candidate_index = (now_weekday.index() as u64 + day_offset) % 7;
+        let candidate = Weekday::from_index(candidate_index as u8)?;
+        if !days.contains(candidate) {
+            continue;
+        }
+        if day_offset == 0 {
+            if target_secs > now_secs_into_day {
+                return Some((target_secs - now_secs_into_day) as u64);
+            }
+            continue;
+        }
+        return Some(day_offset * 86400 + target_secs as u64 - now_secs_into_day as u64);
+    }
+
+    None
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -275,5 +312,66 @@ mod tests {
     fn timeofday_boundary_values_are_valid() {
         assert!(TimeOfDay::new(23, 59).is_ok());
         assert!(TimeOfDay::new(0, 0).is_ok());
+    }
+
+    #[test]
+    fn same_day_future_target() {
+        let r = seconds_until_next(
+            Weekday::Monday,
+            9 * 3600,
+            &WeekdaySet::all(),
+            TimeOfDay::new(17, 0).unwrap(),
+        );
+        assert_eq!(r, Some(8 * 3600));
+    }
+
+    #[test]
+    fn rolls_to_next_included_day_when_passed() {
+        let days = WeekdaySet::from_days(&[Weekday::Tuesday, Weekday::Thursday]);
+        let r = seconds_until_next(
+            Weekday::Tuesday,
+            18 * 3600,
+            &days,
+            TimeOfDay::new(18, 0).unwrap(),
+        );
+        assert_eq!(r, Some(2 * 24 * 3600));
+    }
+
+    #[test]
+    fn wraps_across_week() {
+        let days = WeekdaySet::from_days(&[Weekday::Monday]);
+        let r = seconds_until_next(
+            Weekday::Sunday,
+            12 * 3600,
+            &days,
+            TimeOfDay::new(9, 0).unwrap(),
+        );
+        assert_eq!(r, Some(21 * 3600));
+    }
+
+    #[test]
+    fn empty_set_is_none() {
+        assert_eq!(
+            seconds_until_next(
+                Weekday::Monday,
+                0,
+                &WeekdaySet::from_days(&[]),
+                TimeOfDay::new(9, 0).unwrap()
+            ),
+            None
+        );
+    }
+
+    #[test]
+    fn only_today_passed_rolls_full_week() {
+        let days = WeekdaySet::from_days(&[Weekday::Monday]);
+        // Monday 10:00 now, target 09:00 Monday -> next Monday, 7 days minus 1 hour
+        let r = seconds_until_next(
+            Weekday::Monday,
+            10 * 3600,
+            &days,
+            TimeOfDay::new(9, 0).unwrap(),
+        );
+        assert_eq!(r, Some(7 * 86400 - 3600));
     }
 }
