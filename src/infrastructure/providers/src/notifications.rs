@@ -296,17 +296,25 @@ impl ProviderSource for NotificationsProvider {
         let inner = self.inner.clone();
         Some(
             futures::stream::unfold((rx, inner), |(mut rx, inner)| async move {
-                match rx.recv().await {
-                    Ok(event) => {
-                        let change = serde_json::to_value(&event).ok()?;
-                        let notifications = inner.snapshot_json().await;
-                        let envelope = serde_json::json!({
-                            "change": change,
-                            "notifications": notifications,
-                        });
-                        Some((envelope, (rx, inner)))
+                loop {
+                    match rx.recv().await {
+                        Ok(event) => {
+                            let change = serde_json::to_value(&event).ok()?;
+                            let notifications = inner.snapshot_json().await;
+                            let envelope = serde_json::json!({
+                                "change": change,
+                                "notifications": notifications,
+                            });
+                            return Some((envelope, (rx, inner)));
+                        }
+                        Err(broadcast::error::RecvError::Lagged(skipped)) => {
+                            tracing::warn!(
+                                "notifications subscription lagged: {skipped} events dropped"
+                            );
+                            continue;
+                        }
+                        Err(broadcast::error::RecvError::Closed) => return None,
                     }
-                    Err(_) => None,
                 }
             })
             .boxed(),
@@ -513,6 +521,28 @@ mod tests {
         assert_eq!(notifications[0]["timeout_ms"], 5000);
         assert_eq!(notifications[0]["actions"][0][0], "default");
         assert_eq!(notifications[0]["actions"][0][1], "Open");
+    }
+
+    #[test]
+    fn urgency_from_hints_maps_known_bytes() {
+        use zbus::zvariant::OwnedValue;
+
+        let mut hints: HashMap<String, OwnedValue> = HashMap::new();
+
+        hints.insert("urgency".to_string(), OwnedValue::from(0u8));
+        assert_eq!(NotificationServer::urgency_from_hints(&hints), "low");
+
+        hints.insert("urgency".to_string(), OwnedValue::from(2u8));
+        assert_eq!(NotificationServer::urgency_from_hints(&hints), "critical");
+
+        hints.insert("urgency".to_string(), OwnedValue::from(1u8));
+        assert_eq!(NotificationServer::urgency_from_hints(&hints), "normal");
+
+        hints.insert("urgency".to_string(), OwnedValue::from(7u8));
+        assert_eq!(NotificationServer::urgency_from_hints(&hints), "normal");
+
+        hints.remove("urgency");
+        assert_eq!(NotificationServer::urgency_from_hints(&hints), "normal");
     }
 
     #[tokio::test]
