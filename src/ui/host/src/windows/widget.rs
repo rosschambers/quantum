@@ -225,6 +225,21 @@ impl WidgetWindow {
         window.set_keyboard_mode(KeyboardMode::None);
         window.set_exclusive_zone(0);
 
+        // gtk4-layer-shell sizes the surface from the GTK widget's preferred
+        // size, not from the anchors alone (see panel.rs:113-123 for the same
+        // behavior on overlays). A two-edge-anchored Overlay with an empty
+        // WebView has a preferred size of 0x0, so the compositor would map it
+        // at a tiny placeholder size before the page lays out. Set a default
+        // width matching the view's fixed 380px card stack (plus margin) so the
+        // surface is never zero; height is left to follow the content.
+        //
+        // TODO: while shown, this fixed-width surface can capture pointer
+        // events over its area. Implement input-region passthrough (so only the
+        // opaque toast cards are clickable) as a future improvement; the plan
+        // defers it. For now the window is hidden whenever it is empty, which
+        // bounds the impact.
+        window.set_default_width(400);
+
         window.set_namespace(&format!("quantum-toast-{}", view_name.replace('/', "-")));
 
         let webview = build_webview(
