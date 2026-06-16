@@ -1,7 +1,7 @@
 //! Timer value types for the domain layer.
 //! No imports from other workspace crates and no IO.
 
-use serde::de::{SeqAccess, Visitor};
+use serde::de::{self, SeqAccess, Visitor};
 use serde::ser::SerializeSeq;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::fmt;
@@ -101,7 +101,7 @@ impl Serialize for WeekdaySet {
     where
         S: Serializer,
     {
-        let mut seq = serializer.serialize_seq(None)?;
+        let mut seq = serializer.serialize_seq(Some(self.0.count_ones() as usize))?;
         for day in self.days() {
             seq.serialize_element(&day)?;
         }
@@ -140,10 +140,26 @@ impl<'de> Deserialize<'de> for WeekdaySet {
 }
 
 /// A wall-clock time of day with no date or timezone.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 pub struct TimeOfDay {
     pub hour: u8,
     pub minute: u8,
+}
+
+impl<'de> Deserialize<'de> for TimeOfDay {
+    fn deserialize<D>(deserializer: D) -> Result<TimeOfDay, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        #[derive(Deserialize)]
+        struct Shadow {
+            hour: u8,
+            minute: u8,
+        }
+
+        let shadow = Shadow::deserialize(deserializer)?;
+        TimeOfDay::new(shadow.hour, shadow.minute).map_err(de::Error::custom)
+    }
 }
 
 impl TimeOfDay {
@@ -224,5 +240,40 @@ mod tests {
         let json = serde_json::to_value(&time).unwrap();
         let back: TimeOfDay = serde_json::from_value(json).unwrap();
         assert_eq!(back, time);
+    }
+
+    #[test]
+    fn timeofday_deserialize_rejects_out_of_range() {
+        assert!(serde_json::from_str::<TimeOfDay>(r#"{"hour":25,"minute":0}"#).is_err());
+        assert!(serde_json::from_str::<TimeOfDay>(r#"{"hour":10,"minute":60}"#).is_err());
+        // valid still works:
+        let t: TimeOfDay = serde_json::from_str(r#"{"hour":17,"minute":15}"#).unwrap();
+        assert_eq!(t.secs_into_day(), 17 * 3600 + 15 * 60);
+    }
+
+    #[test]
+    fn weekdayset_from_days_collapses_duplicates() {
+        let doubled = WeekdaySet::from_days(&[Weekday::Monday, Weekday::Monday]);
+        let single = WeekdaySet::from_days(&[Weekday::Monday]);
+        assert_eq!(doubled, single);
+        assert!(doubled.contains(Weekday::Monday));
+    }
+
+    #[test]
+    fn weekdayset_deserialize_canonicalizes_order() {
+        let set: WeekdaySet = serde_json::from_str(r#"["thursday","monday"]"#).unwrap();
+        let json = serde_json::to_string(&set).unwrap();
+        assert_eq!(json, r#"["monday","thursday"]"#);
+    }
+
+    #[test]
+    fn weekdayset_deserialize_rejects_unknown_day() {
+        assert!(serde_json::from_str::<WeekdaySet>(r#"["funday"]"#).is_err());
+    }
+
+    #[test]
+    fn timeofday_boundary_values_are_valid() {
+        assert!(TimeOfDay::new(23, 59).is_ok());
+        assert!(TimeOfDay::new(0, 0).is_ok());
     }
 }
