@@ -27,7 +27,7 @@ libc = "0.2"
 which = "8"
 shell-words = "1"
 humantime-serde = "1"
-zbus = { version = "4", default-features = false, features = ["tokio"] }
+zbus = { version = "4", default-features = true, features = ["tokio"] }
 tempfile = "3"
 
 [dev-dependencies]
