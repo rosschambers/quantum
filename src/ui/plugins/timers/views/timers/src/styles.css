@@ -1,0 +1,18 @@
+:root {
+  color-scheme: light dark;
+}
+html,
+body {
+  margin: 0;
+  padding: 0;
+  height: 100%;
+  /* The widget sits on the desktop background layer; stay transparent so the
+     wallpaper shows through around the timers. */
+  background: transparent;
+  font-family: var(--font-sans, system-ui, sans-serif);
+  overflow: hidden;
+}
+#app {
+  position: absolute;
+  inset: 0;
+}

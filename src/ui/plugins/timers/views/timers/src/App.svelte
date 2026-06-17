@@ -1,0 +1,224 @@
+<script lang="ts">
+  import {
+    createClient,
+    createTimerStore,
+    type Timer,
+    type TimerSettings,
+    type Point,
+  } from "@quantum/client";
+  import TimerVisual from "./lib/TimerVisual.svelte";
+  import { defaultScatterPosition, clampScatterPosition } from "./lib/layout";
+
+  const client = createClient();
+
+  let timers: Timer[] = $state([]);
+  let settings: TimerSettings | null = $state(null);
+  let nowUnix = $state(Date.now() / 1000);
+
+  // In-flight scatter overrides keyed by timer id. During a drag we update
+  // this immediately for responsiveness; on drop we persist via timer.edit
+  // and the next snapshot carries the authoritative scatter_pos.
+  let localScatter: Record<string, Point> = $state({});
+
+  $effect(() => {
+    const off = createTimerStore(client).subscribe((data) => {
+      settings = data.settings;
+      timers = data.timers;
+    });
+    return () => {
+      off?.();
+      client.close();
+    };
+  });
+
+  // rAF loop ticks "now" so countdowns animate smoothly between snapshots.
+  $effect(() => {
+    let raf = 0;
+    const loop = (): void => {
+      nowUnix = Date.now() / 1000;
+      raf = requestAnimationFrame(loop);
+    };
+    raf = requestAnimationFrame(loop);
+    return () => cancelAnimationFrame(raf);
+  });
+
+  const layout = $derived(settings?.layout ?? "scatter");
+  const gap = $derived(settings?.gap ?? 24);
+  const align = $derived(settings?.align ?? "top-left");
+
+  function scatterPosFor(timer: Timer, index: number): Point {
+    return (
+      localScatter[timer.id] ??
+      timer.scatter_pos ??
+      defaultScatterPosition(index)
+    );
+  }
+
+  const containerStyle = $derived.by(() => {
+    const g = `${gap}px`;
+    if (layout === "scatter") return "";
+    const isCenter = align.includes("center");
+    const [vertical, horizontal] = isCenter
+      ? ["center", "center"]
+      : align.split("-");
+    if (layout === "row") {
+      const items =
+        vertical === "top"
+          ? "flex-start"
+          : vertical === "bottom"
+            ? "flex-end"
+            : "center";
+      const justify =
+        horizontal === "left"
+          ? "flex-start"
+          : horizontal === "right"
+            ? "flex-end"
+            : "center";
+      return `gap:${g};align-items:${items};justify-content:${justify};`;
+    }
+    if (layout === "grid") {
+      const justify =
+        horizontal === "left"
+          ? "start"
+          : horizontal === "right"
+            ? "end"
+            : "center";
+      return `gap:${g};justify-content:${justify};`;
+    }
+    // Default: vertical stack.
+    const justify =
+      vertical === "top"
+        ? "flex-start"
+        : vertical === "bottom"
+          ? "flex-end"
+          : "center";
+    const items =
+      horizontal === "left"
+        ? "flex-start"
+        : horizontal === "right"
+          ? "flex-end"
+          : "center";
+    return `gap:${g};justify-content:${justify};align-items:${items};`;
+  });
+
+  // Svelte action: drag a scatter timer and persist its position on drop.
+  function draggable(
+    node: HTMLElement,
+    params: { id: string; enabled: boolean },
+  ): { update: (p: { id: string; enabled: boolean }) => void; destroy: () => void } {
+    let id = params.id;
+    let enabled = params.enabled;
+
+    function onPointerDown(event: PointerEvent): void {
+      if (!enabled) return;
+      const stage = node.parentElement;
+      if (!stage) return;
+      const rect = stage.getBoundingClientRect();
+      const startX = event.clientX;
+      const startY = event.clientY;
+      const originX = node.offsetLeft;
+      const originY = node.offsetTop;
+      node.setPointerCapture(event.pointerId);
+      node.classList.add("dragging");
+
+      function onMove(moveEvent: PointerEvent): void {
+        const position = clampScatterPosition(
+          originX + (moveEvent.clientX - startX),
+          originY + (moveEvent.clientY - startY),
+          rect.width,
+          rect.height,
+        );
+        localScatter = { ...localScatter, [id]: position };
+      }
+
+      function onUp(): void {
+        node.releasePointerCapture(event.pointerId);
+        node.classList.remove("dragging");
+        node.removeEventListener("pointermove", onMove);
+        node.removeEventListener("pointerup", onUp);
+        const position = localScatter[id] ?? { x: originX, y: originY };
+        client
+          .call("timer.edit", {
+            id,
+            changes: {
+              scatter_pos: {
+                x: Math.round(position.x),
+                y: Math.round(position.y),
+              },
+            },
+          })
+          .catch(() => {});
+      }
+
+      node.addEventListener("pointermove", onMove);
+      node.addEventListener("pointerup", onUp);
+    }
+
+    node.addEventListener("pointerdown", onPointerDown);
+    return {
+      update(p: { id: string; enabled: boolean }): void {
+        id = p.id;
+        enabled = p.enabled;
+      },
+      destroy(): void {
+        node.removeEventListener("pointerdown", onPointerDown);
+      },
+    };
+  }
+</script>
+
+<div class="stage {layout}" style={containerStyle}>
+  {#each timers as timer, index (timer.id)}
+    {#if layout === "scatter"}
+      <div
+        class="slot scatter-slot"
+        style="left:{scatterPosFor(timer, index).x}px;top:{scatterPosFor(
+          timer,
+          index,
+        ).y}px;"
+        use:draggable={{ id: timer.id, enabled: true }}
+      >
+        <TimerVisual {timer} {nowUnix} indexInList={index} />
+      </div>
+    {:else}
+      <div class="slot">
+        <TimerVisual {timer} {nowUnix} indexInList={index} />
+      </div>
+    {/if}
+  {/each}
+</div>
+
+<style>
+  .stage {
+    position: absolute;
+    inset: 0;
+    padding: 28px;
+    box-sizing: border-box;
+  }
+  .stage.stack {
+    display: flex;
+    flex-direction: column;
+  }
+  .stage.row {
+    display: flex;
+    flex-direction: row;
+    flex-wrap: wrap;
+  }
+  .stage.grid {
+    display: grid;
+    align-content: start;
+    grid-template-columns: repeat(auto-fill, minmax(180px, max-content));
+  }
+  .stage.scatter {
+    display: block;
+  }
+  .scatter-slot {
+    position: absolute;
+    cursor: grab;
+    touch-action: none;
+  }
+  .scatter-slot:global(.dragging) {
+    cursor: grabbing;
+    z-index: 50;
+  }
+</style>

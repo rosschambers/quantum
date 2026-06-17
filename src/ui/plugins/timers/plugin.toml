@@ -1,0 +1,15 @@
+[plugin]
+name = "timers"
+version = "0.1.0"
+type = "widget"
+
+[settings]
+# Layout of the timer surface: stack, row, grid, or scatter.
+layout = "scatter"
+# Pixel gap between timers in non-scatter layouts.
+gap = 24
+# Anchor alignment for non-scatter layouts.
+align = "top-left"
+
+[widget]
+single_instance = false
