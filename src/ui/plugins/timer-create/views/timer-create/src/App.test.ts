@@ -24,7 +24,7 @@ function defaultNotify(): NotifyConfig {
 
 function defaultVisual(): VisualConfig {
     return {
-        style: 'mixed',
+        style: 'ring',
         size: 120,
         thickness: 8,
         fill: false,
@@ -87,11 +87,43 @@ async function settle(): Promise<void> {
     await tick();
 }
 
+function createCallParams(): {
+    label?: string;
+    start?: unknown;
+    visual?: VisualConfig;
+    notify?: NotifyConfig;
+} {
+    const createCall = mockCallSpy.mock.calls.find(([method]) => method === 'timer.create');
+    expect(createCall).toBeDefined();
+    return createCall![1] as {
+        label?: string;
+        start?: unknown;
+        visual?: VisualConfig;
+        notify?: NotifyConfig;
+    };
+}
+
+async function openAdvanced(container: HTMLElement): Promise<void> {
+    const toggle = container.querySelector(
+        '[data-action="toggle-advanced"]',
+    ) as HTMLButtonElement;
+    await fireEvent.click(toggle);
+    await tick();
+}
+
 describe('TimerCreate App', () => {
     it('renders the backdrop and the centered card', () => {
         const { container } = render(App);
         expect(container.querySelector('.backdrop')).not.toBeNull();
         expect(container.querySelector('.card')).not.toBeNull();
+    });
+
+    it('keeps the Advanced section collapsed by default', async () => {
+        const { container } = render(App);
+        await settle();
+        // The invert toggle lives inside Advanced; it should not be present
+        // until Advanced is expanded.
+        expect(container.querySelector('[data-field="invert"]')).toBeNull();
     });
 
     it('Escape key calls view.hide with the bare canonical name', async () => {
@@ -107,7 +139,7 @@ describe('TimerCreate App', () => {
         expect(hidden).toBe(true);
     });
 
-    it('in mode: label + 45m submit calls timer.create then view.hide', async () => {
+    it('selecting the 45m chip submits a duration start of 2700 seconds', async () => {
         const { container } = render(App);
         await settle();
 
@@ -115,29 +147,27 @@ describe('TimerCreate App', () => {
         await fireEvent.input(label, { target: { value: 'Tea' } });
         await tick();
 
-        const duration = container.querySelector('[data-field="duration"]') as HTMLInputElement;
-        await fireEvent.input(duration, { target: { value: '45m' } });
+        const chip = container.querySelector('[data-chip="2700"]') as HTMLButtonElement;
+        await fireEvent.click(chip);
         await tick();
 
         const submit = container.querySelector('[data-action="submit"]') as HTMLButtonElement;
         await fireEvent.click(submit);
         await settle();
 
-        const createCall = mockCallSpy.mock.calls.find(([method]) => method === 'timer.create');
-        expect(createCall).toBeDefined();
-        const createParams = createCall![1] as { label?: string; start?: unknown };
-        expect(createParams.label).toBe('Tea');
-        expect(createParams.start).toEqual({ kind: 'duration', secs: 2700 });
+        const params = createCallParams();
+        expect(params.label).toBe('Tea');
+        expect(params.start).toEqual({ kind: 'duration', secs: 2700 });
 
         const hidden = mockCallSpy.mock.calls.some(
-            ([method, params]) =>
+            ([method, p]) =>
                 method === 'view.hide' &&
-                (params as { name?: string })?.name === 'plugin/timer-create/timer-create',
+                (p as { name?: string })?.name === 'plugin/timer-create/timer-create',
         );
         expect(hidden).toBe(true);
     });
 
-    it('at mode + daily + 08:00 submits a recurring start', async () => {
+    it('at mode: stepping hour/minute with PM produces a 0-23 hour', async () => {
         const { container } = render(App);
         await settle();
 
@@ -145,21 +175,48 @@ describe('TimerCreate App', () => {
         await fireEvent.click(atMode);
         await tick();
 
-        const daily = container.querySelector('[data-recurrence="daily"]') as HTMLButtonElement;
-        await fireEvent.click(daily);
+        // Default time is 09:00. Step hour +1 -> 10, minute +5 twice -> 10,
+        // then choose PM -> 22:10.
+        const hourUp = container.querySelector('[data-hour="1"]') as HTMLButtonElement;
+        await fireEvent.click(hourUp);
         await tick();
 
-        const time = container.querySelector('[data-field="time"]') as HTMLInputElement;
-        await fireEvent.input(time, { target: { value: '08:00' } });
+        const minuteUp = container.querySelector('[data-minute="5"]') as HTMLButtonElement;
+        await fireEvent.click(minuteUp);
+        await fireEvent.click(minuteUp);
+        await tick();
+
+        const pm = container.querySelector('[data-period="pm"]') as HTMLButtonElement;
+        await fireEvent.click(pm);
         await tick();
 
         const submit = container.querySelector('[data-action="submit"]') as HTMLButtonElement;
         await fireEvent.click(submit);
         await settle();
 
-        const createCall = mockCallSpy.mock.calls.find(([method]) => method === 'timer.create');
-        expect(createCall).toBeDefined();
-        const params = createCall![1] as { start?: unknown };
+        const params = createCallParams();
+        expect(params.start).toEqual({ kind: 'at', time: { hour: 22, minute: 10 } });
+    });
+
+    it('at mode + daily submits a recurring start with all seven days', async () => {
+        const { container } = render(App);
+        await settle();
+
+        const atMode = container.querySelector('[data-mode="at"]') as HTMLButtonElement;
+        await fireEvent.click(atMode);
+        await tick();
+
+        await openAdvanced(container);
+
+        const daily = container.querySelector('[data-recurrence="daily"]') as HTMLButtonElement;
+        await fireEvent.click(daily);
+        await tick();
+
+        const submit = container.querySelector('[data-action="submit"]') as HTMLButtonElement;
+        await fireEvent.click(submit);
+        await settle();
+
+        const params = createCallParams();
         expect(params.start).toEqual({
             kind: 'recurring',
             days: [
@@ -171,20 +228,70 @@ describe('TimerCreate App', () => {
                 'saturday',
                 'sunday',
             ],
-            time: { hour: 8, minute: 0 },
+            time: { hour: 9, minute: 0 },
         });
     });
 
-    it('seeds defaults from timer.list and sends a complete notify with notification off', async () => {
+    it('toggling Invert on sends visual.fill true', async () => {
+        const { container } = render(App);
+        await settle();
+
+        const chip = container.querySelector('[data-chip="600"]') as HTMLButtonElement;
+        await fireEvent.click(chip);
+        await tick();
+
+        await openAdvanced(container);
+
+        const invert = container.querySelector('[data-field="invert"]') as HTMLInputElement;
+        await fireEvent.click(invert);
+        await tick();
+
+        const submit = container.querySelector('[data-action="submit"]') as HTMLButtonElement;
+        await fireEvent.click(submit);
+        await settle();
+
+        const params = createCallParams();
+        expect(params.visual).toBeDefined();
+        expect(params.visual!.fill).toBe(true);
+        // A complete object is sent: untouched default fields are present.
+        expect(params.visual!.size).toBe(120);
+    });
+
+    it('selecting the pie swatch sends visual.style pie', async () => {
+        const { container } = render(App);
+        await settle();
+
+        const chip = container.querySelector('[data-chip="600"]') as HTMLButtonElement;
+        await fireEvent.click(chip);
+        await tick();
+
+        await openAdvanced(container);
+
+        const pie = container.querySelector('[data-style="pie"]') as HTMLButtonElement;
+        await fireEvent.click(pie);
+        await tick();
+
+        const submit = container.querySelector('[data-action="submit"]') as HTMLButtonElement;
+        await fireEvent.click(submit);
+        await settle();
+
+        const params = createCallParams();
+        expect(params.visual).toBeDefined();
+        expect(params.visual!.style).toBe('pie');
+    });
+
+    it('turning Notification off sends a complete notify with notification false', async () => {
         const { container } = render(App);
         await settle();
 
         const listed = mockCallSpy.mock.calls.some(([method]) => method === 'timer.list');
         expect(listed).toBe(true);
 
-        const duration = container.querySelector('[data-field="duration"]') as HTMLInputElement;
-        await fireEvent.input(duration, { target: { value: '10m' } });
+        const chip = container.querySelector('[data-chip="600"]') as HTMLButtonElement;
+        await fireEvent.click(chip);
         await tick();
+
+        await openAdvanced(container);
 
         const notificationToggle = container.querySelector(
             '[data-field="notification"]',
@@ -196,37 +303,44 @@ describe('TimerCreate App', () => {
         await fireEvent.click(submit);
         await settle();
 
-        const createCall = mockCallSpy.mock.calls.find(([method]) => method === 'timer.create');
-        expect(createCall).toBeDefined();
-        const params = createCall![1] as { notify?: NotifyConfig; visual?: VisualConfig };
+        const params = createCallParams();
         expect(params.notify).toBeDefined();
         expect(params.notify!.notification).toBe(false);
         // A complete object is sent: untouched default fields are present.
         expect(params.notify!.ramp_threshold).toBe(0.1);
     });
 
-    it('selecting style ring sends a complete visual with that style', async () => {
+    it('style picker offers exactly ring, pie, dots and bar swatches with no text labels', async () => {
+        const { container } = render(App);
+        await settle();
+        await openAdvanced(container);
+
+        const swatches = Array.from(
+            container.querySelectorAll('[data-style]'),
+        ) as HTMLElement[];
+        const styles = swatches.map((swatch) => swatch.getAttribute('data-style'));
+        expect(styles).toEqual(['ring', 'pie', 'dots', 'bar']);
+        // Swatches are live SVG/CSS examples, not text labels.
+        for (const swatch of swatches) {
+            expect(swatch.textContent?.trim()).toBe('');
+        }
+    });
+
+    it('each advanced row carries an info tooltip with real explanatory text', async () => {
         const { container } = render(App);
         await settle();
 
-        const duration = container.querySelector('[data-field="duration"]') as HTMLInputElement;
-        await fireEvent.input(duration, { target: { value: '10m' } });
+        const atMode = container.querySelector('[data-mode="at"]') as HTMLButtonElement;
+        await fireEvent.click(atMode);
         await tick();
+        await openAdvanced(container);
 
-        const ring = container.querySelector('[data-style="ring"]') as HTMLButtonElement;
-        await fireEvent.click(ring);
-        await tick();
-
-        const submit = container.querySelector('[data-action="submit"]') as HTMLButtonElement;
-        await fireEvent.click(submit);
-        await settle();
-
-        const createCall = mockCallSpy.mock.calls.find(([method]) => method === 'timer.create');
-        expect(createCall).toBeDefined();
-        const params = createCall![1] as { visual?: VisualConfig };
-        expect(params.visual).toBeDefined();
-        expect(params.visual!.style).toBe('ring');
-        // A complete object is sent: untouched default fields are present.
-        expect(params.visual!.size).toBe(120);
+        const tips = Array.from(container.querySelectorAll('.info-tip')) as HTMLElement[];
+        // Repeat, Notification, Sound, Urgency ramp, Direction, Style.
+        expect(tips.length).toBeGreaterThanOrEqual(6);
+        for (const tip of tips) {
+            const bubble = tip.querySelector('.info-tip-bubble');
+            expect(bubble?.textContent?.trim().length ?? 0).toBeGreaterThan(20);
+        }
     });
 });

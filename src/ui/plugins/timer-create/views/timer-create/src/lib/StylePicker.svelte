@@ -2,105 +2,176 @@
     import type { VisualStyle } from '@quantum/client';
 
     /**
-     * Style picker for a new timer. Owns the chosen `style` and `accentHue`
-     * locally and emits a partial `VisualConfig` (`{ style, accent_hue }`)
-     * through `onChange` whenever either changes. The parent merges the
-     * partial over the fetched `defaults_visual` so a complete object is sent.
+     * Style picker for a new timer. Renders the four supported styles as small
+     * live example swatches (no text labels) and emits the chosen
+     * `VisualStyle` through `onChange`. The selected swatch is highlighted.
      */
     let {
-        style = 'mixed',
+        style = 'ring',
         accentHue = 210,
         onChange,
     }: {
         style?: VisualStyle;
         accentHue?: number;
-        onChange: (partial: { style: VisualStyle; accent_hue: number }) => void;
+        onChange: (next: VisualStyle) => void;
     } = $props();
 
-    const STYLES: VisualStyle[] = ['ring', 'wedge', 'pie', 'dots', 'bar', 'mixed'];
+    /** Only the four distinct styles — no `mixed`, no `wedge`. */
+    const STYLES: VisualStyle[] = ['ring', 'pie', 'dots', 'bar'];
+
+    /** Swatch box size in pixels; the example renders inside at ~60%. */
+    const SWATCH_SIZE = 70;
+    const VISUAL_SIZE = Math.round(SWATCH_SIZE * 0.6);
+    /** A fixed fraction so each swatch shows a partially-filled example. */
+    const FRACTION = 0.66;
+
+    const stroke = $derived(`hsl(${accentHue} 70% 62%)`);
+    const track = $derived(`hsl(${accentHue} 30% 50% / 0.25)`);
+
+    // Ring geometry.
+    const ringStrokeWidth = 5;
+    const ringCenter = VISUAL_SIZE / 2;
+    const ringRadius = (VISUAL_SIZE - ringStrokeWidth) / 2;
+    const ringCircumference = $derived(2 * Math.PI * ringRadius);
+    const ringDashOffset = $derived(ringCircumference * (1 - FRACTION));
+
+    // Pie geometry.
+    const pieAngle = FRACTION * 360;
+
+    // Dot grid geometry.
+    const DOT_COUNT = 9;
+    const dotsLit = Math.round(FRACTION * DOT_COUNT);
+    const dots = Array.from({ length: DOT_COUNT }, (_, index) => index < dotsLit);
+    const dotSize = Math.round(VISUAL_SIZE * 0.17);
+    const dotGap = Math.round(VISUAL_SIZE * 0.06);
+
+    // Bar geometry.
+    const barWidth = Math.round(VISUAL_SIZE * 0.82);
+    const barHeight = 11;
 
     function selectStyle(next: VisualStyle): void {
         style = next;
-        onChange({ style, accent_hue: accentHue });
-    }
-
-    function onHueInput(event: Event): void {
-        accentHue = Number((event.target as HTMLInputElement).value);
-        onChange({ style, accent_hue: accentHue });
+        onChange(next);
     }
 </script>
 
-<div class="style-picker">
-    <div class="styles" role="group" aria-label="Visual style">
-        {#each STYLES as candidate (candidate)}
-            <button
-                type="button"
-                data-style={candidate}
-                class:active={style === candidate}
-                onclick={() => selectStyle(candidate)}
-            >
-                {candidate}
-            </button>
-        {/each}
-    </div>
-
-    <label class="hue">
-        <span class="hue-label">Accent</span>
-        <input
-            data-field="accent-hue"
-            type="range"
-            min="0"
-            max="360"
-            value={accentHue}
-            oninput={onHueInput}
-        />
-        <span class="hue-value">{accentHue}</span>
-    </label>
+<div class="style-picker" role="group" aria-label="Visual style">
+    {#each STYLES as candidate (candidate)}
+        <button
+            type="button"
+            class="swatch"
+            class:active={style === candidate}
+            data-style={candidate}
+            aria-label={candidate}
+            aria-pressed={style === candidate}
+            onclick={() => selectStyle(candidate)}
+        >
+            {#if candidate === 'ring'}
+                <svg
+                    width={VISUAL_SIZE}
+                    height={VISUAL_SIZE}
+                    viewBox="0 0 {VISUAL_SIZE} {VISUAL_SIZE}"
+                >
+                    <circle
+                        cx={ringCenter}
+                        cy={ringCenter}
+                        r={ringRadius}
+                        fill="none"
+                        stroke={track}
+                        stroke-width={ringStrokeWidth}
+                    />
+                    <circle
+                        cx={ringCenter}
+                        cy={ringCenter}
+                        r={ringRadius}
+                        fill="none"
+                        stroke={stroke}
+                        stroke-width={ringStrokeWidth}
+                        stroke-linecap="round"
+                        stroke-dasharray={ringCircumference}
+                        stroke-dashoffset={ringDashOffset}
+                        transform="rotate(-90 {ringCenter} {ringCenter})"
+                    />
+                </svg>
+            {:else if candidate === 'pie'}
+                <span
+                    class="pie"
+                    style="width:{VISUAL_SIZE}px;height:{VISUAL_SIZE}px;background:conic-gradient({stroke} {pieAngle}deg, {track} {pieAngle}deg);"
+                ></span>
+            {:else if candidate === 'dots'}
+                <span
+                    class="dots"
+                    style="width:{barWidth}px;gap:{dotGap}px;"
+                >
+                    {#each dots as lit}
+                        <span
+                            class="dot"
+                            style="width:{dotSize}px;height:{dotSize}px;background:{lit
+                                ? stroke
+                                : track};"
+                        ></span>
+                    {/each}
+                </span>
+            {:else if candidate === 'bar'}
+                <span
+                    class="bar"
+                    style="width:{barWidth}px;height:{barHeight}px;border-radius:{barHeight}px;background:{track};"
+                >
+                    <span
+                        class="bar-fill"
+                        style="width:{FRACTION * 100}%;background:{stroke};border-radius:{barHeight}px;"
+                    ></span>
+                </span>
+            {/if}
+        </button>
+    {/each}
 </div>
 
 <style>
     .style-picker {
         display: flex;
-        flex-direction: column;
-        gap: 8px;
-    }
-    .styles {
-        display: flex;
         flex-wrap: wrap;
-        gap: 6px;
+        gap: 12px;
     }
-    .styles button {
-        flex: 1;
-        min-width: 60px;
-        padding: 5px 8px;
-        border-radius: 6px;
-        border: 1px solid var(--color-border, #45475a);
-        background: var(--color-bg, #1e1e2e);
-        color: var(--color-fg, #cdd6f4);
-        cursor: pointer;
-        text-transform: capitalize;
-    }
-    .styles button.active {
-        background: var(--color-accent, #89b4fa);
-        color: var(--color-bg, #1e1e2e);
-        border-color: var(--color-accent, #89b4fa);
-    }
-    .hue {
+    .swatch {
+        width: 70px;
+        height: 70px;
         display: flex;
         align-items: center;
-        gap: 10px;
+        justify-content: center;
+        border: 2px solid var(--color-border, #2a3142);
+        border-radius: 14px;
+        background: var(--color-bg, #1c2230);
+        cursor: pointer;
+        padding: 0;
+        transition: border-color 0.12s, background 0.12s;
     }
-    .hue-label {
-        width: 80px;
-        flex-shrink: 0;
-        color: var(--color-fg-muted, #a6adc8);
+    .swatch:hover {
+        border-color: var(--color-accent, #5b9dff);
     }
-    .hue input {
-        flex: 1;
+    .swatch.active {
+        border-color: var(--color-accent, #5b9dff);
+        background: var(--color-accent-soft, rgba(91, 157, 255, 0.12));
     }
-    .hue-value {
-        width: 32px;
-        text-align: right;
-        color: var(--color-fg-muted, #a6adc8);
+    .pie {
+        border-radius: 50%;
+        display: inline-block;
+    }
+    .dots {
+        display: flex;
+        flex-wrap: wrap;
+        justify-content: center;
+    }
+    .dot {
+        border-radius: 50%;
+        display: inline-block;
+    }
+    .bar {
+        display: inline-block;
+        overflow: hidden;
+    }
+    .bar-fill {
+        display: block;
+        height: 100%;
     }
 </style>

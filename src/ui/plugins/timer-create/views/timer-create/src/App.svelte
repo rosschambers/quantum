@@ -8,9 +8,11 @@
         VisualStyle,
         TimerStoreData,
     } from '@quantum/client';
-    import { parseDurationToSecs, parseTimeOfDay } from './lib/parse';
+    import { DURATION_PRESETS, formatDuration, stepDuration } from './lib/duration';
+    import { to12Hour, setPeriod } from './lib/time';
     import { ALL_WEEKDAYS, recurrenceDays, type Recurrence } from './lib/recurrence';
     import StylePicker from './lib/StylePicker.svelte';
+    import InfoTip from './lib/InfoTip.svelte';
 
     /** Bare canonical view name; the registry strips any `@<monitor>` suffix
      * for single-instance overlays, so `view.hide` uses the bare name. */
@@ -28,7 +30,7 @@
         flash: false,
     };
     const FALLBACK_VISUAL: VisualConfig = {
-        style: 'mixed',
+        style: 'ring',
         size: 120,
         thickness: 8,
         fill: false,
@@ -47,14 +49,36 @@
 
     const SOUND_NAMES: SoundName[] = ['complete', 'bell', 'chime', 'alarm'];
 
+    /** Step sizes for the custom controls. */
+    const DURATION_STEP_SECS = 5 * 60;
+    const MINUTE_STEP = 5;
+
+    /** Per-row tooltip copy for the Advanced section. */
+    const TIP_REPEAT =
+        'How often this timer fires. Once = a single timer. Daily = every day at this time. Days… = only the weekdays you pick.';
+    const TIP_NOTIFICATION = 'Show a desktop notification when the timer reaches zero.';
+    const TIP_SOUND = 'Play a sound when the timer finishes.';
+    const TIP_URGENCY =
+        "Fade the timer's colour toward red as it nears zero so it catches your eye.";
+    const TIP_DIRECTION =
+        'By default the visual depletes (full → empty) as time runs out. Invert to count up (empty → full) instead.';
+    const TIP_STYLE = 'The shape used to show the time remaining.';
+
     const client = createClient();
 
     let label: string = $state('');
     let mode: 'in' | 'at' = $state('in');
-    let durationText: string = $state('');
-    let timeText: string = $state('');
+
+    // Duration ("in") state, in seconds.
+    let durationSecs: number = $state(900);
+
+    // Absolute time ("at") state. Hour is stored 0-23, minute 0-59.
+    let hour: number = $state(9);
+    let minute: number = $state(0);
+
     let recurrence: Recurrence = $state('none');
     let customDays: Weekday[] = $state([]);
+    let advancedOpen: boolean = $state(false);
     let error: string | null = $state(null);
 
     // Complete config objects fetched from the daemon; form controls below
@@ -68,9 +92,34 @@
     let soundName: SoundName = $state('complete');
     let urgencyRamp: boolean = $state(true);
 
-    // Visual form state, fed from StylePicker.
-    let visualStyle: VisualStyle = $state('mixed');
-    let visualAccentHue: number = $state(210);
+    // Direction: invert maps to visual.fill (true = count up / fill).
+    let invert: boolean = $state(false);
+
+    // Visual style, fed from StylePicker.
+    let visualStyle: VisualStyle = $state('ring');
+
+    const period = $derived(to12Hour(hour).period);
+    const hourDisplay = $derived(to12Hour(hour).hour12);
+
+    function selectPreset(secs: number): void {
+        durationSecs = secs;
+    }
+
+    function stepDurationBy(delta: number): void {
+        durationSecs = stepDuration(durationSecs, delta);
+    }
+
+    function stepHour(delta: number): void {
+        hour = (hour + delta + 24) % 24;
+    }
+
+    function stepMinute(delta: number): void {
+        minute = (minute + delta + 60) % 60;
+    }
+
+    function choosePeriod(next: 'am' | 'pm'): void {
+        hour = setPeriod(hour, next);
+    }
 
     function toggleDay(day: Weekday): void {
         customDays = customDays.includes(day)
@@ -87,13 +136,12 @@
         soundOn = notify.sound !== null;
         soundName = notify.sound ?? 'complete';
         urgencyRamp = notify.urgency_ramp;
-        visualStyle = visual.style;
-        visualAccentHue = visual.accent_hue;
+        visualStyle = visual.style === 'mixed' || visual.style === 'wedge' ? 'ring' : visual.style;
+        invert = visual.fill;
     }
 
-    function onStyleChange(partial: { style: VisualStyle; accent_hue: number }): void {
-        visualStyle = partial.style;
-        visualAccentHue = partial.accent_hue;
+    function onStyleChange(next: VisualStyle): void {
+        visualStyle = next;
     }
 
     // Seed form defaults from the daemon's current timer settings. Reads no
@@ -137,21 +185,12 @@
     }
 
     /** Build the `start` object for the current mode, or set an inline error
-     * and return `null` when the inputs do not parse. */
+     * and return `null` when the inputs are invalid. */
     function buildStart(): Record<string, unknown> | null {
         if (mode === 'in') {
-            const secs = parseDurationToSecs(durationText);
-            if (secs === null) {
-                error = 'Enter a duration like 45m, 2h, or 1h30m.';
-                return null;
-            }
-            return { kind: 'duration', secs };
+            return { kind: 'duration', secs: durationSecs };
         }
-        const time = parseTimeOfDay(timeText);
-        if (time === null) {
-            error = 'Enter a time like 17:15.';
-            return null;
-        }
+        const time = { hour, minute };
         if (recurrence === 'none') {
             return { kind: 'at', time };
         }
@@ -179,7 +218,7 @@
         const visual: VisualConfig = {
             ...defaultsVisual,
             style: visualStyle,
-            accent_hue: visualAccentHue,
+            fill: invert,
         };
 
         try {
@@ -198,146 +237,244 @@
     <div class="card" role="dialog" aria-label="New timer">
         <h2 class="title">New timer</h2>
 
-        <label class="row">
-            <span class="row-label">Label</span>
+        <div class="field">
+            <label class="field-label" for="timer-label">Label</label>
             <input
+                id="timer-label"
                 data-field="label"
+                class="text-input"
                 type="text"
-                placeholder="Tea"
+                placeholder="e.g. Walk the dog"
                 bind:value={label}
             />
-        </label>
+        </div>
 
-        <div class="row mode-toggle" role="group" aria-label="Timer mode">
-            <button
-                type="button"
-                data-mode="in"
-                class:active={mode === 'in'}
-                onclick={() => (mode = 'in')}>In</button
-            >
-            <button
-                type="button"
-                data-mode="at"
-                class:active={mode === 'at'}
-                onclick={() => (mode = 'at')}>At</button
-            >
+        <div class="field">
+            <div class="segmented" role="group" aria-label="Timer mode">
+                <button
+                    type="button"
+                    data-mode="in"
+                    class:on={mode === 'in'}
+                    onclick={() => (mode = 'in')}>In</button
+                >
+                <button
+                    type="button"
+                    data-mode="at"
+                    class:on={mode === 'at'}
+                    onclick={() => (mode = 'at')}>At a time</button
+                >
+            </div>
         </div>
 
         {#if mode === 'in'}
-            <label class="row">
-                <span class="row-label">Duration</span>
-                <input
-                    data-field="duration"
-                    type="text"
-                    placeholder="45m"
-                    bind:value={durationText}
-                />
-            </label>
-        {:else}
-            <label class="row">
-                <span class="row-label">Time</span>
-                <input
-                    data-field="time"
-                    type="text"
-                    placeholder="17:15"
-                    bind:value={timeText}
-                />
-            </label>
-
-            <div class="row" role="group" aria-label="Recurrence">
-                <span class="row-label">Repeat</span>
-                <div class="recurrence-toggle">
+            <div class="field">
+                <span class="field-label">Duration</span>
+                <div class="chips" role="group" aria-label="Duration presets">
+                    {#each DURATION_PRESETS as preset (preset.secs)}
+                        <button
+                            type="button"
+                            class="chip"
+                            class:on={durationSecs === preset.secs}
+                            data-chip={preset.secs}
+                            onclick={() => selectPreset(preset.secs)}>{preset.label}</button
+                        >
+                    {/each}
+                </div>
+                <div class="stepper" aria-label="Custom duration">
                     <button
                         type="button"
-                        data-recurrence="none"
-                        class:active={recurrence === 'none'}
-                        onclick={() => (recurrence = 'none')}>Once</button
+                        data-step={-DURATION_STEP_SECS}
+                        onclick={() => stepDurationBy(-DURATION_STEP_SECS)}>−</button
+                    >
+                    <span class="stepper-display" data-field="duration-display"
+                        >{formatDuration(durationSecs)}</span
                     >
                     <button
                         type="button"
-                        data-recurrence="daily"
-                        class:active={recurrence === 'daily'}
-                        onclick={() => (recurrence = 'daily')}>Daily</button
-                    >
-                    <button
-                        type="button"
-                        data-recurrence="custom"
-                        class:active={recurrence === 'custom'}
-                        onclick={() => (recurrence = 'custom')}>Custom</button
+                        data-step={DURATION_STEP_SECS}
+                        onclick={() => stepDurationBy(DURATION_STEP_SECS)}>+</button
                     >
                 </div>
             </div>
-
-            <div class="row weekday-picker" role="group" aria-label="Weekdays">
-                {#each ALL_WEEKDAYS as day (day)}
-                    <button
-                        type="button"
-                        data-weekday={day}
-                        class:active={customDays.includes(day)}
-                        disabled={recurrence !== 'custom'}
-                        onclick={() => toggleDay(day)}
-                        title={day}
-                    >
-                        {day.slice(0, 3)}
-                    </button>
-                {/each}
+        {:else}
+            <div class="field">
+                <span class="field-label">Time</span>
+                <div class="time-row">
+                    <div class="stepper" aria-label="Hour">
+                        <button type="button" data-hour={-1} onclick={() => stepHour(-1)}
+                            >−</button
+                        >
+                        <span class="stepper-display" data-field="hour-display"
+                            >{hourDisplay}<span class="unit"> h</span></span
+                        >
+                        <button type="button" data-hour={1} onclick={() => stepHour(1)}
+                            >+</button
+                        >
+                    </div>
+                    <span class="colon">:</span>
+                    <div class="stepper" aria-label="Minute">
+                        <button
+                            type="button"
+                            data-minute={-MINUTE_STEP}
+                            onclick={() => stepMinute(-MINUTE_STEP)}>−</button
+                        >
+                        <span class="stepper-display" data-field="minute-display"
+                            >{String(minute).padStart(2, '0')}<span class="unit"> m</span></span
+                        >
+                        <button
+                            type="button"
+                            data-minute={MINUTE_STEP}
+                            onclick={() => stepMinute(MINUTE_STEP)}>+</button
+                        >
+                    </div>
+                    <div class="ampm" role="group" aria-label="AM or PM">
+                        <button
+                            type="button"
+                            data-period="am"
+                            class:on={period === 'am'}
+                            onclick={() => choosePeriod('am')}>AM</button
+                        >
+                        <button
+                            type="button"
+                            data-period="pm"
+                            class:on={period === 'pm'}
+                            onclick={() => choosePeriod('pm')}>PM</button
+                        >
+                    </div>
+                </div>
             </div>
         {/if}
 
-        <fieldset class="group">
-            <legend>Alerting</legend>
-            <label class="check">
-                <input
-                    data-field="notification"
-                    type="checkbox"
-                    bind:checked={notification}
-                />
-                <span>Notification</span>
-            </label>
-            <label class="check">
-                <input data-field="sound" type="checkbox" bind:checked={soundOn} />
-                <span>Sound</span>
-            </label>
-            <select
-                data-field="sound-name"
-                bind:value={soundName}
-                disabled={!soundOn}
+        <div class="advanced">
+            <button
+                type="button"
+                class="advanced-summary"
+                data-action="toggle-advanced"
+                aria-expanded={advancedOpen}
+                onclick={() => (advancedOpen = !advancedOpen)}
             >
-                {#each SOUND_NAMES as name (name)}
-                    <option value={name}>{name}</option>
-                {/each}
-            </select>
-            <label class="check">
-                <input
-                    data-field="urgency-ramp"
-                    type="checkbox"
-                    bind:checked={urgencyRamp}
-                />
-                <span>Urgency ramp</span>
-            </label>
-        </fieldset>
+                <span class="advanced-caret">{advancedOpen ? '▾' : '▸'}</span> Advanced
+            </button>
 
-        <fieldset class="group">
-            <legend>Style</legend>
-            <StylePicker
-                style={visualStyle}
-                accentHue={visualAccentHue}
-                onChange={onStyleChange}
-            />
-        </fieldset>
+            {#if advancedOpen}
+                <div class="advanced-body">
+                    {#if mode === 'at'}
+                        <div class="field" role="group" aria-label="Repeat">
+                            <span class="field-label"
+                                >Repeat <InfoTip text={TIP_REPEAT} /></span
+                            >
+                            <div class="segmented">
+                                <button
+                                    type="button"
+                                    data-recurrence="none"
+                                    class:on={recurrence === 'none'}
+                                    onclick={() => (recurrence = 'none')}>Once</button
+                                >
+                                <button
+                                    type="button"
+                                    data-recurrence="daily"
+                                    class:on={recurrence === 'daily'}
+                                    onclick={() => (recurrence = 'daily')}>Daily</button
+                                >
+                                <button
+                                    type="button"
+                                    data-recurrence="custom"
+                                    class:on={recurrence === 'custom'}
+                                    onclick={() => (recurrence = 'custom')}>Days…</button
+                                >
+                            </div>
+                            {#if recurrence === 'custom'}
+                                <div class="weekdays" role="group" aria-label="Weekdays">
+                                    {#each ALL_WEEKDAYS as day (day)}
+                                        <button
+                                            type="button"
+                                            data-weekday={day}
+                                            class:on={customDays.includes(day)}
+                                            onclick={() => toggleDay(day)}
+                                            title={day}
+                                        >
+                                            {day.slice(0, 1).toUpperCase()}{day.slice(1, 2)}
+                                        </button>
+                                    {/each}
+                                </div>
+                            {/if}
+                        </div>
+                    {/if}
+
+                    <div class="field">
+                        <span class="field-label">Alerts</span>
+                        <div class="alert-row">
+                            <span class="alert-label"
+                                >Notification <InfoTip text={TIP_NOTIFICATION} /></span
+                            >
+                            <input
+                                data-field="notification"
+                                type="checkbox"
+                                bind:checked={notification}
+                            />
+                        </div>
+                        <div class="alert-row">
+                            <span class="alert-label"
+                                >Sound <InfoTip text={TIP_SOUND} /></span
+                            >
+                            <div class="alert-control">
+                                <select
+                                    data-field="sound-name"
+                                    bind:value={soundName}
+                                    disabled={!soundOn}
+                                >
+                                    {#each SOUND_NAMES as name (name)}
+                                        <option value={name}>{name}</option>
+                                    {/each}
+                                </select>
+                                <input
+                                    data-field="sound"
+                                    type="checkbox"
+                                    bind:checked={soundOn}
+                                />
+                            </div>
+                        </div>
+                        <div class="alert-row">
+                            <span class="alert-label"
+                                >Urgency ramp <InfoTip text={TIP_URGENCY} /></span
+                            >
+                            <input
+                                data-field="urgency-ramp"
+                                type="checkbox"
+                                bind:checked={urgencyRamp}
+                            />
+                        </div>
+                    </div>
+
+                    <div class="field">
+                        <span class="field-label">Direction</span>
+                        <div class="alert-row">
+                            <span class="alert-label"
+                                >Invert — count up / fill <InfoTip text={TIP_DIRECTION} /></span
+                            >
+                            <input data-field="invert" type="checkbox" bind:checked={invert} />
+                        </div>
+                    </div>
+
+                    <div class="field">
+                        <span class="field-label">Style <InfoTip text={TIP_STYLE} /></span>
+                        <StylePicker
+                            style={visualStyle}
+                            accentHue={defaultsVisual.accent_hue}
+                            onChange={onStyleChange}
+                        />
+                    </div>
+                </div>
+            {/if}
+        </div>
 
         {#if error}
             <p class="form-error" role="alert">{error}</p>
         {/if}
 
-        <div class="actions">
-            <button type="button" data-action="cancel" class="secondary" onclick={close}>
-                Cancel
-            </button>
-            <button type="button" data-action="submit" class="primary" onclick={submit}>
-                Create
-            </button>
-        </div>
+        <button type="button" data-action="submit" class="create-button" onclick={submit}>
+            Create timer
+        </button>
     </div>
 </div>
 
@@ -345,162 +482,242 @@
     .backdrop {
         position: fixed;
         inset: 0;
-        background: var(--color-overlay-backdrop, rgba(0, 0, 0, 0.5));
+        background: var(--color-overlay-backdrop, rgba(0, 0, 0, 0.45));
         backdrop-filter: blur(4px);
         display: flex;
         align-items: center;
         justify-content: center;
     }
     .card {
-        background: var(--color-bg-alt, #313244);
-        color: var(--color-fg, #cdd6f4);
-        border-radius: 12px;
-        padding: 18px 20px;
+        background: var(--color-bg-alt, #161b26);
+        color: var(--color-fg, #e6e9ef);
+        border-radius: 16px;
+        padding: 22px;
         width: 420px;
-        box-shadow: 0 14px 40px var(--color-shadow, rgba(0, 0, 0, 0.6));
-        border: 1px solid var(--color-border, #45475a);
+        display: flex;
+        flex-direction: column;
+        gap: 16px;
+        box-shadow: 0 24px 60px var(--color-shadow, rgba(0, 0, 0, 0.5));
+        border: 1px solid var(--color-border, #2a3142);
     }
     .title {
-        margin: 0 0 12px;
-        font-size: 1.1rem;
+        margin: 0;
+        font-size: 1.05rem;
+        font-weight: 600;
     }
-    .row {
+    .field {
+        display: flex;
+        flex-direction: column;
+        gap: 7px;
+    }
+    .field-label {
         display: flex;
         align-items: center;
-        gap: 10px;
-        margin-bottom: 10px;
-    }
-    .row-label {
-        width: 80px;
-        flex-shrink: 0;
-        color: var(--color-fg-muted, #a6adc8);
-    }
-    .row input {
-        flex: 1;
-        padding: 6px 8px;
-        border-radius: 6px;
-        border: 1px solid var(--color-border, #45475a);
-        background: var(--color-bg, #1e1e2e);
-        color: var(--color-fg, #cdd6f4);
-    }
-    .mode-toggle {
         gap: 6px;
+        font-size: 0.75rem;
+        color: var(--color-fg-muted, #8b94a7);
     }
-    .mode-toggle button {
-        flex: 1;
-        padding: 6px 10px;
-        border-radius: 6px;
-        border: 1px solid var(--color-border, #45475a);
-        background: var(--color-bg, #1e1e2e);
-        color: var(--color-fg, #cdd6f4);
-        cursor: pointer;
-    }
-    .mode-toggle button.active {
-        background: var(--color-accent, #89b4fa);
-        color: var(--color-bg, #1e1e2e);
-        border-color: var(--color-accent, #89b4fa);
-    }
-    .recurrence-toggle {
-        display: flex;
-        gap: 6px;
-        flex: 1;
-    }
-    .recurrence-toggle button {
-        flex: 1;
-        padding: 6px 10px;
-        border-radius: 6px;
-        border: 1px solid var(--color-border, #45475a);
-        background: var(--color-bg, #1e1e2e);
-        color: var(--color-fg, #cdd6f4);
-        cursor: pointer;
-    }
-    .recurrence-toggle button.active {
-        background: var(--color-accent, #89b4fa);
-        color: var(--color-bg, #1e1e2e);
-        border-color: var(--color-accent, #89b4fa);
-    }
-    .weekday-picker {
-        gap: 4px;
-        flex-wrap: wrap;
-    }
-    .weekday-picker button {
-        flex: 1;
-        min-width: 38px;
-        padding: 5px 4px;
-        border-radius: 6px;
-        border: 1px solid var(--color-border, #45475a);
-        background: var(--color-bg, #1e1e2e);
-        color: var(--color-fg, #cdd6f4);
-        cursor: pointer;
-        text-transform: capitalize;
-    }
-    .weekday-picker button.active {
-        background: var(--color-accent, #89b4fa);
-        color: var(--color-bg, #1e1e2e);
-        border-color: var(--color-accent, #89b4fa);
-    }
-    .weekday-picker button:disabled {
-        opacity: 0.4;
-        cursor: not-allowed;
-    }
-    .group {
-        border: 1px solid var(--color-border, #45475a);
-        border-radius: 8px;
+    .text-input {
+        background: var(--color-bg, #1c2230);
+        border: 1px solid var(--color-border, #2a3142);
+        color: var(--color-fg, #e6e9ef);
+        border-radius: 9px;
         padding: 10px 12px;
-        margin: 0 0 10px;
+        font-size: 0.9rem;
+    }
+    .text-input:focus {
+        outline: none;
+        border-color: var(--color-accent, #5b9dff);
+    }
+    .segmented {
+        display: flex;
+        background: var(--color-bg, #1c2230);
+        border: 1px solid var(--color-border, #2a3142);
+        border-radius: 10px;
+        padding: 3px;
+        gap: 3px;
+    }
+    .segmented button {
+        flex: 1;
+        border: none;
+        background: transparent;
+        color: var(--color-fg-muted, #8b94a7);
+        font-size: 0.85rem;
+        padding: 8px;
+        border-radius: 7px;
+        cursor: pointer;
+    }
+    .segmented button.on {
+        background: var(--color-accent, #5b9dff);
+        color: var(--color-bg, #08111f);
+        font-weight: 600;
+    }
+    .chips {
         display: flex;
         flex-wrap: wrap;
+        gap: 8px;
+    }
+    .chip {
+        border: 1px solid var(--color-border, #2a3142);
+        background: var(--color-bg, #1c2230);
+        color: var(--color-fg, #e6e9ef);
+        border-radius: 999px;
+        padding: 8px 14px;
+        font-size: 0.82rem;
+        cursor: pointer;
+    }
+    .chip:hover {
+        border-color: var(--color-accent, #5b9dff);
+    }
+    .chip.on {
+        border-color: var(--color-accent, #5b9dff);
+        background: var(--color-accent-soft, rgba(91, 157, 255, 0.15));
+        color: var(--color-accent, #cfe0ff);
+    }
+    .stepper {
+        display: flex;
+        align-items: center;
+        border: 1px solid var(--color-border, #2a3142);
+        border-radius: 10px;
+        overflow: hidden;
+        width: fit-content;
+        background: var(--color-bg, #1c2230);
+    }
+    .stepper button {
+        border: none;
+        background: transparent;
+        color: var(--color-fg, #e6e9ef);
+        font-size: 1.1rem;
+        width: 42px;
+        height: 44px;
+        cursor: pointer;
+    }
+    .stepper button:hover {
+        background: rgba(255, 255, 255, 0.06);
+    }
+    .stepper-display {
+        min-width: 84px;
+        text-align: center;
+        font-family: var(--font-mono, ui-monospace, monospace);
+        font-size: 1rem;
+        padding: 0 6px;
+    }
+    .unit {
+        color: var(--color-fg-muted, #8b94a7);
+        font-size: 0.75rem;
+    }
+    .time-row {
+        display: flex;
         align-items: center;
         gap: 12px;
     }
-    .group legend {
-        padding: 0 6px;
-        color: var(--color-fg-muted, #a6adc8);
+    .colon {
+        font-size: 1.4rem;
+        color: var(--color-fg-muted, #8b94a7);
+    }
+    .ampm {
+        display: flex;
+        flex-direction: column;
+        border: 1px solid var(--color-border, #2a3142);
+        border-radius: 10px;
+        overflow: hidden;
+    }
+    .ampm button {
+        border: none;
+        background: var(--color-bg, #1c2230);
+        color: var(--color-fg-muted, #8b94a7);
+        font-size: 0.75rem;
+        padding: 8px 12px;
+        cursor: pointer;
+    }
+    .ampm button.on {
+        background: var(--color-accent, #5b9dff);
+        color: var(--color-bg, #08111f);
+        font-weight: 600;
+    }
+    .advanced {
+        border-top: 1px solid var(--color-border, #2a3142);
+        padding-top: 6px;
+    }
+    .advanced-summary {
+        background: none;
+        border: none;
+        color: var(--color-accent, #5b9dff);
+        font-size: 0.85rem;
+        padding: 6px 0;
+        cursor: pointer;
+        user-select: none;
+    }
+    .advanced-caret {
+        display: inline-block;
+        width: 1em;
+    }
+    .advanced-body {
+        display: flex;
+        flex-direction: column;
+        gap: 16px;
+        padding-top: 8px;
+    }
+    .weekdays {
+        display: flex;
+        gap: 6px;
+        flex-wrap: wrap;
+    }
+    .weekdays button {
+        width: 38px;
+        height: 34px;
+        border: 1px solid var(--color-border, #2a3142);
+        background: var(--color-bg, #1c2230);
+        color: var(--color-fg-muted, #8b94a7);
+        border-radius: 8px;
+        font-size: 0.75rem;
+        cursor: pointer;
+    }
+    .weekdays button.on {
+        border-color: var(--color-accent, #5b9dff);
+        background: var(--color-accent-soft, rgba(91, 157, 255, 0.15));
+        color: var(--color-accent, #cfe0ff);
+    }
+    .alert-row {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
         font-size: 0.85rem;
     }
-    .group :global(.style-picker) {
-        flex: 1 1 100%;
-    }
-    .check {
+    .alert-label {
         display: flex;
         align-items: center;
         gap: 6px;
-        cursor: pointer;
     }
-    .group select {
+    .alert-control {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+    }
+    .alert-control select {
         padding: 5px 8px;
         border-radius: 6px;
-        border: 1px solid var(--color-border, #45475a);
-        background: var(--color-bg, #1e1e2e);
-        color: var(--color-fg, #cdd6f4);
+        border: 1px solid var(--color-border, #2a3142);
+        background: var(--color-bg, #1c2230);
+        color: var(--color-fg, #e6e9ef);
     }
-    .group select:disabled {
+    .alert-control select:disabled {
         opacity: 0.4;
     }
     .form-error {
-        margin: 6px 0;
+        margin: 0;
         color: var(--color-error, #f38ba8);
+        font-size: 0.85rem;
+    }
+    .create-button {
+        background: var(--color-accent, #5b9dff);
+        color: var(--color-bg, #08111f);
+        border: none;
+        border-radius: 10px;
+        padding: 12px;
         font-size: 0.9rem;
-    }
-    .actions {
-        display: flex;
-        justify-content: flex-end;
-        gap: 8px;
-        margin-top: 14px;
-    }
-    .actions button {
-        padding: 7px 16px;
-        border-radius: 6px;
-        border: 1px solid var(--color-border, #45475a);
+        font-weight: 600;
         cursor: pointer;
-    }
-    .actions .secondary {
-        background: var(--color-bg, #1e1e2e);
-        color: var(--color-fg, #cdd6f4);
-    }
-    .actions .primary {
-        background: var(--color-accent, #89b4fa);
-        color: var(--color-bg, #1e1e2e);
-        border-color: var(--color-accent, #89b4fa);
+        margin-top: 4px;
     }
 </style>
