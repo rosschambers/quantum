@@ -1,4 +1,4 @@
-use quantum_domain::DomainError;
+use quantum_domain::{DomainError, TimerError};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
@@ -27,6 +27,35 @@ impl ApplicationError {
             Self::Domain(e) => e.rpc_code(),
             Self::Dispatch { source, .. } => source.rpc_code(),
             Self::Unknown(_) => -32603,
+        }
+    }
+}
+
+/// Map timer-subsystem errors onto the EXISTING `ApplicationError`/`DomainError`
+/// variants. This deliberately adds no new variant: a dedicated timer variant
+/// would force a matching change in quantumd's error mapping, which is out of
+/// scope for this task.
+///
+/// - `TimerError::NotFound` is the timer subsystem's "not found" condition.
+///   `DomainError` has no generic not-found variant (`ProviderNotFound` is
+///   provider-specific and wraps a `ProviderId`, not an arbitrary string), so
+///   it routes through `DomainError::Unsupported`, which carries an arbitrary
+///   message and keeps a stable domain-range JSON-RPC code.
+/// - Every other `TimerError` (invalid time, empty weekday set, persistence,
+///   invalid duration) is an operation failure, so it maps to
+///   `DomainError::ActionFailed`, again preserving the original `Display`
+///   message and a domain-range code.
+///
+/// Both arms use the `TimerError`'s `Display` output as the message so the
+/// frontend still sees the human-readable cause.
+impl From<TimerError> for ApplicationError {
+    fn from(error: TimerError) -> ApplicationError {
+        let message = error.to_string();
+        match error {
+            TimerError::NotFound(_) => {
+                ApplicationError::Domain(DomainError::Unsupported(message))
+            }
+            _ => ApplicationError::Domain(DomainError::ActionFailed { reason: message }),
         }
     }
 }

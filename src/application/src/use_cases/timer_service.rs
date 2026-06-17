@@ -15,6 +15,7 @@ use quantum_domain::{
     VisualConfig, WeekdaySet,
 };
 use rand::Rng;
+use serde::Deserialize;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
@@ -23,7 +24,8 @@ use tokio::task::AbortHandle;
 
 /// How a new timer's schedule is expressed by the caller. Resolved into a
 /// concrete `TimerKind` against the clock at creation time.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
 pub enum TimerStart {
     /// Fire once after `secs` seconds from now.
     Duration { secs: u64 },
@@ -35,7 +37,7 @@ pub enum TimerStart {
 
 /// Input for creating a timer. `visual`/`notify` default to the subsystem's
 /// configured defaults when omitted.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Deserialize)]
 pub struct CreateTimerSpec {
     pub label: String,
     pub start: TimerStart,
@@ -46,7 +48,8 @@ pub struct CreateTimerSpec {
 /// Partial update for an existing timer. Each `Some` field replaces the
 /// corresponding value; `None` leaves it unchanged. Supplying `time` (and, for
 /// recurring timers, `days`) reschedules and re-arms the timer.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default)]
 pub struct EditChanges {
     pub label: Option<String>,
     pub visual: Option<VisualConfig>,

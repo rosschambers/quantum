@@ -1,7 +1,7 @@
 use crate::{
-    ApplicationError, LaunchActionUseCase, ListProvidersUseCase, OpenViewUseCase,
-    QueryProviderUseCase, ReloadPluginsUseCase, ReloadThemeUseCase, Result, ScheduleActionUseCase,
-    SearchUseCase, SetThemeUseCase, SubscribeProviderUseCase,
+    ApplicationError, CreateTimerSpec, EditChanges, LaunchActionUseCase, ListProvidersUseCase,
+    OpenViewUseCase, QueryProviderUseCase, ReloadPluginsUseCase, ReloadThemeUseCase, Result,
+    ScheduleActionUseCase, SearchUseCase, SetThemeUseCase, SubscribeProviderUseCase, TimerService,
 };
 use quantum_domain::{DomainError, WindowMode};
 use serde::de::DeserializeOwned;
@@ -20,6 +20,7 @@ pub struct Dispatcher {
     query_provider: Arc<QueryProviderUseCase>,
     schedule_action: Arc<ScheduleActionUseCase>,
     reload_plugins: Arc<ReloadPluginsUseCase>,
+    timer_service: Arc<TimerService>,
 }
 
 /// Params for the three `view.*` handlers (`view.toggle`, `view.show`,
@@ -53,6 +54,7 @@ impl Dispatcher {
         query_provider: Arc<QueryProviderUseCase>,
         schedule_action: Arc<ScheduleActionUseCase>,
         reload_plugins: Arc<ReloadPluginsUseCase>,
+        timer_service: Arc<TimerService>,
     ) -> Self {
         Self {
             search,
@@ -65,6 +67,7 @@ impl Dispatcher {
             query_provider,
             schedule_action,
             reload_plugins,
+            timer_service,
         }
     }
 
@@ -85,6 +88,11 @@ impl Dispatcher {
             "theme.reload" => self.handle_theme_reload(params).await,
             "theme.set" => self.handle_theme_set(params).await,
             "plugin.reload" => self.handle_plugin_reload(params).await,
+            "timer.create" => self.handle_timer_create(params).await,
+            "timer.list" => self.handle_timer_list(params).await,
+            "timer.edit" => self.handle_timer_edit(params).await,
+            "timer.cancel" => self.handle_timer_cancel(params).await,
+            "timer.dismiss" => self.handle_timer_dismiss(params).await,
             "system.status" => self.handle_system_status(params).await,
             _ => Err(ApplicationError::Domain(DomainError::Unsupported(
                 method.to_string(),
@@ -222,6 +230,48 @@ impl Dispatcher {
         let jobs = self.schedule_action.list().await;
         Ok(json!({ "jobs": jobs }))
     }
+
+    async fn handle_timer_create(&self, params: Option<&RawValue>) -> Result<Value> {
+        let spec: CreateTimerSpec = parse_params(params, "timer.create")?;
+        let id = self.timer_service.create(spec).await?;
+        Ok(json!({ "id": id.as_str() }))
+    }
+
+    async fn handle_timer_list(&self, _params: Option<&RawValue>) -> Result<Value> {
+        let data = self.timer_service.list().await;
+        serde_json::to_value(data).map_err(|e| ApplicationError::Unknown(e.to_string()))
+    }
+
+    async fn handle_timer_edit(&self, params: Option<&RawValue>) -> Result<Value> {
+        #[derive(serde::Deserialize)]
+        struct EditParams {
+            id: String,
+            changes: EditChanges,
+        }
+        let p: EditParams = parse_params(params, "timer.edit")?;
+        self.timer_service.edit(p.id.into(), p.changes).await?;
+        Ok(json!({}))
+    }
+
+    async fn handle_timer_cancel(&self, params: Option<&RawValue>) -> Result<Value> {
+        #[derive(serde::Deserialize)]
+        struct IdParam {
+            id: String,
+        }
+        let p: IdParam = parse_params(params, "timer.cancel")?;
+        self.timer_service.cancel(p.id.into()).await?;
+        Ok(json!({}))
+    }
+
+    async fn handle_timer_dismiss(&self, params: Option<&RawValue>) -> Result<Value> {
+        #[derive(serde::Deserialize)]
+        struct IdParam {
+            id: String,
+        }
+        let p: IdParam = parse_params(params, "timer.dismiss")?;
+        self.timer_service.dismiss(p.id.into()).await?;
+        Ok(json!({}))
+    }
 }
 
 #[cfg(test)]
@@ -230,8 +280,9 @@ mod tests {
     use crate::SearchResponse;
     use async_trait::async_trait;
     use quantum_domain::{
-        Action, ActionOutcome, DomainError, EventBus, Match, MatchScore, ProviderId,
-        ProviderRegistry, ProviderSource, Query, ThemeStore, WindowHost,
+        Action, ActionOutcome, CivilNow, Clock, DomainError, EventBus, Match, MatchScore,
+        ProviderId, ProviderRegistry, ProviderSource, Query, ThemeStore, Timer, TimerBroadcast,
+        TimerError, TimerNotifier, TimerStore, TimerStoreData, Weekday, WindowHost,
     };
     use std::collections::HashMap;
 
@@ -361,6 +412,47 @@ mod tests {
         }
     }
 
+    /// Minimal clock fixed at a Monday 09:00 for timer dispatch tests.
+    struct FakeClock;
+
+    impl Clock for FakeClock {
+        fn now_unix(&self) -> u64 {
+            1_000_000
+        }
+        fn local_civil(&self) -> CivilNow {
+            CivilNow {
+                weekday: Weekday::Monday,
+                secs_into_day: 9 * 3600,
+            }
+        }
+    }
+
+    /// In-memory timer store that simply round-trips the last saved data.
+    struct FakeTimerStore;
+
+    #[async_trait]
+    impl TimerStore for FakeTimerStore {
+        async fn load(&self) -> std::result::Result<TimerStoreData, TimerError> {
+            Ok(TimerStoreData::default())
+        }
+        async fn save(&self, _data: &TimerStoreData) -> std::result::Result<(), TimerError> {
+            Ok(())
+        }
+    }
+
+    struct FakeTimerNotifier;
+
+    #[async_trait]
+    impl TimerNotifier for FakeTimerNotifier {
+        async fn notify_complete(&self, _timer: &Timer) {}
+    }
+
+    struct FakeTimerBroadcast;
+
+    impl TimerBroadcast for FakeTimerBroadcast {
+        fn publish(&self, _data: &TimerStoreData) {}
+    }
+
     fn build_dispatcher() -> Arc<Dispatcher> {
         let mut providers = HashMap::new();
         providers.insert(
@@ -391,6 +483,12 @@ mod tests {
         let reload_plugins = Arc::new(super::ReloadPluginsUseCase::new(Arc::new(
             FakePluginCatalog,
         )));
+        let timer_service = Arc::new(TimerService::new(
+            Arc::new(FakeClock),
+            Arc::new(FakeTimerStore),
+            Arc::new(FakeTimerNotifier),
+            Arc::new(FakeTimerBroadcast),
+        ));
         Arc::new(Dispatcher::new(
             search,
             launch_action,
@@ -402,6 +500,7 @@ mod tests {
             query_provider,
             schedule_action,
             reload_plugins,
+            timer_service,
         ))
     }
 
@@ -570,5 +669,30 @@ mod tests {
             .await
             .expect("list 2");
         assert_eq!(listed2["jobs"].as_array().expect("jobs").len(), 0);
+    }
+
+    #[tokio::test]
+    async fn timer_create_then_list_returns_one_timer() {
+        let dispatcher = build_dispatcher();
+        let create_params = raw(json!({
+            "label": "Tea",
+            "start": { "kind": "duration", "secs": 300 }
+        }));
+        let created = dispatcher
+            .dispatch("timer.create", Some(&create_params))
+            .await
+            .expect("create");
+        assert!(
+            created["id"].as_str().is_some(),
+            "timer.create must return an id"
+        );
+
+        let listed = dispatcher
+            .dispatch("timer.list", None)
+            .await
+            .expect("list");
+        let timers = listed["timers"].as_array().expect("timers array");
+        assert_eq!(timers.len(), 1);
+        assert_eq!(timers[0]["label"], "Tea");
     }
 }
