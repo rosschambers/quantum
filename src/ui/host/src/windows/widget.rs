@@ -51,12 +51,14 @@ impl WidgetWindow {
     /// layout: [`ViewAnchor::Top`] produces a bar-style top-anchored surface
     /// with an exclusive zone of `height` (defaulting to [`BAR_HEIGHT`] when
     /// `None`); [`ViewAnchor::None`] (and `Bottom`, which widgets do not yet
-    /// special-case) produces a background-layer, top-right widget like the
-    /// clock.
+    /// special-case) produces a background-layer widget anchored per
+    /// `position` (with [`ViewPosition::Center`] preserved as top-right for the
+    /// clock). `position` is ignored on the top-anchored bar path.
     pub(crate) fn new(
         ctx: WindowContext<'_>,
         view_name: String,
         anchor: ViewAnchor,
+        position: ViewPosition,
         height: Option<u32>,
     ) -> Self {
         // The theme store backs the quantum:// scheme handler registered on
@@ -127,10 +129,32 @@ impl WidgetWindow {
             window.set_exclusive_zone(bar_height);
             window.set_default_height(bar_height);
         } else {
-            // Other widgets (clock, etc.): background layer, top-right.
+            // Other widgets (clock, timers, etc.): background layer, anchored
+            // per the descriptor's `position`, mirroring `new_toast`.
             window.set_layer(Layer::Background);
-            window.set_anchor(Edge::Top, true);
-            window.set_anchor(Edge::Right, true);
+            match position {
+                ViewPosition::TopRight => {
+                    window.set_anchor(Edge::Top, true);
+                    window.set_anchor(Edge::Right, true);
+                }
+                ViewPosition::TopLeft => {
+                    window.set_anchor(Edge::Top, true);
+                    window.set_anchor(Edge::Left, true);
+                }
+                ViewPosition::TopCenter => {
+                    // Anchor only to the top edge: with no left/right anchor the
+                    // compositor centers the surface horizontally.
+                    window.set_anchor(Edge::Top, true);
+                }
+                ViewPosition::Center => {
+                    // Center maps to top-right for backward compatibility with
+                    // existing background widgets (the clock is Center via the
+                    // fallback path and must keep its historical top-right
+                    // placement).
+                    window.set_anchor(Edge::Top, true);
+                    window.set_anchor(Edge::Right, true);
+                }
+            }
             window.set_keyboard_mode(KeyboardMode::None);
             window.set_exclusive_zone(0);
         }

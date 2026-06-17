@@ -6,7 +6,8 @@ use tokio::runtime::Handle;
 use tokio::sync::broadcast;
 
 use quantum_domain::{
-    ports::ThemeStore, EventEnvelope, ViewAnchor, ViewDescriptor, ViewKind, WindowMode,
+    ports::ThemeStore, EventEnvelope, ViewAnchor, ViewDescriptor, ViewKind, ViewPosition,
+    WindowMode,
 };
 
 use gtk4::gdk;
@@ -308,6 +309,7 @@ impl ManagedWindowConstructor {
                     ctx,
                     canonical.to_string(),
                     params.anchor,
+                    descriptor.position,
                     params.height,
                 ))
             }
@@ -352,6 +354,9 @@ impl ManagedWindowConstructor {
                 self.window_context(monitor),
                 canonical.to_string(),
                 ViewAnchor::None,
+                // Fallback widgets (the clock) keep their historical top-right
+                // placement: Center maps to top-right in the background branch.
+                ViewPosition::Center,
                 None,
             )))
         } else {
