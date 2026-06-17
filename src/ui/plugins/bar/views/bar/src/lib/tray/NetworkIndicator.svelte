@@ -33,10 +33,16 @@
     });
 
     async function openWifiMenu(): Promise<void> {
+        // The bar widget is injected with a per-monitor `__quantum_monitor`
+        // so the menu opens on the same display as the bar that was clicked.
+        // When unknown, the bare name lets the daemon place it on the focused
+        // monitor.
+        const monitor = window.__quantum_monitor;
+        const name = monitor ? `widgets/wifi-menu@${monitor}` : 'widgets/wifi-menu';
         try {
-            await client.call('view.show', { name: 'widgets/wifi-menu' });
+            await client.call('view.show', { name });
         } catch (err) {
-            console.error('open wifi menu failed:', err);
+            console.error(`view.show ${name} failed:`, err);
         }
     }
 
