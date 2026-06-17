@@ -93,6 +93,7 @@ impl Dispatcher {
             "timer.edit" => self.handle_timer_edit(params).await,
             "timer.cancel" => self.handle_timer_cancel(params).await,
             "timer.dismiss" => self.handle_timer_dismiss(params).await,
+            "timer.dismiss_all" => self.handle_timer_dismiss_all(params).await,
             "system.status" => self.handle_system_status(params).await,
             _ => Err(ApplicationError::Domain(DomainError::Unsupported(
                 method.to_string(),
@@ -271,6 +272,11 @@ impl Dispatcher {
         let p: IdParam = parse_params(params, "timer.dismiss")?;
         self.timer_service.dismiss(p.id.into()).await?;
         Ok(json!({}))
+    }
+
+    async fn handle_timer_dismiss_all(&self, _params: Option<&RawValue>) -> Result<Value> {
+        let count = self.timer_service.dismiss_all().await?;
+        Ok(json!({ "dismissed": count }))
     }
 }
 
@@ -691,5 +697,30 @@ mod tests {
         let timers = listed["timers"].as_array().expect("timers array");
         assert_eq!(timers.len(), 1);
         assert_eq!(timers[0]["label"], "Tea");
+    }
+
+    #[tokio::test]
+    async fn timer_dismiss_all_removes_every_timer() {
+        let dispatcher = build_dispatcher();
+        for label in ["Tea", "Coffee"] {
+            let create_params = raw(json!({
+                "label": label,
+                "start": { "kind": "duration", "secs": 300 }
+            }));
+            dispatcher
+                .dispatch("timer.create", Some(&create_params))
+                .await
+                .expect("create");
+        }
+
+        let dismissed = dispatcher
+            .dispatch("timer.dismiss_all", None)
+            .await
+            .expect("dismiss_all");
+        assert_eq!(dismissed["dismissed"], 2);
+
+        let listed = dispatcher.dispatch("timer.list", None).await.expect("list");
+        let timers = listed["timers"].as_array().expect("timers array");
+        assert_eq!(timers.len(), 0);
     }
 }

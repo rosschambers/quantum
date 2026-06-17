@@ -153,6 +153,11 @@ impl TimerService {
         self.inner.dismiss(id).await
     }
 
+    /// Dismiss every active timer at once, returning the number removed.
+    pub async fn dismiss_all(&self) -> Result<usize, TimerError> {
+        self.inner.dismiss_all().await
+    }
+
     /// Apply partial changes to a timer, rescheduling if its time changed.
     pub async fn edit(&self, id: TimerId, changes: EditChanges) -> Result<(), TimerError> {
         self.inner.edit(id, changes).await
@@ -425,6 +430,30 @@ impl TimerServiceInner {
     /// and remove the timer entirely.
     async fn dismiss(&self, id: TimerId) -> Result<(), TimerError> {
         self.cancel(id).await
+    }
+
+    /// Remove every timer whose status is `Active`, aborting each arming task,
+    /// then persist and broadcast exactly once. Expired timers are left in
+    /// place. Returns the number of timers removed.
+    async fn dismiss_all(&self) -> Result<usize, TimerError> {
+        let removed = {
+            let mut state = self.state.lock().await;
+            let active_ids: Vec<TimerId> = state
+                .timers
+                .iter()
+                .filter(|(_, timer)| timer.status == TimerStatus::Active)
+                .map(|(id, _)| id.clone())
+                .collect();
+            for id in &active_ids {
+                if let Some(handle) = state.handles.remove(id) {
+                    handle.abort();
+                }
+                state.timers.remove(id);
+            }
+            active_ids.len()
+        };
+        self.persist_and_broadcast().await;
+        Ok(removed)
     }
 
     async fn edit(self: &Arc<Self>, id: TimerId, changes: EditChanges) -> Result<(), TimerError> {
@@ -1234,5 +1263,39 @@ mod tests {
             .find(|t| t.id == id)
             .expect("recurring timer must not be auto-removed");
         assert_eq!(timer.status, TimerStatus::Active);
+    }
+
+    #[tokio::test]
+    async fn dismiss_all_removes_active_and_broadcasts_once() {
+        let (service, fakes) = build_service(1_000_000, civil(Weekday::Monday, 9 * 3600));
+        service
+            .create(CreateTimerSpec {
+                label: "Tea".to_string(),
+                start: TimerStart::Duration { secs: 300 },
+                visual: None,
+                notify: None,
+            })
+            .await
+            .expect("create first");
+        service
+            .create(CreateTimerSpec {
+                label: "Coffee".to_string(),
+                start: TimerStart::Duration { secs: 600 },
+                visual: None,
+                notify: None,
+            })
+            .await
+            .expect("create second");
+
+        let publishes_before = fakes.broadcast.count.load(Ordering::SeqCst);
+
+        let removed = service.dismiss_all().await.expect("dismiss_all");
+        assert_eq!(removed, 2);
+        assert!(service.list().await.timers.is_empty());
+        assert_eq!(
+            fakes.broadcast.count.load(Ordering::SeqCst),
+            publishes_before + 1,
+            "dismiss_all must broadcast exactly once"
+        );
     }
 }
