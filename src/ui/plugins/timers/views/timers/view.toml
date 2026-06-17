@@ -3,3 +3,4 @@ per_monitor = true
 auto_show = true
 anchor = "none"
 position = "top_left"
+fill_output = true

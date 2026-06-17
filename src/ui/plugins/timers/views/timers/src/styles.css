@@ -6,8 +6,11 @@ body {
   margin: 0;
   padding: 0;
   height: 100%;
+  width: 100%;
   /* The widget sits on the desktop background layer; stay transparent so the
-     wallpaper shows through around the timers. */
+     wallpaper shows through around the timers. The fill-output surface covers
+     the whole monitor, so the scatter container below can place timers
+     anywhere across the output. */
   background: transparent;
   font-family: var(--font-sans, system-ui, sans-serif);
   overflow: hidden;

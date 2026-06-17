@@ -39,6 +39,7 @@ pub(crate) struct PanelParams {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct WidgetParams {
     pub anchor: ViewAnchor,
+    pub fill_output: bool,
     pub height: Option<u32>,
 }
 
@@ -67,6 +68,7 @@ pub(crate) fn panel_params(descriptor: &ViewDescriptor) -> PanelParams {
 pub(crate) fn widget_params(descriptor: &ViewDescriptor) -> WidgetParams {
     WidgetParams {
         anchor: descriptor.anchor,
+        fill_output: descriptor.fill_output,
         height: descriptor.height,
     }
 }
@@ -310,6 +312,7 @@ impl ManagedWindowConstructor {
                     canonical.to_string(),
                     params.anchor,
                     descriptor.position,
+                    params.fill_output,
                     params.height,
                 ))
             }
@@ -357,6 +360,7 @@ impl ManagedWindowConstructor {
                 // Fallback widgets (the clock) keep their historical top-right
                 // placement: Center maps to top-right in the background branch.
                 ViewPosition::Center,
+                false,
                 None,
             )))
         } else {
@@ -566,6 +570,7 @@ mod tests {
             widget_params(&descriptor),
             WidgetParams {
                 anchor: ViewAnchor::Top,
+                fill_output: false,
                 height: Some(32),
             }
         );
@@ -580,6 +585,24 @@ mod tests {
             widget_params(&descriptor),
             WidgetParams {
                 anchor: ViewAnchor::None,
+                fill_output: false,
+                height: None,
+            }
+        );
+    }
+
+    #[test]
+    fn widget_params_passes_fill_output_through() {
+        let descriptor = ViewDescriptor {
+            kind: ViewKind::Widget,
+            fill_output: true,
+            ..ViewDescriptor::default()
+        };
+        assert_eq!(
+            widget_params(&descriptor),
+            WidgetParams {
+                anchor: ViewAnchor::None,
+                fill_output: true,
                 height: None,
             }
         );

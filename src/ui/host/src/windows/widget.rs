@@ -54,11 +54,17 @@ impl WidgetWindow {
     /// special-case) produces a background-layer widget anchored per
     /// `position` (with [`ViewPosition::Center`] preserved as top-right for the
     /// clock). `position` is ignored on the top-anchored bar path.
+    ///
+    /// When `fill_output` is true on the background-layer path, the surface
+    /// anchors all four edges so it fills the entire monitor (used by the
+    /// timers widget for free placement and dragging); `position` is then
+    /// ignored. `fill_output` has no effect on the top-anchored bar path.
     pub(crate) fn new(
         ctx: WindowContext<'_>,
         view_name: String,
         anchor: ViewAnchor,
         position: ViewPosition,
+        fill_output: bool,
         height: Option<u32>,
     ) -> Self {
         // The theme store backs the quantum:// scheme handler registered on
@@ -128,8 +134,20 @@ impl WidgetWindow {
             window.set_keyboard_mode(KeyboardMode::None);
             window.set_exclusive_zone(bar_height);
             window.set_default_height(bar_height);
+        } else if fill_output {
+            // Fill-output widgets (the timers scatter surface): background
+            // layer, anchored on all four edges so the transparent surface
+            // covers the whole monitor. The Svelte view positions its content
+            // absolutely within this full-screen area. `position` is ignored.
+            window.set_layer(Layer::Background);
+            window.set_anchor(Edge::Top, true);
+            window.set_anchor(Edge::Bottom, true);
+            window.set_anchor(Edge::Left, true);
+            window.set_anchor(Edge::Right, true);
+            window.set_keyboard_mode(KeyboardMode::None);
+            window.set_exclusive_zone(0);
         } else {
-            // Other widgets (clock, timers, etc.): background layer, anchored
+            // Other widgets (clock, etc.): background layer, anchored
             // per the descriptor's `position`, mirroring `new_toast`.
             window.set_layer(Layer::Background);
             match position {

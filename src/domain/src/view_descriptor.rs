@@ -61,6 +61,11 @@ pub struct ViewDescriptor {
     pub height: Option<u32>,
     pub width: Option<u32>,
     pub single_instance: Option<bool>,
+    /// Whether a background-layer widget should fill the entire monitor with
+    /// a transparent surface (anchoring all four edges) so its view can place
+    /// content freely across the whole output. Ignored for top-anchored bars.
+    #[serde(default)]
+    pub fill_output: bool,
 }
 
 impl Default for ViewDescriptor {
@@ -74,6 +79,7 @@ impl Default for ViewDescriptor {
             height: None,
             width: None,
             single_instance: None,
+            fill_output: false,
         }
     }
 }
@@ -108,6 +114,7 @@ mod tests {
         assert_eq!(descriptor.height, None);
         assert_eq!(descriptor.width, None);
         assert_eq!(descriptor.single_instance, None);
+        assert!(!descriptor.fill_output);
     }
 
     #[test]
@@ -164,6 +171,7 @@ mod tests {
             height: Some(32),
             width: Some(1920),
             single_instance: Some(true),
+            fill_output: true,
         };
         let json = serde_json::to_string(&descriptor).unwrap();
         let restored: ViewDescriptor = serde_json::from_str(&json).unwrap();

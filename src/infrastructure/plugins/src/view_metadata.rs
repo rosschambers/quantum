@@ -21,6 +21,7 @@ pub fn parse_view_toml(text: &str) -> Result<ViewDescriptor, PluginsError> {
         height: Option<u32>,
         width: Option<u32>,
         single_instance: Option<bool>,
+        fill_output: Option<bool>,
     }
 
     let raw: RawView =
@@ -75,6 +76,7 @@ pub fn parse_view_toml(text: &str) -> Result<ViewDescriptor, PluginsError> {
         height: raw.height,
         width: raw.width,
         single_instance: raw.single_instance,
+        fill_output: raw.fill_output.unwrap_or(defaults.fill_output),
     })
 }
 
@@ -118,8 +120,22 @@ single_instance = false
                 height: Some(32),
                 width: Some(600),
                 single_instance: Some(false),
+                fill_output: false,
             }
         );
+    }
+
+    #[test]
+    fn fill_output_true_parses() {
+        let descriptor =
+            parse_view_toml("fill_output = true\n").expect("valid fill_output");
+        assert!(descriptor.fill_output);
+    }
+
+    #[test]
+    fn fill_output_defaults_to_false_when_missing() {
+        let descriptor = parse_view_toml("kind = \"widget\"\n").expect("missing fill_output is valid");
+        assert!(!descriptor.fill_output);
     }
 
     #[test]
