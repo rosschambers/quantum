@@ -10,6 +10,7 @@
     import NetworkIndicator from './lib/tray/NetworkIndicator.svelte';
     import BarClock from './lib/BarClock.svelte';
     import NotificationIndicator from './lib/tray/NotificationIndicator.svelte';
+    import TimerIndicator from './lib/tray/TimerIndicator.svelte';
     import PowerMenuIndicator from './lib/tray/PowerMenuIndicator.svelte';
     import VolumeIndicator from './lib/tray/VolumeIndicator.svelte';
 
@@ -42,6 +43,7 @@
             <BluetoothIndicator {client} />
             <BatteryIndicator {client} />
             <NotificationIndicator {client} />
+            <TimerIndicator {client} />
         </div>
         <div class="divider" aria-hidden="true"></div>
         <div class="group">

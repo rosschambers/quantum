@@ -48,7 +48,8 @@
         | 'prev'
         | 'next'
         | 'pacman'
-        | 'target';
+        | 'target'
+        | 'timer';
 
     let { name, size = 14, color = 'currentColor', stroke = 2 }: Props = $props();
 </script>
@@ -172,6 +173,14 @@
         <line x1="12" y1="18" x2="12" y2="22" />
         <line x1="2" y1="12" x2="6" y2="12" />
         <line x1="18" y1="12" x2="22" y2="12" />
+    {:else if name === 'timer'}
+        <!-- Stopwatch: a clock face circle, a top stem/button, and two
+             hands pointing up and to the upper-right. -->
+        <circle cx="12" cy="14" r="7" />
+        <line x1="12" y1="14" x2="12" y2="9.5" />
+        <line x1="12" y1="14" x2="15" y2="14" />
+        <line x1="9.5" y1="3" x2="14.5" y2="3" />
+        <line x1="12" y1="3" x2="12" y2="7" />
     {/if}
 </svg>
 
