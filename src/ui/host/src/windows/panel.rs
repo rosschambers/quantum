@@ -8,22 +8,6 @@ use gtk4::prelude::*;
 use gtk4_layer_shell::{Edge, KeyboardMode, Layer, LayerShell};
 use webkit6::{prelude::*, WebView};
 
-/// Pick the GDK monitor that fullscreen-overlay panels should anchor
-/// to. Returns the first monitor in `gdk::Display::monitors()`, which
-/// is the user's primary display under Wayland. Returning `None`
-/// lets the compositor pick (current behaviour).
-fn pick_overlay_monitor() -> Option<gdk::Monitor> {
-    let display = gdk::Display::default()?;
-    let monitors = display.monitors();
-    let n = monitors.n_items();
-    if n == 0 {
-        return None;
-    }
-    monitors
-        .item(0)
-        .and_then(|obj| obj.downcast::<gdk::Monitor>().ok())
-}
-
 /// The panel window - a top-layer panel window anchored on-demand.
 ///
 /// The `dispatcher` and `theme_store` constructor arguments are consumed
@@ -43,10 +27,11 @@ pub struct PanelWindow {
     fullscreen_overlay: bool,
 }
 
-/// When set to `1`, the launcher anchors as a layer-shell `Top` surface with
-/// exclusive keyboard, the production behavior. When unset (the default while
-/// the daemon is in early testing), the launcher opens as a normal xdg-toplevel
-/// window that the user can close or switch away from like any other window.
+/// Whether the `QUANTUM_LAYER_SHELL` env flag is set. This only affects
+/// non-overlay (plain) panels: overlays — including the launcher, which is an
+/// `overlay` view — always use layer-shell (see `should_use_layer_shell`), so
+/// this flag does not gate them. When unset, a plain panel opens as a normal
+/// xdg-toplevel the user can close or switch away from.
 fn use_layer_shell() -> bool {
     std::env::var("QUANTUM_LAYER_SHELL")
         .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
@@ -162,14 +147,20 @@ impl PanelWindow {
             window.set_exclusive_zone(-1); // Don't reserve space.
 
             if is_fullscreen_overlay {
-                // Pin to the monitor supplied by the caller (typically
-                // the bar widget's `@<monitor>` suffix on the view key)
-                // so the overlay opens on the same display as the bar
-                // that triggered it. Fall back to the primary monitor
-                // when no monitor is supplied (e.g. direct quantumctl
-                // calls without a suffix).
-                if let Some(m) = monitor.as_ref().cloned().or_else(pick_overlay_monitor) {
-                    window.set_monitor(&m);
+                // Pin to the monitor supplied by the caller (the bar
+                // widget's `@<connector>` suffix on the view key) so the
+                // overlay opens on the same display as the bar that
+                // triggered it. When no monitor is supplied (the launcher
+                // keybind, a suffix-less `view.show`, or an unknown/stale
+                // connector) we deliberately do NOT call `set_monitor`:
+                // gtk4-layer-shell then leaves the output unset and the
+                // compositor places the surface on the focused monitor,
+                // which is what wofi/fuzzel/rofi do and what the user
+                // expects. Forcing `monitors.item(0)` here made the
+                // launcher and wifi menu open on the wrong display on
+                // multi-monitor setups.
+                if let Some(m) = monitor.as_ref() {
+                    window.set_monitor(m);
                 }
                 // Anchor all four edges so the surface spans the whole
                 // output; the page renders a centered card on a dark
