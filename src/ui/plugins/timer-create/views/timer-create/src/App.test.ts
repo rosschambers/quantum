@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, fireEvent } from '@testing-library/svelte/svelte5';
 import { tick } from 'svelte';
+import type { NotifyConfig, VisualConfig, TimerStoreData } from '@quantum/client';
 
 /*
  * Module-level mock state. Each test resets these via beforeEach so the
@@ -10,10 +11,58 @@ import { tick } from 'svelte';
 let mockCallSpy = vi.fn();
 let mockSubscribeSpy = vi.fn();
 
+function defaultNotify(): NotifyConfig {
+    return {
+        notification: true,
+        sound: 'complete',
+        urgency_ramp: true,
+        ramp_threshold: 0.1,
+        pulse: false,
+        flash: false,
+    };
+}
+
+function defaultVisual(): VisualConfig {
+    return {
+        style: 'mixed',
+        size: 120,
+        thickness: 8,
+        fill: false,
+        reverse: false,
+        accent_hue: 210,
+        track_opacity: 0.2,
+        label_visibility: 'always',
+        time_visibility: 'always',
+        text_position: 'below',
+        text_color: 'accent',
+        time_format: 'clock',
+        font_scale: 1,
+        font_weight: 500,
+        uppercase: false,
+    };
+}
+
+function timerListResult(): TimerStoreData {
+    return {
+        settings: {
+            layout: 'grid',
+            gap: 12,
+            align: 'center',
+            defaults_visual: defaultVisual(),
+            defaults_notify: defaultNotify(),
+        },
+        timers: [],
+    };
+}
+
 vi.mock('@quantum/client', () => ({
     createClient: () => ({
         call: (...args: unknown[]) => {
             mockCallSpy(...args);
+            const [method] = args as [string, unknown];
+            if (method === 'timer.list') {
+                return Promise.resolve(timerListResult());
+            }
             return Promise.resolve(undefined);
         },
         subscribe: (...args: unknown[]) => {
@@ -76,10 +125,9 @@ describe('TimerCreate App', () => {
 
         const createCall = mockCallSpy.mock.calls.find(([method]) => method === 'timer.create');
         expect(createCall).toBeDefined();
-        expect(createCall![1]).toEqual({
-            label: 'Tea',
-            start: { kind: 'duration', secs: 2700 },
-        });
+        const createParams = createCall![1] as { label?: string; start?: unknown };
+        expect(createParams.label).toBe('Tea');
+        expect(createParams.start).toEqual({ kind: 'duration', secs: 2700 });
 
         const hidden = mockCallSpy.mock.calls.some(
             ([method, params]) =>
@@ -125,5 +173,60 @@ describe('TimerCreate App', () => {
             ],
             time: { hour: 8, minute: 0 },
         });
+    });
+
+    it('seeds defaults from timer.list and sends a complete notify with notification off', async () => {
+        const { container } = render(App);
+        await settle();
+
+        const listed = mockCallSpy.mock.calls.some(([method]) => method === 'timer.list');
+        expect(listed).toBe(true);
+
+        const duration = container.querySelector('[data-field="duration"]') as HTMLInputElement;
+        await fireEvent.input(duration, { target: { value: '10m' } });
+        await tick();
+
+        const notificationToggle = container.querySelector(
+            '[data-field="notification"]',
+        ) as HTMLInputElement;
+        await fireEvent.click(notificationToggle);
+        await tick();
+
+        const submit = container.querySelector('[data-action="submit"]') as HTMLButtonElement;
+        await fireEvent.click(submit);
+        await settle();
+
+        const createCall = mockCallSpy.mock.calls.find(([method]) => method === 'timer.create');
+        expect(createCall).toBeDefined();
+        const params = createCall![1] as { notify?: NotifyConfig; visual?: VisualConfig };
+        expect(params.notify).toBeDefined();
+        expect(params.notify!.notification).toBe(false);
+        // A complete object is sent: untouched default fields are present.
+        expect(params.notify!.ramp_threshold).toBe(0.1);
+    });
+
+    it('selecting style ring sends a complete visual with that style', async () => {
+        const { container } = render(App);
+        await settle();
+
+        const duration = container.querySelector('[data-field="duration"]') as HTMLInputElement;
+        await fireEvent.input(duration, { target: { value: '10m' } });
+        await tick();
+
+        const ring = container.querySelector('[data-style="ring"]') as HTMLButtonElement;
+        await fireEvent.click(ring);
+        await tick();
+
+        const submit = container.querySelector('[data-action="submit"]') as HTMLButtonElement;
+        await fireEvent.click(submit);
+        await settle();
+
+        const createCall = mockCallSpy.mock.calls.find(([method]) => method === 'timer.create');
+        expect(createCall).toBeDefined();
+        const params = createCall![1] as { visual?: VisualConfig };
+        expect(params.visual).toBeDefined();
+        expect(params.visual!.style).toBe('ring');
+        // A complete object is sent: untouched default fields are present.
+        expect(params.visual!.size).toBe(120);
     });
 });

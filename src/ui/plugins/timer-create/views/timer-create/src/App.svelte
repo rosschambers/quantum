@@ -1,12 +1,51 @@
 <script lang="ts">
     import { createClient } from '@quantum/client';
-    import type { Weekday } from '@quantum/client';
+    import type {
+        Weekday,
+        SoundName,
+        NotifyConfig,
+        VisualConfig,
+        VisualStyle,
+        TimerStoreData,
+    } from '@quantum/client';
     import { parseDurationToSecs, parseTimeOfDay } from './lib/parse';
     import { ALL_WEEKDAYS, recurrenceDays, type Recurrence } from './lib/recurrence';
+    import StylePicker from './lib/StylePicker.svelte';
 
     /** Bare canonical view name; the registry strips any `@<monitor>` suffix
      * for single-instance overlays, so `view.hide` uses the bare name. */
     const VIEW_NAME = 'plugin/timer-create/timer-create';
+
+    /** Sensible hardcoded defaults used when the `timer.list` fetch fails or
+     * returns nothing. The daemon also fills omitted fields from
+     * `settings.defaults_*`, but a complete object is sent for determinism. */
+    const FALLBACK_NOTIFY: NotifyConfig = {
+        notification: true,
+        sound: null,
+        urgency_ramp: true,
+        ramp_threshold: 0.1,
+        pulse: false,
+        flash: false,
+    };
+    const FALLBACK_VISUAL: VisualConfig = {
+        style: 'mixed',
+        size: 120,
+        thickness: 8,
+        fill: false,
+        reverse: false,
+        accent_hue: 210,
+        track_opacity: 0.2,
+        label_visibility: 'always',
+        time_visibility: 'always',
+        text_position: 'below',
+        text_color: 'accent',
+        time_format: 'clock',
+        font_scale: 1,
+        font_weight: 500,
+        uppercase: false,
+    };
+
+    const SOUND_NAMES: SoundName[] = ['complete', 'bell', 'chime', 'alarm'];
 
     const client = createClient();
 
@@ -18,6 +57,21 @@
     let customDays: Weekday[] = $state([]);
     let error: string | null = $state(null);
 
+    // Complete config objects fetched from the daemon; form controls below
+    // override individual fields, and the merged result is submitted.
+    let defaultsNotify: NotifyConfig = $state({ ...FALLBACK_NOTIFY });
+    let defaultsVisual: VisualConfig = $state({ ...FALLBACK_VISUAL });
+
+    // Alerting form state.
+    let notification: boolean = $state(true);
+    let soundOn: boolean = $state(false);
+    let soundName: SoundName = $state('complete');
+    let urgencyRamp: boolean = $state(true);
+
+    // Visual form state, fed from StylePicker.
+    let visualStyle: VisualStyle = $state('mixed');
+    let visualAccentHue: number = $state(210);
+
     function toggleDay(day: Weekday): void {
         customDays = customDays.includes(day)
             ? customDays.filter((existing) => existing !== day)
@@ -25,6 +79,39 @@
                   (candidate) => candidate === day || customDays.includes(candidate),
               );
     }
+
+    function applyDefaults(notify: NotifyConfig, visual: VisualConfig): void {
+        defaultsNotify = notify;
+        defaultsVisual = visual;
+        notification = notify.notification;
+        soundOn = notify.sound !== null;
+        soundName = notify.sound ?? 'complete';
+        urgencyRamp = notify.urgency_ramp;
+        visualStyle = visual.style;
+        visualAccentHue = visual.accent_hue;
+    }
+
+    function onStyleChange(partial: { style: VisualStyle; accent_hue: number }): void {
+        visualStyle = partial.style;
+        visualAccentHue = partial.accent_hue;
+    }
+
+    // Seed form defaults from the daemon's current timer settings. Reads no
+    // reactive state, so this effect runs once.
+    $effect(() => {
+        client
+            .call('timer.list', {})
+            .then((result) => {
+                const data = result as TimerStoreData | undefined;
+                const settings = data?.settings;
+                if (settings?.defaults_notify && settings?.defaults_visual) {
+                    applyDefaults(settings.defaults_notify, settings.defaults_visual);
+                }
+            })
+            .catch(() => {
+                // Non-fatal; the hardcoded fallbacks already seed the form.
+            });
+    });
 
     $effect(() => {
         document.addEventListener('keydown', onKeyDown);
@@ -80,8 +167,23 @@
         error = null;
         const start = buildStart();
         if (start === null) return;
+
+        // Merge the form values over the fetched defaults so a complete
+        // NotifyConfig / VisualConfig is always sent.
+        const notify: NotifyConfig = {
+            ...defaultsNotify,
+            notification,
+            sound: soundOn ? soundName : null,
+            urgency_ramp: urgencyRamp,
+        };
+        const visual: VisualConfig = {
+            ...defaultsVisual,
+            style: visualStyle,
+            accent_hue: visualAccentHue,
+        };
+
         try {
-            await client.call('timer.create', { label, start });
+            await client.call('timer.create', { label, start, visual, notify });
         } catch (err) {
             console.error('timer.create failed:', err);
             error = 'Could not create the timer.';
@@ -181,6 +283,48 @@
                 {/each}
             </div>
         {/if}
+
+        <fieldset class="group">
+            <legend>Alerting</legend>
+            <label class="check">
+                <input
+                    data-field="notification"
+                    type="checkbox"
+                    bind:checked={notification}
+                />
+                <span>Notification</span>
+            </label>
+            <label class="check">
+                <input data-field="sound" type="checkbox" bind:checked={soundOn} />
+                <span>Sound</span>
+            </label>
+            <select
+                data-field="sound-name"
+                bind:value={soundName}
+                disabled={!soundOn}
+            >
+                {#each SOUND_NAMES as name (name)}
+                    <option value={name}>{name}</option>
+                {/each}
+            </select>
+            <label class="check">
+                <input
+                    data-field="urgency-ramp"
+                    type="checkbox"
+                    bind:checked={urgencyRamp}
+                />
+                <span>Urgency ramp</span>
+            </label>
+        </fieldset>
+
+        <fieldset class="group">
+            <legend>Style</legend>
+            <StylePicker
+                style={visualStyle}
+                accentHue={visualAccentHue}
+                onChange={onStyleChange}
+            />
+        </fieldset>
 
         {#if error}
             <p class="form-error" role="alert">{error}</p>
@@ -298,6 +442,40 @@
     .weekday-picker button:disabled {
         opacity: 0.4;
         cursor: not-allowed;
+    }
+    .group {
+        border: 1px solid var(--color-border, #45475a);
+        border-radius: 8px;
+        padding: 10px 12px;
+        margin: 0 0 10px;
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        gap: 12px;
+    }
+    .group legend {
+        padding: 0 6px;
+        color: var(--color-fg-muted, #a6adc8);
+        font-size: 0.85rem;
+    }
+    .group :global(.style-picker) {
+        flex: 1 1 100%;
+    }
+    .check {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        cursor: pointer;
+    }
+    .group select {
+        padding: 5px 8px;
+        border-radius: 6px;
+        border: 1px solid var(--color-border, #45475a);
+        background: var(--color-bg, #1e1e2e);
+        color: var(--color-fg, #cdd6f4);
+    }
+    .group select:disabled {
+        opacity: 0.4;
     }
     .form-error {
         margin: 6px 0;
