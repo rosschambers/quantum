@@ -22,6 +22,7 @@ pub mod proc_stats;
 pub mod shell_command;
 pub mod system_power;
 pub mod timer_clock;
+pub mod timer_store;
 pub mod wifi;
 pub mod notifications;
 
@@ -46,4 +47,5 @@ pub use proc_stats::ProcStatsProvider;
 pub use shell_command::ShellCommandProvider;
 pub use system_power::SystemPowerProvider;
 pub use timer_clock::SystemClock;
+pub use timer_store::JsonTimerStore;
 pub use wifi::WifiProvider;
