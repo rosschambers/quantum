@@ -394,8 +394,9 @@
         background: var(--color-bg-alt, #313244);
         color: var(--color-fg, #cdd6f4);
         border-radius: 12px;
-        width: 420px;
-        max-height: 70vh;
+        width: min(420px, 92vw);
+        max-height: 80vh;
+        box-sizing: border-box;
         display: flex;
         flex-direction: column;
         overflow: hidden;

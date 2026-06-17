@@ -133,7 +133,9 @@
         position: fixed;
         top: 12px;
         right: 12px;
-        width: 380px;
+        width: min(380px, 92vw);
+        max-width: calc(100vw - 24px);
+        box-sizing: border-box;
         display: flex;
         flex-direction: column;
         gap: 8px;

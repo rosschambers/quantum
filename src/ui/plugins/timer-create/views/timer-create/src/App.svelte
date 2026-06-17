@@ -493,7 +493,10 @@
         color: var(--color-fg, #e6e9ef);
         border-radius: 16px;
         padding: 22px;
-        width: 420px;
+        width: min(420px, 92vw);
+        max-height: 90vh;
+        overflow: auto;
+        box-sizing: border-box;
         display: flex;
         flex-direction: column;
         gap: 16px;

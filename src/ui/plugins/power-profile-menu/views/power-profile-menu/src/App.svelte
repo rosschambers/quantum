@@ -188,13 +188,16 @@
         color: var(--color-fg, #cdd6f4);
         border-radius: 12px;
         padding: 18px 20px;
-        width: 380px;
+        width: min(380px, 92vw);
+        max-height: 90vh;
+        overflow: auto;
+        box-sizing: border-box;
         box-shadow: 0 14px 40px var(--color-shadow, rgba(0, 0, 0, 0.6));
         border: 1px solid var(--color-border, #45475a);
     }
     .title {
         margin: 0 0 14px;
-        font-size: 14px;
+        font-size: var(--font-size-base, 14px);
         font-weight: 600;
         color: var(--color-fg-alt, #a6adc8);
         letter-spacing: 0.04em;
@@ -248,12 +251,12 @@
         min-width: 0;
     }
     .label {
-        font-size: 14px;
+        font-size: var(--font-size-base, 14px);
         font-weight: 600;
         line-height: 1.2;
     }
     .description {
-        font-size: 11px;
+        font-size: var(--font-size-sm, 11px);
         color: var(--color-fg-alt, #a6adc8);
         line-height: 1.3;
     }

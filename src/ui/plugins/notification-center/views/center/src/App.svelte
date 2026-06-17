@@ -128,7 +128,8 @@
     .panel {
         display: flex;
         flex-direction: column;
-        width: 380px;
+        width: min(380px, 92vw);
+        box-sizing: border-box;
         max-height: calc(100vh - 24px);
         background: var(--color-bg-alt, #313244);
         color: var(--color-fg, #cdd6f4);
