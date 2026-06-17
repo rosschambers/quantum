@@ -29,15 +29,16 @@ pub use event_bus::EventEnvelope;
 pub use ids::ProviderId;
 pub use match_result::{IconRef, Match};
 pub use ports::{
-    ActionOutcome, EventBus, HyprlandClient, PluginCatalog, ProviderRegistry, ProviderSource,
-    ShellExecutor, ShellOutput, ThemeStore, WindowHost,
+    ActionOutcome, Clock, EventBus, HyprlandClient, PluginCatalog, ProviderRegistry,
+    ProviderSource, ShellExecutor, ShellOutput, ThemeStore, TimerBroadcast, TimerNotifier,
+    TimerStore, WindowHost,
 };
 pub use query::Query;
 pub use score::MatchScore;
 pub use timer::{
-    seconds_until_next, NotifyConfig, Point, SoundName, TextColor, TextPosition, TextVisibility,
-    TimeFormat, TimeOfDay, Timer, TimerError, TimerId, TimerKind, TimerStatus, VisualConfig,
-    VisualStyle, Weekday, WeekdaySet,
+    seconds_until_next, CivilNow, NotifyConfig, Point, SoundName, TextColor, TextPosition,
+    TextVisibility, TimeFormat, TimeOfDay, Timer, TimerError, TimerId, TimerKind, TimerSettings,
+    TimerStatus, TimerStoreData, VisualConfig, VisualStyle, Weekday, WeekdaySet,
 };
 pub use tokens::tokens_to_css;
 pub use view_descriptor::{ViewAnchor, ViewDescriptor, ViewKind, ViewPosition};

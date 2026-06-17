@@ -1,3 +1,4 @@
+use crate::timer::{CivilNow, Timer, TimerError, TimerStoreData};
 use crate::{Action, DomainError, Match, ProviderId, Query};
 use async_trait::async_trait;
 use std::sync::Arc;
@@ -109,6 +110,32 @@ pub trait WindowHost: Send + Sync {
     async fn set_view_height(&self, view: &str, height: u32) -> Result<(), DomainError>;
 }
 
+/// A source of wall-clock time. Synchronous: callers need the current instant
+/// without yielding. `now_unix` is seconds since the Unix epoch; `local_civil`
+/// projects "now" onto the local calendar for recurring-timer arithmetic.
+pub trait Clock: Send + Sync {
+    fn now_unix(&self) -> u64;
+    fn local_civil(&self) -> CivilNow;
+}
+
+/// Persistence for the timer subsystem's full state.
+#[async_trait]
+pub trait TimerStore: Send + Sync {
+    async fn load(&self) -> Result<TimerStoreData, TimerError>;
+    async fn save(&self, data: &TimerStoreData) -> Result<(), TimerError>;
+}
+
+/// Delivers a user-facing notification when a timer completes.
+#[async_trait]
+pub trait TimerNotifier: Send + Sync {
+    async fn notify_complete(&self, timer: &Timer);
+}
+
+/// Broadcasts the current timer state to subscribers (for example, frontends).
+pub trait TimerBroadcast: Send + Sync {
+    fn publish(&self, data: &TimerStoreData);
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -182,5 +209,30 @@ mod subscribe_tests {
         let mut stream = p.subscribe().expect("stream");
         let event = stream.next().await.expect("event");
         assert_eq!(event, serde_json::json!({"x": 1}));
+    }
+}
+
+#[cfg(test)]
+mod timer_port_tests {
+    use super::*;
+
+    // Compile-time proof that all four timer ports are object-safe and can be
+    // used behind `Arc<dyn Trait>`. If any trait stopped being object-safe,
+    // this would fail to compile.
+    #[allow(dead_code)]
+    fn assert_object_safe(
+        _clock: Arc<dyn Clock>,
+        _store: Arc<dyn TimerStore>,
+        _notifier: Arc<dyn TimerNotifier>,
+        _broadcast: Arc<dyn TimerBroadcast>,
+    ) {
+    }
+
+    #[test]
+    fn timer_ports_are_object_safe() {
+        let _: Option<Arc<dyn Clock>> = None;
+        let _: Option<Arc<dyn TimerStore>> = None;
+        let _: Option<Arc<dyn TimerNotifier>> = None;
+        let _: Option<Arc<dyn TimerBroadcast>> = None;
     }
 }

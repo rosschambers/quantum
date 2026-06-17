@@ -442,6 +442,52 @@ impl Timer {
     }
 }
 
+/// The current civil ("wall clock") moment as a weekday plus seconds elapsed
+/// since midnight. Carries no date or timezone: it is the calendar projection
+/// of "now" used to drive recurring-timer arithmetic via `seconds_until_next`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CivilNow {
+    pub weekday: Weekday,
+    pub secs_into_day: u32,
+}
+
+/// Subsystem-wide timer settings: how timers are laid out and the default
+/// visual and notification configuration applied to new timers.
+/// `#[serde(default)]` at the struct level fills any missing field from the
+/// manual `Default` impl, so partial JSON (including `{}`) deserializes to the
+/// full set of spec defaults.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct TimerSettings {
+    pub layout: String,
+    pub gap: u32,
+    pub align: String,
+    pub defaults_visual: VisualConfig,
+    pub defaults_notify: NotifyConfig,
+}
+
+impl Default for TimerSettings {
+    fn default() -> TimerSettings {
+        TimerSettings {
+            layout: "scatter".to_string(),
+            gap: 24,
+            align: "top_right".to_string(),
+            defaults_visual: VisualConfig::default(),
+            defaults_notify: NotifyConfig::default(),
+        }
+    }
+}
+
+/// The full persisted state of the timer subsystem: settings plus the list of
+/// configured timers. `#[serde(default)]` lets partial JSON (including `{}`)
+/// deserialize to an empty timer list with default settings.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
+#[serde(default)]
+pub struct TimerStoreData {
+    pub settings: TimerSettings,
+    pub timers: Vec<Timer>,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -880,6 +926,90 @@ mod tests {
             TimerError::EmptyWeekdaySet.to_string(),
             "recurring timer needs at least one weekday"
         );
+    }
+
+    #[test]
+    fn timer_settings_default_values_match_spec() {
+        let settings = TimerSettings::default();
+        assert_eq!(settings.layout, "scatter");
+        assert_eq!(settings.gap, 24);
+        assert_eq!(settings.align, "top_right");
+        assert_eq!(settings.defaults_visual, VisualConfig::default());
+        assert_eq!(settings.defaults_notify, NotifyConfig::default());
+    }
+
+    #[test]
+    fn timer_settings_empty_json_is_full_default() {
+        let from_empty: TimerSettings = serde_json::from_str("{}").unwrap();
+        assert_eq!(from_empty, TimerSettings::default());
+    }
+
+    #[test]
+    fn timer_settings_partial_json_keeps_other_defaults() {
+        let partial: TimerSettings = serde_json::from_str(r#"{"gap": 8}"#).unwrap();
+        assert_eq!(partial.gap, 8);
+        let default = TimerSettings::default();
+        assert_eq!(partial.layout, default.layout);
+        assert_eq!(partial.align, default.align);
+        assert_eq!(partial.defaults_visual, default.defaults_visual);
+        assert_eq!(partial.defaults_notify, default.defaults_notify);
+    }
+
+    #[test]
+    fn timer_settings_round_trips() {
+        let settings = TimerSettings {
+            layout: "grid".to_string(),
+            gap: 40,
+            align: "bottom_left".to_string(),
+            defaults_visual: VisualConfig {
+                size: 99,
+                ..VisualConfig::default()
+            },
+            defaults_notify: NotifyConfig {
+                ramp_threshold: 7,
+                ..NotifyConfig::default()
+            },
+        };
+        let json = serde_json::to_string(&settings).unwrap();
+        let back: TimerSettings = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, settings);
+    }
+
+    #[test]
+    fn timer_store_data_default_is_empty_timers_and_default_settings() {
+        let data = TimerStoreData::default();
+        assert!(data.timers.is_empty());
+        assert_eq!(data.settings, TimerSettings::default());
+    }
+
+    #[test]
+    fn timer_store_data_empty_json_is_full_default() {
+        let from_empty: TimerStoreData = serde_json::from_str("{}").unwrap();
+        assert_eq!(from_empty, TimerStoreData::default());
+    }
+
+    #[test]
+    fn timer_store_data_round_trips_with_one_timer() {
+        let data = TimerStoreData {
+            settings: TimerSettings::default(),
+            timers: vec![sample_one_shot()],
+        };
+        let json = serde_json::to_string(&data).unwrap();
+        let back: TimerStoreData = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, data);
+        assert_eq!(back.timers.len(), 1);
+    }
+
+    #[test]
+    fn civil_now_is_copy_and_holds_fields() {
+        let now = CivilNow {
+            weekday: Weekday::Wednesday,
+            secs_into_day: 3600,
+        };
+        let copy = now;
+        assert_eq!(copy, now);
+        assert_eq!(copy.weekday, Weekday::Wednesday);
+        assert_eq!(copy.secs_into_day, 3600);
     }
 
     fn sample_one_shot() -> Timer {
