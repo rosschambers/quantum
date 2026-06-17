@@ -88,4 +88,42 @@ describe('TimerCreate App', () => {
         );
         expect(hidden).toBe(true);
     });
+
+    it('at mode + daily + 08:00 submits a recurring start', async () => {
+        const { container } = render(App);
+        await settle();
+
+        const atMode = container.querySelector('[data-mode="at"]') as HTMLButtonElement;
+        await fireEvent.click(atMode);
+        await tick();
+
+        const daily = container.querySelector('[data-recurrence="daily"]') as HTMLButtonElement;
+        await fireEvent.click(daily);
+        await tick();
+
+        const time = container.querySelector('[data-field="time"]') as HTMLInputElement;
+        await fireEvent.input(time, { target: { value: '08:00' } });
+        await tick();
+
+        const submit = container.querySelector('[data-action="submit"]') as HTMLButtonElement;
+        await fireEvent.click(submit);
+        await settle();
+
+        const createCall = mockCallSpy.mock.calls.find(([method]) => method === 'timer.create');
+        expect(createCall).toBeDefined();
+        const params = createCall![1] as { start?: unknown };
+        expect(params.start).toEqual({
+            kind: 'recurring',
+            days: [
+                'monday',
+                'tuesday',
+                'wednesday',
+                'thursday',
+                'friday',
+                'saturday',
+                'sunday',
+            ],
+            time: { hour: 8, minute: 0 },
+        });
+    });
 });

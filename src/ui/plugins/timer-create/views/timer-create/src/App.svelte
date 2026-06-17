@@ -1,6 +1,8 @@
 <script lang="ts">
     import { createClient } from '@quantum/client';
+    import type { Weekday } from '@quantum/client';
     import { parseDurationToSecs, parseTimeOfDay } from './lib/parse';
+    import { ALL_WEEKDAYS, recurrenceDays, type Recurrence } from './lib/recurrence';
 
     /** Bare canonical view name; the registry strips any `@<monitor>` suffix
      * for single-instance overlays, so `view.hide` uses the bare name. */
@@ -12,7 +14,17 @@
     let mode: 'in' | 'at' = $state('in');
     let durationText: string = $state('');
     let timeText: string = $state('');
+    let recurrence: Recurrence = $state('none');
+    let customDays: Weekday[] = $state([]);
     let error: string | null = $state(null);
+
+    function toggleDay(day: Weekday): void {
+        customDays = customDays.includes(day)
+            ? customDays.filter((existing) => existing !== day)
+            : [...ALL_WEEKDAYS].filter(
+                  (candidate) => candidate === day || customDays.includes(candidate),
+              );
+    }
 
     $effect(() => {
         document.addEventListener('keydown', onKeyDown);
@@ -53,7 +65,15 @@
             error = 'Enter a time like 17:15.';
             return null;
         }
-        return { kind: 'at', time };
+        if (recurrence === 'none') {
+            return { kind: 'at', time };
+        }
+        const days = recurrenceDays(recurrence, customDays);
+        if (days === null) {
+            error = 'Pick at least one day for a custom recurrence.';
+            return null;
+        }
+        return { kind: 'recurring', days, time };
     }
 
     async function submit(): Promise<void> {
@@ -121,6 +141,45 @@
                     bind:value={timeText}
                 />
             </label>
+
+            <div class="row" role="group" aria-label="Recurrence">
+                <span class="row-label">Repeat</span>
+                <div class="recurrence-toggle">
+                    <button
+                        type="button"
+                        data-recurrence="none"
+                        class:active={recurrence === 'none'}
+                        onclick={() => (recurrence = 'none')}>Once</button
+                    >
+                    <button
+                        type="button"
+                        data-recurrence="daily"
+                        class:active={recurrence === 'daily'}
+                        onclick={() => (recurrence = 'daily')}>Daily</button
+                    >
+                    <button
+                        type="button"
+                        data-recurrence="custom"
+                        class:active={recurrence === 'custom'}
+                        onclick={() => (recurrence = 'custom')}>Custom</button
+                    >
+                </div>
+            </div>
+
+            <div class="row weekday-picker" role="group" aria-label="Weekdays">
+                {#each ALL_WEEKDAYS as day (day)}
+                    <button
+                        type="button"
+                        data-weekday={day}
+                        class:active={customDays.includes(day)}
+                        disabled={recurrence !== 'custom'}
+                        onclick={() => toggleDay(day)}
+                        title={day}
+                    >
+                        {day.slice(0, 3)}
+                    </button>
+                {/each}
+            </div>
         {/if}
 
         {#if error}
@@ -196,6 +255,49 @@
         background: var(--color-accent, #89b4fa);
         color: var(--color-bg, #1e1e2e);
         border-color: var(--color-accent, #89b4fa);
+    }
+    .recurrence-toggle {
+        display: flex;
+        gap: 6px;
+        flex: 1;
+    }
+    .recurrence-toggle button {
+        flex: 1;
+        padding: 6px 10px;
+        border-radius: 6px;
+        border: 1px solid var(--color-border, #45475a);
+        background: var(--color-bg, #1e1e2e);
+        color: var(--color-fg, #cdd6f4);
+        cursor: pointer;
+    }
+    .recurrence-toggle button.active {
+        background: var(--color-accent, #89b4fa);
+        color: var(--color-bg, #1e1e2e);
+        border-color: var(--color-accent, #89b4fa);
+    }
+    .weekday-picker {
+        gap: 4px;
+        flex-wrap: wrap;
+    }
+    .weekday-picker button {
+        flex: 1;
+        min-width: 38px;
+        padding: 5px 4px;
+        border-radius: 6px;
+        border: 1px solid var(--color-border, #45475a);
+        background: var(--color-bg, #1e1e2e);
+        color: var(--color-fg, #cdd6f4);
+        cursor: pointer;
+        text-transform: capitalize;
+    }
+    .weekday-picker button.active {
+        background: var(--color-accent, #89b4fa);
+        color: var(--color-bg, #1e1e2e);
+        border-color: var(--color-accent, #89b4fa);
+    }
+    .weekday-picker button:disabled {
+        opacity: 0.4;
+        cursor: not-allowed;
     }
     .form-error {
         margin: 6px 0;
