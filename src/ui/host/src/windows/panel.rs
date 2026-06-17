@@ -95,17 +95,15 @@ impl PanelWindow {
         let mut builder = gtk4::ApplicationWindow::builder().application(app);
 
         if is_fullscreen_overlay {
-            // gtk4-layer-shell sizes the surface from the GTK widget's
-            // preferred size, NOT from the anchors alone. With an empty
-            // WebView the preferred size is 0x0 and the compositor falls
-            // back to a tiny placeholder (~200x200). Set generous
-            // defaults so the surface spans even very large outputs;
-            // layer-shell clamps to the output rectangle when all four
-            // edges are anchored.
-            builder = builder
-                .default_width(8192)
-                .default_height(8192)
-                .resizable(false);
+            // Do NOT force a default size here. When all four edges are
+            // anchored (below), the compositor sends the output's exact
+            // dimensions in its configure event and gtk4-layer-shell uses
+            // them — exactly like the fill-output widget path
+            // (`widget.rs`). Forcing a giant `default_width`/`default_height`
+            // instead pins the surface to that fixed size, which Hyprland
+            // clamps to the WHOLE desktop span (the sum of every output's
+            // width) rather than the single target output, leaving the
+            // page's centered card off-center on multi-monitor layouts.
         } else {
             builder = builder
                 .default_width(width)
