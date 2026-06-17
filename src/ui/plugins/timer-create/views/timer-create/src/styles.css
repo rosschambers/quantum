@@ -1,0 +1,15 @@
+html,
+body {
+    margin: 0;
+    padding: 0;
+    height: 100%;
+    /*
+     * The overlay window is painted transparent by the host (panel.rs);
+     * the page .backdrop provides the dim. Keep the document background
+     * transparent so nothing paints over the dimmed area.
+     */
+    background: transparent;
+    font-family: var(--font-sans, -apple-system, BlinkMacSystemFont, sans-serif);
+    font-size: var(--font-size-base, 14px);
+    color: var(--color-fg, #cdd6f4);
+}

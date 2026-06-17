@@ -1,0 +1,12 @@
+[plugin]
+name = "timer-create"
+version = "0.1.0"
+type = "widget"
+
+[settings]
+# Default visual style applied to the style picker when no defaults are
+# fetched from the daemon.
+default_style = "mixed"
+
+[widget]
+single_instance = true
