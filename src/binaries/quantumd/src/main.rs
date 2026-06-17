@@ -14,7 +14,7 @@ use tracing_subscriber::EnvFilter;
 use quantum_application::{
     ApplicationError, Dispatcher as AppDispatcher, LaunchActionUseCase, ListProvidersUseCase,
     OpenViewUseCase, QueryProviderUseCase, ReloadPluginsUseCase, ReloadThemeUseCase,
-    ScheduleActionUseCase, SearchUseCase, SetThemeUseCase, SubscribeProviderUseCase,
+    ScheduleActionUseCase, SearchUseCase, SetThemeUseCase, SubscribeProviderUseCase, TimerService,
 };
 use quantum_config::{Config, ConfigStore};
 use quantum_domain::{DomainError, EventBus, ProviderId, ProviderSource};
@@ -24,10 +24,11 @@ use quantum_ipc::{
 };
 use quantum_providers::{
     BluezProvider, DeclarativeShellProvider, DesktopAppsProvider, HyprlandActiveWindowProvider,
-    HyprlandWindowsProvider, InMemoryProviderRegistry, LogindBrightnessProvider, MprisProvider,
-    NetworkManagerProvider, NotificationsProvider, PluginScriptProvider, PowerProfilesDaemonProvider, ProcStatsProvider,
-    ProvidersError, PulseAudioProvider, ShellCommandProvider, SystemPowerProvider,
-    TokioShellExecutor, UpowerBatteryProvider, WifiProvider,
+    HyprlandWindowsProvider, InMemoryProviderRegistry, JsonTimerStore, LogindBrightnessProvider,
+    MprisProvider, NetworkManagerProvider, NotificationTimerNotifier, NotificationsProvider,
+    PluginScriptProvider, PowerProfilesDaemonProvider, ProcStatsProvider, ProvidersError,
+    PulseAudioProvider, ShellCommandProvider, SoundPlayer, SystemClock, SystemPowerProvider,
+    TimerProvider, TokioShellExecutor, UpowerBatteryProvider, WifiProvider,
 };
 use quantum_theme::ThemeStore;
 use quantum_ui::{DummyWindowHost, IpcDispatcher as UiIpcDispatcher};
@@ -625,6 +626,29 @@ async fn setup_daemon(
     notifications.start_dbus().await;
     info!("Registered NotificationsProvider");
 
+    // Timer subsystem.
+    let timer_provider = Arc::new(TimerProvider::new());
+    registry
+        .register(
+            timer_provider.id().clone(),
+            timer_provider.clone() as Arc<dyn quantum_domain::ProviderSource>,
+        )
+        .await;
+    info!("Registered TimerProvider");
+
+    let timer_clock: Arc<dyn quantum_domain::Clock> = Arc::new(SystemClock::new());
+    let timer_store: Arc<dyn quantum_domain::TimerStore> = Arc::new(JsonTimerStore::new());
+    let timer_notifier: Arc<dyn quantum_domain::TimerNotifier> = Arc::new(
+        NotificationTimerNotifier::new(notifications.clone(), SoundPlayer::detect()),
+    );
+    let timer_broadcast: Arc<dyn quantum_domain::TimerBroadcast> = timer_provider.clone();
+    let timer_service = Arc::new(TimerService::new(
+        timer_clock,
+        timer_store,
+        timer_notifier,
+        timer_broadcast,
+    ));
+
     // Plugins: walk ~/.config/quantum/plugins/, merge over the embedded
     // first-party catalog (user plugins shadow embedded ones by name),
     // register one PluginScriptProvider per discovered plugin, spawn one
@@ -732,6 +756,7 @@ async fn setup_daemon(
     let _ = subscribe_provider_use_case
         .execute("notifications".into())
         .await;
+    let _ = subscribe_provider_use_case.execute("timer".into()).await;
     if hypr_client_opt.is_some() {
         let _ = subscribe_provider_use_case
             .execute("hyprland.activewindow".into())
@@ -749,6 +774,12 @@ async fn setup_daemon(
         "wifi",
     ] {
         let _ = subscribe_provider_use_case.execute(id.into()).await;
+    }
+
+    // Re-arm persisted timers and broadcast the first snapshot now that the
+    // provider's subscribe bridge to the event bus is live.
+    if let Err(e) = timer_service.load_and_arm().await {
+        tracing::warn!("failed to load and arm timers: {e}");
     }
 
     // Use the window host passed in from main (GtkWindowHost when running with
@@ -775,6 +806,7 @@ async fn setup_daemon(
         query_provider_use_case,
         schedule_action_use_case,
         reload_plugins_use_case,
+        timer_service.clone(),
     ));
     let _ipc_dispatcher = Arc::new(AppDispatcherAdapter::new(dispatcher));
 
