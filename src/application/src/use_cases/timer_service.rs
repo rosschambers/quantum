@@ -150,11 +150,8 @@ impl TimerServiceInner {
     /// Pick an 8 hex-character id not already present in `existing`.
     fn generate_id(existing: &HashMap<TimerId, Timer>) -> TimerId {
         loop {
-            let mut candidate = String::with_capacity(8);
-            for _ in 0..8 {
-                candidate.push_str(&format!("{:x}", rand::thread_rng().gen_range(0..16)));
-            }
-            let id = TimerId::from(candidate);
+            let value: u32 = rand::thread_rng().gen();
+            let id = TimerId::from(format!("{value:08x}"));
             if !existing.contains_key(&id) {
                 return id;
             }
@@ -271,7 +268,12 @@ impl TimerServiceInner {
 
         self.notifier.notify_complete(&timer_snapshot).await;
 
-        {
+        // Update state under the lock and capture whether (and when) to re-arm.
+        // Crucially we do NOT arm here: the arming task that is running `fire`
+        // has its own `AbortHandle` registered under `id`, and `arm` would
+        // abort it. We must persist and broadcast to completion FIRST, then
+        // re-arm last (see `recurring_fire_from_spawned_task_still_broadcasts`).
+        let rearm_at: Option<u64> = {
             let mut state = self.state.lock().await;
             // Re-read: the timer may have been removed while the notifier ran,
             // and we need its current kind to decide expire-vs-rearm.
@@ -288,17 +290,20 @@ impl TimerServiceInner {
                         timer.status = TimerStatus::Expired;
                     }
                     state.handles.remove(&id);
+                    None
                 }
                 Some((days, time)) => {
                     let civil = self.clock.local_civil();
                     let now = self.clock.now_unix();
-                    let new_fire = seconds_until_next(
-                        civil.weekday,
-                        civil.secs_into_day,
-                        &days,
-                        time,
-                    )
-                    .map(|delta| now + delta);
+                    let new_fire =
+                        seconds_until_next(civil.weekday, civil.secs_into_day, &days, time)
+                            .map(|delta| now + delta);
+                    // Invariant: `seconds_until_next` returns `Some` for any
+                    // non-empty day set, which a recurring timer always has.
+                    debug_assert!(
+                        days.is_empty() || new_fire.is_some(),
+                        "seconds_until_next must yield Some for a non-empty day set"
+                    );
 
                     let mut fires_at = None;
                     if let Some(timer) = state.timers.get_mut(&id) {
@@ -310,14 +315,21 @@ impl TimerServiceInner {
                         timer.status = TimerStatus::Active;
                         fires_at = Some(timer.fires_at_unix());
                     }
-                    if let Some(fires_at) = fires_at {
-                        Self::arm(self, &mut state, id.clone(), fires_at);
-                    }
+                    fires_at
                 }
             }
-        }
+        };
 
+        // Persist and broadcast to completion before touching the arming task.
         self.persist_and_broadcast().await;
+
+        // Re-arm last. No `.await` may follow this in the recurring path:
+        // `arm` aborts the prior handle for `id` — which is this very task — and
+        // that abort is harmless only because `fire` returns immediately after.
+        if let Some(fires_at) = rearm_at {
+            let mut state = self.state.lock().await;
+            Self::arm(self, &mut state, id, fires_at);
+        }
     }
 
     async fn cancel(&self, id: TimerId) -> Result<(), TimerError> {
@@ -432,7 +444,7 @@ impl TimerServiceInner {
             let mut state = self.state.lock().await;
             state.settings = data.settings;
             // Start from a clean slate so a re-load is idempotent.
-            for (_, handle) in state.handles.drain() {
+            for handle in std::mem::take(&mut state.handles).into_values() {
                 handle.abort();
             }
             state.timers.clear();
@@ -485,7 +497,7 @@ mod tests {
         WeekdaySet,
     };
     use async_trait::async_trait;
-    use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
+    use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
     use std::sync::{Arc, Mutex};
 
     /// Clock with interior mutability on `now` so a test can advance time
@@ -515,6 +527,10 @@ mod tests {
     struct FakeStore {
         data: Mutex<Option<TimerStoreData>>,
         save_count: AtomicUsize,
+        /// When set, `save` yields to the scheduler before recording. This
+        /// mimics the real `JsonTimerStore`, whose disk write yields, so a task
+        /// aborted earlier in the same poll is cancelled at this point.
+        yield_on_save: AtomicBool,
     }
 
     #[async_trait]
@@ -523,6 +539,9 @@ mod tests {
             Ok(self.data.lock().unwrap().clone().unwrap_or_default())
         }
         async fn save(&self, data: &TimerStoreData) -> Result<(), TimerError> {
+            if self.yield_on_save.load(Ordering::SeqCst) {
+                tokio::task::yield_now().await;
+            }
             self.save_count.fetch_add(1, Ordering::SeqCst);
             *self.data.lock().unwrap() = Some(data.clone());
             Ok(())
@@ -567,6 +586,7 @@ mod tests {
         let store = Arc::new(FakeStore {
             data: Mutex::new(None),
             save_count: AtomicUsize::new(0),
+            yield_on_save: AtomicBool::new(false),
         });
         let notifier = Arc::new(FakeNotifier {
             count: AtomicUsize::new(0),
@@ -990,5 +1010,85 @@ mod tests {
         assert_eq!(timer.status, TimerStatus::Active);
         // Monday 09:00 -> 17:00 today is 8 hours out.
         assert_eq!(timer.fires_at_unix(), 1_000_000 + 8 * 3600);
+    }
+
+    /// Regression: a recurring fire that runs inside the arming task (whose
+    /// `AbortHandle` is registered under the timer id) must still broadcast.
+    ///
+    /// This drives `fire` from a spawned task whose handle is registered under
+    /// the id exactly as `arm` does in production. With a `FakeStore` that
+    /// yields inside `save`, the old ordering (re-arm before persist) aborted
+    /// the running task at the save yield point, so `broadcast.publish` never
+    /// ran. The fix persists and broadcasts before re-arming.
+    #[tokio::test]
+    async fn recurring_fire_from_spawned_task_still_broadcasts() {
+        let (service, fakes) = build_service(1_000_000, civil(Weekday::Monday, 9 * 3600));
+        fakes.store.yield_on_save.store(true, Ordering::SeqCst);
+
+        let id = service
+            .create(CreateTimerSpec {
+                label: "Standup".to_string(),
+                start: TimerStart::Recurring {
+                    days: WeekdaySet::from_days(&[Weekday::Monday]),
+                    time: TimeOfDay::new(17, 0).unwrap(),
+                },
+                visual: None,
+                notify: None,
+            })
+            .await
+            .expect("create");
+
+        let before_publishes = fakes.broadcast.count.load(Ordering::SeqCst);
+        let before_fire = service
+            .list()
+            .await
+            .timers
+            .iter()
+            .find(|t| t.id == id)
+            .map(|t| t.fires_at_unix())
+            .expect("present");
+
+        // Advance the clock so the recompute lands strictly later.
+        fakes.clock.set_now(1_000_500);
+
+        let service = Arc::new(service);
+        let service_for_task = service.clone();
+        let id_for_task = id.clone();
+
+        // Hold the state lock so the spawned task blocks on its first
+        // `state.lock().await`. While holding it, register the task's handle
+        // under the id (mimicking `arm`) and abort the original arming task so
+        // only our task remains. Releasing the lock lets `fire` proceed.
+        let join = {
+            let mut state = service.inner.state.lock().await;
+            let handle =
+                tokio::spawn(async move { service_for_task.fire(id_for_task).await });
+            if let Some(previous) = state.handles.insert(id.clone(), handle.abort_handle()) {
+                previous.abort();
+            }
+            handle
+        };
+
+        // Under the old ordering the task is aborted at the save yield point, so
+        // this returns a cancellation error; under the fix it completes. Either
+        // way we then assert on the observable broadcast.
+        let _ = join.await;
+
+        assert!(
+            fakes.broadcast.count.load(Ordering::SeqCst) > before_publishes,
+            "recurring fire must broadcast after re-arming (publishes: {} -> {})",
+            before_publishes,
+            fakes.broadcast.count.load(Ordering::SeqCst)
+        );
+
+        let listed = service.list().await;
+        let timer = listed.timers.iter().find(|t| t.id == id).expect("present");
+        assert_eq!(timer.status, TimerStatus::Active);
+        assert!(
+            timer.fires_at_unix() > before_fire,
+            "next fire {} should be greater than {}",
+            timer.fires_at_unix(),
+            before_fire
+        );
     }
 }
