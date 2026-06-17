@@ -17,10 +17,15 @@ use quantum_domain::{
 use rand::Rng;
 use serde::Deserialize;
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::Mutex;
 use tokio::task::AbortHandle;
+
+/// Default time an expired one-shot timer lingers in the "complete" state
+/// before being automatically removed from the widget and persistence.
+const DEFAULT_EXPIRED_LINGER: Duration = Duration::from_secs(10);
 
 /// How a new timer's schedule is expressed by the caller. Resolved into a
 /// concrete `TimerKind` against the clock at creation time.
@@ -70,6 +75,11 @@ struct TimerServiceInner {
     notifier: Arc<dyn TimerNotifier>,
     broadcast: Arc<dyn TimerBroadcast>,
     state: Mutex<TimerServiceState>,
+    /// How long an expired one-shot timer lingers in the "complete" state
+    /// before being auto-removed, in milliseconds. Stored as an atomic so the
+    /// `with_expired_linger` builder can override it without rebuilding the
+    /// `Arc`. Defaults to 10_000 (ten seconds).
+    expired_linger_ms: AtomicU64,
 }
 
 struct TimerServiceState {
@@ -96,8 +106,21 @@ impl TimerService {
                     timers: HashMap::new(),
                     handles: HashMap::new(),
                 }),
+                expired_linger_ms: AtomicU64::new(DEFAULT_EXPIRED_LINGER.as_millis() as u64),
             }),
         }
+    }
+
+    /// Override how long an expired one-shot timer lingers before auto-removal.
+    /// Intended to be called immediately after `new` (for example by tests, to
+    /// avoid waiting the default ten seconds). Mutates the value inside the
+    /// `Arc` in place, so no timers must have been armed yet for the new value
+    /// to take effect on subsequent fires.
+    pub fn with_expired_linger(self, linger: Duration) -> Self {
+        self.inner
+            .expired_linger_ms
+            .store(linger.as_millis() as u64, Ordering::Relaxed);
+        self
     }
 
     /// Create, arm, persist, and broadcast a new timer.
@@ -275,11 +298,13 @@ impl TimerServiceInner {
 
         self.notifier.notify_complete(&timer_snapshot).await;
 
-        // Update state under the lock and capture whether (and when) to re-arm.
+        // Update state under the lock and capture whether (and when) to re-arm,
+        // and whether a one-shot expiry should be scheduled for auto-removal.
         // Crucially we do NOT arm here: the arming task that is running `fire`
         // has its own `AbortHandle` registered under `id`, and `arm` would
         // abort it. We must persist and broadcast to completion FIRST, then
         // re-arm last (see `recurring_fire_from_spawned_task_still_broadcasts`).
+        let mut schedule_removal = false;
         let rearm_at: Option<u64> = {
             let mut state = self.state.lock().await;
             // Re-read: the timer may have been removed while the notifier ran,
@@ -297,6 +322,7 @@ impl TimerServiceInner {
                         timer.status = TimerStatus::Expired;
                     }
                     state.handles.remove(&id);
+                    schedule_removal = true;
                     None
                 }
                 Some((days, time)) => {
@@ -335,7 +361,49 @@ impl TimerServiceInner {
         // that abort is harmless only because `fire` returns immediately after.
         if let Some(fires_at) = rearm_at {
             let mut state = self.state.lock().await;
-            Self::arm(self, &mut state, id, fires_at);
+            Self::arm(self, &mut state, id.clone(), fires_at);
+        }
+
+        // A one-shot that just expired lingers in the "complete" state for the
+        // configured delay, then removes itself.
+        if schedule_removal {
+            self.spawn_expired_removal(id);
+        }
+    }
+
+    /// Spawn a detached task that, after the linger delay, removes `id` if it is
+    /// still present and still `Expired`. The status guard makes this safe even
+    /// if the user dismissed and recreated a timer with the same (random) id:
+    /// only a still-expired timer is removed. The task's handle is intentionally
+    /// untracked — it is a fire-and-forget cleanup, and the one-shot's arming
+    /// handle was already cleared when it fired.
+    fn spawn_expired_removal(self: &Arc<Self>, id: TimerId) {
+        let linger = Duration::from_millis(self.expired_linger_ms.load(Ordering::Relaxed));
+        let inner = self.clone();
+        tokio::spawn(async move {
+            tokio::time::sleep(linger).await;
+            inner.remove_if_expired(id).await;
+        });
+    }
+
+    /// Remove `id` only if it is still present and `Expired`, then persist and
+    /// broadcast. A no-op (no broadcast) if the timer is gone or no longer
+    /// expired.
+    async fn remove_if_expired(&self, id: TimerId) {
+        let removed = {
+            let mut state = self.state.lock().await;
+            let still_expired = state
+                .timers
+                .get(&id)
+                .is_some_and(|timer| timer.status == TimerStatus::Expired);
+            if still_expired {
+                state.timers.remove(&id);
+                state.handles.remove(&id);
+            }
+            still_expired
+        };
+        if removed {
+            self.persist_and_broadcast().await;
         }
     }
 
@@ -1094,5 +1162,77 @@ mod tests {
             timer.fires_at_unix(),
             before_fire
         );
+    }
+
+    #[tokio::test]
+    async fn expired_oneshot_is_auto_removed_after_linger() {
+        let (service, fakes) = build_service(1_000_000, civil(Weekday::Monday, 9 * 3600));
+        let service = service.with_expired_linger(std::time::Duration::from_millis(40));
+        let id = service
+            .create(CreateTimerSpec {
+                label: "Tea".to_string(),
+                start: TimerStart::Duration { secs: 300 },
+                visual: None,
+                notify: None,
+            })
+            .await
+            .expect("create");
+
+        service.fire(id.clone()).await;
+
+        // Immediately after fire: present and Expired (lingering).
+        let listed = service.list().await;
+        let timer = listed
+            .timers
+            .iter()
+            .find(|t| t.id == id)
+            .expect("present right after fire");
+        assert_eq!(timer.status, TimerStatus::Expired);
+        let publishes_after_fire = fakes.broadcast.count.load(Ordering::SeqCst);
+
+        // After the linger elapses the removal task should drop it.
+        tokio::time::sleep(std::time::Duration::from_millis(120)).await;
+
+        assert!(
+            service.list().await.timers.iter().all(|t| t.id != id),
+            "expired one-shot should be auto-removed after the linger"
+        );
+        assert!(
+            fakes.broadcast.count.load(Ordering::SeqCst) > publishes_after_fire,
+            "removal must broadcast (publishes: {} -> {})",
+            publishes_after_fire,
+            fakes.broadcast.count.load(Ordering::SeqCst)
+        );
+    }
+
+    #[tokio::test]
+    async fn recurring_is_not_auto_removed() {
+        let (service, _fakes) = build_service(1_000_000, civil(Weekday::Monday, 9 * 3600));
+        let service = service.with_expired_linger(std::time::Duration::from_millis(40));
+        let id = service
+            .create(CreateTimerSpec {
+                label: "Standup".to_string(),
+                start: TimerStart::Recurring {
+                    days: WeekdaySet::from_days(&[Weekday::Monday]),
+                    time: TimeOfDay::new(17, 0).unwrap(),
+                },
+                visual: None,
+                notify: None,
+            })
+            .await
+            .expect("create");
+
+        service.fire(id.clone()).await;
+
+        // Past any linger interval, the recurring timer must still be present.
+        tokio::time::sleep(std::time::Duration::from_millis(120)).await;
+
+        let listed = service.list().await;
+        let timer = listed
+            .timers
+            .iter()
+            .find(|t| t.id == id)
+            .expect("recurring timer must not be auto-removed");
+        assert_eq!(timer.status, TimerStatus::Active);
     }
 }
