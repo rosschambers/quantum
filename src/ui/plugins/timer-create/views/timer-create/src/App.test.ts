@@ -57,4 +57,35 @@ describe('TimerCreate App', () => {
         );
         expect(hidden).toBe(true);
     });
+
+    it('in mode: label + 45m submit calls timer.create then view.hide', async () => {
+        const { container } = render(App);
+        await settle();
+
+        const label = container.querySelector('[data-field="label"]') as HTMLInputElement;
+        await fireEvent.input(label, { target: { value: 'Tea' } });
+        await tick();
+
+        const duration = container.querySelector('[data-field="duration"]') as HTMLInputElement;
+        await fireEvent.input(duration, { target: { value: '45m' } });
+        await tick();
+
+        const submit = container.querySelector('[data-action="submit"]') as HTMLButtonElement;
+        await fireEvent.click(submit);
+        await settle();
+
+        const createCall = mockCallSpy.mock.calls.find(([method]) => method === 'timer.create');
+        expect(createCall).toBeDefined();
+        expect(createCall![1]).toEqual({
+            label: 'Tea',
+            start: { kind: 'duration', secs: 2700 },
+        });
+
+        const hidden = mockCallSpy.mock.calls.some(
+            ([method, params]) =>
+                method === 'view.hide' &&
+                (params as { name?: string })?.name === 'plugin/timer-create/timer-create',
+        );
+        expect(hidden).toBe(true);
+    });
 });
