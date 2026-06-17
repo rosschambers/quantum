@@ -127,14 +127,14 @@ single_instance = false
 
     #[test]
     fn fill_output_true_parses() {
-        let descriptor =
-            parse_view_toml("fill_output = true\n").expect("valid fill_output");
+        let descriptor = parse_view_toml("fill_output = true\n").expect("valid fill_output");
         assert!(descriptor.fill_output);
     }
 
     #[test]
     fn fill_output_defaults_to_false_when_missing() {
-        let descriptor = parse_view_toml("kind = \"widget\"\n").expect("missing fill_output is valid");
+        let descriptor =
+            parse_view_toml("kind = \"widget\"\n").expect("missing fill_output is valid");
         assert!(!descriptor.fill_output);
     }
 
