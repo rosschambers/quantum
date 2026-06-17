@@ -52,9 +52,7 @@ impl From<TimerError> for ApplicationError {
     fn from(error: TimerError) -> ApplicationError {
         let message = error.to_string();
         match error {
-            TimerError::NotFound(_) => {
-                ApplicationError::Domain(DomainError::Unsupported(message))
-            }
+            TimerError::NotFound(_) => ApplicationError::Domain(DomainError::Unsupported(message)),
             _ => ApplicationError::Domain(DomainError::ActionFailed { reason: message }),
         }
     }

@@ -687,10 +687,7 @@ mod tests {
             "timer.create must return an id"
         );
 
-        let listed = dispatcher
-            .dispatch("timer.list", None)
-            .await
-            .expect("list");
+        let listed = dispatcher.dispatch("timer.list", None).await.expect("list");
         let timers = listed["timers"].as_array().expect("timers array");
         assert_eq!(timers.len(), 1);
         assert_eq!(timers[0]["label"], "Tea");

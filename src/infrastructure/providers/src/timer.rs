@@ -82,8 +82,8 @@ impl TimerBroadcast for TimerProvider {
 mod tests {
     use super::*;
     use quantum_domain::{
-        NotifyConfig, ProviderSource, Timer, TimerBroadcast, TimerId, TimerKind, TimerStoreData,
-        TimerStatus, VisualConfig,
+        NotifyConfig, ProviderSource, Timer, TimerBroadcast, TimerId, TimerKind, TimerStatus,
+        TimerStoreData, VisualConfig,
     };
 
     fn sample_timer() -> Timer {
@@ -113,6 +113,9 @@ mod tests {
         .expect("no timeout")
         .expect("an item");
         assert_eq!(envelope["change"], "snapshot");
-        assert_eq!(envelope["timers"].as_array().expect("timers array").len(), 1);
+        assert_eq!(
+            envelope["timers"].as_array().expect("timers array").len(),
+            1
+        );
     }
 }

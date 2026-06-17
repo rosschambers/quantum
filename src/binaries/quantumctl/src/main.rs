@@ -240,8 +240,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 print_response(&result, cli.json);
             }
             TimerCommand::Cancel { id } => {
-                let result =
-                    call_daemon(&socket_path, "timer.cancel", json!({ "id": id })).await?;
+                let result = call_daemon(&socket_path, "timer.cancel", json!({ "id": id })).await?;
                 print_response(&result, cli.json);
             }
             TimerCommand::Dismiss { id } => {
@@ -261,7 +260,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 }
                 if let Some(time) = at {
                     let (hour, minute) = parse_time_of_day(&time)?;
-                    changes.insert("time".to_string(), json!({ "hour": hour, "minute": minute }));
+                    changes.insert(
+                        "time".to_string(),
+                        json!({ "hour": hour, "minute": minute }),
+                    );
                 }
                 if let Some(repeat_spec) = repeat {
                     let days = parse_repeat(&repeat_spec)?;

@@ -9,8 +9,8 @@ pub use error::{ApplicationError, Result};
 pub use use_cases::{
     CreateTimerSpec, EditChanges, LaunchActionUseCase, ListProvidersUseCase, OpenViewUseCase,
     QueryProviderUseCase, ReloadPluginsUseCase, ReloadThemeUseCase, ScheduleActionUseCase,
-    ScheduleId, ScheduledJobSummary, SearchResponse, SearchUseCase, SetThemeUseCase, TimerService,
-    TimerStart, SubscribeProviderUseCase,
+    ScheduleId, ScheduledJobSummary, SearchResponse, SearchUseCase, SetThemeUseCase,
+    SubscribeProviderUseCase, TimerService, TimerStart,
 };
 
 pub fn version() -> &'static str {

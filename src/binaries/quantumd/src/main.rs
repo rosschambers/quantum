@@ -384,16 +384,17 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         if env.channel != "notifications.event" {
                             continue;
                         }
-                        let is_created = serde_json::from_str::<serde_json::Value>(env.payload.get())
-                            .ok()
-                            .and_then(|value| {
-                                value
-                                    .get("change")
-                                    .and_then(|change| change.get("type"))
-                                    .and_then(|kind| kind.as_str())
-                                    .map(|kind| kind == "created")
-                            })
-                            .unwrap_or(false);
+                        let is_created =
+                            serde_json::from_str::<serde_json::Value>(env.payload.get())
+                                .ok()
+                                .and_then(|value| {
+                                    value
+                                        .get("change")
+                                        .and_then(|change| change.get("type"))
+                                        .and_then(|kind| kind.as_str())
+                                        .map(|kind| kind == "created")
+                                })
+                                .unwrap_or(false);
                         if is_created {
                             let params =
                                 serde_json::json!({"name": "plugin/notification-center/toast"});

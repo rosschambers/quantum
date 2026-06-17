@@ -16,7 +16,6 @@ pub mod view_descriptor;
 pub mod window_mode;
 
 pub use action::Action;
-pub use notifications::{Notification, NotificationEvent, NotificationUrgency};
 pub use bar_state::{
     ActiveWifi, ActiveWindowState, AudioSink, AudioState, BatteryChargeState, BluetoothDevice,
     BluetoothState, BrightnessDisplay, BrightnessState, Ipv4Method, MonitorActiveWindowState,
@@ -28,6 +27,7 @@ pub use error::DomainError;
 pub use event_bus::EventEnvelope;
 pub use ids::ProviderId;
 pub use match_result::{IconRef, Match};
+pub use notifications::{Notification, NotificationEvent, NotificationUrgency};
 pub use ports::{
     ActionOutcome, Clock, EventBus, HyprlandClient, PluginCatalog, ProviderRegistry,
     ProviderSource, ShellExecutor, ShellOutput, ThemeStore, TimerBroadcast, TimerNotifier,

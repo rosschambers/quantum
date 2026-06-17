@@ -677,10 +677,7 @@ mod tests {
             serde_json::to_string(&TimeFormat::Compact).unwrap(),
             "\"compact\""
         );
-        assert_eq!(
-            serde_json::to_string(&SoundName::Bell).unwrap(),
-            "\"bell\""
-        );
+        assert_eq!(serde_json::to_string(&SoundName::Bell).unwrap(), "\"bell\"");
     }
 
     #[test]

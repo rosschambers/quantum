@@ -155,8 +155,7 @@ mod tests {
     async fn notify_complete_pushes_notification() {
         let notifications = Arc::new(NotificationsProvider::new());
         let mut stream = notifications.subscribe().expect("subscribe stream");
-        let notifier =
-            NotificationTimerNotifier::new(notifications.clone(), SoundPlayer::none());
+        let notifier = NotificationTimerNotifier::new(notifications.clone(), SoundPlayer::none());
         let timer = timer_with_notify(NotifyConfig {
             notification: true,
             sound: None,

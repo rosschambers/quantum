@@ -206,9 +206,13 @@ impl TimerServiceInner {
                 end_unix: now + secs,
             },
             TimerStart::At { time } => {
-                let delta =
-                    seconds_until_next(civil.weekday, civil.secs_into_day, &WeekdaySet::all(), time)
-                        .unwrap_or(0);
+                let delta = seconds_until_next(
+                    civil.weekday,
+                    civil.secs_into_day,
+                    &WeekdaySet::all(),
+                    time,
+                )
+                .unwrap_or(0);
                 TimerKind::OneShot {
                     end_unix: now + delta,
                 }
@@ -217,8 +221,8 @@ impl TimerServiceInner {
                 if days.is_empty() {
                     return Err(TimerError::EmptyWeekdaySet);
                 }
-                let delta =
-                    seconds_until_next(civil.weekday, civil.secs_into_day, &days, time).unwrap_or(0);
+                let delta = seconds_until_next(civil.weekday, civil.secs_into_day, &days, time)
+                    .unwrap_or(0);
                 TimerKind::Recurring {
                     days,
                     time,
@@ -394,12 +398,9 @@ impl TimerServiceInner {
                             if let Some(new_time) = changes.time {
                                 *time = new_time;
                             }
-                            if let Some(delta) = seconds_until_next(
-                                civil.weekday,
-                                civil.secs_into_day,
-                                days,
-                                *time,
-                            ) {
+                            if let Some(delta) =
+                                seconds_until_next(civil.weekday, civil.secs_into_day, days, *time)
+                            {
                                 *next_fire_unix = now + delta;
                             }
                             needs_rearm = true;
@@ -494,12 +495,12 @@ impl TimerServiceInner {
 #[cfg(test)]
 mod tests {
     use super::{CreateTimerSpec, EditChanges, TimerService, TimerStart};
-    use quantum_domain::{
-        CivilNow, Clock, NotifyConfig, Point, TimerBroadcast, TimerError, TimerKind, TimerNotifier,
-        TimerStore, TimerStoreData, Timer, TimerId, TimerStatus, TimeOfDay, VisualConfig, Weekday,
-        WeekdaySet,
-    };
     use async_trait::async_trait;
+    use quantum_domain::{
+        CivilNow, Clock, NotifyConfig, Point, TimeOfDay, Timer, TimerBroadcast, TimerError,
+        TimerId, TimerKind, TimerNotifier, TimerStatus, TimerStore, TimerStoreData, VisualConfig,
+        Weekday, WeekdaySet,
+    };
     use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
     use std::sync::{Arc, Mutex};
 
@@ -634,12 +635,7 @@ mod tests {
         }
     }
 
-    fn recurring_timer(
-        id: &str,
-        days: WeekdaySet,
-        time: TimeOfDay,
-        next_fire_unix: u64,
-    ) -> Timer {
+    fn recurring_timer(id: &str, days: WeekdaySet, time: TimeOfDay, next_fire_unix: u64) -> Timer {
         Timer {
             id: TimerId::from(id),
             label: id.to_string(),
@@ -672,7 +668,12 @@ mod tests {
         assert_eq!(listed.timers.len(), 1);
         let timer = &listed.timers[0];
         assert_eq!(timer.id, id);
-        assert_eq!(timer.kind, TimerKind::OneShot { end_unix: 1_000_300 });
+        assert_eq!(
+            timer.kind,
+            TimerKind::OneShot {
+                end_unix: 1_000_300
+            }
+        );
         assert!(fakes.store.save_count.load(Ordering::SeqCst) >= 1);
         assert!(fakes.broadcast.count.load(Ordering::SeqCst) >= 1);
     }
@@ -779,11 +780,7 @@ mod tests {
         service.fire(id.clone()).await;
 
         let listed = service.list().await;
-        let timer = listed
-            .timers
-            .iter()
-            .find(|t| t.id == id)
-            .expect("present");
+        let timer = listed.timers.iter().find(|t| t.id == id).expect("present");
         assert_eq!(timer.status, TimerStatus::Active);
         assert!(
             timer.fires_at_unix() > before,
@@ -986,7 +983,12 @@ mod tests {
             .find(|t| t.id == TimerId::from("future"))
             .expect("present");
         assert_eq!(timer.status, TimerStatus::Active);
-        assert_eq!(timer.kind, TimerKind::OneShot { end_unix: 1_000_500 });
+        assert_eq!(
+            timer.kind,
+            TimerKind::OneShot {
+                end_unix: 1_000_500
+            }
+        );
     }
 
     #[tokio::test]
@@ -1064,8 +1066,7 @@ mod tests {
         // only our task remains. Releasing the lock lets `fire` proceed.
         let join = {
             let mut state = service.inner.state.lock().await;
-            let handle =
-                tokio::spawn(async move { service_for_task.fire(id_for_task).await });
+            let handle = tokio::spawn(async move { service_for_task.fire(id_for_task).await });
             if let Some(previous) = state.handles.insert(id.clone(), handle.abort_handle()) {
                 previous.abort();
             }

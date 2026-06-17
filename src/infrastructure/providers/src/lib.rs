@@ -16,6 +16,7 @@ pub mod hyprland_active_window;
 pub mod hyprland_windows;
 pub mod mpris;
 pub mod network;
+pub mod notifications;
 pub mod plugin_script;
 pub mod power_profile;
 pub mod proc_stats;
@@ -26,7 +27,6 @@ pub mod timer_clock;
 pub mod timer_notifier;
 pub mod timer_store;
 pub mod wifi;
-pub mod notifications;
 
 pub use error::ProvidersError;
 pub use registry::InMemoryProviderRegistry;

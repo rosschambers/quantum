@@ -31,8 +31,9 @@ impl JsonTimerStore {
     /// `$XDG_STATE_HOME/quantum/timers.json`, falling back to
     /// `~/.local/state/quantum/timers.json` when `XDG_STATE_HOME` is unset.
     fn default_path() -> PathBuf {
-        let state_home = std::env::var("XDG_STATE_HOME")
-            .unwrap_or_else(|_| format!("{}/.local/state", std::env::var("HOME").unwrap_or_default()));
+        let state_home = std::env::var("XDG_STATE_HOME").unwrap_or_else(|_| {
+            format!("{}/.local/state", std::env::var("HOME").unwrap_or_default())
+        });
 
         PathBuf::from(state_home).join("quantum/timers.json")
     }
@@ -76,10 +77,7 @@ impl TimerStore for JsonTimerStore {
     async fn save(&self, data: &TimerStoreData) -> Result<(), TimerError> {
         if let Some(parent) = self.path.parent() {
             std::fs::create_dir_all(parent).map_err(|error| {
-                TimerError::Persistence(format!(
-                    "failed to create {}: {error}",
-                    parent.display()
-                ))
+                TimerError::Persistence(format!("failed to create {}: {error}", parent.display()))
             })?;
         }
 
@@ -89,10 +87,7 @@ impl TimerStore for JsonTimerStore {
 
         let temp_path = self.path.with_extension("tmp");
         std::fs::write(&temp_path, serialized.as_bytes()).map_err(|error| {
-            TimerError::Persistence(format!(
-                "failed to write {}: {error}",
-                temp_path.display()
-            ))
+            TimerError::Persistence(format!("failed to write {}: {error}", temp_path.display()))
         })?;
 
         std::fs::rename(&temp_path, &self.path).map_err(|error| {
