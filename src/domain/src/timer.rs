@@ -214,6 +214,138 @@ pub fn seconds_until_next(
     None
 }
 
+/// The visual rendering style of a timer.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum VisualStyle {
+    Ring,
+    Wedge,
+    Pie,
+    Dots,
+    Bar,
+    #[default]
+    Mixed,
+}
+
+/// When a piece of text on a timer is shown.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum TextVisibility {
+    Always,
+    Hover,
+    Hidden,
+}
+
+/// Where text is positioned relative to a timer.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum TextPosition {
+    Below,
+    Above,
+    Center,
+}
+
+/// The color treatment applied to timer text.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum TextColor {
+    Accent,
+    White,
+    Muted,
+}
+
+/// How the remaining time is formatted.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum TimeFormat {
+    Clock,
+    Compact,
+    Percent,
+}
+
+/// A named completion sound.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum SoundName {
+    #[default]
+    Complete,
+    Bell,
+    Chime,
+    Alarm,
+}
+
+/// Visual configuration for a timer. `#[serde(default)]` at the struct level
+/// fills any missing field from the manual `Default` impl, so partial JSON
+/// (including `{}`) deserializes to the full set of spec defaults.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct VisualConfig {
+    pub style: VisualStyle,
+    pub size: u32,
+    pub thickness: u32,
+    pub fill: bool,
+    pub reverse: bool,
+    pub accent_hue: u16,
+    pub track_opacity: u8,
+    pub label_visibility: TextVisibility,
+    pub time_visibility: TextVisibility,
+    pub text_position: TextPosition,
+    pub text_color: TextColor,
+    pub time_format: TimeFormat,
+    pub font_scale: u16,
+    pub font_weight: u16,
+    pub uppercase: bool,
+}
+
+impl Default for VisualConfig {
+    fn default() -> VisualConfig {
+        VisualConfig {
+            style: VisualStyle::Mixed,
+            size: 130,
+            thickness: 12,
+            fill: true,
+            reverse: true,
+            accent_hue: 220,
+            track_opacity: 0,
+            label_visibility: TextVisibility::Hover,
+            time_visibility: TextVisibility::Hover,
+            text_position: TextPosition::Center,
+            text_color: TextColor::Accent,
+            time_format: TimeFormat::Compact,
+            font_scale: 105,
+            font_weight: 500,
+            uppercase: true,
+        }
+    }
+}
+
+/// Notification configuration for a timer. `#[serde(default)]` at the struct
+/// level fills any missing field from the manual `Default` impl, so partial
+/// JSON (including `{}`) deserializes to the full set of spec defaults.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct NotifyConfig {
+    pub notification: bool,
+    pub sound: Option<SoundName>,
+    pub urgency_ramp: bool,
+    pub ramp_threshold: u8,
+    pub pulse: bool,
+    pub flash: bool,
+}
+
+impl Default for NotifyConfig {
+    fn default() -> NotifyConfig {
+        NotifyConfig {
+            notification: true,
+            sound: None,
+            urgency_ramp: true,
+            ramp_threshold: 20,
+            pulse: true,
+            flash: true,
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -373,5 +505,154 @@ mod tests {
             TimeOfDay::new(9, 0).unwrap(),
         );
         assert_eq!(r, Some(7 * 86400 - 3600));
+    }
+
+    #[test]
+    fn enum_defaults_match_spec() {
+        assert_eq!(VisualStyle::default(), VisualStyle::Mixed);
+        assert_eq!(SoundName::default(), SoundName::Complete);
+    }
+
+    #[test]
+    fn enums_serialize_lowercase() {
+        assert_eq!(
+            serde_json::to_string(&VisualStyle::Ring).unwrap(),
+            "\"ring\""
+        );
+        assert_eq!(
+            serde_json::to_string(&TextVisibility::Hover).unwrap(),
+            "\"hover\""
+        );
+        assert_eq!(
+            serde_json::to_string(&TextPosition::Center).unwrap(),
+            "\"center\""
+        );
+        assert_eq!(
+            serde_json::to_string(&TextColor::Accent).unwrap(),
+            "\"accent\""
+        );
+        assert_eq!(
+            serde_json::to_string(&TimeFormat::Compact).unwrap(),
+            "\"compact\""
+        );
+        assert_eq!(
+            serde_json::to_string(&SoundName::Bell).unwrap(),
+            "\"bell\""
+        );
+    }
+
+    #[test]
+    fn visual_config_default_values_match_spec() {
+        let config = VisualConfig::default();
+        assert_eq!(config.style, VisualStyle::Mixed);
+        assert_eq!(config.size, 130);
+        assert_eq!(config.thickness, 12);
+        assert!(config.fill);
+        assert!(config.reverse);
+        assert_eq!(config.accent_hue, 220);
+        assert_eq!(config.track_opacity, 0);
+        assert_eq!(config.label_visibility, TextVisibility::Hover);
+        assert_eq!(config.time_visibility, TextVisibility::Hover);
+        assert_eq!(config.text_position, TextPosition::Center);
+        assert_eq!(config.text_color, TextColor::Accent);
+        assert_eq!(config.time_format, TimeFormat::Compact);
+        assert_eq!(config.font_scale, 105);
+        assert_eq!(config.font_weight, 500);
+        assert!(config.uppercase);
+    }
+
+    #[test]
+    fn visual_config_empty_json_is_full_default() {
+        let from_empty: VisualConfig = serde_json::from_str("{}").unwrap();
+        assert_eq!(from_empty, VisualConfig::default());
+    }
+
+    #[test]
+    fn visual_config_partial_json_keeps_other_defaults() {
+        let partial: VisualConfig = serde_json::from_str(r#"{"size": 90}"#).unwrap();
+        assert_eq!(partial.size, 90);
+        let default = VisualConfig::default();
+        assert_eq!(partial.style, default.style);
+        assert_eq!(partial.thickness, default.thickness);
+        assert_eq!(partial.fill, default.fill);
+        assert_eq!(partial.reverse, default.reverse);
+        assert_eq!(partial.accent_hue, default.accent_hue);
+        assert_eq!(partial.track_opacity, default.track_opacity);
+        assert_eq!(partial.label_visibility, default.label_visibility);
+        assert_eq!(partial.time_visibility, default.time_visibility);
+        assert_eq!(partial.text_position, default.text_position);
+        assert_eq!(partial.text_color, default.text_color);
+        assert_eq!(partial.time_format, default.time_format);
+        assert_eq!(partial.font_scale, default.font_scale);
+        assert_eq!(partial.font_weight, default.font_weight);
+        assert_eq!(partial.uppercase, default.uppercase);
+    }
+
+    #[test]
+    fn visual_config_round_trips() {
+        let config = VisualConfig {
+            style: VisualStyle::Bar,
+            size: 200,
+            thickness: 20,
+            fill: false,
+            reverse: false,
+            accent_hue: 300,
+            track_opacity: 50,
+            label_visibility: TextVisibility::Always,
+            time_visibility: TextVisibility::Hidden,
+            text_position: TextPosition::Below,
+            text_color: TextColor::White,
+            time_format: TimeFormat::Clock,
+            font_scale: 120,
+            font_weight: 700,
+            uppercase: false,
+        };
+        let json = serde_json::to_string(&config).unwrap();
+        let back: VisualConfig = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, config);
+    }
+
+    #[test]
+    fn notify_config_default_values_match_spec() {
+        let config = NotifyConfig::default();
+        assert!(config.notification);
+        assert_eq!(config.sound, None);
+        assert!(config.urgency_ramp);
+        assert_eq!(config.ramp_threshold, 20);
+        assert!(config.pulse);
+        assert!(config.flash);
+    }
+
+    #[test]
+    fn notify_config_empty_json_is_full_default() {
+        let from_empty: NotifyConfig = serde_json::from_str("{}").unwrap();
+        assert_eq!(from_empty, NotifyConfig::default());
+    }
+
+    #[test]
+    fn notify_config_partial_json_keeps_other_defaults() {
+        let partial: NotifyConfig = serde_json::from_str(r#"{"ramp_threshold": 5}"#).unwrap();
+        assert_eq!(partial.ramp_threshold, 5);
+        let default = NotifyConfig::default();
+        assert_eq!(partial.notification, default.notification);
+        assert_eq!(partial.sound, default.sound);
+        assert_eq!(partial.urgency_ramp, default.urgency_ramp);
+        assert_eq!(partial.pulse, default.pulse);
+        assert_eq!(partial.flash, default.flash);
+    }
+
+    #[test]
+    fn notify_config_round_trips() {
+        let config = NotifyConfig {
+            notification: false,
+            sound: Some(SoundName::Chime),
+            urgency_ramp: false,
+            ramp_threshold: 80,
+            pulse: false,
+            flash: false,
+        };
+        let json = serde_json::to_string(&config).unwrap();
+        let back: NotifyConfig = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, config);
     }
 }
