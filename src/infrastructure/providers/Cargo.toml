@@ -29,6 +29,7 @@ shell-words = "1"
 humantime-serde = "1"
 zbus = { version = "4", default-features = true, features = ["tokio"] }
 tempfile = "3"
+chrono = "0.4"
 
 [dev-dependencies]
 tempfile = "3"
