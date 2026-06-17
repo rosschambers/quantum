@@ -35,8 +35,9 @@ pub use ports::{
 pub use query::Query;
 pub use score::MatchScore;
 pub use timer::{
-    seconds_until_next, NotifyConfig, SoundName, TextColor, TextPosition, TextVisibility,
-    TimeFormat, TimeOfDay, TimerError, VisualConfig, VisualStyle, Weekday, WeekdaySet,
+    seconds_until_next, NotifyConfig, Point, SoundName, TextColor, TextPosition, TextVisibility,
+    TimeFormat, TimeOfDay, Timer, TimerError, TimerId, TimerKind, TimerStatus, VisualConfig,
+    VisualStyle, Weekday, WeekdaySet,
 };
 pub use tokens::tokens_to_css;
 pub use view_descriptor::{ViewAnchor, ViewDescriptor, ViewKind, ViewPosition};

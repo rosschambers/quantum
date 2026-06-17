@@ -6,11 +6,19 @@ use serde::ser::SerializeSeq;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::fmt;
 
-/// Errors produced by timer value types. Expanded by later tasks.
-#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+/// Errors produced by timer value types and operations.
+#[derive(Debug, Clone, PartialEq, thiserror::Error)]
 pub enum TimerError {
     #[error("invalid time: {0}")]
     InvalidTime(String),
+    #[error("recurring timer needs at least one weekday")]
+    EmptyWeekdaySet,
+    #[error("timer not found: {0}")]
+    NotFound(String),
+    #[error("persistence error: {0}")]
+    Persistence(String),
+    #[error("invalid duration: {0}")]
+    InvalidDuration(String),
 }
 
 /// A day of the week. Serializes as a lowercase name.
@@ -346,6 +354,94 @@ impl Default for NotifyConfig {
     }
 }
 
+/// Stable identifier for a timer. Serializes transparently as its inner string.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct TimerId(String);
+
+impl TimerId {
+    /// Borrow the identifier as a string slice.
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl From<&str> for TimerId {
+    fn from(s: &str) -> Self {
+        Self(s.to_string())
+    }
+}
+
+impl From<String> for TimerId {
+    fn from(s: String) -> Self {
+        Self(s)
+    }
+}
+
+impl fmt::Display for TimerId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
+/// Lifecycle status of a timer.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum TimerStatus {
+    #[default]
+    Active,
+    Expired,
+}
+
+/// A 2D point. Used for scattered placement of timers. Cannot derive `Eq`
+/// because the coordinates are `f64`.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct Point {
+    pub x: f64,
+    pub y: f64,
+}
+
+/// What kind of timer this is and when it fires. Serialized internally tagged
+/// on a `type` field in snake_case (`one_shot` / `recurring`).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum TimerKind {
+    OneShot {
+        end_unix: u64,
+    },
+    Recurring {
+        days: WeekdaySet,
+        time: TimeOfDay,
+        next_fire_unix: u64,
+    },
+}
+
+/// A configured timer: identity, label, kind, and its visual and notification
+/// settings, plus runtime status and optional scattered position.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Timer {
+    pub id: TimerId,
+    pub label: String,
+    pub kind: TimerKind,
+    pub visual: VisualConfig,
+    pub notify: NotifyConfig,
+    #[serde(default)]
+    pub status: TimerStatus,
+    #[serde(default)]
+    pub scatter_pos: Option<Point>,
+}
+
+impl Timer {
+    /// The Unix timestamp at which this timer next fires: `end_unix` for a
+    /// one-shot timer, `next_fire_unix` for a recurring timer.
+    pub fn fires_at_unix(&self) -> u64 {
+        match &self.kind {
+            TimerKind::OneShot { end_unix } => *end_unix,
+            TimerKind::Recurring { next_fire_unix, .. } => *next_fire_unix,
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -406,7 +502,7 @@ mod tests {
     #[test]
     fn timeofday_serde_round_trips() {
         let time = TimeOfDay::new(7, 45).unwrap();
-        let json = serde_json::to_value(&time).unwrap();
+        let json = serde_json::to_value(time).unwrap();
         let back: TimeOfDay = serde_json::from_value(json).unwrap();
         assert_eq!(back, time);
     }
@@ -654,5 +750,163 @@ mod tests {
         let json = serde_json::to_string(&config).unwrap();
         let back: NotifyConfig = serde_json::from_str(&json).unwrap();
         assert_eq!(back, config);
+    }
+
+    #[test]
+    fn timer_id_from_str_and_string_equal() {
+        assert_eq!(TimerId::from("t1"), TimerId::from("t1".to_string()));
+    }
+
+    #[test]
+    fn timer_id_as_str_and_display() {
+        let id = TimerId::from("morning");
+        assert_eq!(id.as_str(), "morning");
+        assert_eq!(id.to_string(), "morning");
+    }
+
+    #[test]
+    fn timer_id_serde_transparent() {
+        let id = TimerId::from("abc");
+        let json = serde_json::to_string(&id).unwrap();
+        assert_eq!(json, "\"abc\"");
+        let back: TimerId = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, id);
+    }
+
+    #[test]
+    fn timer_status_default_is_active() {
+        assert_eq!(TimerStatus::default(), TimerStatus::Active);
+    }
+
+    #[test]
+    fn timer_status_serializes_lowercase() {
+        assert_eq!(
+            serde_json::to_string(&TimerStatus::Active).unwrap(),
+            "\"active\""
+        );
+        assert_eq!(
+            serde_json::to_string(&TimerStatus::Expired).unwrap(),
+            "\"expired\""
+        );
+    }
+
+    #[test]
+    fn point_round_trips() {
+        let point = Point { x: 1.5, y: -2.25 };
+        let json = serde_json::to_string(&point).unwrap();
+        let back: Point = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, point);
+    }
+
+    #[test]
+    fn timer_kind_one_shot_serializes_with_tag() {
+        let kind = TimerKind::OneShot { end_unix: 1000 };
+        let value = serde_json::to_value(&kind).unwrap();
+        assert_eq!(value["type"], "one_shot");
+        assert_eq!(value["end_unix"], 1000);
+    }
+
+    #[test]
+    fn timer_kind_recurring_serializes_with_tag() {
+        let kind = TimerKind::Recurring {
+            days: WeekdaySet::from_days(&[Weekday::Monday]),
+            time: TimeOfDay::new(8, 30).unwrap(),
+            next_fire_unix: 2000,
+        };
+        let value = serde_json::to_value(&kind).unwrap();
+        assert_eq!(value["type"], "recurring");
+        assert_eq!(value["days"], serde_json::json!(["monday"]));
+        assert_eq!(value["time"], serde_json::json!({"hour": 8, "minute": 30}));
+        assert_eq!(value["next_fire_unix"], 2000);
+    }
+
+    #[test]
+    fn timer_fires_at_unix_one_shot() {
+        let timer = sample_one_shot();
+        assert_eq!(timer.fires_at_unix(), 1700);
+    }
+
+    #[test]
+    fn timer_fires_at_unix_recurring() {
+        let timer = sample_recurring();
+        assert_eq!(timer.fires_at_unix(), 9000);
+    }
+
+    #[test]
+    fn timer_one_shot_round_trips() {
+        let timer = sample_one_shot();
+        let json = serde_json::to_string(&timer).unwrap();
+        let back: Timer = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, timer);
+    }
+
+    #[test]
+    fn timer_recurring_round_trips() {
+        let timer = sample_recurring();
+        let json = serde_json::to_string(&timer).unwrap();
+        let back: Timer = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, timer);
+    }
+
+    #[test]
+    fn timer_status_and_scatter_pos_default_when_absent() {
+        let json = r#"{
+            "id": "t1",
+            "label": "Tea",
+            "kind": {"type": "one_shot", "end_unix": 1700},
+            "visual": {},
+            "notify": {}
+        }"#;
+        let timer: Timer = serde_json::from_str(json).unwrap();
+        assert_eq!(timer.status, TimerStatus::Active);
+        assert_eq!(timer.scatter_pos, None);
+    }
+
+    #[test]
+    fn timer_error_has_all_variants() {
+        let variants = [
+            TimerError::InvalidTime("x".to_string()),
+            TimerError::EmptyWeekdaySet,
+            TimerError::NotFound("t1".to_string()),
+            TimerError::Persistence("disk".to_string()),
+            TimerError::InvalidDuration("neg".to_string()),
+        ];
+        assert_eq!(variants.len(), 5);
+        assert_eq!(
+            TimerError::NotFound("t1".to_string()).to_string(),
+            "timer not found: t1"
+        );
+        assert_eq!(
+            TimerError::EmptyWeekdaySet.to_string(),
+            "recurring timer needs at least one weekday"
+        );
+    }
+
+    fn sample_one_shot() -> Timer {
+        Timer {
+            id: TimerId::from("t1"),
+            label: "Tea".to_string(),
+            kind: TimerKind::OneShot { end_unix: 1700 },
+            visual: VisualConfig::default(),
+            notify: NotifyConfig::default(),
+            status: TimerStatus::Active,
+            scatter_pos: Some(Point { x: 12.0, y: 34.0 }),
+        }
+    }
+
+    fn sample_recurring() -> Timer {
+        Timer {
+            id: TimerId::from("t2"),
+            label: "Standup".to_string(),
+            kind: TimerKind::Recurring {
+                days: WeekdaySet::from_days(&[Weekday::Monday, Weekday::Friday]),
+                time: TimeOfDay::new(9, 0).unwrap(),
+                next_fire_unix: 9000,
+            },
+            visual: VisualConfig::default(),
+            notify: NotifyConfig::default(),
+            status: TimerStatus::Expired,
+            scatter_pos: None,
+        }
     }
 }
