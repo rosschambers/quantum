@@ -21,6 +21,11 @@ pub struct DbusNotification {
     pub timeout_ms: u64,
     pub actions: Vec<(String, String)>,
     pub hints: HashMap<String, serde_json::Value>,
+    /// True for notifications synthesized inside Quantum (for example timer
+    /// completions) rather than received over D-Bus. Internal notifications are
+    /// deduplicated by content among themselves and never fold into a D-Bus
+    /// entry that happens to share an app name and summary.
+    pub internal: bool,
 }
 
 #[derive(Debug)]
@@ -82,6 +87,7 @@ impl NotificationsInner {
                 timeout_ms,
                 actions,
                 hints: HashMap::new(),
+                internal: false,
             });
             let _ = self
                 .tx
@@ -104,6 +110,7 @@ impl NotificationsInner {
             timeout_ms,
             actions,
             hints: HashMap::new(),
+            internal: false,
         });
         let _ = self.tx.send(NotificationEvent::Created { id, timeout_ms: event_timeout });
         id
@@ -156,17 +163,30 @@ impl NotificationsProvider {
 
     pub async fn get_all(&self) -> Vec<DbusNotification> { self.inner.store.read().await.clone() }
 
-    pub async fn add_internal_notification(&self, app_name: String, summary: String, body: String, icon: Option<String>, timeout_ms: u64) {
+    /// Add (or update) a notification synthesized inside Quantum, returning its
+    /// id. Internal notifications sharing an app name and summary are
+    /// deduplicated in place so a re-firing timer updates its existing entry
+    /// rather than stacking duplicates; each distinct one gets a unique id so
+    /// consumers can key and dismiss them independently.
+    pub async fn add_internal_notification(&self, app_name: String, summary: String, body: String, icon: Option<String>, timeout_ms: u64) -> u32 {
         let mut store = self.inner.store.write().await;
-        if let Some(pos) = store.iter().position(|n| n.app_name == app_name && n.summary == summary && n.id == 0) {
+        if let Some(pos) = store
+            .iter()
+            .position(|n| n.internal && n.app_name == app_name && n.summary == summary)
+        {
             store[pos].body = body;
-            let _ = self.inner.tx.send(NotificationEvent::Updated { id: 0 });
-        } else {
+            let id = store[pos].id;
+            let _ = self.inner.tx.send(NotificationEvent::Updated { id });
+            return id;
+        }
+        let id = {
             let mut next = self.inner.next_id.lock().unwrap();
             *next += 1;
-            store.push(DbusNotification { app_name, icon: icon.unwrap_or_default(), id: 0, summary, body, urgency: "normal".to_string(), timeout_ms, actions: Vec::new(), hints: HashMap::new() });
-        }
-        let _ = self.inner.tx.send(NotificationEvent::Created { id: 0, timeout_ms: Some(timeout_ms) });
+            *next
+        };
+        store.push(DbusNotification { app_name, icon: icon.unwrap_or_default(), id, summary, body, urgency: "normal".to_string(), timeout_ms, actions: Vec::new(), hints: HashMap::new(), internal: true });
+        let _ = self.inner.tx.send(NotificationEvent::Created { id, timeout_ms: Some(timeout_ms) });
+        id
     }
 
     pub async fn dismiss(&self, id: u32) -> Result<(), DomainError> {
@@ -332,29 +352,47 @@ impl ProviderSource for NotificationsProvider {
     fn subscribe(&self) -> Option<futures::stream::BoxStream<'static, serde_json::Value>> {
         let rx = self.inner.tx.subscribe();
         let inner = self.inner.clone();
+        // State machine for the stream: first yield the current snapshot so a
+        // freshly opened consumer (and `provider.query`) catches up without
+        // waiting for the next change event, then stream subsequent changes.
+        enum StreamState {
+            Initial,
+            Streaming,
+        }
         Some(
-            futures::stream::unfold((rx, inner), |(mut rx, inner)| async move {
-                loop {
-                    match rx.recv().await {
-                        Ok(event) => {
-                            let change = serde_json::to_value(&event).ok()?;
-                            let notifications = inner.snapshot_json().await;
-                            let envelope = serde_json::json!({
-                                "change": change,
-                                "notifications": notifications,
-                            });
-                            return Some((envelope, (rx, inner)));
-                        }
-                        Err(broadcast::error::RecvError::Lagged(skipped)) => {
-                            tracing::warn!(
-                                "notifications subscription lagged: {skipped} events dropped"
-                            );
-                            continue;
-                        }
-                        Err(broadcast::error::RecvError::Closed) => return None,
+            futures::stream::unfold(
+                (StreamState::Initial, rx, inner),
+                |(state, mut rx, inner)| async move {
+                    if let StreamState::Initial = state {
+                        let notifications = inner.snapshot_json().await;
+                        let envelope = serde_json::json!({
+                            "change": serde_json::Value::Null,
+                            "notifications": notifications,
+                        });
+                        return Some((envelope, (StreamState::Streaming, rx, inner)));
                     }
-                }
-            })
+                    loop {
+                        match rx.recv().await {
+                            Ok(event) => {
+                                let change = serde_json::to_value(&event).ok()?;
+                                let notifications = inner.snapshot_json().await;
+                                let envelope = serde_json::json!({
+                                    "change": change,
+                                    "notifications": notifications,
+                                });
+                                return Some((envelope, (StreamState::Streaming, rx, inner)));
+                            }
+                            Err(broadcast::error::RecvError::Lagged(skipped)) => {
+                                tracing::warn!(
+                                    "notifications subscription lagged: {skipped} events dropped"
+                                );
+                                continue;
+                            }
+                            Err(broadcast::error::RecvError::Closed) => return None,
+                        }
+                    }
+                },
+            )
             .boxed(),
         )
     }
@@ -486,10 +524,84 @@ mod tests {
     #[tokio::test]
     async fn dismisses_notification() {
         let provider = NotificationsProvider::new();
-        provider.add_internal_notification("App".into(), "Title".into(), "Body".into(), None, 5000).await;
+        let id = provider.add_internal_notification("App".into(), "Title".into(), "Body".into(), None, 5000).await;
         assert_eq!(provider.count().await, 1);
-        provider.dismiss(0).await.unwrap();
+        provider.dismiss(id).await.unwrap();
         assert_eq!(provider.count().await, 0);
+    }
+
+    #[tokio::test]
+    async fn internal_notifications_get_distinct_nonzero_ids() {
+        // Two different timers (same app name, different label) must produce
+        // two separately keyed entries, not collapse onto a shared id 0.
+        let provider = NotificationsProvider::new();
+        let first = provider
+            .add_internal_notification("Quantum Timer".into(), "Tea".into(), "Timer complete".into(), None, 0)
+            .await;
+        let second = provider
+            .add_internal_notification("Quantum Timer".into(), "Pasta".into(), "Timer complete".into(), None, 0)
+            .await;
+        assert_ne!(first, 0);
+        assert_ne!(second, 0);
+        assert_ne!(first, second);
+        assert_eq!(provider.count().await, 2);
+    }
+
+    #[tokio::test]
+    async fn internal_notification_dedupes_same_content_in_place() {
+        // Re-firing the same logical notification updates the existing entry
+        // and keeps its id, rather than stacking a duplicate.
+        let provider = NotificationsProvider::new();
+        let first = provider
+            .add_internal_notification("Quantum Timer".into(), "Tea".into(), "Brewing".into(), None, 0)
+            .await;
+        let again = provider
+            .add_internal_notification("Quantum Timer".into(), "Tea".into(), "Timer complete".into(), None, 0)
+            .await;
+        assert_eq!(first, again);
+        assert_eq!(provider.count().await, 1);
+        let all = provider.get_all().await;
+        assert_eq!(all[0].body, "Timer complete");
+    }
+
+    #[tokio::test]
+    async fn dismiss_removes_only_targeted_internal_notification() {
+        let provider = NotificationsProvider::new();
+        let first = provider
+            .add_internal_notification("Quantum Timer".into(), "Tea".into(), "Timer complete".into(), None, 0)
+            .await;
+        let second = provider
+            .add_internal_notification("Quantum Timer".into(), "Pasta".into(), "Timer complete".into(), None, 0)
+            .await;
+        provider.dismiss(first).await.unwrap();
+        let all = provider.get_all().await;
+        assert_eq!(all.len(), 1);
+        assert_eq!(all[0].id, second);
+        assert_eq!(all[0].summary, "Pasta");
+    }
+
+    #[tokio::test]
+    async fn internal_dedup_does_not_match_dbus_notification() {
+        // An internal add must never fold itself into a D-Bus notification that
+        // happens to share an app name and summary; they are distinct sources.
+        let provider = NotificationsProvider::new();
+        provider
+            .inner
+            .apply_notify(
+                "Quantum Timer".into(),
+                String::new(),
+                0,
+                "Tea".into(),
+                "From app".into(),
+                Vec::new(),
+                0,
+                "normal".into(),
+            )
+            .await;
+        provider
+            .add_internal_notification("Quantum Timer".into(), "Tea".into(), "Timer complete".into(), None, 0)
+            .await;
+        assert_eq!(provider.count().await, 2);
     }
     #[test]
     fn subscribes_returns_stream() {
@@ -534,9 +646,47 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn subscribe_emits_initial_snapshot_without_prior_event() {
+        // A freshly opened consumer (for example the notification center) must
+        // receive the current notification list on subscribe, even when no
+        // create/update/dismiss event fires afterwards. This is the documented
+        // streaming contract every other provider honors and is what
+        // `provider.query` relies on to catch up.
+        let provider = NotificationsProvider::new();
+        provider.inner.store.write().await.push(DbusNotification {
+            app_name: "Spotify".into(),
+            icon: String::new(),
+            id: 7,
+            summary: "Now playing".into(),
+            body: "Song".into(),
+            urgency: "normal".into(),
+            timeout_ms: 5000,
+            actions: Vec::new(),
+            hints: HashMap::new(),
+            internal: false,
+        });
+
+        let mut stream = provider.subscribe().expect("stream");
+        let value = tokio::time::timeout(std::time::Duration::from_secs(2), stream.next())
+            .await
+            .expect("subscribe must emit an initial snapshot within the timeout")
+            .expect("envelope");
+
+        let notifications = value["notifications"].as_array().expect("array");
+        assert_eq!(notifications.len(), 1);
+        assert_eq!(notifications[0]["app_name"], "Spotify");
+        assert_eq!(notifications[0]["id"], 7);
+    }
+
+    #[tokio::test]
     async fn subscribe_emits_envelope_with_snapshot() {
         let provider = NotificationsProvider::new();
         let mut stream = provider.subscribe().expect("stream");
+        // First emission is the initial snapshot (empty, change null); the
+        // create event follows as the second emission.
+        let initial = stream.next().await.expect("initial snapshot");
+        assert!(initial["change"].is_null());
+        assert_eq!(initial["notifications"].as_array().expect("array").len(), 0);
         provider
             .inner
             .apply_notify(

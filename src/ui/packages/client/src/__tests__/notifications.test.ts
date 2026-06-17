@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { createClient } from '../index';
 import { createMockTransport } from '../transport';
 import { createNotificationStore, type PendingNotification } from '../notifications';
@@ -128,6 +128,34 @@ describe('createNotificationStore', () => {
 
     expect(received).toHaveLength(1);
     expect(received[0][0].id).toBe(1);
+  });
+
+  it('fetches the current snapshot via provider.query on subscribe', async () => {
+    // A freshly opened consumer (the notification center) must catch up to the
+    // current notification list immediately, not wait for the next change
+    // event. It queries the provider on subscribe, exactly like every other
+    // tray indicator.
+    const existing = makeNotification({ id: 9, app_name: 'Discord' });
+    const client = {
+      call: vi.fn().mockResolvedValue({
+        change: null,
+        notifications: [existing],
+      }),
+      subscribe: vi.fn().mockReturnValue(vi.fn()),
+    };
+
+    const received: PendingNotification[][] = [];
+    createNotificationStore(client).subscribe((notifications) => received.push(notifications));
+
+    // Flush the resolved provider.query promise.
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(client.call).toHaveBeenCalledWith('provider.query', { id: 'notifications' });
+    expect(client.subscribe).toHaveBeenCalledWith(NOTIFICATION_CHANNEL, expect.any(Function));
+    expect(received).toHaveLength(1);
+    expect(received[0]).toHaveLength(1);
+    expect(received[0][0].id).toBe(9);
   });
 
   it('unsubscribe stops further callbacks', () => {

@@ -21,9 +21,15 @@ export interface NotificationChange {
   data: { id: number; timeout_ms: number };
 }
 
-/** The full envelope published on `notifications.event`. */
+/**
+ * The full envelope published on `notifications.event`.
+ *
+ * `change` is null for the initial catch-up snapshot the provider emits on
+ * subscribe (and returns from `provider.query`); it carries a change
+ * descriptor for every subsequent live event.
+ */
 export interface NotificationEnvelope {
-  change: NotificationChange;
+  change: NotificationChange | null;
   notifications: PendingNotification[];
 }
 
@@ -33,17 +39,38 @@ export interface NotificationStore {
 }
 
 const NOTIFICATION_CHANNEL = 'notifications.event';
+const NOTIFICATION_PROVIDER = 'notifications';
+
+/** The subset of the client surface the notification store needs. */
+type NotificationClient = Pick<Client, 'call' | 'subscribe'>;
 
 /**
- * Create a notification store backed by the `notifications.event` stream.
+ * Create a notification store backed by `provider.query` and the
+ * `notifications.event` stream.
  *
- * The server is the source of truth: every event carries the full current
- * snapshot, so consumers replace their state with `notifications` on each call.
- * Consumers derive a count via `notifications.length`.
+ * On subscribe it immediately fetches the current snapshot via
+ * `provider.query` and delivers it, so a freshly opened consumer (the
+ * notification center) catches up to the bell's count instead of waiting for
+ * the next change event. It then subscribes to `notifications.event`, where
+ * every event carries the full current snapshot and replaces the consumer's
+ * state. Consumers derive a count via `notifications.length`.
  */
-export function createNotificationStore(client: Client): NotificationStore {
+export function createNotificationStore(client: NotificationClient): NotificationStore {
   return {
     subscribe(callback: (notifications: PendingNotification[]) => void): () => void {
+      void client
+        .call('provider.query', { id: NOTIFICATION_PROVIDER })
+        .then((result) => {
+          const envelope = parseEnvelope(result);
+          if (envelope !== null) {
+            callback(envelope.notifications);
+          }
+        })
+        .catch(() => {
+          // Initial fetch failures are non-fatal; the stream will deliver the
+          // next snapshot once it arrives.
+        });
+
       return client.subscribe(NOTIFICATION_CHANNEL, (payload: unknown) => {
         const envelope = parseEnvelope(payload);
         if (envelope === null) {
