@@ -10,6 +10,9 @@ vi.mock('@quantum/client', () => ({
     createNotificationStore: () => ({
         subscribe: vi.fn(() => () => {}),
     }),
+    createTimerStore: () => ({
+        subscribe: vi.fn(() => () => {}),
+    }),
     __esModule: true,
 }));
 
