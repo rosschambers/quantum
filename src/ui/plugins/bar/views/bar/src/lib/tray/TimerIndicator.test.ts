@@ -141,4 +141,80 @@ describe('TimerIndicator', () => {
 
         expect(container.querySelector('.timer-badge')?.textContent).toBe('9+');
     });
+
+    it('opens a quick-actions popover on right-click', async () => {
+        const { client } = makeMockClient();
+        const { container } = render(TimerIndicator, {
+            props: { client: client as never },
+        });
+        await tick();
+
+        expect(container.querySelector('.timer-menu')).toBeNull();
+
+        const button = container.querySelector('button') as HTMLButtonElement;
+        await fireEvent.contextMenu(button);
+        await tick();
+
+        expect(container.querySelector('.timer-menu')).not.toBeNull();
+    });
+
+    it('dismisses all timers from the popover and closes it', async () => {
+        const { client, call } = makeMockClient();
+        const { container } = render(TimerIndicator, {
+            props: { client: client as never },
+        });
+        await tick();
+
+        await fireEvent.contextMenu(container.querySelector('button') as HTMLButtonElement);
+        await tick();
+
+        const dismiss = Array.from(container.querySelectorAll('.timer-menu button')).find(
+            (el) => el.textContent?.includes('Dismiss all'),
+        ) as HTMLButtonElement;
+        expect(dismiss).toBeTruthy();
+        await fireEvent.click(dismiss);
+        await tick();
+
+        expect(call).toHaveBeenCalledWith('timer.dismiss_all', {});
+        expect(container.querySelector('.timer-menu')).toBeNull();
+    });
+
+    it('opens the creation overlay from the popover and closes it', async () => {
+        const { client, call } = makeMockClient();
+        const { container } = render(TimerIndicator, {
+            props: { client: client as never },
+        });
+        await tick();
+
+        await fireEvent.contextMenu(container.querySelector('button') as HTMLButtonElement);
+        await tick();
+
+        const open = Array.from(container.querySelectorAll('.timer-menu button')).find(
+            (el) => el.textContent?.includes('Open timers'),
+        ) as HTMLButtonElement;
+        expect(open).toBeTruthy();
+        await fireEvent.click(open);
+        await tick();
+
+        expect(call).toHaveBeenCalledWith('view.toggle', {
+            name: 'plugin/timer-create/timer-create',
+        });
+        expect(container.querySelector('.timer-menu')).toBeNull();
+    });
+
+    it('closes the popover on Escape', async () => {
+        const { client } = makeMockClient();
+        const { container } = render(TimerIndicator, {
+            props: { client: client as never },
+        });
+        await tick();
+
+        await fireEvent.contextMenu(container.querySelector('button') as HTMLButtonElement);
+        await tick();
+        expect(container.querySelector('.timer-menu')).not.toBeNull();
+
+        await fireEvent.keyDown(window, { key: 'Escape' });
+        await tick();
+        expect(container.querySelector('.timer-menu')).toBeNull();
+    });
 });
