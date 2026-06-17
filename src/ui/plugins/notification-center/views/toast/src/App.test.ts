@@ -141,4 +141,58 @@ describe('NotificationToast App', () => {
         await tick();
         expect(container.querySelectorAll('.toast')).toHaveLength(0);
     });
+
+    it('hides_when_shown_but_no_notifications_arrive', async () => {
+        // The daemon maps the overlay surface on a `created` event, but the
+        // store may deliver nothing (immediately-closed/replaced notification,
+        // zero-timeout edge case, or a show->subscribe race). The debounced
+        // guard must unmap the empty window so it stops capturing pointer input.
+        render(App);
+        await tick();
+
+        const hiddenBefore = mockCallSpy.mock.calls.some(
+            ([method, params]) =>
+                method === 'view.hide' &&
+                (params as { name?: string })?.name === 'plugin/notification-center/toast',
+        );
+        expect(hiddenBefore).toBe(false);
+
+        // Advance past the debounce window.
+        vi.advanceTimersByTime(601);
+        await tick();
+
+        const hiddenAfter = mockCallSpy.mock.calls.some(
+            ([method, params]) =>
+                method === 'view.hide' &&
+                (params as { name?: string })?.name === 'plugin/notification-center/toast',
+        );
+        expect(hiddenAfter).toBe(true);
+    });
+
+    it('does_not_hide_if_a_notification_arrives_before_debounce', async () => {
+        // A real notification can arrive a few hundred milliseconds after the
+        // daemon shows the window (the show->subscribe race). The debounce must
+        // be long enough that the card renders first and the window is NOT hidden.
+        const { container } = render(App);
+        await tick();
+
+        // A card arrives before the debounce elapses.
+        vi.advanceTimersByTime(300);
+        emit([makeNotification({ id: 42, timeout_ms: 5000 })]);
+        await tick();
+        expect(container.querySelectorAll('.toast')).toHaveLength(1);
+
+        // Advance past where the debounce would have fired, but stay well short
+        // of the 5000ms auto-dismiss so the card remains visible.
+        vi.advanceTimersByTime(1000);
+        await tick();
+
+        expect(container.querySelectorAll('.toast')).toHaveLength(1);
+        const hidden = mockCallSpy.mock.calls.some(
+            ([method, params]) =>
+                method === 'view.hide' &&
+                (params as { name?: string })?.name === 'plugin/notification-center/toast',
+        );
+        expect(hidden).toBe(false);
+    });
 });

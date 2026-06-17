@@ -12,6 +12,14 @@
     // default_timeout.
     const DEFAULT_TIMEOUT_MS = 5000;
 
+    // How long the stack may stay empty before the overlay surface is unmapped.
+    // The daemon shows this window on every `created` event, so an empty window
+    // must never stay mapped (it captures pointer input over the screen corner).
+    // This must comfortably outlast the daemon's show->subscribe delivery so a
+    // real notification renders before the guard fires, yet be short enough that
+    // a stuck-empty window clears quickly.
+    const HIDE_DEBOUNCE_MS = 600;
+
     // Currently-visible toasts, newest first (rendered top to bottom).
     let visible: PendingNotification[] = $state([]);
 
@@ -48,6 +56,20 @@
             timers.clear();
             client.close();
         };
+    });
+
+    // Safety net: whenever the stack is empty, schedule an unmap of the overlay
+    // surface. If a card arrives before the debounce elapses (the show->subscribe
+    // race), the effect re-runs and the teardown cancels the pending hide, so a
+    // real notification is never hidden before it renders.
+    $effect(() => {
+        if (visible.length !== 0) return;
+        const handle = setTimeout(() => {
+            if (visible.length === 0) {
+                client.call('view.hide', { name: VIEW_NAME }).catch(() => {});
+            }
+        }, HIDE_DEBOUNCE_MS);
+        return () => clearTimeout(handle);
     });
 
     function removeToast(id: number): void {
