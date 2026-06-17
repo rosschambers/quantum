@@ -8,6 +8,7 @@ pub mod schedule_action;
 pub mod search;
 pub mod set_theme;
 pub mod subscribe_provider;
+pub mod timer_service;
 
 pub use launch_action::LaunchActionUseCase;
 pub use list_providers::ListProvidersUseCase;
@@ -19,3 +20,4 @@ pub use schedule_action::{ScheduleActionUseCase, ScheduleId, ScheduledJobSummary
 pub use search::{SearchResponse, SearchUseCase};
 pub use set_theme::SetThemeUseCase;
 pub use subscribe_provider::SubscribeProviderUseCase;
+pub use timer_service::{CreateTimerSpec, EditChanges, TimerService, TimerStart};

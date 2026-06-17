@@ -7,9 +7,10 @@ pub mod use_cases;
 pub use dispatcher::Dispatcher;
 pub use error::{ApplicationError, Result};
 pub use use_cases::{
-    LaunchActionUseCase, ListProvidersUseCase, OpenViewUseCase, QueryProviderUseCase,
-    ReloadPluginsUseCase, ReloadThemeUseCase, ScheduleActionUseCase, ScheduleId,
-    ScheduledJobSummary, SearchResponse, SearchUseCase, SetThemeUseCase, SubscribeProviderUseCase,
+    CreateTimerSpec, EditChanges, LaunchActionUseCase, ListProvidersUseCase, OpenViewUseCase,
+    QueryProviderUseCase, ReloadPluginsUseCase, ReloadThemeUseCase, ScheduleActionUseCase,
+    ScheduleId, ScheduledJobSummary, SearchResponse, SearchUseCase, SetThemeUseCase, TimerService,
+    TimerStart, SubscribeProviderUseCase,
 };
 
 pub fn version() -> &'static str {
