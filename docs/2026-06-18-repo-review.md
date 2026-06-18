@@ -685,6 +685,7 @@ Highest-severity verified findings (top of the fix queue):
 - **Raised by:** build (AX).
 
 ### Frontend `pnpm -r build` runs the view builds without `--parallel`
+- **Status:** ⏸ Reverted (`7fdfcca`→fix) — `--parallel` was tried but is incorrect here: the view packages import `@quantum/client` and need its `dist/` built first, so a non-topological parallel build races and fails to resolve the package (caught by CI on a cold tree). Reverted to the topological `pnpm -r build`. The original finding's premise (the builds were "serial") is fine — topological ordering is required, not a defect.
 - **Severity:** low
 - **Verified locations:** `justfile:30` (`pnpm -C src/ui -r build`);
   `.github/workflows/ci.yml:74` (`pnpm -r build`).

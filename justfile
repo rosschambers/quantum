@@ -27,7 +27,7 @@ frontend-install:
     {{devsh}} pnpm -C src/ui install
 
 frontend-build:
-    {{devsh}} pnpm -C src/ui -r --parallel build
+    {{devsh}} pnpm -C src/ui -r build
 
 frontend-test:
     {{devsh}} pnpm -C src/ui -r test

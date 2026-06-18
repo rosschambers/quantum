@@ -73,10 +73,12 @@ jobs:
         run: pnpm install --frozen-lockfile
 
       # The frontend must build before the Rust build: quantumd's build.rs
-      # embeds each view's compiled dist/.
+      # embeds each view's compiled dist/. This runs in topological order (not
+      # --parallel): the view packages import @quantum/client and need its
+      # dist/ built first, so a parallel build races and fails to resolve it.
       - name: Build frontend
         working-directory: src/ui
-        run: pnpm -r --parallel build
+        run: pnpm -r build
 
       # Rust format, lint, and tests run inside the nix-shell so the GTK4 and
       # WebKitGTK -sys crates find their libraries via pkg-config, exactly as
