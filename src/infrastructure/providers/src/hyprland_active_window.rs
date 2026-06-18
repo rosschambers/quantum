@@ -135,6 +135,12 @@ impl HyprlandActiveWindowProvider {
             // same `MonitorActiveWindowState` once `apply_event` finishes.
             // The change-gate suppresses the redundant broadcasts.
             let mut last_published: Option<serde_json::Value> = None;
+            // Last broadcast state, compared with `PartialEq` BEFORE
+            // serializing. Title-change bursts frequently leave the
+            // multi-monitor state unchanged; comparing the state directly
+            // means the full `serde_json::to_value` over every monitor only
+            // runs when a broadcast will actually be sent.
+            let mut last_state: Option<MonitorActiveWindowState> = None;
             let mut backoff_secs = 1u64;
             loop {
                 let stream = match client.subscribe_events() {
@@ -152,7 +158,15 @@ impl HyprlandActiveWindowProvider {
                     let payload = {
                         let mut guard = state_for_task.lock().unwrap();
                         apply_event(&mut guard, ev);
-                        serde_json::to_value(&*guard).unwrap_or(serde_json::Value::Null)
+                        // Cheap equality check first: if the state matches the
+                        // last broadcast, skip serialization entirely.
+                        if last_state.as_ref() == Some(&*guard) {
+                            continue;
+                        }
+                        let value =
+                            serde_json::to_value(&*guard).unwrap_or(serde_json::Value::Null);
+                        last_state = Some(guard.clone());
+                        value
                     };
                     send_state_if_changed(&tx_for_task, &mut last_published, payload);
                 }
