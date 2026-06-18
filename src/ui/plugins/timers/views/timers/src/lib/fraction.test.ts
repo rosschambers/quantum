@@ -3,6 +3,8 @@ import {
   remainingFraction,
   displayFraction,
   rampColor,
+  resolveBaseColor,
+  rampToWarning,
   formatTime,
 } from "./fraction";
 
@@ -65,6 +67,23 @@ describe("rampColor", () => {
   it("stays at the base hue exactly at the threshold boundary", () => {
     // frac == threshold/100 -> t = 0 -> hue unchanged.
     expect(rampColor(0.2, 210, 20)).toBe("hsl(210 70% 60%)");
+  });
+});
+
+describe("resolveBaseColor", () => {
+  it("uses the theme accent when hue is null", () => {
+    expect(resolveBaseColor(null)).toBe("var(--color-accent)");
+    expect(resolveBaseColor(151)).toBe("hsl(151 70% 60%)");
+  });
+});
+
+describe("rampToWarning", () => {
+  it("stays at base above threshold and mixes below it", () => {
+    const base = "var(--color-accent)";
+    expect(rampToWarning(0.5, base, 20)).toBe(base);
+    const low = rampToWarning(0, base, 20);
+    expect(low).toContain("color-mix");
+    expect(low).toContain("var(--color-warning)");
   });
 });
 

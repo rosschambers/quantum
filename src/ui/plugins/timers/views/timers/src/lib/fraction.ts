@@ -53,6 +53,31 @@ export function rampColor(frac: number, hue: number, threshold: number): string 
 }
 
 /**
+ * The base colour for a timer with no custom hue.
+ *
+ * When `accentHue` is `null` the timer follows the theme's `--color-accent`
+ * CSS variable; otherwise it uses the given hue at the fixed 70% / 60%
+ * saturation / lightness.
+ */
+export function resolveBaseColor(accentHue: number | null): string {
+  return accentHue === null ? "var(--color-accent)" : `hsl(${accentHue} 70% 60%)`;
+}
+
+/**
+ * Mix a base colour toward the theme's `--color-warning` token as time runs low.
+ *
+ * Above `threshold` percent remaining the colour stays at `base`. At or below
+ * it the colour mixes toward `--color-warning`, with the base weight falling
+ * from 100% at the threshold to 0% at `frac = 0`.
+ */
+export function rampToWarning(frac: number, base: string, threshold: number): string {
+  const rampFrac = threshold / 100;
+  if (rampFrac <= 0 || frac > rampFrac) return base;
+  const pct = clamp((frac / rampFrac) * 100, 0, 100);
+  return `color-mix(in oklab, var(--color-warning), ${base} ${pct.toFixed(1)}%)`;
+}
+
+/**
  * Format the remaining time for display.
  *
  * `clock` renders `m:ss` (or `h:mm:ss` past an hour); `compact` renders a
