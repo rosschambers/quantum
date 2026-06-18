@@ -19,26 +19,40 @@ See [AGENTS.md](AGENTS.md) for conventions, layer rules, and commit style.
 
 ## Installation
 
-### System Dependencies
+### Canonical: nix-shell
 
-On Ubuntu 24.04 or similar:
+All builds, tests, lint, and format checks run through the nix-shell defined
+by `shell.nix`, wrapped by `./scripts/devsh.sh`. This is the supported path:
+it provides the correct Rust, GTK4, WebKitGTK 6, and gtk4-layer-shell, and
+installs the pkg-config alias the `gtk4-layer-shell` crate needs (upstream
+ships `gtk4-layer-shell-0.pc`, but the crate looks up `gtk4-layer-shell.pc`).
+
+```bash
+just build          # builds all crates inside the nix-shell
+# or, equivalently:
+./scripts/devsh.sh cargo build --bin quantumd --bin quantumctl
+```
+
+To install the built binaries for the systemd user service:
+
+```bash
+./scripts/devsh.sh cargo install --path src/binaries/quantumd
+./scripts/devsh.sh cargo install --path src/binaries/quantumctl
+```
+
+### Advanced / unsupported: system toolchain
+
+Building against a system-installed toolchain (outside nix-shell) is **not
+supported**. If you attempt it, you must supply the GTK4, WebKitGTK 6, and
+gtk4-layer-shell development packages yourself, for example on Ubuntu:
 
 ```bash
 sudo apt-get install libgtk-4-dev libwebkit2gtk-6.0-dev libgtk4-layer-shell-dev
 ```
 
-### Building from Source
-
-```bash
-just build
-```
-
-Then install:
-
-```bash
-cargo install --path src/binaries/quantumd
-cargo install --path src/binaries/quantumctl
-```
+You must also alias the pkg-config file the `gtk4-layer-shell` crate expects
+(`gtk4-layer-shell.pc` pointing at the system's `gtk4-layer-shell-0.pc`);
+`shell.nix` does this automatically, a bare `cargo install` does not.
 
 ## Quick Start
 
@@ -51,7 +65,6 @@ cargo install --path src/binaries/quantumctl
 | `just fmt` | Format Rust code |
 | `just lint` | Clippy + warnings as errors |
 | `just dev` | Run daemon in dev mode |
-| `just ts-bindgen` | Regenerate TypeScript types |
 
 ### Running
 
@@ -61,10 +74,10 @@ Build via `just build`:
 just build
 ```
 
-Or build inside the container and run on the host via `nix-shell`:
+Or build through the nix-shell wrapper directly:
 
 ```bash
-nix-shell --run "cargo build --bin quantumd --bin quantumctl"
+./scripts/devsh.sh cargo build --bin quantumd --bin quantumctl
 ```
 
 Start the daemon in dev mode via `just`:
@@ -73,10 +86,10 @@ Start the daemon in dev mode via `just`:
 just dev
 ```
 
-Or run directly via `nix-shell`:
+Or run directly through the nix-shell wrapper:
 
 ```bash
-RUST_LOG=info nix-shell --run "./target/debug/quantumd" &
+RUST_LOG=info ./scripts/devsh.sh ./target/debug/quantumd &
 ```
 
 Control the launcher via `quantumctl`:
