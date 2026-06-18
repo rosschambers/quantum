@@ -70,6 +70,68 @@ fn resolve_icon_path(icon: Option<&str>) -> Option<std::path::PathBuf> {
     freedesktop_icons::lookup(name).with_size(48).find()
 }
 
+/// Parse every `*.desktop` file in `dir` into `(id, AppInfo)` pairs, in
+/// directory iteration order.
+///
+/// This performs blocking filesystem work (`read_dir` plus `read_to_string`)
+/// and is intended to run on a blocking thread pool. Unreadable directories
+/// and unparseable files are skipped silently, mirroring the previous
+/// best-effort behavior. The caller deduplicates by id (first seen wins).
+fn parse_desktop_directory(dir: &Path) -> Vec<(String, AppInfo)> {
+    let mut parsed: Vec<(String, AppInfo)> = Vec::new();
+    let entries = match std::fs::read_dir(dir) {
+        Ok(entries) => entries,
+        // Directory doesn't exist or can't be read, skip it.
+        Err(_) => return parsed,
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.extension().and_then(|s| s.to_str()) != Some("desktop") {
+            continue;
+        }
+        let Ok(content) = std::fs::read_to_string(&path) else {
+            continue;
+        };
+        let Ok(de) = DesktopEntry::decode(&path, &content) else {
+            continue;
+        };
+        let Some(name) = path.file_stem().and_then(|s| s.to_str()) else {
+            continue;
+        };
+        let app_name = de
+            .name(None)
+            .map(|s| s.to_string())
+            .unwrap_or_else(|| "Unknown".to_string());
+        let generic_name = de.generic_name(None).map(|s| s.to_string());
+        let keywords: Vec<String> = de
+            .keywords()
+            .unwrap_or_default()
+            .split(';')
+            .filter(|s: &&str| !s.is_empty())
+            .map(|s: &str| s.to_string())
+            .collect();
+        let exec = de.exec().unwrap_or_default().to_string();
+        // Prefer the entry's declared Icon= key; fall back to the desktop file
+        // stem, which is conventionally also the icon name.
+        let icon = de
+            .icon()
+            .map(|s| s.to_string())
+            .or_else(|| Some(name.to_string()));
+        parsed.push((
+            name.to_string(),
+            AppInfo::new(
+                name.to_string(),
+                app_name,
+                generic_name,
+                keywords,
+                exec,
+                icon,
+            ),
+        ));
+    }
+    parsed
+}
+
 /// Default number of usage-ranked apps shown for an empty query when the
 /// caller does not specify a limit.
 const DEFAULT_EMPTY_QUERY_LIMIT: usize = 12;
@@ -136,59 +198,22 @@ impl DesktopAppsProvider {
     /// Scan a single directory for .desktop files, inserting each parsed
     /// entry into `by_id` only if the id is not already present (first
     /// seen wins, per XDG Base Directory Specification).
+    ///
+    /// The directory walk and file parsing are blocking filesystem work, so
+    /// they run on Tokio's blocking pool rather than parking the async
+    /// runtime. The parsed entries are merged into `by_id` afterwards,
+    /// preserving the first-seen-wins ordering within and across directories.
     async fn scan_directory(
         &self,
         dir: &Path,
         by_id: &mut HashMap<String, AppInfo>,
     ) -> Result<(), DomainError> {
-        match std::fs::read_dir(dir) {
-            Ok(entries) => {
-                for entry in entries.flatten() {
-                    let path = entry.path();
-                    if path.extension().and_then(|s| s.to_str()) == Some("desktop") {
-                        if let Ok(content) = std::fs::read_to_string(&path) {
-                            if let Ok(de) = DesktopEntry::decode(&path, &content) {
-                                let app_name = de
-                                    .name(None)
-                                    .map(|s| s.to_string())
-                                    .unwrap_or_else(|| "Unknown".to_string());
-                                let generic_name = de.generic_name(None).map(|s| s.to_string());
-                                let keywords: Vec<String> = de
-                                    .keywords()
-                                    .unwrap_or_default()
-                                    .split(';')
-                                    .filter(|s: &&str| !s.is_empty())
-                                    .map(|s: &str| s.to_string())
-                                    .collect();
-                                let exec = de.exec().unwrap_or_default().to_string();
-
-                                if let Some(name) = path.file_stem().and_then(|s| s.to_str()) {
-                                    // Prefer the entry's declared Icon= key;
-                                    // fall back to the desktop file stem, which
-                                    // is conventionally also the icon name.
-                                    let icon = de
-                                        .icon()
-                                        .map(|s| s.to_string())
-                                        .or_else(|| Some(name.to_string()));
-                                    by_id.entry(name.to_string()).or_insert_with(|| {
-                                        AppInfo::new(
-                                            name.to_string(),
-                                            app_name,
-                                            generic_name,
-                                            keywords,
-                                            exec,
-                                            icon,
-                                        )
-                                    });
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-            Err(_) => {
-                // Directory doesn't exist or can't be read, skip it
-            }
+        let owned_dir = dir.to_path_buf();
+        let parsed = tokio::task::spawn_blocking(move || parse_desktop_directory(&owned_dir))
+            .await
+            .map_err(|e| DomainError::Unsupported(format!("desktop apps scan join error: {e}")))?;
+        for (id, app) in parsed {
+            by_id.entry(id).or_insert(app);
         }
         Ok(())
     }
