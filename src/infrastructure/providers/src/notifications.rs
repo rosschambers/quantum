@@ -72,6 +72,31 @@ fn evict_to_make_room(store: &mut Vec<DbusNotification>) {
     }
 }
 
+/// Decide whether a notification icon reference is safe to emit to the
+/// privileged WebView, returning `None` when the icon must be suppressed
+/// (rendered as `null`).
+///
+/// The `app_icon` field comes from an arbitrary `Notify` caller and is bound
+/// into an `<img src>` in the toast and center views. A remote URL there forces
+/// the privileged WebView to make an outbound request (tracking or
+/// deanonymization), so remote references are rejected server-side. Allowed: an
+/// empty string (suppressed, as before), a bare freedesktop icon name (no
+/// scheme), an absolute local filesystem path (starts with `/`), or a
+/// `quantum://` or `file://` URI. Anything that carries a `://` scheme other
+/// than `quantum` or `file` (for example `http://`, `https://`) is rejected.
+fn sanitize_icon(icon: &str) -> Option<String> {
+    if icon.is_empty() {
+        return None;
+    }
+    if let Some(scheme_end) = icon.find("://") {
+        let scheme = &icon[..scheme_end];
+        if scheme != "quantum" && scheme != "file" {
+            return None;
+        }
+    }
+    Some(icon.to_string())
+}
+
 /// Resolve a D-Bus `expire_timeout` into a stored `timeout_ms`, where the
 /// value `0` means "never auto-dismiss".
 ///
@@ -183,10 +208,9 @@ impl NotificationsInner {
                     "app_name": n.app_name,
                     "summary": n.summary,
                     "body": n.body,
-                    "icon": if n.icon.is_empty() {
-                        serde_json::Value::Null
-                    } else {
-                        serde_json::Value::String(n.icon.clone())
+                    "icon": match sanitize_icon(&n.icon) {
+                        Some(icon) => serde_json::Value::String(icon),
+                        None => serde_json::Value::Null,
                     },
                     "urgency": n.urgency,
                     "timeout_ms": n.timeout_ms,
@@ -1051,6 +1075,79 @@ mod tests {
             all.last().expect("last").id,
             (MAX_NOTIFICATIONS + overflow) as u32
         );
+    }
+
+    #[test]
+    fn sanitize_icon_allows_safe_references_and_rejects_remote_urls() {
+        // Empty string emits null, as before.
+        assert_eq!(sanitize_icon(""), None);
+        // A bare freedesktop icon name is a safe reference.
+        assert_eq!(sanitize_icon("firefox"), Some("firefox".to_string()));
+        // An absolute local filesystem path is safe.
+        assert_eq!(
+            sanitize_icon("/usr/share/icons/x.png"),
+            Some("/usr/share/icons/x.png".to_string())
+        );
+        // The quantum custom scheme is trusted.
+        assert_eq!(
+            sanitize_icon("quantum://icon/foo"),
+            Some("quantum://icon/foo".to_string())
+        );
+        // Local file URIs are trusted.
+        assert_eq!(
+            sanitize_icon("file:///x.png"),
+            Some("file:///x.png".to_string())
+        );
+        // Remote URLs must be rejected so the WebView never beacons out.
+        assert_eq!(sanitize_icon("http://evil/p.png"), None);
+        assert_eq!(sanitize_icon("https://evil/p.png"), None);
+    }
+
+    #[tokio::test]
+    async fn snapshot_json_nulls_remote_icon() {
+        // A D-Bus caller that sets app_icon to a remote URL must not have it
+        // emitted into the privileged WebView's <img src>.
+        let provider = NotificationsProvider::new();
+        provider
+            .inner
+            .apply_notify(
+                "App".into(),
+                "http://attacker/beacon.png".into(),
+                0,
+                "Summary".into(),
+                "Body".into(),
+                Vec::new(),
+                0,
+                "normal".into(),
+            )
+            .await;
+        let snapshot = provider.inner.snapshot_json().await;
+        assert_eq!(snapshot.len(), 1);
+        assert!(
+            snapshot[0]["icon"].is_null(),
+            "remote icon must be nulled in the snapshot"
+        );
+    }
+
+    #[tokio::test]
+    async fn snapshot_json_keeps_safe_icon() {
+        let provider = NotificationsProvider::new();
+        provider
+            .inner
+            .apply_notify(
+                "App".into(),
+                "firefox".into(),
+                0,
+                "Summary".into(),
+                "Body".into(),
+                Vec::new(),
+                0,
+                "normal".into(),
+            )
+            .await;
+        let snapshot = provider.inner.snapshot_json().await;
+        assert_eq!(snapshot.len(), 1);
+        assert_eq!(snapshot[0]["icon"], "firefox");
     }
 
     #[tokio::test]
