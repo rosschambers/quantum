@@ -49,6 +49,29 @@ use quantum_domain::NotificationEvent;
 /// org.freedesktop.Notifications spec leaves the concrete value to the server.
 const DEFAULT_EXPIRE_MS: u64 = 5000;
 
+/// Maximum number of active notifications retained in the in-memory store.
+///
+/// Quantum is the `org.freedesktop.Notifications` server, so any client on the
+/// session bus can call `Notify` (with `replaces_id == 0`) in a loop and grow
+/// the store without bound; never-expire entries are never auto-evicted, so the
+/// store would otherwise leak memory until the daemon is killed (a denial of
+/// service). Each change event also re-serializes the entire store in
+/// `snapshot_json`, so an unbounded store makes per-event cost grow without
+/// bound too. Capping the active set bounds both. When a new push would exceed
+/// the cap, the oldest notifications are evicted first. One hundred active
+/// notifications is far more than any usable notification center displays while
+/// staying small enough that the per-event snapshot stays cheap.
+const MAX_NOTIFICATIONS: usize = 100;
+
+/// Evict the oldest notifications so that one more notification can be pushed
+/// without the store exceeding `MAX_NOTIFICATIONS`. Notifications are appended
+/// to the back, so the front holds the oldest entries.
+fn evict_to_make_room(store: &mut Vec<DbusNotification>) {
+    while store.len() >= MAX_NOTIFICATIONS {
+        store.remove(0);
+    }
+}
+
 /// Resolve a D-Bus `expire_timeout` into a stored `timeout_ms`, where the
 /// value `0` means "never auto-dismiss".
 ///
@@ -129,6 +152,7 @@ impl NotificationsInner {
             *next += 1;
             *next
         };
+        evict_to_make_room(&mut store);
         store.push(DbusNotification {
             app_name,
             icon: app_icon,
@@ -225,6 +249,7 @@ impl NotificationsProvider {
             *next += 1;
             *next
         };
+        evict_to_make_room(&mut store);
         store.push(DbusNotification {
             app_name,
             icon: icon.unwrap_or_default(),
@@ -969,6 +994,63 @@ mod tests {
         let outcome = provider.invoke(&action).await.unwrap();
         assert!(outcome.message.is_none());
         assert_eq!(provider.count().await, 1);
+    }
+
+    #[tokio::test]
+    async fn apply_notify_caps_active_store_and_evicts_oldest() {
+        // A malicious or buggy client can call Notify (replaces_id = 0) in a
+        // loop. The store must stay bounded at MAX_NOTIFICATIONS, evicting the
+        // oldest entries so the newest survive.
+        let provider = NotificationsProvider::new();
+        let overflow = 5usize;
+        for index in 0..(MAX_NOTIFICATIONS + overflow) {
+            provider
+                .inner
+                .apply_notify(
+                    "App".into(),
+                    String::new(),
+                    0,
+                    format!("Summary {index}"),
+                    "Body".into(),
+                    Vec::new(),
+                    0,
+                    "normal".into(),
+                )
+                .await;
+        }
+        let all = provider.get_all().await;
+        assert_eq!(all.len(), MAX_NOTIFICATIONS, "store must not exceed the cap");
+        // Ids are assigned 1..=(MAX_NOTIFICATIONS + overflow). The oldest
+        // `overflow` ids must have been evicted, leaving the newest retained.
+        assert_eq!(all.first().expect("first").id, (overflow + 1) as u32);
+        assert_eq!(
+            all.last().expect("last").id,
+            (MAX_NOTIFICATIONS + overflow) as u32
+        );
+    }
+
+    #[tokio::test]
+    async fn add_internal_notification_caps_active_store_and_evicts_oldest() {
+        let provider = NotificationsProvider::new();
+        let overflow = 3usize;
+        for index in 0..(MAX_NOTIFICATIONS + overflow) {
+            provider
+                .add_internal_notification(
+                    "App".into(),
+                    format!("Summary {index}"),
+                    "Body".into(),
+                    None,
+                    0,
+                )
+                .await;
+        }
+        let all = provider.get_all().await;
+        assert_eq!(all.len(), MAX_NOTIFICATIONS, "store must not exceed the cap");
+        assert_eq!(all.first().expect("first").id, (overflow + 1) as u32);
+        assert_eq!(
+            all.last().expect("last").id,
+            (MAX_NOTIFICATIONS + overflow) as u32
+        );
     }
 
     #[tokio::test]
