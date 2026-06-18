@@ -30,9 +30,15 @@ pkgs.mkShell {
 
   # The Rust crate `gtk4-layer-shell = "0.5"` looks up `gtk4-layer-shell` via
   # pkg-config, but upstream installs the file as `gtk4-layer-shell-0.pc`. Shim
-  # in a temp dir with the alias and prepend it to PKG_CONFIG_PATH.
+  # in a STABLE, repo-local directory with the alias and prepend it to
+  # PKG_CONFIG_PATH. The directory path must be deterministic across shell
+  # entries: a fresh `mktemp -d` each time changes PKG_CONFIG_PATH, which
+  # invalidates the gtk/webkit `-sys` build-script fingerprints and forces a
+  # full recompile on every devsh.sh invocation. `.pkgconfig-shim/` is
+  # gitignored.
   shellHook = ''
-    PKG_CONFIG_SHIM="$(mktemp -d)"
+    PKG_CONFIG_SHIM="$PWD/.pkgconfig-shim"
+    mkdir -p "$PKG_CONFIG_SHIM"
     ln -sf "${pkgs.gtk4-layer-shell.dev}/lib/pkgconfig/gtk4-layer-shell-0.pc" \
            "$PKG_CONFIG_SHIM/gtk4-layer-shell.pc"
     export PKG_CONFIG_PATH="$PKG_CONFIG_SHIM:$PKG_CONFIG_PATH"
