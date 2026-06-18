@@ -41,6 +41,13 @@ export interface NotificationStore {
 const NOTIFICATION_CHANNEL = 'notifications.event';
 const NOTIFICATION_PROVIDER = 'notifications';
 
+// How many times the initial catch-up `provider.query` is retried, and the
+// delay between attempts. The query can transiently reject or time out during
+// a busy daemon startup; without a retry the notification center would render
+// permanently empty until the next brand-new notification arrived.
+const CATCH_UP_RETRIES = 3;
+const CATCH_UP_RETRY_DELAY_MS = 250;
+
 /** The subset of the client surface the notification store needs. */
 type NotificationClient = Pick<Client, 'call' | 'subscribe'>;
 
@@ -58,26 +65,48 @@ type NotificationClient = Pick<Client, 'call' | 'subscribe'>;
 export function createNotificationStore(client: NotificationClient): NotificationStore {
   return {
     subscribe(callback: (notifications: PendingNotification[]) => void): () => void {
-      void client
-        .call('provider.query', { id: NOTIFICATION_PROVIDER })
-        .then((result) => {
-          const envelope = parseEnvelope(result);
-          if (envelope !== null) {
-            callback(envelope.notifications);
-          }
-        })
-        .catch(() => {
-          // Initial fetch failures are non-fatal; the stream will deliver the
-          // next snapshot once it arrives.
-        });
+      // Tracks whether the subscription is still live so a pending retry does
+      // not fire a callback after teardown.
+      let active = true;
 
-      return client.subscribe(NOTIFICATION_CHANNEL, (payload: unknown) => {
+      // Fetch the current snapshot, retrying a bounded number of times if the
+      // call rejects. A delivered snapshot stops the retries; the live stream
+      // below remains the source of truth for every subsequent change.
+      const attemptCatchUp = (remaining: number): void => {
+        if (!active) {
+          return;
+        }
+        void client
+          .call('provider.query', { id: NOTIFICATION_PROVIDER })
+          .then((result) => {
+            if (!active) {
+              return;
+            }
+            const envelope = parseEnvelope(result);
+            if (envelope !== null) {
+              callback(envelope.notifications);
+            }
+          })
+          .catch(() => {
+            if (active && remaining > 0) {
+              setTimeout(() => attemptCatchUp(remaining - 1), CATCH_UP_RETRY_DELAY_MS);
+            }
+          });
+      };
+      attemptCatchUp(CATCH_UP_RETRIES);
+
+      const off = client.subscribe(NOTIFICATION_CHANNEL, (payload: unknown) => {
         const envelope = parseEnvelope(payload);
         if (envelope === null) {
           return;
         }
         callback(envelope.notifications);
       });
+
+      return () => {
+        active = false;
+        off();
+      };
     },
   };
 }

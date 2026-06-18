@@ -158,6 +158,38 @@ describe('createNotificationStore', () => {
     expect(received[0][0].id).toBe(9);
   });
 
+  it('retries the catch-up query when the first attempt rejects', async () => {
+    // A transient provider.query rejection during a busy startup must not leave
+    // the center permanently empty: the store retries and delivers once a later
+    // attempt succeeds.
+    vi.useFakeTimers();
+    const existing = makeNotification({ id: 7, app_name: 'Discord' });
+    const call = vi
+      .fn()
+      .mockRejectedValueOnce(new Error('timed out'))
+      .mockResolvedValue({ change: null, notifications: [existing] });
+    const client = {
+      call,
+      subscribe: vi.fn().mockReturnValue(vi.fn()),
+    };
+
+    const received: PendingNotification[][] = [];
+    createNotificationStore(client).subscribe((notifications) => received.push(notifications));
+
+    // Let the first (rejected) query settle, then advance past the retry delay
+    // and let the second (resolved) query settle.
+    await Promise.resolve();
+    await Promise.resolve();
+    await vi.advanceTimersByTimeAsync(250);
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(call).toHaveBeenCalledTimes(2);
+    expect(received).toHaveLength(1);
+    expect(received[0][0].id).toBe(7);
+    vi.useRealTimers();
+  });
+
   it('unsubscribe stops further callbacks', () => {
     const transport = createMockTransport();
     const client = createClient({ transport });
