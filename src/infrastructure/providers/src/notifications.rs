@@ -1043,7 +1043,11 @@ mod tests {
                 .await;
         }
         let all = provider.get_all().await;
-        assert_eq!(all.len(), MAX_NOTIFICATIONS, "store must not exceed the cap");
+        assert_eq!(
+            all.len(),
+            MAX_NOTIFICATIONS,
+            "store must not exceed the cap"
+        );
         // Ids are assigned 1..=(MAX_NOTIFICATIONS + overflow). The oldest
         // `overflow` ids must have been evicted, leaving the newest retained.
         assert_eq!(all.first().expect("first").id, (overflow + 1) as u32);
@@ -1069,7 +1073,11 @@ mod tests {
                 .await;
         }
         let all = provider.get_all().await;
-        assert_eq!(all.len(), MAX_NOTIFICATIONS, "store must not exceed the cap");
+        assert_eq!(
+            all.len(),
+            MAX_NOTIFICATIONS,
+            "store must not exceed the cap"
+        );
         assert_eq!(all.first().expect("first").id, (overflow + 1) as u32);
         assert_eq!(
             all.last().expect("last").id,
