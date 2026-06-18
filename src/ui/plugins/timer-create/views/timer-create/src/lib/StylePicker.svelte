@@ -2,7 +2,7 @@
     import type { VisualStyle } from '@quantum/client';
 
     /**
-     * Style picker for a new timer. Renders the four supported styles as small
+     * Style picker for a new timer. Renders the six supported styles as small
      * live example swatches (no text labels) and emits the chosen
      * `VisualStyle` through `onChange`. The selected swatch is highlighted.
      */
@@ -16,8 +16,8 @@
         onChange: (next: VisualStyle) => void;
     } = $props();
 
-    /** Only the four distinct styles — no `mixed`, no `wedge`. */
-    const STYLES: VisualStyle[] = ['ring', 'pie', 'dots', 'bar'];
+    /** Only the six distinct styles — no `mixed`, no `wedge`. */
+    const STYLES: VisualStyle[] = ['ring', 'pie', 'dots', 'bar', 'spiral', 'pulse'];
 
     /** Swatch box size in pixels; the example renders inside at ~60%. */
     const SWATCH_SIZE = 70;
@@ -48,6 +48,48 @@
     // Bar geometry.
     const barWidth = Math.round(VISUAL_SIZE * 0.82);
     const barHeight = 11;
+
+    /**
+     * Build an Archimedean spiral path string growing from the centre outward,
+     * starting at twelve o'clock. `fraction` truncates the spiral so a partial
+     * example matches the other swatches' partially-filled look.
+     */
+    function buildSpiralPath(
+        centerX: number,
+        centerY: number,
+        maxRadius: number,
+        turns: number,
+        fraction: number,
+    ): string {
+        const steps = 120;
+        const maxTheta = turns * 2 * Math.PI * fraction;
+        let definition = '';
+        for (let index = 0; index <= steps; index += 1) {
+            const theta = (index / steps) * maxTheta;
+            const radius = (theta / (turns * 2 * Math.PI)) * maxRadius;
+            const x = centerX + radius * Math.cos(theta - Math.PI / 2);
+            const y = centerY + radius * Math.sin(theta - Math.PI / 2);
+            definition += (index === 0 ? 'M' : 'L') + x.toFixed(1) + ' ' + y.toFixed(1) + ' ';
+        }
+        return definition;
+    }
+
+    // Spiral geometry. Reuses the ring stroke width for a consistent weight.
+    const spiralTurns = 3;
+    const spiralStrokeWidth = ringStrokeWidth;
+    const spiralRadius = (VISUAL_SIZE - spiralStrokeWidth) / 2;
+    const spiralTrackPath = buildSpiralPath(ringCenter, ringCenter, spiralRadius, spiralTurns, 1);
+    const spiralFillPath = buildSpiralPath(
+        ringCenter,
+        ringCenter,
+        spiralRadius,
+        spiralTurns,
+        FRACTION,
+    );
+
+    // Pulse geometry. A filled inner circle inside a faint outer ring.
+    const pulseOuterRadius = (VISUAL_SIZE - ringStrokeWidth) / 2;
+    const pulseInnerRadius = Math.round(VISUAL_SIZE * 0.32);
 
     function selectStyle(next: VisualStyle): void {
         style = next;
@@ -122,6 +164,48 @@
                         style="width:{FRACTION * 100}%;background:{stroke};border-radius:{barHeight}px;"
                     ></span>
                 </span>
+            {:else if candidate === 'spiral'}
+                <svg
+                    width={VISUAL_SIZE}
+                    height={VISUAL_SIZE}
+                    viewBox="0 0 {VISUAL_SIZE} {VISUAL_SIZE}"
+                >
+                    <path
+                        d={spiralTrackPath}
+                        fill="none"
+                        stroke={track}
+                        stroke-width={spiralStrokeWidth}
+                        stroke-linecap="round"
+                    />
+                    <path
+                        d={spiralFillPath}
+                        fill="none"
+                        stroke={stroke}
+                        stroke-width={spiralStrokeWidth}
+                        stroke-linecap="round"
+                    />
+                </svg>
+            {:else if candidate === 'pulse'}
+                <svg
+                    width={VISUAL_SIZE}
+                    height={VISUAL_SIZE}
+                    viewBox="0 0 {VISUAL_SIZE} {VISUAL_SIZE}"
+                >
+                    <circle
+                        cx={ringCenter}
+                        cy={ringCenter}
+                        r={pulseOuterRadius}
+                        fill="none"
+                        stroke={track}
+                        stroke-width={2}
+                    />
+                    <circle
+                        cx={ringCenter}
+                        cy={ringCenter}
+                        r={pulseInnerRadius}
+                        fill={stroke}
+                    />
+                </svg>
             {/if}
         </button>
     {/each}

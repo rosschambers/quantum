@@ -315,7 +315,7 @@ describe('TimerCreate App', () => {
         expect(params.notify!.ramp_threshold).toBe(0.1);
     });
 
-    it('style picker offers exactly ring, pie, dots and bar swatches with no text labels', async () => {
+    it('style picker offers exactly ring, pie, dots, bar, spiral and pulse swatches with no text labels', async () => {
         const { container } = render(App);
         await settle();
         await openAdvanced(container);
@@ -324,7 +324,7 @@ describe('TimerCreate App', () => {
             container.querySelectorAll('[data-style]'),
         ) as HTMLElement[];
         const styles = swatches.map((swatch) => swatch.getAttribute('data-style'));
-        expect(styles).toEqual(['ring', 'pie', 'dots', 'bar']);
+        expect(styles).toEqual(['ring', 'pie', 'dots', 'bar', 'spiral', 'pulse']);
         // Swatches are live SVG/CSS examples, not text labels.
         for (const swatch of swatches) {
             expect(swatch.textContent?.trim()).toBe('');
