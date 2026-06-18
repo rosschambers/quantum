@@ -57,6 +57,10 @@ jobs:
             set -euo pipefail
             cargo fmt --all -- --check
             cargo clippy --workspace --all-targets -- -D warnings
+            # Build the binaries first: the e2e test (quantum-e2e) spawns the
+            # compiled target/debug/quantumd, so it must exist before the test
+            # run rather than relying on a leftover artifact.
+            cargo build --workspace
             cargo test --workspace
           ' shell.nix
 
