@@ -815,9 +815,33 @@ async fn setup_daemon(
     let socket_path = if let Some(path) = socket_override {
         PathBuf::from(path)
     } else {
-        let runtime_dir = std::env::var("XDG_RUNTIME_DIR")
-            .unwrap_or_else(|_| format!("{}/.run", std::env::var("HOME").unwrap_or_default()));
-        PathBuf::from(runtime_dir).join("quantum.sock")
+        let runtime_dir = match std::env::var("XDG_RUNTIME_DIR") {
+            Ok(dir) => PathBuf::from(dir),
+            Err(_) => {
+                // No runtime directory provided by the session; fall back to a
+                // private directory under HOME. Create it with mode 0700 so the
+                // control socket inside it is not world-traversable. Only create
+                // it when absent — never re-permission a directory the user
+                // already controls.
+                let fallback =
+                    PathBuf::from(std::env::var("HOME").unwrap_or_default()).join(".run");
+                if !fallback.exists() {
+                    use std::os::unix::fs::DirBuilderExt;
+                    if let Err(err) = std::fs::DirBuilder::new()
+                        .recursive(true)
+                        .mode(0o700)
+                        .create(&fallback)
+                    {
+                        tracing::warn!(
+                            "Failed to create runtime-dir fallback {}: {err}",
+                            fallback.display()
+                        );
+                    }
+                }
+                fallback
+            }
+        };
+        runtime_dir.join("quantum.sock")
     };
 
     // Clean up stale socket if needed
