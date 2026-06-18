@@ -27,6 +27,17 @@ impl ProcStatsProvider {
             let mut last_published: Option<serde_json::Value> = None;
             loop {
                 tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+                // No subscriber (no bar connected): skip the /proc read and
+                // parse entirely for this tick. The broadcast sender reports
+                // zero receivers, so nothing would consume the payload anyway.
+                // When a subscriber appears, receiver_count() goes positive
+                // again and polling resumes on the next tick. `prev` may be
+                // stale after an idle gap, but the busy-over-total ratio stays
+                // a valid percentage across any interval length, so the first
+                // resumed payload remains correct.
+                if tx_for_task.receiver_count() == 0 {
+                    continue;
+                }
                 let stat = match tokio::fs::read_to_string("/proc/stat").await {
                     Ok(s) => s,
                     Err(_) => continue,
