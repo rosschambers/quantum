@@ -211,19 +211,111 @@ impl DesktopAppsProvider {
         }
     }
 
-    /// Strip desktop entry field codes from exec string.
-    fn clean_exec(exec: &str) -> String {
-        exec.split_whitespace()
-            .map(|part| {
-                if part.starts_with('%') {
-                    String::new()
-                } else {
-                    part.to_string()
+    /// Tokenize a desktop entry `Exec=` value into an argv vector following the
+    /// freedesktop Desktop Entry Specification quoting and field-code rules.
+    ///
+    /// Rules honored:
+    /// - Double-quoted arguments may contain spaces. Inside double quotes a
+    ///   backslash escapes the characters the specification reserves: `"`,
+    ///   `` ` ``, `$`, and `\`. A backslash before any other character is kept
+    ///   literally.
+    /// - `%%` is unescaped to a single literal `%`.
+    /// - The defined field codes (`%f %F %u %U %d %D %n %N %i %c %k %v %m`)
+    ///   are removed wherever they appear.
+    /// - A `%` followed by any other character is a non-standard or deprecated
+    ///   field code: the `%` is dropped and the following character is kept.
+    ///   A trailing lone `%` is dropped. This means a Steam-style
+    ///   `%command%` placeholder (which is not a valid `Exec` field code)
+    ///   degrades to `ommand` rather than being passed through verbatim or
+    ///   crashing.
+    ///
+    /// Used for both the displayed/cleaned exec and the argv handed to
+    /// `spawn_detached`, so the two always agree.
+    fn tokenize_exec(exec: &str) -> Vec<String> {
+        const FIELD_CODES: &[char] = &[
+            'f', 'F', 'u', 'U', 'd', 'D', 'n', 'N', 'i', 'c', 'k', 'v', 'm',
+        ];
+        let chars: Vec<char> = exec.chars().collect();
+        let mut tokens: Vec<String> = Vec::new();
+        let mut current = String::new();
+        // Whether a token is currently open. Set when a quote opens or a
+        // character is appended, so that an explicit empty quoted argument
+        // ("") is preserved while a field code that resolves to nothing is
+        // dropped.
+        let mut token_open = false;
+        let mut in_quotes = false;
+        let mut index = 0;
+        while index < chars.len() {
+            let current_char = chars[index];
+            if in_quotes {
+                match current_char {
+                    '"' => {
+                        in_quotes = false;
+                        index += 1;
+                    }
+                    '\\' => match chars.get(index + 1) {
+                        Some(next) if matches!(next, '"' | '`' | '$' | '\\') => {
+                            current.push(*next);
+                            index += 2;
+                        }
+                        _ => {
+                            current.push('\\');
+                            index += 1;
+                        }
+                    },
+                    '%' if chars.get(index + 1) == Some(&'%') => {
+                        current.push('%');
+                        index += 2;
+                    }
+                    other => {
+                        current.push(other);
+                        index += 1;
+                    }
                 }
-            })
-            .filter(|s| !s.is_empty())
-            .collect::<Vec<_>>()
-            .join(" ")
+                continue;
+            }
+
+            if current_char.is_whitespace() {
+                if token_open {
+                    tokens.push(std::mem::take(&mut current));
+                    token_open = false;
+                }
+                index += 1;
+            } else if current_char == '"' {
+                in_quotes = true;
+                token_open = true;
+                index += 1;
+            } else if current_char == '%' {
+                match chars.get(index + 1) {
+                    Some('%') => {
+                        current.push('%');
+                        token_open = true;
+                        index += 2;
+                    }
+                    Some(code) if FIELD_CODES.contains(code) => {
+                        // Defined field code: remove it entirely.
+                        index += 2;
+                    }
+                    Some(_) => {
+                        // Non-standard field code: drop the `%`, keep the
+                        // following character (processed on the next iteration).
+                        index += 1;
+                    }
+                    None => {
+                        // Trailing lone `%`: drop it.
+                        index += 1;
+                    }
+                }
+            } else {
+                current.push(current_char);
+                token_open = true;
+                index += 1;
+            }
+        }
+        if token_open {
+            tokens.push(current);
+        }
+        tokens
     }
 }
 
@@ -329,11 +421,10 @@ impl ProviderSource for DesktopAppsProvider {
             Action::Launch { desktop_id } => {
                 let apps = self.apps.read().await;
                 if let Some(app) = apps.iter().find(|a| &a.id == desktop_id) {
-                    let clean_exec = Self::clean_exec(&app.exec);
-                    let command: Vec<String> = clean_exec
-                        .split_whitespace()
-                        .map(|s| s.to_string())
-                        .collect();
+                    // Use the same spec-aware tokenizer for the argv as for the
+                    // cleaned display string, so quoted arguments survive intact
+                    // and field codes are removed consistently.
+                    let command: Vec<String> = Self::tokenize_exec(&app.exec);
 
                     if !command.is_empty() {
                         self.executor.spawn_detached(&command).await?;
@@ -414,8 +505,84 @@ mod tests {
     #[tokio::test]
     async fn clean_exec_strips_field_codes() {
         let exec = "firefox %u %U";
-        let cleaned = DesktopAppsProvider::clean_exec(exec);
-        assert_eq!(cleaned, "firefox");
+        let tokens = DesktopAppsProvider::tokenize_exec(exec);
+        assert_eq!(tokens, vec!["firefox".to_string()]);
+    }
+
+    #[test]
+    fn tokenize_exec_strips_simple_field_code() {
+        assert_eq!(
+            DesktopAppsProvider::tokenize_exec("firefox %u"),
+            vec!["firefox".to_string()]
+        );
+    }
+
+    #[test]
+    fn tokenize_exec_keeps_quoted_argument_with_space() {
+        assert_eq!(
+            DesktopAppsProvider::tokenize_exec("\"my app\" --flag"),
+            vec!["my app".to_string(), "--flag".to_string()]
+        );
+    }
+
+    #[test]
+    fn tokenize_exec_removes_field_code_between_args() {
+        assert_eq!(
+            DesktopAppsProvider::tokenize_exec("app %U file"),
+            vec!["app".to_string(), "file".to_string()]
+        );
+    }
+
+    #[test]
+    fn tokenize_exec_unescapes_double_percent() {
+        assert_eq!(
+            DesktopAppsProvider::tokenize_exec("app %%literal"),
+            vec!["app".to_string(), "%literal".to_string()]
+        );
+    }
+
+    #[test]
+    fn tokenize_exec_multiple_quoted_args() {
+        assert_eq!(
+            DesktopAppsProvider::tokenize_exec("app \"a b\" c"),
+            vec!["app".to_string(), "a b".to_string(), "c".to_string()]
+        );
+    }
+
+    /// A backslash inside double quotes escapes the characters the spec
+    /// reserves (`"`, `` ` ``, `$`, `\`), so `"a\"b"` is a single argument
+    /// containing a literal double quote.
+    #[test]
+    fn tokenize_exec_escaped_quote_inside_quotes() {
+        assert_eq!(
+            DesktopAppsProvider::tokenize_exec("app \"a\\\"b\""),
+            vec!["app".to_string(), "a\"b".to_string()]
+        );
+    }
+
+    /// Steam writes a `%command%` placeholder into launch options, which is
+    /// NOT a valid Desktop Entry `Exec` field code. `%c` is a real field code
+    /// and is stripped wherever it appears, and a trailing lone `%` is
+    /// dropped, so the non-standard token degrades to `ommand` rather than
+    /// crashing or being passed through verbatim.
+    #[test]
+    fn tokenize_exec_nonstandard_steam_field_code_degrades() {
+        assert_eq!(
+            DesktopAppsProvider::tokenize_exec("steam %command%"),
+            vec!["steam".to_string(), "ommand".to_string()]
+        );
+    }
+
+    /// All defined field codes are removed and `%%` collapses to a literal
+    /// percent.
+    #[test]
+    fn tokenize_exec_removes_all_defined_field_codes() {
+        assert_eq!(
+            DesktopAppsProvider::tokenize_exec(
+                "app %f %F %u %U %d %D %n %N %i %c %k %v %m tail"
+            ),
+            vec!["app".to_string(), "tail".to_string()]
+        );
     }
 
     #[tokio::test]
