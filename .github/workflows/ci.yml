@@ -13,44 +13,46 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install system dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y \
-            libgtk-4-dev \
-            libwebkit2gtk-6.0-dev \
-            libgtk4-layer-shell-dev
-
-      - name: Install Rust toolchain
-        # Toolchain version is pinned via rust-toolchain.toml; do not hardcode here.
-        uses: dtolnay/rust-toolchain@master
-
-      - name: Install Node.js
-        uses: actions/setup-node@v4
+      # The GTK4, WebKitGTK 6, and gtk4-layer-shell toolchain is not available
+      # through apt on Ubuntu, so CI uses the same Nix environment as local
+      # development (shell.nix, driven locally by scripts/devsh.sh). The
+      # nix_path pins <nixpkgs> so `import <nixpkgs>` in shell.nix resolves.
+      - name: Install Nix
+        uses: cachix/install-nix-action@v27
         with:
-          node-version: '20'
+          nix_path: nixpkgs=channel:nixos-24.11
 
       - name: Install pnpm
         uses: pnpm/action-setup@v4
         with:
           version: 9
 
+      - name: Install Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
       - name: Install frontend dependencies
         working-directory: src/ui
         run: pnpm install --frozen-lockfile
 
+      # The frontend must build before the Rust build: quantumd's build.rs
+      # embeds each view's compiled dist/.
       - name: Build frontend
         working-directory: src/ui
         run: pnpm -r build
 
-      - name: Check Rust formatting
-        run: cargo fmt --all -- --check
-
-      - name: Run Clippy
-        run: cargo clippy --workspace --all-targets -- -D warnings
-
-      - name: Run tests
-        run: cargo test --workspace
+      # Rust format, lint, and tests run inside the nix-shell so the GTK4 and
+      # WebKitGTK -sys crates find their libraries via pkg-config, exactly as
+      # scripts/devsh.sh does locally.
+      - name: Rust format, lint, and test
+        run: |
+          nix-shell --run '
+            set -euo pipefail
+            cargo fmt --all -- --check
+            cargo clippy --workspace --all-targets -- -D warnings
+            cargo test --workspace
+          ' shell.nix
 
       - name: Run frontend tests
         working-directory: src/ui
