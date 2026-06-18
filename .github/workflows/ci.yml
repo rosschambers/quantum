@@ -17,10 +17,16 @@ jobs:
       # through apt on Ubuntu, so CI uses the same Nix environment as local
       # development (shell.nix, driven locally by scripts/devsh.sh). The
       # nix_path pins <nixpkgs> so `import <nixpkgs>` in shell.nix resolves.
+      #
+      # nixos-unstable is required because the workspace depends on crates that
+      # need a recent Rust (edition 2024 in a transitive dependency, and the
+      # rust-toolchain.toml pins 1.85). The stable channels lag well behind:
+      # nixos-24.11 ships rustc 1.82, which cannot even parse the manifests.
+      # This matches the unstable channel used locally (rustc 1.95).
       - name: Install Nix
         uses: cachix/install-nix-action@v27
         with:
-          nix_path: nixpkgs=channel:nixos-24.11
+          nix_path: nixpkgs=channel:nixos-unstable
 
       - name: Install pnpm
         uses: pnpm/action-setup@v4
