@@ -63,9 +63,9 @@ const DEFAULT_EXPIRE_MS: u64 = 5000;
 fn resolve_timeout_ms(expire_timeout: i32, urgency: &str) -> u64 {
     if expire_timeout > 0 {
         expire_timeout as u64
-    } else if expire_timeout == 0 {
-        0
-    } else if urgency == "critical" {
+    } else if expire_timeout == 0 || urgency == "critical" {
+        // `0` means never expire; a critical notification asking for the
+        // server default (`-1`) likewise persists until it is dismissed.
         0
     } else {
         DEFAULT_EXPIRE_MS
