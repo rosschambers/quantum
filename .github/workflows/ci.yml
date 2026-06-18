@@ -26,7 +26,12 @@ jobs:
       - name: Install Nix
         uses: cachix/install-nix-action@v31
         with:
-          nix_path: nixpkgs=channel:nixos-unstable
+          # Pin nixpkgs to a specific nixos-unstable revision rather than the
+          # moving `channel:nixos-unstable` so the toolchain is stable across
+          # runs. This revision provides rustc 1.95.0, matching the local
+          # development toolchain (verified via `rustc.version`). Bump it
+          # deliberately when the workspace needs a newer toolchain.
+          nix_path: nixpkgs=https://github.com/NixOS/nixpkgs/archive/567a49d1913ce81ac6e9582e3553dd90a955875f.tar.gz
 
       # Cache the /nix/store closure (GTK4, WebKitGTK, the Rust toolchain, ...)
       # so it is not re-downloaded from cache.nixos.org on every run. Each run
@@ -71,7 +76,7 @@ jobs:
       # embeds each view's compiled dist/.
       - name: Build frontend
         working-directory: src/ui
-        run: pnpm -r build
+        run: pnpm -r --parallel build
 
       # Rust format, lint, and tests run inside the nix-shell so the GTK4 and
       # WebKitGTK -sys crates find their libraries via pkg-config, exactly as
@@ -82,10 +87,14 @@ jobs:
             set -euo pipefail
             cargo fmt --all -- --check
             cargo clippy --workspace --all-targets -- -D warnings
-            # Build the binaries first: the e2e test (quantum-e2e) spawns the
-            # compiled target/debug/quantumd, so it must exist before the test
-            # run rather than relying on a leftover artifact.
-            cargo build --workspace
+            # Compile all test and binary artifacts (including
+            # target/debug/quantumd) without running anything: the e2e test
+            # (quantum-e2e) spawns the compiled target/debug/quantumd, so it
+            # must exist before the test run. `cargo test --no-run` builds it as
+            # part of the workspace bin targets and the subsequent
+            # `cargo test --workspace` reuses those artifacts, avoiding a
+            # separate redundant `cargo build --workspace` codegen pass.
+            cargo test --workspace --no-run
             cargo test --workspace
           ' shell.nix
 
