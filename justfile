@@ -1,4 +1,4 @@
-# All targets run inside the dev container via scripts/devsh.sh.
+# All targets run inside the nix-shell via scripts/devsh.sh.
 # This keeps the build environment hermetic and identical across machines.
 # For an interactive shell, use `just shell`.
 
@@ -27,7 +27,7 @@ frontend-install:
     {{devsh}} pnpm -C src/ui install
 
 frontend-build:
-    {{devsh}} pnpm -C src/ui -r build
+    {{devsh}} pnpm -C src/ui -r --parallel build
 
 frontend-test:
     {{devsh}} pnpm -C src/ui -r test
