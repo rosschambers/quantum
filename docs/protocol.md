@@ -55,7 +55,7 @@ request/response section below.
 | `timer.cancel`       | `{ id }`                                          | `{}`                        | Yes        |
 | `timer.dismiss`      | `{ id }`                                          | `{}`                        | Yes        |
 | `timer.dismiss_all`  | none                                             | `{ dismissed }`             | Yes        |
-| `system.status`      | `{}`                                             | `{ version, providers_count, themes_count }` | Yes |
+| `system.status`      | `{}`                                             | `{ version, providers_count }` | Yes |
 
 Any method not in this table returns `Unsupported` (`-32004`).
 
@@ -712,20 +712,18 @@ Get daemon status and metadata.
   id: number,
   result: {
     version: string,                // e.g., "0.1.0"
-    providers_count: number,
-    themes_count: number            // placeholder: handler hardcodes 1
+    providers_count: number
   }
 }
 ```
 
-`themes_count` is currently a placeholder — the handler in
-`src/application/src/dispatcher.rs` hardcodes `1` rather than counting
-installed themes.
+Note: an earlier `themes_count` field was removed — the theme store exposes no
+enumeration capability, so the handler no longer reports a fabricated count.
 
 **Example:**
 
 ```json
-{"jsonrpc":"2.0","id":1,"result":{"version":"0.1.0","providers_count":4,"themes_count":1}}
+{"jsonrpc":"2.0","id":1,"result":{"version":"0.1.0","providers_count":4}}
 ```
 
 ---
