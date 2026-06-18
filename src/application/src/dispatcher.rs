@@ -172,10 +172,13 @@ impl Dispatcher {
 
     async fn handle_system_status(&self, _params: Option<&RawValue>) -> Result<Value> {
         let providers = self.list_providers.execute().await;
+        // No theme-listing capability is wired into the dispatcher (the
+        // `ThemeStore` port exposes no enumeration), so reporting a real theme
+        // count is impossible here. Rather than emit a fabricated value, omit
+        // the field entirely.
         Ok(json!({
             "version": quantum_domain::version(),
             "providers_count": providers.len(),
-            "themes_count": 1,
         }))
     }
 
@@ -609,7 +612,9 @@ mod tests {
         let status: serde_json::Value = resp;
         assert!(status.get("version").is_some());
         assert_eq!(status["providers_count"], 1);
-        assert_eq!(status["themes_count"], 1);
+        // themes_count is intentionally absent: the dispatcher has no
+        // theme-listing capability, so no honest count can be reported.
+        assert!(status.get("themes_count").is_none());
     }
 
     #[tokio::test]
