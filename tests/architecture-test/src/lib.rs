@@ -194,4 +194,83 @@ mod tests {
             violations.join("\n"),
         );
     }
+
+    /// The set of crate names `domain` is permitted to depend on. `futures` is
+    /// deliberately blessed: it backs the `BoxStream` return type of
+    /// `ProviderSource::subscribe` in `src/domain/src/ports.rs`. No runtime or
+    /// IO crate (tokio, chrono, time, reqwest, ...) belongs here.
+    const DOMAIN_ALLOWED_DEPENDENCIES: &[&str] =
+        &["thiserror", "serde", "serde_json", "async-trait", "futures"];
+
+    /// Locate the workspace's `src/domain` crate. Panics if it is missing,
+    /// because that itself signals the layout the test relies on has changed.
+    fn find_domain_package(
+        metadata: &cargo_metadata::Metadata,
+        workspace_root: &Path,
+    ) -> Package {
+        for package in metadata.workspace_packages() {
+            if let Some(classified) = classify(package, workspace_root) {
+                if classified.layer == Layer::Domain {
+                    return (*package).clone();
+                }
+            }
+        }
+        panic!(
+            "ARCHITECTURE TEST: no crate found under src/domain. The domain dependency \
+             allowlist checks rely on that crate existing."
+        );
+    }
+
+    #[test]
+    fn domain_dependencies_stay_within_allowlist() {
+        use cargo_metadata::DependencyKind;
+
+        let metadata = MetadataCommand::new().exec().expect("cargo metadata");
+        let workspace_root = PathBuf::from(metadata.workspace_root.as_std_path());
+        let domain = find_domain_package(&metadata, &workspace_root);
+
+        let mut offenders: Vec<String> = Vec::new();
+        for dependency in &domain.dependencies {
+            // Dev-dependencies (for example tokio for `#[tokio::test]`) do not
+            // ship in the domain library and are not constrained.
+            if dependency.kind == DependencyKind::Development {
+                continue;
+            }
+            if !DOMAIN_ALLOWED_DEPENDENCIES.contains(&dependency.name.as_str()) {
+                offenders.push(dependency.name.as_str().to_string());
+            }
+        }
+
+        assert!(
+            offenders.is_empty(),
+            "ARCHITECTURE TEST: domain crate '{}' has non-allowlisted dependencies: {:?}.\n\
+             Domain may only depend on {{thiserror, serde, serde_json, async-trait, futures}}.\n\
+             `futures` is blessed solely for the BoxStream type in src/domain/src/ports.rs; do \
+             not add tokio, chrono, time, reqwest, or other runtime/IO crates to domain.",
+            domain.name, offenders,
+        );
+    }
+
+    #[test]
+    fn domain_does_not_depend_on_chrono_or_time() {
+        use cargo_metadata::DependencyKind;
+
+        let metadata = MetadataCommand::new().exec().expect("cargo metadata");
+        let workspace_root = PathBuf::from(metadata.workspace_root.as_std_path());
+        let domain = find_domain_package(&metadata, &workspace_root);
+
+        for dependency in &domain.dependencies {
+            if dependency.kind == DependencyKind::Development {
+                continue;
+            }
+            let name = dependency.name.as_str();
+            assert!(
+                name != "chrono" && name != "time",
+                "ARCHITECTURE TEST: domain crate must not depend on '{}'. Time and calendar \
+                 logic stays pure integer arithmetic behind the domain Clock port; chrono and \
+                 time live only in infrastructure.",
+                name,
+            );
+        }
+    }
 }
