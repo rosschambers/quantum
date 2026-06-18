@@ -44,6 +44,34 @@ struct NotificationsInner {
 
 use quantum_domain::NotificationEvent;
 
+/// Default auto-dismiss applied when a notification requests the server
+/// default (D-Bus `expire_timeout == -1`), in milliseconds. The
+/// org.freedesktop.Notifications spec leaves the concrete value to the server.
+const DEFAULT_EXPIRE_MS: u64 = 5000;
+
+/// Resolve a D-Bus `expire_timeout` into a stored `timeout_ms`, where the
+/// value `0` means "never auto-dismiss".
+///
+/// Per the org.freedesktop.Notifications spec the incoming `expire_timeout` is:
+/// `> 0` an explicit timeout in milliseconds, `0` meaning never expire, and
+/// `-1` asking the server to pick a default. The previous implementation
+/// collapsed both `0` and `-1` into `0`, so a notification that asked to
+/// persist (`0`) was wrongly auto-dismissed using the toast's fallback. Here
+/// the server default (`-1`) resolves to a concrete positive value, leaving
+/// `0` to unambiguously mean never-expire. A critical notification that asks
+/// for the server default persists until dismissed.
+fn resolve_timeout_ms(expire_timeout: i32, urgency: &str) -> u64 {
+    if expire_timeout > 0 {
+        expire_timeout as u64
+    } else if expire_timeout == 0 {
+        0
+    } else if urgency == "critical" {
+        0
+    } else {
+        DEFAULT_EXPIRE_MS
+    }
+}
+
 impl NotificationsInner {
     #[allow(clippy::too_many_arguments)]
     async fn apply_notify(
@@ -57,11 +85,7 @@ impl NotificationsInner {
         expire_timeout: i32,
         urgency: String,
     ) -> u32 {
-        let timeout_ms = if expire_timeout > 0 {
-            expire_timeout as u64
-        } else {
-            0
-        };
+        let timeout_ms = resolve_timeout_ms(expire_timeout, &urgency);
         let event_timeout = if timeout_ms > 0 { Some(timeout_ms) } else { None };
         let mut store = self.store.write().await;
 
@@ -607,6 +631,64 @@ mod tests {
     fn subscribes_returns_stream() {
         let provider = NotificationsProvider::new();
         assert!(provider.subscribe().is_some());
+    }
+
+    #[test]
+    fn resolve_timeout_distinguishes_never_default_and_explicit() {
+        // An explicit positive timeout is honored verbatim.
+        assert_eq!(resolve_timeout_ms(5000, "normal"), 5000);
+        // Zero means never auto-dismiss and must not be turned into a default.
+        assert_eq!(resolve_timeout_ms(0, "normal"), 0);
+        // The server default (-1) resolves to a concrete positive value.
+        assert_eq!(resolve_timeout_ms(-1, "normal"), DEFAULT_EXPIRE_MS);
+        // A critical notification asking for the server default persists.
+        assert_eq!(resolve_timeout_ms(-1, "critical"), 0);
+        // An explicit positive timeout still wins for critical urgency.
+        assert_eq!(resolve_timeout_ms(3000, "critical"), 3000);
+    }
+
+    #[tokio::test]
+    async fn apply_notify_persists_zero_timeout_as_never() {
+        // A D-Bus notification with expire_timeout 0 must be stored with
+        // timeout_ms 0 (never), not silently rewritten to a default.
+        let provider = NotificationsProvider::new();
+        provider
+            .inner
+            .apply_notify(
+                "App".into(),
+                String::new(),
+                0,
+                "Persistent".into(),
+                "Body".into(),
+                Vec::new(),
+                0,
+                "normal".into(),
+            )
+            .await;
+        let all = provider.get_all().await;
+        assert_eq!(all.len(), 1);
+        assert_eq!(all[0].timeout_ms, 0);
+    }
+
+    #[tokio::test]
+    async fn apply_notify_resolves_server_default_to_concrete_value() {
+        let provider = NotificationsProvider::new();
+        provider
+            .inner
+            .apply_notify(
+                "App".into(),
+                String::new(),
+                0,
+                "Default".into(),
+                "Body".into(),
+                Vec::new(),
+                -1,
+                "normal".into(),
+            )
+            .await;
+        let all = provider.get_all().await;
+        assert_eq!(all.len(), 1);
+        assert_eq!(all[0].timeout_ms, DEFAULT_EXPIRE_MS);
     }
 
     #[tokio::test]
