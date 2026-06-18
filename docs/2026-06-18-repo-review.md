@@ -124,6 +124,7 @@ Highest-severity verified findings (top of the fix queue):
 - **Raised by:** architecture (D).
 
 ### `DomainError` too coarse; typed error enums collapse to `(code, message)` on the wire
+- **Status:** ◐ Partial (`b94f907`) — added a `DomainError::NotFound(String)` variant with stable code `-32005` and remapped `TimerError::NotFound` to it (no longer masquerading as `Unsupported`). Whether to send the full serde-tagged error body in `error.data` (vs the current code+message) remains a deferred decision.
 - **Severity:** medium
 - **Verified locations:** `src/domain/src/error.rs:7-16`; timer mapping
   `src/application/src/error.rs:51-59`; wire flattening
@@ -236,6 +237,7 @@ Highest-severity verified findings (top of the fix queue):
 - **Raised by:** architecture (L).
 
 ### `ProviderSource::subscribe()` overloaded for both streaming and one-shot snapshot
+- **Status:** ✅ Fixed (`26dd151`) — added an explicit `async fn snapshot()` to `ProviderSource` (default `None`); `QueryProviderUseCase` now prefers it and falls back to the subscribe-first-emission path. `notifications` overrides it with a payload byte-identical to its stream's first emission.
 - **Severity:** low
 - **Verified locations:** `src/domain/src/ports.rs:24`; one-shot consumer
   `src/application/src/use_cases/query_provider.rs:36-55` (2s timeout at `:27`).
