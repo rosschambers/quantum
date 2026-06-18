@@ -46,3 +46,14 @@ anyhow = "1"
 cargo_metadata = "0.18"
 futures = "0.3"
 include_dir = "0.7"
+
+# Trim dev-build debug info. The gtk/webkit `-sys` dependency tree emits a large
+# amount of DWARF; full debuginfo on it dominates link time and target size
+# without aiding day-to-day debugging of this workspace's own crates.
+[profile.dev]
+debug = "line-tables-only"
+split-debuginfo = "unpacked"
+
+# Dependencies never need debug info for debugging our own code.
+[profile.dev.package."*"]
+debug = false

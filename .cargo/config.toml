@@ -1,0 +1,6 @@
+# Use the mold linker for the Linux GNU target. mold is provided by shell.nix's
+# nativeBuildInputs, so it is on PATH for every build driven through
+# scripts/devsh.sh. Linking the gtk/webkit dependency tree is link-heavy, and
+# mold is substantially faster than the default bfd/gold linker.
+[target.x86_64-unknown-linux-gnu]
+rustflags = ["-C", "link-arg=-fuse-ld=mold"]

@@ -11,6 +11,7 @@ pkgs.mkShell {
     cargo
     rustfmt
     clippy
+    mold
   ];
 
   buildInputs = with pkgs; [
