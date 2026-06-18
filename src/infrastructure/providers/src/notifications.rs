@@ -462,6 +462,18 @@ impl ProviderSource for NotificationsProvider {
         Ok(ActionOutcome { message: None })
     }
 
+    async fn snapshot(&self) -> Option<serde_json::Value> {
+        // Mirror the shape of `subscribe()`'s first emission so a
+        // `provider.query` answered through this explicit one-shot path is
+        // byte-for-byte identical to one answered by taking the stream's
+        // initial snapshot: a null `change` plus the current notifications.
+        let notifications = self.inner.snapshot_json().await;
+        Some(serde_json::json!({
+            "change": serde_json::Value::Null,
+            "notifications": notifications,
+        }))
+    }
+
     fn subscribe(&self) -> Option<futures::stream::BoxStream<'static, serde_json::Value>> {
         let rx = self.inner.tx.subscribe();
         let inner = self.inner.clone();
@@ -910,6 +922,35 @@ mod tests {
         let notifications = value["notifications"].as_array().expect("array");
         assert_eq!(notifications.len(), 1);
         assert_eq!(notifications[0]["app_name"], "Spotify");
+        assert_eq!(notifications[0]["id"], 7);
+    }
+
+    #[tokio::test]
+    async fn snapshot_matches_subscribe_first_emission_shape() {
+        // The explicit one-shot snapshot must be identical to the stream's
+        // first emission so `provider.query` answered either way is the same.
+        let provider = NotificationsProvider::new();
+        provider.inner.store.write().await.push(DbusNotification {
+            app_name: "Spotify".into(),
+            icon: "firefox".into(),
+            id: 7,
+            summary: "Now playing".into(),
+            body: "Song".into(),
+            urgency: "normal".into(),
+            timeout_ms: 5000,
+            actions: vec![("default".into(), "Open".into())],
+            hints: HashMap::new(),
+            internal: false,
+        });
+
+        let snapshot = provider.snapshot().await.expect("snapshot value");
+        let mut stream = provider.subscribe().expect("stream");
+        let first = stream.next().await.expect("initial emission");
+
+        assert_eq!(snapshot, first);
+        assert!(snapshot["change"].is_null());
+        let notifications = snapshot["notifications"].as_array().expect("array");
+        assert_eq!(notifications.len(), 1);
         assert_eq!(notifications[0]["id"], 7);
     }
 

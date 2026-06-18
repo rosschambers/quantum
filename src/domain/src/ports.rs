@@ -24,6 +24,17 @@ pub trait ProviderSource: Send + Sync {
     fn subscribe(&self) -> Option<futures::stream::BoxStream<'static, serde_json::Value>> {
         None
     }
+    /// The provider's current state for one-shot `provider.query`, distinct
+    /// from the streaming `subscribe()`. Providers that can report their state
+    /// synchronously override this to return `Some(value)`; the default returns
+    /// `None`, signalling the caller to fall back to taking the first emission
+    /// of `subscribe()`. When overridden, the returned value MUST match the
+    /// shape of `subscribe()`'s first emission so a `provider.query` answered
+    /// via this explicit path is indistinguishable from one answered via the
+    /// stream.
+    async fn snapshot(&self) -> Option<serde_json::Value> {
+        None
+    }
 }
 
 /// Registry for looking up providers.
