@@ -14,6 +14,13 @@
   let timers: Timer[] = $state([]);
   let settings: TimerSettings | null = $state(null);
   let nowUnix = $state(Date.now() / 1000);
+  let editingId: string | null = $state(null);
+
+  function dismiss(id: string): void {
+    client.call("timer.dismiss", { id }).catch((error: unknown) => {
+      console.error("timer.dismiss failed", error);
+    });
+  }
 
   // In-flight scatter overrides keyed by timer id. During a drag we update
   // this immediately for responsiveness; on drop we persist via timer.edit
@@ -178,11 +185,23 @@
         ).y}px;"
         use:draggable={{ id: timer.id, enabled: true }}
       >
-        <TimerVisual {timer} {nowUnix} indexInList={index} />
+        <TimerVisual
+          {timer}
+          {nowUnix}
+          indexInList={index}
+          onDismiss={() => dismiss(timer.id)}
+          onEdit={() => (editingId = timer.id)}
+        />
       </div>
     {:else}
       <div class="slot">
-        <TimerVisual {timer} {nowUnix} indexInList={index} />
+        <TimerVisual
+          {timer}
+          {nowUnix}
+          indexInList={index}
+          onDismiss={() => dismiss(timer.id)}
+          onEdit={() => (editingId = timer.id)}
+        />
       </div>
     {/if}
   {/each}

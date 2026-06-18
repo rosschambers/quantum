@@ -40,7 +40,15 @@
     timer,
     nowUnix,
     indexInList,
-  }: { timer: Timer; nowUnix: number; indexInList: number } = $props();
+    onDismiss,
+    onEdit,
+  }: {
+    timer: Timer;
+    nowUnix: number;
+    indexInList: number;
+    onDismiss?: () => void;
+    onEdit?: () => void;
+  } = $props();
 
   const visual = $derived(timer.visual);
   const notify = $derived(timer.notify);
@@ -494,6 +502,27 @@
     {@render cap(timer.label, false)}
     {@render cap(timeText, true)}
   {/if}
+
+  <div class="controls hoveronly">
+    <button
+      type="button"
+      class="control"
+      aria-label="Dismiss timer"
+      onpointerdown={(event) => event.stopPropagation()}
+      onclick={() => onDismiss?.()}
+    >
+      ✕
+    </button>
+    <button
+      type="button"
+      class="control"
+      aria-label="Edit timer"
+      onpointerdown={(event) => event.stopPropagation()}
+      onclick={() => onEdit?.()}
+    >
+      ✎
+    </button>
+  </div>
 </div>
 
 <style>
@@ -550,5 +579,35 @@
   }
   .timer-visual:hover .cap.hoveronly {
     opacity: 1;
+  }
+  .controls {
+    display: flex;
+    gap: 6px;
+  }
+  .controls.hoveronly {
+    opacity: 0;
+    transition: opacity 0.15s;
+  }
+  .timer-visual:hover .controls.hoveronly {
+    opacity: 1;
+  }
+  .control {
+    width: 26px;
+    height: 26px;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border: 1px solid var(--color-surface, rgba(255, 255, 255, 0.18));
+    background: var(--color-bg-alt, rgba(24, 24, 37, 0.85));
+    color: var(--color-fg, #cdd6f4);
+    cursor: pointer;
+    font-size: 13px;
+    line-height: 1;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.4);
+  }
+  .control:hover {
+    border-color: var(--color-accent, #f38ba8);
+    color: var(--color-accent, #f38ba8);
   }
 </style>

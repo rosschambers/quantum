@@ -1,5 +1,5 @@
-import { describe, it, expect } from "vitest";
-import { render } from "@testing-library/svelte/svelte5";
+import { describe, it, expect, vi } from "vitest";
+import { render, fireEvent } from "@testing-library/svelte/svelte5";
 import type {
   Timer,
   VisualConfig,
@@ -87,5 +87,31 @@ describe("TimerVisual", () => {
     });
     const circle = container.querySelector("svg circle");
     expect(circle).not.toBeNull();
+  });
+
+  it("invokes onDismiss when the dismiss control is clicked", async () => {
+    const onDismiss = vi.fn();
+    const { container } = render(TimerVisual, {
+      props: { timer: makeTimer({}), nowUnix, indexInList: 0, onDismiss },
+    });
+    const button = container.querySelector(
+      '[aria-label="Dismiss timer"]',
+    ) as HTMLButtonElement;
+    expect(button).not.toBeNull();
+    await fireEvent.click(button);
+    expect(onDismiss).toHaveBeenCalledTimes(1);
+  });
+
+  it("invokes onEdit when the edit control is clicked", async () => {
+    const onEdit = vi.fn();
+    const { container } = render(TimerVisual, {
+      props: { timer: makeTimer({}), nowUnix, indexInList: 0, onEdit },
+    });
+    const button = container.querySelector(
+      '[aria-label="Edit timer"]',
+    ) as HTMLButtonElement;
+    expect(button).not.toBeNull();
+    await fireEvent.click(button);
+    expect(onEdit).toHaveBeenCalledTimes(1);
   });
 });
