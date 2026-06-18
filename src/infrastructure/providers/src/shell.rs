@@ -1,4 +1,5 @@
 use async_trait::async_trait;
+use std::process::Stdio;
 use std::time::Duration;
 use tokio::process::Command;
 
@@ -77,9 +78,14 @@ impl ShellExecutor for TokioShellExecutor {
             });
             let line = serde_json::to_string(&command_str)
                 .map_err(|e| DomainError::Unsupported(format!("json serialization failed: {e}")))?;
+            use std::os::unix::fs::OpenOptionsExt;
             std::fs::OpenOptions::new()
                 .create(true)
                 .append(true)
+                // Opt-in debug log that records every launched command; keep it
+                // readable and writable only by the owner (0600) rather than
+                // whatever the process umask would grant.
+                .mode(0o600)
                 .open(&log_path)
                 .and_then(|mut f| {
                     use std::io::Write;
@@ -94,6 +100,16 @@ impl ShellExecutor for TokioShellExecutor {
         for arg in &command[1..] {
             cmd.arg(arg);
         }
+
+        // Detach the child from the daemon: its own process group so signals
+        // sent to the daemon's group never reach it, and null stdio so it
+        // neither inherits the daemon's descriptors nor holds them open. The
+        // session environment (WAYLAND_DISPLAY, DBUS_SESSION_BUS_ADDRESS, PATH,
+        // and so on) is left intact because launched GUI applications need it.
+        cmd.process_group(0)
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null());
 
         let mut child = cmd
             .spawn()
