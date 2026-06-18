@@ -62,6 +62,7 @@ pub struct EditChanges {
     pub time: Option<TimeOfDay>,
     pub days: Option<WeekdaySet>,
     pub scatter_pos: Option<Point>,
+    pub duration_secs: Option<u64>,
 }
 
 /// Orchestrates the timer lifecycle. Cheap to clone (it is a single `Arc`).
@@ -462,7 +463,7 @@ impl TimerServiceInner {
 
         {
             let mut state = self.state.lock().await;
-            let needs_rearm;
+            let mut needs_rearm = false;
             let fires_at;
             {
                 let Some(timer) = state.timers.get_mut(&id) else {
@@ -515,13 +516,20 @@ impl TimerServiceInner {
                                 .unwrap_or(0);
                                 *end_unix = now + delta;
                                 needs_rearm = true;
-                            } else {
-                                needs_rearm = false;
                             }
                         }
                     }
-                } else {
-                    needs_rearm = false;
+                }
+
+                // A new remaining duration applies only to one-shot timers; a
+                // recurring timer fires on its weekday schedule, so the field is
+                // ignored there. Resetting `end_unix` requires re-arming so the
+                // internal sleep tracks the new instant, not just the field.
+                if let Some(secs) = changes.duration_secs {
+                    if let TimerKind::OneShot { end_unix } = &mut timer.kind {
+                        *end_unix = now + secs;
+                        needs_rearm = true;
+                    }
                 }
 
                 fires_at = timer.fires_at_unix();
@@ -950,6 +958,7 @@ mod tests {
                     time: None,
                     days: None,
                     scatter_pos: None,
+                    duration_secs: None,
                 },
             )
             .await
@@ -987,6 +996,7 @@ mod tests {
                     time: Some(TimeOfDay::new(10, 0).unwrap()),
                     days: None,
                     scatter_pos: None,
+                    duration_secs: None,
                 },
             )
             .await
@@ -1032,6 +1042,7 @@ mod tests {
                     time: None,
                     days: None,
                     scatter_pos: Some(Point { x: 5.0, y: 6.0 }),
+                    duration_secs: None,
                 },
             )
             .await
@@ -1041,6 +1052,81 @@ mod tests {
         let timer = listed.timers.iter().find(|t| t.id == id).expect("present");
         assert_eq!(timer.fires_at_unix(), before);
         assert_eq!(timer.scatter_pos, Some(Point { x: 5.0, y: 6.0 }));
+    }
+
+    #[tokio::test]
+    async fn edit_oneshot_duration_resets_end() {
+        let (service, _fakes) = build_service(1_000_000, civil(Weekday::Monday, 9 * 3600));
+        let id = service
+            .create(CreateTimerSpec {
+                label: "Tea".to_string(),
+                start: TimerStart::Duration { secs: 300 },
+                visual: None,
+                notify: None,
+            })
+            .await
+            .expect("create");
+
+        service
+            .edit(
+                id.clone(),
+                EditChanges {
+                    duration_secs: Some(600),
+                    ..Default::default()
+                },
+            )
+            .await
+            .expect("edit");
+
+        let listed = service.list().await;
+        let timer = listed.timers.iter().find(|t| t.id == id).expect("present");
+        assert_eq!(
+            timer.kind,
+            TimerKind::OneShot {
+                end_unix: 1_000_000 + 600
+            }
+        );
+    }
+
+    #[tokio::test]
+    async fn edit_recurring_ignores_duration() {
+        let (service, _fakes) = build_service(1_000_000, civil(Weekday::Monday, 9 * 3600));
+        let id = service
+            .create(CreateTimerSpec {
+                label: "Standup".to_string(),
+                start: TimerStart::Recurring {
+                    days: WeekdaySet::from_days(&[Weekday::Monday]),
+                    time: TimeOfDay::new(17, 0).unwrap(),
+                },
+                visual: None,
+                notify: None,
+            })
+            .await
+            .expect("create");
+
+        let before_kind = service
+            .list()
+            .await
+            .timers
+            .iter()
+            .find(|t| t.id == id)
+            .map(|t| t.kind.clone())
+            .expect("present");
+
+        service
+            .edit(
+                id.clone(),
+                EditChanges {
+                    duration_secs: Some(600),
+                    ..Default::default()
+                },
+            )
+            .await
+            .expect("edit");
+
+        let listed = service.list().await;
+        let timer = listed.timers.iter().find(|t| t.id == id).expect("present");
+        assert_eq!(timer.kind, before_kind);
     }
 
     #[tokio::test]
