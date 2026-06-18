@@ -24,7 +24,7 @@ serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
 gtk4 = { version = "0.9", features = ["v4_14"] }
-glib = "0.19"
+glib = "0.20"
 include_dir.workspace = true
 
 [dev-dependencies]
