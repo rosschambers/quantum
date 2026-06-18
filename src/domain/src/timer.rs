@@ -231,6 +231,8 @@ pub enum VisualStyle {
     Pie,
     Dots,
     Bar,
+    Spiral,
+    Pulse,
     #[default]
     Mixed,
 }
@@ -678,6 +680,20 @@ mod tests {
             "\"compact\""
         );
         assert_eq!(serde_json::to_string(&SoundName::Bell).unwrap(), "\"bell\"");
+    }
+
+    #[test]
+    fn visual_style_spiral_and_pulse_serialize() {
+        assert_eq!(
+            serde_json::to_string(&VisualStyle::Spiral).unwrap(),
+            "\"spiral\""
+        );
+        assert_eq!(
+            serde_json::to_string(&VisualStyle::Pulse).unwrap(),
+            "\"pulse\""
+        );
+        let back: VisualStyle = serde_json::from_str("\"pulse\"").unwrap();
+        assert_eq!(back, VisualStyle::Pulse);
     }
 
     #[test]
