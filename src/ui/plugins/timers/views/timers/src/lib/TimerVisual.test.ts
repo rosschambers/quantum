@@ -67,4 +67,25 @@ describe("TimerVisual", () => {
     expect(path).not.toBeNull();
     expect(path?.getAttribute("stroke")).not.toBe("none");
   });
+
+  it("renders spiral as an svg path with a non-empty d attribute", () => {
+    const spiralTimer = makeTimer({ style: "spiral" });
+    const { container } = render(TimerVisual, {
+      props: { timer: spiralTimer, nowUnix, indexInList: 0 },
+    });
+    const path = container.querySelector("svg path");
+    expect(path).not.toBeNull();
+    const d = path?.getAttribute("d");
+    expect(typeof d).toBe("string");
+    expect(d).not.toBe("");
+  });
+
+  it("renders pulse as a filled svg circle without error", () => {
+    const pulseTimer = makeTimer({ style: "pulse" });
+    const { container } = render(TimerVisual, {
+      props: { timer: pulseTimer, nowUnix, indexInList: 0 },
+    });
+    const circle = container.querySelector("svg circle");
+    expect(circle).not.toBeNull();
+  });
 });

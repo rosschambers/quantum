@@ -10,7 +10,7 @@
   } from "./fraction";
 
   /** Concrete styles a `mixed` timer cycles through, in playground order. */
-  const STYLES = ["ring", "wedge", "pie", "dots", "bar"] as const;
+  const STYLES = ["ring", "wedge", "pie", "dots", "bar", "spiral", "pulse"] as const;
 
   /**
    * Per-timer total-duration approximation.
@@ -173,6 +173,29 @@
     )} ${endY.toFixed(2)} Z`;
   }
 
+  // An Archimedean spiral that winds outward from the centre across `turns`
+  // revolutions, drawn only for the leading `fraction` of its full length so
+  // the visible arc grows with the displayed fraction.
+  function spiralPath(
+    centerX: number,
+    centerY: number,
+    maxRadius: number,
+    fraction: number,
+    turns: number,
+  ): string {
+    const steps = 120;
+    const maxTheta = turns * 2 * Math.PI * fraction;
+    let d = "";
+    for (let i = 0; i <= steps; i++) {
+      const theta = (i / steps) * maxTheta;
+      const pointRadius = (theta / (turns * 2 * Math.PI)) * maxRadius;
+      const x = centerX + pointRadius * Math.cos(theta - Math.PI / 2);
+      const y = centerY + pointRadius * Math.sin(theta - Math.PI / 2);
+      d += (i === 0 ? "M" : "L") + x.toFixed(1) + " " + y.toFixed(1) + " ";
+    }
+    return d;
+  }
+
   // Geometry.
   const size = $derived(visual.size);
   const thick = $derived(visual.thickness);
@@ -196,6 +219,30 @@
   const dots = $derived(
     Array.from({ length: dotCount }, (_, i) => i < dotsLit),
   );
+
+  // The spiral winds 3.5 turns out to a radius one thickness short of the
+  // surface edge. The track draws the full spiral; the progress path draws the
+  // leading portion that grows with the displayed fraction.
+  const spiralTurns = 3.5;
+  const spiralMaxRadius = $derived(size / 2 - thick);
+  const spiralTrackD = $derived(
+    spiralPath(center, center, spiralMaxRadius, 1, spiralTurns),
+  );
+  const spiralProgressD = $derived(
+    spiralPath(center, center, spiralMaxRadius, displayFrac, spiralTurns),
+  );
+
+  // The pulse beats faster as the timer nears zero. `nowUnix` is already in
+  // seconds, so the sine phase uses it directly. The filled circle's radius and
+  // opacity rise and fall with each beat.
+  const pulseFrequencyHz = $derived(0.4 + (1 - frac) * 1.6);
+  const pulseBeat = $derived(
+    (Math.sin(nowUnix * pulseFrequencyHz * 2 * Math.PI) + 1) / 2,
+  );
+  const pulseTrackRadius = $derived(size / 2 - thick);
+  const pulseInnerRadius = $derived(pulseTrackRadius * (0.82 + pulseBeat * 0.18));
+  const pulseOpacity = $derived(0.35 + pulseBeat * 0.5);
+  const pulseGlow = $derived(6 + pulseBeat * 22);
 
   // Text.
   const timeText = $derived(
@@ -347,6 +394,71 @@
             : ''}"
         ></span>
       {/each}
+    </div>
+  {:else if styleId === "spiral"}
+    <div class="circular" style="width:{size}px;height:{size}px;">
+      <svg
+        class="circular-svg"
+        width={size}
+        height={size}
+        viewBox="0 0 {size} {size}"
+      >
+        {@render gradientDefs()}
+        <path
+          d={spiralTrackD}
+          fill="none"
+          stroke={trackCol}
+          stroke-width={thick}
+          stroke-linecap="round"
+        />
+        {#if visual.fill_border}
+          <path
+            d={spiralProgressD}
+            fill="none"
+            stroke={fillBorderColor}
+            stroke-width={underlayWidth}
+            stroke-linecap="round"
+          />
+        {/if}
+        <path
+          d={spiralProgressD}
+          fill="none"
+          stroke={strokePaint}
+          stroke-width={thick}
+          stroke-linecap="round"
+        />
+      </svg>
+      {#if visual.depth_sheen}
+        <div class="sheen"></div>
+      {/if}
+    </div>
+  {:else if styleId === "pulse"}
+    <div class="circular" style="width:{size}px;height:{size}px;">
+      <svg
+        class="circular-svg"
+        width={size}
+        height={size}
+        viewBox="0 0 {size} {size}"
+      >
+        <circle
+          cx={center}
+          cy={center}
+          r={pulseTrackRadius}
+          fill="none"
+          stroke={trackCol}
+          stroke-width="2"
+        />
+        <circle
+          cx={center}
+          cy={center}
+          r={pulseInnerRadius}
+          fill={stroke}
+          opacity={pulseOpacity}
+          stroke={visual.fill_border ? fillBorderColor : "none"}
+          stroke-width={visual.fill_border ? visual.fill_border_width : 0}
+          style="filter:drop-shadow(0 0 {pulseGlow}px {stroke});"
+        />
+      </svg>
     </div>
   {/if}
 {/snippet}
