@@ -6,7 +6,7 @@ use std::path::Path;
 use std::sync::Arc;
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader, BufWriter};
 use tokio::net::{UnixListener, UnixStream};
-use tokio::sync::broadcast;
+use tokio::sync::{broadcast, Semaphore};
 
 use crate::error::IpcError;
 use crate::protocol::{JsonRpcError, JsonRpcRequest, JsonRpcResponse};
@@ -17,6 +17,15 @@ use quantum_domain::EventEnvelope;
 /// without bound. Real requests are tiny; 1 MiB is generous headroom for
 /// theme.reload-style payloads.
 const MAX_LINE_BYTES: u64 = 1024 * 1024;
+
+/// Maximum number of client connections served concurrently. The daemon is
+/// per-user and its only legitimate clients are the local frontends and the
+/// `quantumctl` helper, so a handful of connections is the norm; 64 leaves
+/// generous headroom while bounding the work a misbehaving or malicious local
+/// process can force the daemon to spawn. When the limit is reached new
+/// connections wait for a permit rather than being rejected, so legitimate
+/// clients are never refused.
+const MAX_CONNECTIONS: usize = 64;
 
 /// Result type for dispatch operations.
 pub type DispatchResult = Result<Value, DispatchError>;
@@ -82,18 +91,43 @@ impl UnixSocketServer {
         let listener =
             UnixListener::bind(&self.socket_path).map_err(|e| IpcError::Io(e.to_string()))?;
 
+        // Restrict the control socket to the owning user (0600) regardless of
+        // the process umask. The daemon is per-user, so no other account has
+        // any business connecting; this is the primary access control on the
+        // IPC surface.
+        std::fs::set_permissions(
+            &self.socket_path,
+            std::os::unix::fs::PermissionsExt::from_mode(0o600),
+        )
+        .map_err(|e| IpcError::Io(e.to_string()))?;
+
+        // Bound the number of connections served at once. A permit is acquired
+        // before each per-connection task is spawned and moved into the task so
+        // it is released only when the connection ends.
+        let connection_limit = Arc::new(Semaphore::new(MAX_CONNECTIONS));
+
         loop {
             let (stream, _) = listener
                 .accept()
                 .await
                 .map_err(|e| IpcError::Io(e.to_string()))?;
 
+            // Wait for a free connection slot before accepting work. The
+            // semaphore is never closed, so the only error is impossible here.
+            let permit = match connection_limit.clone().acquire_owned().await {
+                Ok(permit) => permit,
+                Err(_) => break,
+            };
+
             let dispatcher = dispatcher.clone();
             let broadcast_tx = broadcast_tx.clone();
             tokio::spawn(async move {
+                let _permit = permit;
                 let _ = handle_connection(stream, dispatcher, broadcast_tx).await;
             });
         }
+
+        Ok(())
     }
 }
 
@@ -273,6 +307,42 @@ mod tests {
 
         assert!(response.result.is_none());
         assert!(response.error.is_some());
+    }
+
+    #[tokio::test]
+    async fn bound_socket_is_owner_only_0600() {
+        use std::os::unix::fs::PermissionsExt;
+        use std::time::Duration;
+
+        let temp_dir = tempfile::tempdir().unwrap();
+        let socket_path = temp_dir.path().join("test.sock");
+
+        let server = UnixSocketServer::new(&socket_path);
+        let dispatcher = Arc::new(FakeDispatcher);
+        let (broadcast_tx, _) = broadcast::channel::<EventEnvelope>(16);
+
+        let socket_path_clone = socket_path.clone();
+        tokio::spawn(async move {
+            let _ = server.serve(dispatcher, broadcast_tx).await;
+        });
+
+        // Wait for the socket file to appear.
+        for _ in 0..40 {
+            if socket_path_clone.exists() {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(25)).await;
+        }
+
+        let mode = std::fs::metadata(&socket_path_clone)
+            .unwrap()
+            .permissions()
+            .mode();
+        assert_eq!(
+            mode & 0o777,
+            0o600,
+            "control socket must be restricted to the owning user"
+        );
     }
 
     #[tokio::test]
