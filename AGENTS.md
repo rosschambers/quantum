@@ -15,16 +15,30 @@ Crates and their allowed dependencies:
 
 | Crate                          | May depend on                              |
 | ------------------------------ | ------------------------------------------ |
-| `src/domain`                   | nothing (only `thiserror`, `serde`, `serde_json`, `async-trait`)        |
+| `src/domain`                   | nothing (only `thiserror`, `serde`, `serde_json`, `async-trait`, `futures`) |
 | `src/application`              | `domain`                                   |
-| `src/infrastructure`           | `domain`                                   |
+| `src/infrastructure/config`    | `domain`, sibling infrastructure crates    |
+| `src/infrastructure/dbus`      | `domain`, sibling infrastructure crates    |
+| `src/infrastructure/hyprland`  | `domain`, sibling infrastructure crates    |
+| `src/infrastructure/ipc`       | `domain`, sibling infrastructure crates    |
+| `src/infrastructure/plugins`   | `domain`, sibling infrastructure crates    |
+| `src/infrastructure/providers` | `domain`, sibling infrastructure crates    |
+| `src/infrastructure/theme-store` | `domain`, sibling infrastructure crates  |
 | `src/ui/host`                  | `application` (and through it, `domain`)   |
 | `src/binaries/quantumd`        | `ui`, `application`, `infrastructure`      |
 | `src/binaries/quantumctl`      | `domain`, `infrastructure` (ipc client)    |
 | `src/binaries/quantum-dev`     | `domain`, `infrastructure`                 |
 
+Infrastructure is **seven sibling crates**, not one. Sibling infrastructure
+crates may depend on each other (for example `providers` on `dbus` and
+`hyprland`); the architecture test in `tests/architecture-test/src/lib.rs`
+explicitly permits sibling-on-sibling infrastructure edges.
+
 **Forbidden:**
-- `domain` importing any other workspace crate or any async/IO crate.
+- `domain` importing any other workspace crate, or any async *runtime* / IO
+  crate. `futures` is permitted solely for the `BoxStream` stream type used by
+  `ProviderSource::subscribe` in `src/domain/src/ports.rs`; do not add `tokio`,
+  `chrono`, `time`, or other runtime/IO crates.
 - `application` importing `infrastructure` or `ui`.
 - `infrastructure` importing `application` or `ui`.
 - `ui` importing `infrastructure` directly (must go through `application`).
@@ -33,7 +47,8 @@ A CI test in `tests/architecture-test/src/lib.rs` enforces these rules by parsin
 Cargo metadata. Do not weaken it.
 
 **Cross-layer rules in practice:**
-- `domain` must not gain non-serde dependencies. Time and calendar logic stays
+- `domain` must not gain new non-serde dependencies beyond the blessed
+  `futures` (`BoxStream`) exception noted above. Time and calendar logic stays
   pure integer arithmetic (for example weekday plus seconds-into-day) behind a
   domain `Clock` port; `chrono` lives only in `infrastructure`. Do not add
   `chrono` or `time` to `domain`.
@@ -96,19 +111,29 @@ Commit per task in the implementation plan. Small commits beat big ones.
 ## Running and Testing the Daemon Locally
 
 - **Single-instance guard.** `quantumd` binds a Unix socket at
-  `$XDG_RUNTIME_DIR/quantum.sock` (`src/binaries/quantumd/src/main.rs:782`).
+  `$XDG_RUNTIME_DIR/quantum.sock` (the socket-path resolution and
+  single-instance guard in `main`, `src/binaries/quantumd/src/main.rs:814-833`).
   If a live daemon already owns it, a new instance prints `quantum is already
   running` and exits with code 1. A stale socket is removed automatically only
   when connecting to it fails, so a crashed daemon's socket self-heals but a
   live one blocks you.
-- **A systemd user service respawns the daemon.** `quantum.service` (enabled,
-  running the nix-installed binary — NOT your local dev build) restarts
-  `quantumd` after you `kill` the process, re-owning the socket within
-  seconds. To run a dev build you must `systemctl --user stop quantum.service`
-  first; killing the process alone is not enough. Restore normal operation with
-  `systemctl --user start quantum.service`. The installed service does not pick
-  up local code changes until the nix package is rebuilt and reinstalled, so a
-  fix verified against a dev build is not live on the user's session until then.
+- **A systemd user service respawns the daemon.** `quantum.service` (enabled)
+  restarts `quantumd` after you `kill` the process, re-owning the socket within
+  seconds, so killing the process alone is never enough to free the socket for a
+  dev build. To run a dev build you must `systemctl --user stop quantum.service`
+  first, then restore normal operation with `systemctl --user start
+  quantum.service`. **Which binary the service runs depends on how it was
+  installed**, and the two supported modes differ:
+  - **Cargo install (the shipped unit).** `packaging/systemd/quantum.service`
+    sets `ExecStart=%h/.cargo/bin/quantumd`, so a service installed from that
+    unit runs whatever `cargo install --path src/binaries/quantumd` last placed
+    in `~/.cargo/bin`. A dev build is not live until you re-run `cargo install`
+    (or point the unit at your `target/debug/quantumd`).
+  - **Nix-installed.** If the maintainer's machine instead runs a
+    nix-packaged `quantumd`, the service does not pick up local code changes
+    until the nix package is rebuilt and reinstalled.
+  Either way, a fix verified against a dev build is not live on the session
+  until the binary the service points at is rebuilt and reinstalled.
 - **Detaching a dev daemon.** Launch with `setsid` and redirect to a log file
   so it survives the spawning shell, and run with `RUST_LOG=info` to capture
   provider registration, `ViewMultiplexer` install, and the per-monitor
@@ -151,10 +176,11 @@ Commit per task in the implementation plan. Small commits beat big ones.
 
 - **Layer-shell usage differs by window type — `QUANTUM_LAYER_SHELL` gates
   only plain panels, not the bar.** `WidgetWindow` (the bar and the clock)
-  always calls `init_layer_shell()` unconditionally
-  (`src/ui/host/src/windows/widget.rs:94` and `:198`). `PanelWindow` decides
-  via `should_use_layer_shell(env_flag, is_overlay) = env_flag || is_overlay`
-  (`src/ui/host/src/windows/panel.rs:61`): overlays (power-menu and similar)
+  always calls `init_layer_shell()` unconditionally (the two `WidgetWindow`
+  constructors at `src/ui/host/src/windows/widget.rs:102` and `:240`).
+  `PanelWindow` decides via
+  `should_use_layer_shell(env_flag, is_overlay) = env_flag || is_overlay`
+  (`should_use_layer_shell` at `src/ui/host/src/windows/panel.rs:46`): overlays (power-menu and similar)
   always use layer-shell because they dim the whole screen and dismiss on
   Escape, so they cannot lock the user out; plain panels (the launcher) use it
   only when `QUANTUM_LAYER_SHELL=1`, defaulting otherwise to a normal
@@ -180,7 +206,7 @@ Commit per task in the implementation plan. Small commits beat big ones.
   `quantum://` custom URI scheme breaks absolute URL normalization.
 - Widget URLs are `quantum://theme/<theme>/views/widgets/<name>/index.html`.
   The `views/` prefix is required and is handled by `candidate_paths` in
-  `src/infrastructure/src/theme/store.rs`.
+  `src/infrastructure/theme-store/src/store.rs`.
 - Always wrap window notify calls in
   `if (typeof window.__quantum_notify === 'function') { ... }` — events can
   arrive before the JS client has loaded.

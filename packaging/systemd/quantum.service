@@ -4,6 +4,9 @@ After=display-manager.service
 
 [Service]
 Type=simple
+# Cargo-install variant: runs the binary placed in ~/.cargo/bin by
+# `cargo install --path src/binaries/quantumd`. A nix-packaged deployment
+# points ExecStart at the nix store path instead.
 ExecStart=%h/.cargo/bin/quantumd
 Restart=on-failure
 
