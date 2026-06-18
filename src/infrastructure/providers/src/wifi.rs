@@ -1307,9 +1307,7 @@ HomeNet:AA\\:AA\\:AA\\:AA\\:AA\\:02:40:WPA2:2412:yes:*";
         let args = connect_args("HomeNet", None, Some("pw"), true);
         assert_eq!(
             args,
-            vec![
-                "device", "wifi", "connect", "--", "HomeNet", "password", "pw", "hidden", "yes",
-            ]
+            vec!["device", "wifi", "connect", "--", "HomeNet", "password", "pw", "hidden", "yes",]
         );
     }
 
@@ -1333,7 +1331,10 @@ HomeNet:AA\\:AA\\:AA\\:AA\\:AA\\:02:40:WPA2:2412:yes:*";
             ssid_index,
             "-- must immediately precede the SSID"
         );
-        assert_eq!(leading_dash, vec!["device", "wifi", "connect", "--", "-rogue"]);
+        assert_eq!(
+            leading_dash,
+            vec!["device", "wifi", "connect", "--", "-rogue"]
+        );
     }
 
     #[tokio::test]

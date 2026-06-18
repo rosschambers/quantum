@@ -204,10 +204,7 @@ mod tests {
 
     /// Locate the workspace's `src/domain` crate. Panics if it is missing,
     /// because that itself signals the layout the test relies on has changed.
-    fn find_domain_package(
-        metadata: &cargo_metadata::Metadata,
-        workspace_root: &Path,
-    ) -> Package {
+    fn find_domain_package(metadata: &cargo_metadata::Metadata, workspace_root: &Path) -> Package {
         for package in metadata.workspace_packages() {
             if let Some(classified) = classify(package, workspace_root) {
                 if classified.layer == Layer::Domain {
@@ -247,7 +244,8 @@ mod tests {
              Domain may only depend on {{thiserror, serde, serde_json, async-trait, futures}}.\n\
              `futures` is blessed solely for the BoxStream type in src/domain/src/ports.rs; do \
              not add tokio, chrono, time, reqwest, or other runtime/IO crates to domain.",
-            domain.name, offenders,
+            domain.name,
+            offenders,
         );
     }
 
