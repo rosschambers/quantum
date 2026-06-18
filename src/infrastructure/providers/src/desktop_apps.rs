@@ -1,8 +1,8 @@
 use async_trait::async_trait;
 use freedesktop_desktop_entry::DesktopEntry;
 use std::collections::HashMap;
-use std::path::Path;
-use std::sync::Arc;
+use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex};
 use tokio::sync::RwLock;
 
 use quantum_domain::{
@@ -145,6 +145,14 @@ pub struct DesktopAppsProvider {
     /// query and updated on every launch. Behind a Mutex because `invoke`
     /// records launches through a shared `&self`.
     usage: tokio::sync::Mutex<crate::app_usage::UsageStore>,
+    /// Memoized icon-name to resolved-path lookups. Icon resolution walks the
+    /// installed icon themes on disk, so each distinct icon name is resolved at
+    /// most once for the lifetime of the provider; repeated keystrokes reuse
+    /// the cached result instead of re-walking the filesystem. A `None` value
+    /// caches a negative result (the name resolved to nothing). Behind a
+    /// synchronous Mutex because it is touched from `search` through `&self`
+    /// without crossing an await point while held.
+    icon_cache: Mutex<HashMap<String, Option<PathBuf>>>,
 }
 
 impl DesktopAppsProvider {
@@ -155,6 +163,7 @@ impl DesktopAppsProvider {
             apps: RwLock::new(Vec::new()),
             executor,
             usage: tokio::sync::Mutex::new(crate::app_usage::UsageStore::load()),
+            icon_cache: Mutex::new(HashMap::new()),
         };
 
         provider.scan_apps().await?;
@@ -218,11 +227,32 @@ impl DesktopAppsProvider {
         Ok(())
     }
 
+    /// Resolve an icon name to an [`IconRef`], memoizing the result per icon
+    /// name so a given name is only ever walked off disk once.
+    ///
+    /// The cache stores the resolved [`PathBuf`] (or `None` for a negative
+    /// result), keyed by the raw icon name. A poisoned mutex falls back to an
+    /// uncached resolution rather than failing the search.
+    fn resolve_icon_cached(&self, icon: Option<&str>) -> Option<quantum_domain::IconRef> {
+        let name = icon?;
+        if let Ok(cache) = self.icon_cache.lock() {
+            if let Some(cached) = cache.get(name) {
+                return cached.clone().map(quantum_domain::IconRef::Path);
+            }
+        }
+        let resolved = resolve_icon_path(Some(name));
+        if let Ok(mut cache) = self.icon_cache.lock() {
+            cache.insert(name.to_string(), resolved.clone());
+        }
+        resolved.map(quantum_domain::IconRef::Path)
+    }
+
     /// Build a [`Match`] for an app, resolving its icon to a concrete file
     /// path. An unresolved icon yields no `IconRef` rather than a name the
-    /// webview cannot load.
+    /// webview cannot load. Icon resolution is memoized, so this should only
+    /// be called for matches that survive sorting and truncation.
     fn match_from_app(&self, app: &AppInfo, score: f32) -> Match {
-        let icon = resolve_icon_path(app.icon.as_deref()).map(quantum_domain::IconRef::Path);
+        let icon = self.resolve_icon_cached(app.icon.as_deref());
         Match {
             id: app.id.clone(),
             provider: self.id.clone(),
@@ -364,24 +394,35 @@ impl ProviderSource for DesktopAppsProvider {
                 .unwrap_or(DEFAULT_EMPTY_QUERY_LIMIT);
             let ids: Vec<String> = apps.iter().map(|a| a.id.clone()).collect();
             let ranked_ids = self.usage.lock().await.rank(&ids);
-            let mut matches: Vec<Match> = ranked_ids
+            // Index apps by id once so the ranked-id lookup is O(1) per id
+            // rather than a linear scan of every app per ranked id.
+            let by_id: HashMap<&str, &AppInfo> = apps.iter().map(|a| (a.id.as_str(), a)).collect();
+            // Resolve icons only for the bounded set that survives truncation.
+            let survivors: Vec<&AppInfo> = ranked_ids
                 .iter()
                 .take(limit)
-                .filter_map(|id| apps.iter().find(|a| &a.id == id))
-                .map(|app| self.match_from_app(app, 1.0))
+                .filter_map(|id| by_id.get(id.as_str()).copied())
                 .collect();
             // Preserve the ranked order: the launcher renders matches as-is,
             // but downstream aggregation may re-sort by score, so give earlier
             // (more relevant) defaults a marginally higher score.
-            let count = matches.len();
-            for (idx, m) in matches.iter_mut().enumerate() {
-                m.score = MatchScore::new(1.0 - (idx as f32 / count.max(1) as f32 * 0.001));
-            }
+            let count = survivors.len();
+            let matches: Vec<Match> = survivors
+                .iter()
+                .enumerate()
+                .map(|(idx, app)| {
+                    let score = 1.0 - (idx as f32 / count.max(1) as f32 * 0.001);
+                    self.match_from_app(app, score)
+                })
+                .collect();
             return Ok(matches);
         }
 
         let query_lower = q.text.to_lowercase();
-        let mut matches = Vec::new();
+        // Collect (score, app) pairs first and defer icon resolution until
+        // after sorting and truncation, so the per-keystroke filesystem work
+        // is bounded by `limit` rather than the number of scoring matches.
+        let mut scored: Vec<(f32, &AppInfo)> = Vec::new();
 
         for app in apps.iter() {
             let name_lower = app.name_lower.as_str();
@@ -420,23 +461,23 @@ impl ProviderSource for DesktopAppsProvider {
             let combined_score = name_score.max(generic_score).max(keyword_score);
 
             if combined_score > 0.1 {
-                matches.push(self.match_from_app(app, combined_score));
+                scored.push((combined_score, app));
             }
         }
 
         // Sort by score descending
-        matches.sort_by(|a, b| {
-            let a_val = a.score.value();
-            let b_val = b.score.value();
-            b_val
-                .partial_cmp(&a_val)
-                .unwrap_or(std::cmp::Ordering::Equal)
-        });
+        scored.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
 
-        // Limit results
+        // Limit results before resolving icons, so icon resolution touches at
+        // most `limit` apps per keystroke instead of every scoring match.
         if let Some(limit) = q.limit {
-            matches.truncate(limit as usize);
+            scored.truncate(limit as usize);
         }
+
+        let matches: Vec<Match> = scored
+            .into_iter()
+            .map(|(score, app)| self.match_from_app(app, score))
+            .collect();
 
         Ok(matches)
     }
@@ -603,9 +644,7 @@ mod tests {
     #[test]
     fn tokenize_exec_removes_all_defined_field_codes() {
         assert_eq!(
-            DesktopAppsProvider::tokenize_exec(
-                "app %f %F %u %U %d %D %n %N %i %c %k %v %m tail"
-            ),
+            DesktopAppsProvider::tokenize_exec("app %f %F %u %U %d %D %n %N %i %c %k %v %m tail"),
             vec!["app".to_string(), "tail".to_string()]
         );
     }
@@ -631,6 +670,7 @@ Type=Application"#;
             apps: RwLock::new(Vec::new()),
             executor,
             usage: test_usage(),
+            icon_cache: Mutex::new(HashMap::new()),
         };
 
         provider
@@ -672,6 +712,7 @@ Type=Application"#,
             apps: RwLock::new(Vec::new()),
             executor,
             usage: test_usage(),
+            icon_cache: Mutex::new(HashMap::new()),
         };
 
         // Manually scan the temp directory
@@ -716,6 +757,7 @@ Type=Application"#,
             )]),
             executor,
             usage: test_usage(),
+            icon_cache: Mutex::new(HashMap::new()),
         };
 
         let query = Query::new("browser");
@@ -756,6 +798,7 @@ Type=Application"#,
             ]),
             executor,
             usage: test_usage(),
+            icon_cache: Mutex::new(HashMap::new()),
         };
 
         let query = Query::new("browser");
@@ -785,6 +828,7 @@ Type=Application"#,
             )]),
             executor,
             usage: test_usage(),
+            icon_cache: Mutex::new(HashMap::new()),
         };
 
         let query = Query::new("firefox");
@@ -848,6 +892,7 @@ Type=Application"#,
             )]),
             executor,
             usage: test_usage(),
+            icon_cache: Mutex::new(HashMap::new()),
         };
 
         let query = Query::new("quantum");
@@ -889,6 +934,7 @@ Type=Application"#,
             ]),
             executor,
             usage: test_usage(),
+            icon_cache: Mutex::new(HashMap::new()),
         };
 
         let query = Query::new("");
@@ -922,6 +968,7 @@ Type=Application"#,
             apps: RwLock::new(apps),
             executor,
             usage: test_usage(),
+            icon_cache: Mutex::new(HashMap::new()),
         };
 
         let query = Query {
@@ -962,6 +1009,7 @@ Type=Application"#,
             ]),
             executor: executor.clone(),
             usage: test_usage(),
+            icon_cache: Mutex::new(HashMap::new()),
         };
 
         // Launch zeta so it gains usage history.
@@ -994,6 +1042,7 @@ Type=Application"#,
             )]),
             executor,
             usage: test_usage(),
+            icon_cache: Mutex::new(HashMap::new()),
         };
 
         let query = Query::new("xyz123nonexistent");
@@ -1103,6 +1152,7 @@ Type=Application"#,
             )]),
             executor: executor.clone(),
             usage: test_usage(),
+            icon_cache: Mutex::new(HashMap::new()),
         };
 
         let action = Action::Launch {
