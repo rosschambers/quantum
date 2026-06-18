@@ -1,6 +1,10 @@
 # Protocol Reference
 
-Quantum communicates via JSON-RPC 2.0 over Unix sockets. This document describes every available method.
+Quantum communicates via JSON-RPC 2.0 over Unix sockets. The
+[Method Index](#method-index) lists every method the dispatcher accepts;
+the sections that follow document a representative subset in full detail.
+The authoritative method list lives in `Dispatcher::dispatch`
+(`src/application/src/dispatcher.rs`).
 
 ## Connection
 
@@ -19,6 +23,41 @@ Responses are also newline-delimited:
 {"jsonrpc":"2.0","id":1,"result":{...}}
 {"jsonrpc":"2.0","id":2,"error":{"code":-32001,"message":"...","data":...}}
 ```
+
+---
+
+## Method Index
+
+Every method routed by `Dispatcher::dispatch`
+(`src/application/src/dispatcher.rs`). "Documented" marks methods with a full
+request/response section below.
+
+| Method               | Params (summary)                              | Result (summary)            | Documented |
+|----------------------|-----------------------------------------------|-----------------------------|------------|
+| `search`             | `{ text, providers?, limit? }`                | `{ matches, warnings }`     | Yes        |
+| `action.invoke`      | `{ provider, action }`                         | `{}`                        | Yes        |
+| `action.schedule`    | `{ delay_secs, label, action }`                | `{ id }`                    | Yes        |
+| `action.cancel`      | `{ id }`                                        | `{}`                        | Yes        |
+| `action.scheduled`   | none                                            | `{ jobs }`                  | Yes        |
+| `provider.list`      | `{}`                                            | `string[]`                  | Yes        |
+| `provider.subscribe` | `{ provider }`                                  | `{}`                        | Yes        |
+| `provider.query`     | `{ id }`                                         | provider-specific JSON      | Yes        |
+| `view.toggle`        | `{ name }`                                       | `{}`                        | Yes        |
+| `view.show`          | `{ name }`                                       | `{}`                        | Yes        |
+| `view.hide`          | `{ name }`                                       | `{}`                        | Yes        |
+| `view.set_height`    | `{ name, height }`                               | `{}`                        | Yes        |
+| `theme.reload`       | `{}`                                             | `{}`                        | Yes        |
+| `theme.set`          | `{ theme }`                                       | `{}`                        | Yes        |
+| `plugin.reload`      | none                                             | `{ loaded }`                | Yes        |
+| `timer.create`       | `CreateTimerSpec`                                | `{ id }`                    | Yes        |
+| `timer.list`         | none                                             | `TimerStoreData`            | Yes        |
+| `timer.edit`         | `{ id, changes }`                                | `{}`                        | Yes        |
+| `timer.cancel`       | `{ id }`                                          | `{}`                        | Yes        |
+| `timer.dismiss`      | `{ id }`                                          | `{}`                        | Yes        |
+| `timer.dismiss_all`  | none                                             | `{ dismissed }`             | Yes        |
+| `system.status`      | `{}`                                             | `{ version, providers_count, themes_count }` | Yes |
+
+Any method not in this table returns `Unsupported` (`-32004`).
 
 ---
 
@@ -125,7 +164,7 @@ Invokes the action from a matched result.
   id: number,
   method: "action.invoke",
   params: {
-    provider_id: string,            // which provider owns this action
+    provider: string,               // which provider owns this action
     action: Action
   }
 }
@@ -145,6 +184,97 @@ Invokes the action from a matched result.
 
 - `-32003` (ActionFailed): Action could not be executed
 - `-32001` (ProviderNotFound): Provider doesn't exist
+
+---
+
+### action.schedule
+
+Schedule an `action.invoke` to fire after a delay. Jobs are held in memory
+only (not persisted across daemon restarts). `delay_secs` must be in the
+range `(0, 86400]` (24 hours).
+
+**Request:**
+
+```typescript
+{
+  jsonrpc: "2.0",
+  id: number,
+  method: "action.schedule",
+  params: {
+    delay_secs: number,             // seconds from now; (0, 86400]
+    label: string,                  // human-readable label for the job
+    action: {                       // same envelope as action.invoke params
+      provider: string,
+      action: Action
+    }
+  }
+}
+```
+
+**Response:**
+
+```typescript
+{
+  jsonrpc: "2.0",
+  id: number,
+  result: { id: string }            // 8-character hex job id
+}
+```
+
+---
+
+### action.cancel
+
+Cancel a scheduled job by id before it fires.
+
+**Request:**
+
+```typescript
+{
+  jsonrpc: "2.0",
+  id: number,
+  method: "action.cancel",
+  params: { id: string }            // job id from action.schedule
+}
+```
+
+**Response:** `{ result: {} }`. Unknown ids return `Unsupported` (`-32004`).
+
+---
+
+### action.scheduled
+
+List the currently scheduled jobs.
+
+**Request:**
+
+```typescript
+{
+  jsonrpc: "2.0",
+  id: number,
+  method: "action.scheduled",
+  params: {}                        // no parameters
+}
+```
+
+**Response:**
+
+```typescript
+{
+  jsonrpc: "2.0",
+  id: number,
+  result: {
+    jobs: Array<{
+      id: string,
+      label: string,
+      fires_at: {                   // serde SystemTime shape
+        secs_since_epoch: number,
+        nanos_since_epoch: number
+      }
+    }>
+  }
+}
+```
 
 ---
 
@@ -178,6 +308,47 @@ List all registered provider IDs.
 ```json
 {"jsonrpc":"2.0","id":1,"result":["apps","shell","hyprland","pacman-updates"]}
 ```
+
+---
+
+### provider.subscribe
+
+Start a provider's event stream so it begins publishing on
+`<provider>.event` (see [AGENTS.md](../AGENTS.md) channel naming). Providers
+that do not implement `subscribe` return `Unsupported` (`-32004`).
+
+**Request:**
+
+```typescript
+{
+  jsonrpc: "2.0",
+  id: number,
+  method: "provider.subscribe",
+  params: { provider: string }      // provider ID to subscribe to
+}
+```
+
+**Response:** `{ result: {} }`.
+
+---
+
+### provider.query
+
+Run a provider's one-shot query and return its provider-specific JSON
+payload verbatim.
+
+**Request:**
+
+```typescript
+{
+  jsonrpc: "2.0",
+  id: number,
+  method: "provider.query",
+  params: { id: string }            // provider ID to query
+}
+```
+
+**Response:** `{ result: <provider-specific JSON> }`.
 
 ---
 
@@ -268,6 +439,29 @@ Hide a view window.
 
 ---
 
+### view.set_height
+
+Set the content height of a view window (used by content-sized views that
+report their measured height back to the host).
+
+**Request:**
+
+```typescript
+{
+  jsonrpc: "2.0",
+  id: number,
+  method: "view.set_height",
+  params: {
+    name: string,
+    height: number                  // pixels (u32)
+  }
+}
+```
+
+**Response:** `{ result: {} }`.
+
+---
+
 ### theme.reload
 
 Reload the active theme from disk (hot reload).
@@ -290,6 +484,206 @@ Reload the active theme from disk (hot reload).
   jsonrpc: "2.0",
   id: number,
   result: {}
+}
+```
+
+---
+
+### theme.set
+
+Switch to a named theme and reload.
+
+**Request:**
+
+```typescript
+{
+  jsonrpc: "2.0",
+  id: number,
+  method: "theme.set",
+  params: { theme: string }         // theme name
+}
+```
+
+**Response:** `{ result: {} }`.
+
+---
+
+### plugin.reload
+
+Re-discover and reload plugins. Takes no parameters.
+
+**Request:**
+
+```typescript
+{
+  jsonrpc: "2.0",
+  id: number,
+  method: "plugin.reload",
+  params: {}
+}
+```
+
+**Response:**
+
+```typescript
+{
+  jsonrpc: "2.0",
+  id: number,
+  result: { loaded: number }        // count of plugins loaded
+}
+```
+
+---
+
+### timer.create
+
+Create a timer. Publishes the updated timer state on `timer.event`. The full
+TypeScript shapes for `CreateTimerSpec`, `TimerStart`, `VisualConfig`, and
+`NotifyConfig` are hand-written in `@quantum/client` (`src/ui/packages/client/src/timer.ts`).
+
+**Request:**
+
+```typescript
+{
+  jsonrpc: "2.0",
+  id: number,
+  method: "timer.create",
+  params: {
+    label: string,
+    start:                          // tagged union on "kind"
+      | { kind: "duration", secs: number }
+      | { kind: "at", time: TimeOfDay }
+      | { kind: "recurring", days: WeekdaySet, time: TimeOfDay },
+    visual?: VisualConfig,          // defaults to subsystem config when omitted
+    notify?: NotifyConfig
+  }
+}
+```
+
+**Response:**
+
+```typescript
+{
+  jsonrpc: "2.0",
+  id: number,
+  result: { id: string }            // new timer id
+}
+```
+
+---
+
+### timer.list
+
+List all timers and current timer settings. Takes no parameters.
+
+**Request:**
+
+```typescript
+{
+  jsonrpc: "2.0",
+  id: number,
+  method: "timer.list",
+  params: {}
+}
+```
+
+**Response:** `{ result: TimerStoreData }` where `TimerStoreData` is
+`{ settings, timers }` (see `@quantum/client` `timer.ts`).
+
+---
+
+### timer.edit
+
+Apply a partial update to an existing timer. Each supplied field replaces the
+old value; omitted fields are unchanged. Supplying `time` (and `days` for
+recurring timers) reschedules and re-arms the timer.
+
+**Request:**
+
+```typescript
+{
+  jsonrpc: "2.0",
+  id: number,
+  method: "timer.edit",
+  params: {
+    id: string,
+    changes: {                      // all fields optional
+      label?: string,
+      visual?: VisualConfig,
+      notify?: NotifyConfig,
+      time?: TimeOfDay,
+      days?: WeekdaySet,
+      scatter_pos?: { x: number, y: number },
+      duration_secs?: number
+    }
+  }
+}
+```
+
+**Response:** `{ result: {} }`.
+
+---
+
+### timer.cancel
+
+Remove a single timer by id.
+
+**Request:**
+
+```typescript
+{
+  jsonrpc: "2.0",
+  id: number,
+  method: "timer.cancel",
+  params: { id: string }
+}
+```
+
+**Response:** `{ result: {} }`.
+
+---
+
+### timer.dismiss
+
+Dismiss a single timer by id (clears a fired timer from the widget).
+
+**Request:**
+
+```typescript
+{
+  jsonrpc: "2.0",
+  id: number,
+  method: "timer.dismiss",
+  params: { id: string }
+}
+```
+
+**Response:** `{ result: {} }`.
+
+---
+
+### timer.dismiss_all
+
+Dismiss every timer. Takes no parameters.
+
+**Request:**
+
+```typescript
+{
+  jsonrpc: "2.0",
+  id: number,
+  method: "timer.dismiss_all",
+  params: {}
+}
+```
+
+**Response:**
+
+```typescript
+{
+  jsonrpc: "2.0",
+  id: number,
+  result: { dismissed: number }     // count of timers dismissed
 }
 ```
 
@@ -319,10 +713,14 @@ Get daemon status and metadata.
   result: {
     version: string,                // e.g., "0.1.0"
     providers_count: number,
-    themes_count: number
+    themes_count: number            // placeholder: handler hardcodes 1
   }
 }
 ```
+
+`themes_count` is currently a placeholder — the handler in
+`src/application/src/dispatcher.rs` hardcodes `1` rather than counting
+installed themes.
 
 **Example:**
 
@@ -334,16 +732,17 @@ Get daemon status and metadata.
 
 ## Error Codes
 
-Standard JSON-RPC error codes apply, plus Quantum-specific codes carved
-into two stable ranges:
+Two error types reach the IPC wire: `quantum_domain::DomainError`
+(`src/domain/src/error.rs`) and `quantum_application::ApplicationError`
+(`src/application/src/error.rs`). Each exposes a stable `rpc_code()`.
+Domain error codes occupy the range `-32000..-32099` and are part of the
+public IPC contract: **stable; do not renumber**. New variants allocate the
+next free code in the domain range.
 
-- `-32000..-32099` — domain errors (semantic failures the frontend should
-  reason about, like an unknown provider or a failed action).
-- `-32100..-32199` — infrastructure errors (I/O, serialization, external
-  process failures). Frontends typically surface these as transient.
-
-These codes are part of the public IPC contract: **stable; do not
-renumber**. New variants allocate the next free code in their range.
+There is no separate infrastructure error code range. Provider-layer
+failures are `ProvidersError`, which carry no RPC code of their own — they
+are converted into `DomainError` (typically `ActionFailed` or
+`Unsupported`) before crossing IPC, so they surface with a domain code.
 
 ### Standard JSON-RPC codes
 
@@ -356,28 +755,31 @@ renumber**. New variants allocate the next free code in their range.
 
 ### Domain errors (`-32000..-32099`)
 
-Source: `quantum_domain::DomainError`.
+Source: `quantum_domain::DomainError` (`src/domain/src/error.rs`).
 
 | Code   | Variant            | Meaning                                  |
 |--------|--------------------|------------------------------------------|
 | -32001 | `ProviderNotFound` | Provider ID doesn't exist                |
 | -32002 | `InvalidQuery`     | Query validation failed                  |
 | -32003 | `ActionFailed`     | Action execution failed                  |
-| -32004 | `Unsupported`      | Operation not supported on this platform |
+| -32004 | `Unsupported`      | Operation not supported / unknown method |
 
-### Infrastructure errors (`-32100..-32199`)
+### Application errors
 
-Source: `quantum_infrastructure::InfrastructureError`. The `Domain`
-wrapper variant delegates to the domain code above rather than allocating
-its own code.
+Source: `quantum_application::ApplicationError`
+(`src/application/src/error.rs`). The `Domain` and `Dispatch` variants
+delegate to `DomainError::rpc_code` above; only `Unknown` allocates a code,
+and it reuses the standard JSON-RPC internal-error code.
 
-| Code   | Variant               | Meaning                                |
-|--------|-----------------------|----------------------------------------|
-| -32100 | `Io`                  | File or socket I/O failure             |
-| -32101 | `Serde`               | JSON (de)serialization failure         |
-| -32102 | `ConfigParse`         | Config file could not be parsed        |
-| -32103 | `HyprlandUnreachable` | Hyprland IPC socket unavailable        |
-| -32104 | `Spawn`               | Failed to spawn a child process        |
+| Code   | Variant            | Meaning                                       |
+|--------|--------------------|-----------------------------------------------|
+| (delegated) | `Domain`      | Wraps a `DomainError`; uses its domain code   |
+| (delegated) | `Dispatch`    | Wraps a `DomainError` with the failing method |
+| -32603 | `Unknown`          | Untyped internal failure                      |
+
+Timer-subsystem errors (`TimerError`) are likewise mapped onto
+`DomainError` before reaching IPC: `NotFound` becomes `Unsupported`
+(`-32004`) and every other variant becomes `ActionFailed` (`-32003`).
 
 ---
 
@@ -423,7 +825,7 @@ const results = await client.call('search', {
 
 // Invoke action
 await client.call('action.invoke', {
-  provider_id: 'apps',
+  provider: 'apps',
   action: results.matches[0].action
 })
 
