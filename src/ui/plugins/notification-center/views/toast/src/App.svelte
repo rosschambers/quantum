@@ -7,10 +7,10 @@
     // shown instance from this base name when hiding.
     const VIEW_NAME = 'plugin/notification-center/toast';
 
-    // Fallback auto-dismiss when a notification carries timeout_ms === 0
-    // (the server's "no explicit expiry" sentinel). Mirrors plugin.toml's
-    // default_timeout.
-    const DEFAULT_TIMEOUT_MS = 5000;
+    // The shortest time a toast stays on screen, in milliseconds. Apps that
+    // request a very short expiry (a couple of seconds) would otherwise blink
+    // past before they can be read, so positive timeouts are floored to this.
+    const MIN_VISIBLE_MS = 3000;
 
     // How long the stack may stay empty before the overlay surface is unmapped.
     // The daemon shows this window on every `created` event, so an empty window
@@ -39,7 +39,15 @@
                 seen.add(notification.id);
                 // Newest on top.
                 visible = [notification, ...visible];
-                const delay = notification.timeout_ms > 0 ? notification.timeout_ms : DEFAULT_TIMEOUT_MS;
+                // A timeout_ms of 0 means "never auto-dismiss" (the resolved
+                // server-default already carries a concrete positive value).
+                // Critical notifications also persist until the user acts on
+                // them. Everything else auto-dismisses after its timeout,
+                // floored so it stays readable.
+                const persistent =
+                    notification.urgency === 'critical' || notification.timeout_ms <= 0;
+                if (persistent) continue;
+                const delay = Math.max(notification.timeout_ms, MIN_VISIBLE_MS);
                 const id = notification.id;
                 timers.set(
                     id,

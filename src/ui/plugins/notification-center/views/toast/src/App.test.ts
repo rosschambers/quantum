@@ -94,20 +94,47 @@ describe('NotificationToast App', () => {
         expect(hidden).toBe(true);
     });
 
-    it('uses the 5000ms default when timeout_ms is 0', async () => {
+    it('never auto-dismisses when timeout_ms is 0', async () => {
         const { container } = render(App);
         await tick();
         emit([makeNotification({ id: 2, timeout_ms: 0 })]);
         await tick();
         expect(container.querySelectorAll('.toast')).toHaveLength(1);
 
-        vi.advanceTimersByTime(4999);
+        // Even far past any default the persistent toast stays visible.
+        vi.advanceTimersByTime(600000);
+        await tick();
+        expect(container.querySelectorAll('.toast')).toHaveLength(1);
+    });
+
+    it('floors a very short timeout to the minimum visible duration', async () => {
+        const { container } = render(App);
+        await tick();
+        emit([makeNotification({ id: 3, timeout_ms: 800 })]);
         await tick();
         expect(container.querySelectorAll('.toast')).toHaveLength(1);
 
-        vi.advanceTimersByTime(2);
+        // Still visible past its requested 800ms because of the 3000ms floor.
+        vi.advanceTimersByTime(900);
+        await tick();
+        expect(container.querySelectorAll('.toast')).toHaveLength(1);
+
+        // Gone once the floor elapses.
+        vi.advanceTimersByTime(2101);
         await tick();
         expect(container.querySelectorAll('.toast')).toHaveLength(0);
+    });
+
+    it('never auto-dismisses a critical notification', async () => {
+        const { container } = render(App);
+        await tick();
+        emit([makeNotification({ id: 4, urgency: 'critical', timeout_ms: 5000 })]);
+        await tick();
+        expect(container.querySelectorAll('.toast')).toHaveLength(1);
+
+        vi.advanceTimersByTime(600000);
+        await tick();
+        expect(container.querySelectorAll('.toast')).toHaveLength(1);
     });
 
     it('clicking a toast calls action.invoke with a dismiss envelope for that id', async () => {
