@@ -7,6 +7,7 @@
     type Point,
   } from "@quantum/client";
   import TimerVisual from "./lib/TimerVisual.svelte";
+  import TimerEditForm from "./lib/TimerEditForm.svelte";
   import { defaultScatterPosition, clampScatterPosition } from "./lib/layout";
 
   const client = createClient();
@@ -15,6 +16,10 @@
   let settings: TimerSettings | null = $state(null);
   let nowUnix = $state(Date.now() / 1000);
   let editingId: string | null = $state(null);
+
+  const editingTimer = $derived(
+    editingId === null ? null : (timers.find((t) => t.id === editingId) ?? null),
+  );
 
   function dismiss(id: string): void {
     client.call("timer.dismiss", { id }).catch((error: unknown) => {
@@ -206,6 +211,15 @@
     {/if}
   {/each}
 </div>
+
+{#if editingTimer}
+  <TimerEditForm
+    timer={editingTimer}
+    {client}
+    {nowUnix}
+    onClose={() => (editingId = null)}
+  />
+{/if}
 
 <style>
   .stage {
