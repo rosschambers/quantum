@@ -11,44 +11,62 @@ Quantum follows a strict onion architecture enforced at the Cargo crate level. E
 Pure business logic with no I/O, no async runtime, no external frameworks. Contains:
 
 - **Value objects:** `ProviderId`, `WindowId`, `MatchScore`
-- **Entities:** `Query`, `Match`, `Action`, `IconRef`
+- **Entities:** `Query`, `Match`, `Action`, `IconRef`, `Timer`
 - **Errors:** `DomainError` with stable IPC codes
-- **Ports (traits):** `ProviderSource`, `ProviderRegistry`, `ConfigStore`, `ThemeStore`, `ShellExecutor`, `HyprlandClient`, `WindowHost`, `EventBus`
+- **Ports (traits):** `ProviderSource`, `ProviderRegistry`, `ThemeStore`, `EventBus`, `ShellExecutor`, `HyprlandClient`, `PluginCatalog`, `WindowHost`, `Clock`, `TimerStore`, `TimerNotifier`, `TimerBroadcast` (see `src/domain/src/ports.rs`)
 
-**Dependencies:** Only `serde`, `serde_json`, `thiserror`, `async-trait`
+**Dependencies:** `serde`, `serde_json`, `thiserror`, `async-trait`, and
+`futures` (for the `BoxStream` stream type used by `ProviderSource::subscribe`).
+No async *runtime* or I/O crate; `futures` is permitted solely for the stream
+type in ports.
 
 #### Application Layer (`src/application`)
 
 Use cases and business logic orchestration. Contains:
 
-- **Use cases:** `SearchUseCase`, `LaunchActionUseCase`, `ListProvidersUseCase`, `ReloadThemeUseCase`, `OpenViewUseCase`
+- **Use cases:** `SearchUseCase`, `LaunchActionUseCase`, `ListProvidersUseCase`, `ReloadThemeUseCase`, `SetThemeUseCase`, `OpenViewUseCase`, `SubscribeProviderUseCase`, `QueryProviderUseCase`, `ScheduleActionUseCase`, `ReloadPluginsUseCase`, `TimerService`
 - **Dispatcher:** Routes JSON-RPC method calls to use cases
 - **Errors:** `ApplicationError` wrapping domain errors
 
 **Dependencies:** `domain` (path)
 
-#### Infrastructure Layer (`src/infrastructure`)
+#### Infrastructure Layer (`src/infrastructure/<crate>`)
 
-Concrete implementations of domain ports and external integrations. Contains:
+Concrete implementations of domain ports and external integrations. After the
+layout reorganization the infrastructure region is **seven separate crates**:
 
-- **Providers:** `DesktopAppsProvider`, `ShellCommandProvider`, `HyprlandWindowsProvider`, `DeclarativeShellProvider`
-- **Shell execution:** `TokioShellExecutor`
-- **Configuration:** `ConfigStore` (TOML parser)
-- **Themes:** `ThemeStore` (cascade resolution, hot reload)
-- **IPC server:** JSON-RPC over Unix sockets
-- **Hyprland client:** Command/event streaming
+- **`config`** — read-only TOML configuration loader
+- **`dbus`** — shared DBus connection helpers
+- **`hyprland`** — Hyprland IPC client and event streaming
+- **`ipc`** — JSON-RPC server over Unix sockets
+- **`plugins`** — plugin discovery and catalog
+- **`providers`** — the `ProviderSource` implementations and shell executor
+- **`theme-store`** — theme cascade resolution and hot reload
 
-**Dependencies:** `domain` (path)
+The `providers` crate holds the provider implementations, including
+`DesktopAppsProvider`, `ShellCommandProvider`, `HyprlandWindowsProvider`,
+`HyprlandActiveWindowProvider`, `DeclarativeShellProvider`, `MprisProvider`,
+`NotificationsProvider`, `PulseAudioProvider`, `UpowerBatteryProvider`,
+`BluezProvider`, `LogindBrightnessProvider`, `NetworkManagerProvider`,
+`WifiProvider`, `PowerProfilesDaemonProvider`, `SystemPowerProvider`,
+`ProcStatsProvider`, `PluginScriptProvider`, and `TimerProvider`, plus the
+`TokioShellExecutor` and `InMemoryProviderRegistry` (see
+`src/infrastructure/providers/src/lib.rs`).
+
+**Dependencies:** `domain` (path), and sibling infrastructure crates may
+depend on one another (for example `providers` on `dbus` and `hyprland`). The
+architecture test permits sibling-on-sibling infrastructure edges.
 
 #### UI Layer (`src/ui/host`)
 
 GTK4 and WebKitGTK windows, Svelte 5 frontends, and browser bridges. Contains:
 
-- **App shell:** `QuantumApp` (GTK4 application)
-- **Windows:** `LauncherWindow` (anchored via gtk4-layer-shell)
-- **Bridge:** WebKit script message handler for bidirectional RPC
-- **URI scheme:** `quantum://` handler for theme bundles
-- **Window host:** `GtkWindowHost` (manages window lifecycle)
+- **Windows:** `PanelWindow` and `WidgetWindow` (`src/ui/host/src/windows/`), anchored via gtk4-layer-shell
+- **Multiplexer:** `ViewMultiplexer` (`multiplex.rs`) — per-monitor view windows
+- **Registry:** `WindowRegistry` (`registry.rs`) — window lifecycle bookkeeping
+- **Bridge:** WebKit script message handler for bidirectional RPC (`bridge.rs`)
+- **URI scheme:** `quantum://` handler for theme bundles (`scheme.rs`)
+- **Window host:** `GtkWindowHost` (`window_host.rs`, manages window lifecycle)
 
 **Dependencies:** `application` (path)
 
@@ -58,7 +76,7 @@ GTK4 and WebKitGTK windows, Svelte 5 frontends, and browser bridges. Contains:
   - Dependencies: `ui`, `application`, `infrastructure`, `domain`
 - **`quantumctl`** — CLI client for IPC operations
   - Dependencies: `domain`, `infrastructure`
-- **`quantum-dev`** — Development tools (TS codegen, theme watch)
+- **`quantum-dev`** — Development tools (theme watch and related helpers; there is no TypeScript codegen)
   - Dependencies: `domain`, `infrastructure`
 
 #### Testing Crate
@@ -93,46 +111,48 @@ This constraint is enforced by an automated test: `cargo test -p quantum-archite
 
 ```
 src/
-├── domain/
+├── domain/src/
 │   ├── ids.rs (ProviderId, WindowId)
 │   ├── score.rs (MatchScore)
 │   ├── query.rs (Query)
-│   ├── match.rs (Match, IconRef)
+│   ├── match_result.rs (Match, IconRef)
 │   ├── action.rs (Action enum)
 │   ├── error.rs (DomainError with codes)
-│   └── ports.rs (trait definitions)
-├── application/
+│   ├── ports.rs (trait definitions)
+│   ├── timer.rs (Timer domain types)
+│   ├── notifications.rs, tokens.rs, bar_state.rs,
+│   │   view_descriptor.rs, window_mode.rs, event_bus.rs
+├── application/src/
 │   ├── error.rs (ApplicationError)
 │   ├── dispatcher.rs (method routing)
 │   └── use_cases/
-│       ├── search.rs
-│       ├── launch_action.rs
-│       ├── list_providers.rs
-│       ├── reload_theme.rs
-│       └── open_view.rs
-├── infrastructure/
-│   ├── error.rs (InfrastructureError)
-│   ├── registry.rs (InMemoryProviderRegistry)
-│   ├── shell.rs (TokioShellExecutor)
-│   ├── config/ (ConfigStore, TOML loader)
-│   ├── theme/ (ThemeStore, cascade, manifest)
-│   ├── ipc/ (JSON-RPC server)
-│   ├── hyprland/ (client, events)
-│   └── providers/
-│       ├── desktop_apps.rs
-│       ├── shell_command.rs
-│       ├── hyprland_windows.rs
-│       └── declarative_shell.rs
+│       ├── search.rs, launch_action.rs, list_providers.rs
+│       ├── reload_theme.rs, set_theme.rs, open_view.rs
+│       ├── subscribe_provider.rs, query_provider.rs
+│       ├── schedule_action.rs, reload_plugins.rs
+│       └── timer_service.rs
+├── infrastructure/                (seven sibling crates)
+│   ├── config/        (read-only TOML loader)
+│   ├── dbus/          (shared DBus helpers)
+│   ├── hyprland/      (client, events)
+│   ├── ipc/           (JSON-RPC server)
+│   ├── plugins/       (plugin discovery)
+│   ├── providers/src/ (lib.rs re-exports all ProviderSource impls,
+│   │                   registry.rs, shell.rs, desktop_apps.rs, ...)
+│   └── theme-store/src/ (store.rs: ThemeStore, cascade, candidate_paths)
 ├── ui/
-│   ├── host/
-│   │   ├── app.rs (QuantumApp)
+│   ├── host/src/
 │   │   ├── bridge.rs (WebKit ↔ Dispatcher)
 │   │   ├── scheme.rs (quantum:// handler)
 │   │   ├── window_host.rs (GtkWindowHost)
+│   │   ├── multiplex.rs (ViewMultiplexer)
+│   │   ├── registry.rs (WindowRegistry)
+│   │   ├── view_catalog.rs, messages.rs, dispatcher.rs, error.rs
 │   │   └── windows/
-│   │       └── launcher.rs (LauncherWindow)
-│   ├── themes/ (Svelte 5 theme bundles)
-│   └── packages/ (shared TS packages like @quantum/client)
+│   │       ├── panel.rs (PanelWindow)
+│   │       └── widget.rs (WidgetWindow)
+│   ├── plugins/ (first-party plugin views, embedded from dist/)
+│   └── packages/ (shared TypeScript packages like @quantum/client)
 └── binaries/
     ├── quantumd/ (daemon main)
     ├── quantumctl/ (CLI client)
