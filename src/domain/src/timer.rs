@@ -264,6 +264,16 @@ pub enum TextColor {
     Muted,
 }
 
+/// The color of the outline that hugs a timer's filling portion.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum FillBorderColor {
+    #[default]
+    Dark,
+    Light,
+    Accent,
+}
+
 /// How the remaining time is formatted.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -295,7 +305,7 @@ pub struct VisualConfig {
     pub thickness: u32,
     pub fill: bool,
     pub reverse: bool,
-    pub accent_hue: u16,
+    pub accent_hue: Option<u16>,
     pub track_opacity: u8,
     pub label_visibility: TextVisibility,
     pub time_visibility: TextVisibility,
@@ -305,26 +315,36 @@ pub struct VisualConfig {
     pub font_scale: u16,
     pub font_weight: u16,
     pub uppercase: bool,
+    pub gradient_stroke: bool,
+    pub fill_border: bool,
+    pub fill_border_width: u32,
+    pub fill_border_color: FillBorderColor,
+    pub depth_sheen: bool,
 }
 
 impl Default for VisualConfig {
     fn default() -> VisualConfig {
         VisualConfig {
-            style: VisualStyle::Mixed,
-            size: 130,
-            thickness: 12,
+            style: VisualStyle::Ring,
+            size: 100,
+            thickness: 20,
             fill: true,
             reverse: true,
-            accent_hue: 220,
+            accent_hue: None,
             track_opacity: 0,
             label_visibility: TextVisibility::Hover,
             time_visibility: TextVisibility::Hover,
             text_position: TextPosition::Center,
-            text_color: TextColor::Accent,
+            text_color: TextColor::Muted,
             time_format: TimeFormat::Compact,
-            font_scale: 105,
-            font_weight: 500,
+            font_scale: 100,
+            font_weight: 600,
             uppercase: true,
+            gradient_stroke: true,
+            fill_border: true,
+            fill_border_width: 1,
+            fill_border_color: FillBorderColor::Dark,
+            depth_sheen: false,
         }
     }
 }
@@ -699,21 +719,43 @@ mod tests {
     #[test]
     fn visual_config_default_values_match_spec() {
         let config = VisualConfig::default();
-        assert_eq!(config.style, VisualStyle::Mixed);
-        assert_eq!(config.size, 130);
-        assert_eq!(config.thickness, 12);
+        assert_eq!(config.style, VisualStyle::Ring);
+        assert_eq!(config.size, 100);
+        assert_eq!(config.thickness, 20);
         assert!(config.fill);
         assert!(config.reverse);
-        assert_eq!(config.accent_hue, 220);
+        assert_eq!(config.accent_hue, None);
         assert_eq!(config.track_opacity, 0);
         assert_eq!(config.label_visibility, TextVisibility::Hover);
         assert_eq!(config.time_visibility, TextVisibility::Hover);
         assert_eq!(config.text_position, TextPosition::Center);
-        assert_eq!(config.text_color, TextColor::Accent);
+        assert_eq!(config.text_color, TextColor::Muted);
         assert_eq!(config.time_format, TimeFormat::Compact);
-        assert_eq!(config.font_scale, 105);
-        assert_eq!(config.font_weight, 500);
+        assert_eq!(config.font_scale, 100);
+        assert_eq!(config.font_weight, 600);
         assert!(config.uppercase);
+        assert!(config.gradient_stroke);
+        assert!(config.fill_border);
+        assert_eq!(config.fill_border_width, 1);
+        assert_eq!(config.fill_border_color, FillBorderColor::Dark);
+        assert!(!config.depth_sheen);
+    }
+
+    #[test]
+    fn fill_border_color_serializes_lowercase_and_defaults_dark() {
+        assert_eq!(FillBorderColor::default(), FillBorderColor::Dark);
+        assert_eq!(
+            serde_json::to_string(&FillBorderColor::Light).unwrap(),
+            "\"light\""
+        );
+    }
+
+    #[test]
+    fn accent_hue_none_is_default_and_some_round_trips() {
+        assert_eq!(VisualConfig::default().accent_hue, None);
+        let json = r#"{"accent_hue": 151}"#;
+        let cfg: VisualConfig = serde_json::from_str(json).unwrap();
+        assert_eq!(cfg.accent_hue, Some(151));
     }
 
     #[test]
@@ -741,6 +783,11 @@ mod tests {
         assert_eq!(partial.font_scale, default.font_scale);
         assert_eq!(partial.font_weight, default.font_weight);
         assert_eq!(partial.uppercase, default.uppercase);
+        assert_eq!(partial.gradient_stroke, default.gradient_stroke);
+        assert_eq!(partial.fill_border, default.fill_border);
+        assert_eq!(partial.fill_border_width, default.fill_border_width);
+        assert_eq!(partial.fill_border_color, default.fill_border_color);
+        assert_eq!(partial.depth_sheen, default.depth_sheen);
     }
 
     #[test]
@@ -751,7 +798,7 @@ mod tests {
             thickness: 20,
             fill: false,
             reverse: false,
-            accent_hue: 300,
+            accent_hue: Some(300),
             track_opacity: 50,
             label_visibility: TextVisibility::Always,
             time_visibility: TextVisibility::Hidden,
@@ -761,6 +808,11 @@ mod tests {
             font_scale: 120,
             font_weight: 700,
             uppercase: false,
+            gradient_stroke: false,
+            fill_border: false,
+            fill_border_width: 3,
+            fill_border_color: FillBorderColor::Accent,
+            depth_sheen: true,
         };
         let json = serde_json::to_string(&config).unwrap();
         let back: VisualConfig = serde_json::from_str(&json).unwrap();
