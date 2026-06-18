@@ -1,4 +1,6 @@
 <script lang="ts">
+    import { untrack } from 'svelte';
+
     let now = $state(new Date());
 
     $effect(() => {
@@ -15,14 +17,20 @@
         }),
     );
 
-    let date = $derived(
-        now.toLocaleDateString(undefined, {
+    // The localized date string only changes when the calendar day changes, so
+    // derive it from a day-granularity key. This derived depends solely on
+    // dayKey, so toLocaleDateString runs once per day instead of every second.
+    let dayKey = $derived(now.toDateString());
+
+    let date = $derived.by(() => {
+        dayKey;
+        return untrack(() => now).toLocaleDateString(undefined, {
             weekday: 'short',
             month: 'short',
             day: 'numeric',
             year: 'numeric',
-        }),
-    );
+        });
+    });
 </script>
 
 <div class="bar-clock" title={date + ' ' + time}>
