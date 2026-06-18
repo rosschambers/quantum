@@ -31,16 +31,14 @@ impl ApplicationError {
     }
 }
 
-/// Map timer-subsystem errors onto the EXISTING `ApplicationError`/`DomainError`
-/// variants. This deliberately adds no new variant: a dedicated timer variant
-/// would force a matching change in quantumd's error mapping, which is out of
-/// scope for this task.
+/// Map timer-subsystem errors onto the `ApplicationError`/`DomainError`
+/// variants.
 ///
-/// - `TimerError::NotFound` is the timer subsystem's "not found" condition.
-///   `DomainError` has no generic not-found variant (`ProviderNotFound` is
-///   provider-specific and wraps a `ProviderId`, not an arbitrary string), so
-///   it routes through `DomainError::Unsupported`, which carries an arbitrary
-///   message and keeps a stable domain-range JSON-RPC code.
+/// - `TimerError::NotFound` is the timer subsystem's "not found" condition. It
+///   maps to `DomainError::NotFound`, the generic not-found variant, which
+///   carries the missing identifier string and keeps a stable domain-range
+///   JSON-RPC code distinct from `ProviderNotFound` (which is provider-specific
+///   and wraps a `ProviderId`).
 /// - Every other `TimerError` (invalid time, empty weekday set, persistence,
 ///   invalid duration) is an operation failure, so it maps to
 ///   `DomainError::ActionFailed`, again preserving the original `Display`
@@ -52,7 +50,7 @@ impl From<TimerError> for ApplicationError {
     fn from(error: TimerError) -> ApplicationError {
         let message = error.to_string();
         match error {
-            TimerError::NotFound(_) => ApplicationError::Domain(DomainError::Unsupported(message)),
+            TimerError::NotFound(_) => ApplicationError::Domain(DomainError::NotFound(message)),
             _ => ApplicationError::Domain(DomainError::ActionFailed { reason: message }),
         }
     }
@@ -63,6 +61,25 @@ pub type Result<T> = std::result::Result<T, ApplicationError>;
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn timer_not_found_maps_to_domain_not_found() {
+        let timer_err = TimerError::NotFound("t1".to_string());
+        let app_err: ApplicationError = timer_err.into();
+        match app_err {
+            ApplicationError::Domain(DomainError::NotFound(id)) => {
+                assert!(id.contains("t1"));
+            }
+            other => panic!("expected DomainError::NotFound, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn timer_not_found_carries_not_found_rpc_code() {
+        let timer_err = TimerError::NotFound("t1".to_string());
+        let app_err: ApplicationError = timer_err.into();
+        assert_eq!(app_err.rpc_code(), -32005);
+    }
 
     #[test]
     fn domain_error_converts_to_application_error() {

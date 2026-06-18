@@ -13,6 +13,8 @@ pub enum DomainError {
     ActionFailed { reason: String },
     #[error("unsupported: {0}")]
     Unsupported(String),
+    #[error("not found: {0}")]
+    NotFound(String),
 }
 
 impl DomainError {
@@ -28,6 +30,7 @@ impl DomainError {
             Self::InvalidQuery(_) => -32002,
             Self::ActionFailed { .. } => -32003,
             Self::Unsupported(_) => -32004,
+            Self::NotFound(_) => -32005,
         }
     }
 }
@@ -63,6 +66,12 @@ mod tests {
     }
 
     #[test]
+    fn not_found_has_stable_code() {
+        let e = DomainError::NotFound("timer t1".to_string());
+        assert_eq!(e.rpc_code(), -32005);
+    }
+
+    #[test]
     fn all_codes_are_in_domain_range() {
         let codes = [
             DomainError::ProviderNotFound("x".into()).rpc_code(),
@@ -72,6 +81,7 @@ mod tests {
             }
             .rpc_code(),
             DomainError::Unsupported("x".to_string()).rpc_code(),
+            DomainError::NotFound("x".to_string()).rpc_code(),
         ];
         for code in codes {
             assert!(
@@ -111,6 +121,14 @@ mod tests {
     #[test]
     fn serde_roundtrip_unsupported() {
         let e = DomainError::Unsupported("x11".to_string());
+        let s = serde_json::to_string(&e).unwrap();
+        let back: DomainError = serde_json::from_str(&s).unwrap();
+        assert_eq!(e, back);
+    }
+
+    #[test]
+    fn serde_roundtrip_not_found() {
+        let e = DomainError::NotFound("timer t1".to_string());
         let s = serde_json::to_string(&e).unwrap();
         let back: DomainError = serde_json::from_str(&s).unwrap();
         assert_eq!(e, back);
