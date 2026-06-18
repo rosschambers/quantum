@@ -1,3 +1,8 @@
+# This file governs ONLY non-nix rustup users. Inside the nix-shell
+# (scripts/devsh.sh / shell.nix) there is no rustup, so this file is ignored
+# and rustc/cargo come from the host nixpkgs (currently 1.95). The channel
+# here is kept in step with nixpkgs for rustup users; the supported MSRV floor
+# is `rust-version = "1.85"` in Cargo.toml.
 [toolchain]
-channel = "1.85"
+channel = "1.95"
 components = ["rustfmt", "clippy"]

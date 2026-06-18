@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # Run a command inside the nix-shell environment defined by shell.nix.
-# Replaces the docker-based devcontainer; shell.nix provides the same
-# toolchain (Rust 1.85 + GTK4 + WebKit + gtk4-layer-shell) without the
-# container-rebuild cost.
+# shell.nix supplies the toolchain from the host nixpkgs: rustc/cargo
+# (currently 1.95, tracks nixpkgs) plus GTK4, WebKit, and gtk4-layer-shell.
+# Note: rust-toolchain.toml is NOT honored here (no rustup inside the shell);
+# it only governs non-nix rustup users.
 set -euo pipefail
 
 REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"

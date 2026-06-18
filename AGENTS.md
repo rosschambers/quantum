@@ -94,7 +94,12 @@ Commit per task in the implementation plan. Small commits beat big ones.
 
 - **All builds, tests, lint, and format checks run via `./scripts/devsh.sh
   <command>`, which is a thin nix-shell wrapper around `shell.nix`.** The
-  host's nixpkgs provides Rust 1.85, GTK4, WebKitGTK 6, and gtk4-layer-shell.
+  toolchain comes from the host's nixpkgs (`rustc`/`cargo` from `shell.nix`,
+  currently rustc 1.95), along with GTK4, WebKitGTK 6, and gtk4-layer-shell.
+  The exact Rust version tracks nixpkgs and can drift. The repo's
+  `rust-toolchain.toml` is **not** consulted inside the nix shell — there is no
+  rustup there — so it only governs non-nix rustup users; the workspace MSRV
+  (`rust-version = "1.85"` in `Cargo.toml`) remains the supported floor.
 - The audio provider currently shells out to `pactl`, so that binary must be
   available in the host environment.
 - **Each `devsh.sh` invocation can trigger a full cargo rebuild.** Build-script
