@@ -1,13 +1,13 @@
+use async_trait::async_trait;
+use futures::StreamExt;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
-use futures::StreamExt;
 use tokio::sync::{broadcast, RwLock};
-use async_trait::async_trait;
 
 use quantum_domain::error::DomainError;
 use quantum_domain::match_result::{IconRef, Match};
-use quantum_domain::score::MatchScore;
 use quantum_domain::query::Query;
+use quantum_domain::score::MatchScore;
 use quantum_domain::{Action, ActionOutcome, ProviderId, ProviderSource};
 
 #[derive(Debug, Clone)]
@@ -86,7 +86,11 @@ impl NotificationsInner {
         urgency: String,
     ) -> u32 {
         let timeout_ms = resolve_timeout_ms(expire_timeout, &urgency);
-        let event_timeout = if timeout_ms > 0 { Some(timeout_ms) } else { None };
+        let event_timeout = if timeout_ms > 0 {
+            Some(timeout_ms)
+        } else {
+            None
+        };
         let mut store = self.store.write().await;
 
         if replaces_id != 0 {
@@ -113,9 +117,10 @@ impl NotificationsInner {
                 hints: HashMap::new(),
                 internal: false,
             });
-            let _ = self
-                .tx
-                .send(NotificationEvent::Created { id: replaces_id, timeout_ms: event_timeout });
+            let _ = self.tx.send(NotificationEvent::Created {
+                id: replaces_id,
+                timeout_ms: event_timeout,
+            });
             return replaces_id;
         }
 
@@ -136,7 +141,10 @@ impl NotificationsInner {
             hints: HashMap::new(),
             internal: false,
         });
-        let _ = self.tx.send(NotificationEvent::Created { id, timeout_ms: event_timeout });
+        let _ = self.tx.send(NotificationEvent::Created {
+            id,
+            timeout_ms: event_timeout,
+        });
         id
     }
 
@@ -185,14 +193,23 @@ impl NotificationsProvider {
         }
     }
 
-    pub async fn get_all(&self) -> Vec<DbusNotification> { self.inner.store.read().await.clone() }
+    pub async fn get_all(&self) -> Vec<DbusNotification> {
+        self.inner.store.read().await.clone()
+    }
 
     /// Add (or update) a notification synthesized inside Quantum, returning its
     /// id. Internal notifications sharing an app name and summary are
     /// deduplicated in place so a re-firing timer updates its existing entry
     /// rather than stacking duplicates; each distinct one gets a unique id so
     /// consumers can key and dismiss them independently.
-    pub async fn add_internal_notification(&self, app_name: String, summary: String, body: String, icon: Option<String>, timeout_ms: u64) -> u32 {
+    pub async fn add_internal_notification(
+        &self,
+        app_name: String,
+        summary: String,
+        body: String,
+        icon: Option<String>,
+        timeout_ms: u64,
+    ) -> u32 {
         let mut store = self.inner.store.write().await;
         if let Some(pos) = store
             .iter()
@@ -208,8 +225,22 @@ impl NotificationsProvider {
             *next += 1;
             *next
         };
-        store.push(DbusNotification { app_name, icon: icon.unwrap_or_default(), id, summary, body, urgency: "normal".to_string(), timeout_ms, actions: Vec::new(), hints: HashMap::new(), internal: true });
-        let _ = self.inner.tx.send(NotificationEvent::Created { id, timeout_ms: Some(timeout_ms) });
+        store.push(DbusNotification {
+            app_name,
+            icon: icon.unwrap_or_default(),
+            id,
+            summary,
+            body,
+            urgency: "normal".to_string(),
+            timeout_ms,
+            actions: Vec::new(),
+            hints: HashMap::new(),
+            internal: true,
+        });
+        let _ = self.inner.tx.send(NotificationEvent::Created {
+            id,
+            timeout_ms: Some(timeout_ms),
+        });
         id
     }
 
@@ -220,10 +251,9 @@ impl NotificationsProvider {
         }
         let _ = self.inner.tx.send(NotificationEvent::Dismissed { id });
         if let Some(conn) = self.inner.conn.get() {
-            if let Ok(ctxt) = zbus::object_server::SignalContext::new(
-                conn,
-                "/org/freedesktop/Notifications",
-            ) {
+            if let Ok(ctxt) =
+                zbus::object_server::SignalContext::new(conn, "/org/freedesktop/Notifications")
+            {
                 let _ = NotificationServer::notification_closed(&ctxt, id, 2).await;
             }
         }
@@ -233,17 +263,17 @@ impl NotificationsProvider {
     /// Notify the originating application that the user invoked an action.
     pub async fn invoke_action(&self, id: u32, action_key: &str) {
         if let Some(conn) = self.inner.conn.get() {
-            if let Ok(ctxt) = zbus::object_server::SignalContext::new(
-                conn,
-                "/org/freedesktop/Notifications",
-            ) {
-                let _ =
-                    NotificationServer::action_invoked(&ctxt, id, action_key.to_string()).await;
+            if let Ok(ctxt) =
+                zbus::object_server::SignalContext::new(conn, "/org/freedesktop/Notifications")
+            {
+                let _ = NotificationServer::action_invoked(&ctxt, id, action_key.to_string()).await;
             }
         }
     }
 
-    pub async fn count(&self) -> usize { self.inner.store.read().await.len() }
+    pub async fn count(&self) -> usize {
+        self.inner.store.read().await.len()
+    }
 
     /// Become the org.freedesktop.Notifications server. Replaces any running
     /// notification daemon and keeps the connection alive for the process
@@ -277,7 +307,9 @@ impl NotificationsProvider {
         {
             Ok(reply) => reply,
             Err(error) => {
-                tracing::warn!("notifications: could not claim org.freedesktop.Notifications: {error}");
+                tracing::warn!(
+                    "notifications: could not claim org.freedesktop.Notifications: {error}"
+                );
                 return;
             }
         };
@@ -313,24 +345,32 @@ impl NotificationsProvider {
 
 #[async_trait]
 impl ProviderSource for NotificationsProvider {
-    fn id(&self) -> &ProviderId { &self.id }
+    fn id(&self) -> &ProviderId {
+        &self.id
+    }
 
     async fn search(&self, _q: &Query) -> Result<Vec<Match>, DomainError> {
         let store = self.inner.store.read().await;
-        Ok(store.iter()
+        Ok(store
+            .iter()
             .filter(|n| !n.summary.is_empty())
             .map(|n| Match {
                 id: format!("notification-{}", n.id),
                 provider: self.id.clone(),
                 title: n.summary.clone(),
                 subtitle: Some(n.body.clone()),
-                icon: if n.icon.is_empty() { None } else { Some(IconRef::Name(n.icon.clone())) },
+                icon: if n.icon.is_empty() {
+                    None
+                } else {
+                    Some(IconRef::Name(n.icon.clone()))
+                },
                 score: MatchScore::new(0.9),
                 action: quantum_domain::Action::Custom {
                     kind: "notifications".to_string(),
                     payload: serde_json::json!({ "command": "dismiss", "id": n.id }),
                 },
-            }).collect())
+            })
+            .collect())
     }
 
     async fn invoke(&self, action: &Action) -> Result<ActionOutcome, DomainError> {
@@ -342,19 +382,19 @@ impl ProviderSource for NotificationsProvider {
         }
         let command = payload.get("command").and_then(serde_json::Value::as_str);
         match command {
-            Some("dismiss") => {
-                match payload.get("id").and_then(serde_json::Value::as_u64) {
-                    Some(id) => {
-                        self.dismiss(id as u32).await?;
-                    }
-                    None => {
-                        tracing::warn!("notifications: dismiss command missing id");
-                    }
+            Some("dismiss") => match payload.get("id").and_then(serde_json::Value::as_u64) {
+                Some(id) => {
+                    self.dismiss(id as u32).await?;
                 }
-            }
+                None => {
+                    tracing::warn!("notifications: dismiss command missing id");
+                }
+            },
             Some("action") => {
                 let id = payload.get("id").and_then(serde_json::Value::as_u64);
-                let action_key = payload.get("action_key").and_then(serde_json::Value::as_str);
+                let action_key = payload
+                    .get("action_key")
+                    .and_then(serde_json::Value::as_str);
                 match (id, action_key) {
                     (Some(id), Some(action_key)) => {
                         let id = id as u32;
@@ -542,13 +582,23 @@ mod tests {
     #[tokio::test]
     async fn adds_and_counts_notification() {
         let provider = NotificationsProvider::new();
-        provider.add_internal_notification("Spotify".into(), "Now playing".into(), "Song title".into(), Some("spotify".into()), 5000).await;
+        provider
+            .add_internal_notification(
+                "Spotify".into(),
+                "Now playing".into(),
+                "Song title".into(),
+                Some("spotify".into()),
+                5000,
+            )
+            .await;
         assert_eq!(provider.count().await, 1);
     }
     #[tokio::test]
     async fn dismisses_notification() {
         let provider = NotificationsProvider::new();
-        let id = provider.add_internal_notification("App".into(), "Title".into(), "Body".into(), None, 5000).await;
+        let id = provider
+            .add_internal_notification("App".into(), "Title".into(), "Body".into(), None, 5000)
+            .await;
         assert_eq!(provider.count().await, 1);
         provider.dismiss(id).await.unwrap();
         assert_eq!(provider.count().await, 0);
@@ -560,10 +610,22 @@ mod tests {
         // two separately keyed entries, not collapse onto a shared id 0.
         let provider = NotificationsProvider::new();
         let first = provider
-            .add_internal_notification("Quantum Timer".into(), "Tea".into(), "Timer complete".into(), None, 0)
+            .add_internal_notification(
+                "Quantum Timer".into(),
+                "Tea".into(),
+                "Timer complete".into(),
+                None,
+                0,
+            )
             .await;
         let second = provider
-            .add_internal_notification("Quantum Timer".into(), "Pasta".into(), "Timer complete".into(), None, 0)
+            .add_internal_notification(
+                "Quantum Timer".into(),
+                "Pasta".into(),
+                "Timer complete".into(),
+                None,
+                0,
+            )
             .await;
         assert_ne!(first, 0);
         assert_ne!(second, 0);
@@ -577,10 +639,22 @@ mod tests {
         // and keeps its id, rather than stacking a duplicate.
         let provider = NotificationsProvider::new();
         let first = provider
-            .add_internal_notification("Quantum Timer".into(), "Tea".into(), "Brewing".into(), None, 0)
+            .add_internal_notification(
+                "Quantum Timer".into(),
+                "Tea".into(),
+                "Brewing".into(),
+                None,
+                0,
+            )
             .await;
         let again = provider
-            .add_internal_notification("Quantum Timer".into(), "Tea".into(), "Timer complete".into(), None, 0)
+            .add_internal_notification(
+                "Quantum Timer".into(),
+                "Tea".into(),
+                "Timer complete".into(),
+                None,
+                0,
+            )
             .await;
         assert_eq!(first, again);
         assert_eq!(provider.count().await, 1);
@@ -592,10 +666,22 @@ mod tests {
     async fn dismiss_removes_only_targeted_internal_notification() {
         let provider = NotificationsProvider::new();
         let first = provider
-            .add_internal_notification("Quantum Timer".into(), "Tea".into(), "Timer complete".into(), None, 0)
+            .add_internal_notification(
+                "Quantum Timer".into(),
+                "Tea".into(),
+                "Timer complete".into(),
+                None,
+                0,
+            )
             .await;
         let second = provider
-            .add_internal_notification("Quantum Timer".into(), "Pasta".into(), "Timer complete".into(), None, 0)
+            .add_internal_notification(
+                "Quantum Timer".into(),
+                "Pasta".into(),
+                "Timer complete".into(),
+                None,
+                0,
+            )
             .await;
         provider.dismiss(first).await.unwrap();
         let all = provider.get_all().await;
@@ -623,7 +709,13 @@ mod tests {
             )
             .await;
         provider
-            .add_internal_notification("Quantum Timer".into(), "Tea".into(), "Timer complete".into(), None, 0)
+            .add_internal_notification(
+                "Quantum Timer".into(),
+                "Tea".into(),
+                "Timer complete".into(),
+                None,
+                0,
+            )
             .await;
         assert_eq!(provider.count().await, 2);
     }
@@ -713,7 +805,10 @@ mod tests {
         assert_eq!(all[0].id, 1);
         assert_eq!(all[0].app_name, "Spotify");
         assert_eq!(all[0].summary, "Now playing");
-        assert_eq!(all[0].actions, vec![("default".to_string(), "Open".to_string())]);
+        assert_eq!(
+            all[0].actions,
+            vec![("default".to_string(), "Open".to_string())]
+        );
     }
 
     #[tokio::test]
@@ -721,7 +816,16 @@ mod tests {
         let provider = NotificationsProvider::new();
         let id = provider
             .inner
-            .apply_notify("App".into(), "".into(), 0, "T".into(), "B".into(), Vec::new(), 0, "normal".into())
+            .apply_notify(
+                "App".into(),
+                "".into(),
+                0,
+                "T".into(),
+                "B".into(),
+                Vec::new(),
+                0,
+                "normal".into(),
+            )
             .await;
         provider.dismiss(id).await.unwrap();
         assert_eq!(provider.count().await, 0);
@@ -820,7 +924,16 @@ mod tests {
         let provider = NotificationsProvider::new();
         let id = provider
             .inner
-            .apply_notify("App".into(), "".into(), 0, "T".into(), "B".into(), Vec::new(), 0, "normal".into())
+            .apply_notify(
+                "App".into(),
+                "".into(),
+                0,
+                "T".into(),
+                "B".into(),
+                Vec::new(),
+                0,
+                "normal".into(),
+            )
             .await;
         assert_eq!(provider.count().await, 1);
         let action = Action::Custom {
@@ -837,7 +950,16 @@ mod tests {
         let provider = NotificationsProvider::new();
         let id = provider
             .inner
-            .apply_notify("App".into(), "".into(), 0, "T".into(), "B".into(), Vec::new(), 0, "normal".into())
+            .apply_notify(
+                "App".into(),
+                "".into(),
+                0,
+                "T".into(),
+                "B".into(),
+                Vec::new(),
+                0,
+                "normal".into(),
+            )
             .await;
         assert_eq!(provider.count().await, 1);
         let action = Action::Custom {
@@ -854,11 +976,29 @@ mod tests {
         let provider = NotificationsProvider::new();
         let id = provider
             .inner
-            .apply_notify("App".into(), "".into(), 0, "First".into(), "".into(), Vec::new(), 0, "normal".into())
+            .apply_notify(
+                "App".into(),
+                "".into(),
+                0,
+                "First".into(),
+                "".into(),
+                Vec::new(),
+                0,
+                "normal".into(),
+            )
             .await;
         let same = provider
             .inner
-            .apply_notify("App".into(), "".into(), id, "Second".into(), "".into(), Vec::new(), 0, "normal".into())
+            .apply_notify(
+                "App".into(),
+                "".into(),
+                id,
+                "Second".into(),
+                "".into(),
+                Vec::new(),
+                0,
+                "normal".into(),
+            )
             .await;
         assert_eq!(same, id);
         let all = provider.get_all().await;

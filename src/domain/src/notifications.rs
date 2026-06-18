@@ -33,7 +33,13 @@ impl Notification {
 
     /// Create from a D-Bus Notify signal. D-Bus id=0 means "create new", >0 means update existing.
     pub fn from_dbus(app_name: &str, icon: &str, id: u32, summary: &str, body: &str) -> Self {
-        Self::new(id, app_name, summary, body, if icon.is_empty() { None } else { Some(icon) })
+        Self::new(
+            id,
+            app_name,
+            summary,
+            body,
+            if icon.is_empty() { None } else { Some(icon) },
+        )
     }
 }
 
@@ -91,7 +97,10 @@ mod tests {
 
     #[test]
     fn event_kind_field() {
-        let e = NotificationEvent::Created { id: 42, timeout_ms: Some(5000) };
+        let e = NotificationEvent::Created {
+            id: 42,
+            timeout_ms: Some(5000),
+        };
         let json = serde_json::to_value(&e).expect("serde");
         assert_eq!(json["type"], "created");
         assert_eq!(json["data"]["id"], 42);

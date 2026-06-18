@@ -188,7 +188,10 @@ mod tests {
 
     #[test]
     fn view_kind_toast_serializes() {
-        assert_eq!(serde_json::to_string(&ViewKind::Toast).unwrap(), "\"toast\"");
+        assert_eq!(
+            serde_json::to_string(&ViewKind::Toast).unwrap(),
+            "\"toast\""
+        );
     }
 
     #[test]
