@@ -39,6 +39,11 @@ function defaultVisual(): VisualConfig {
         font_scale: 1,
         font_weight: 500,
         uppercase: false,
+        gradient_stroke: true,
+        fill_border: true,
+        fill_border_width: 1,
+        fill_border_color: 'dark',
+        depth_sheen: false,
     };
 }
 

@@ -45,6 +45,11 @@
         font_scale: 1,
         font_weight: 500,
         uppercase: false,
+        gradient_stroke: true,
+        fill_border: true,
+        fill_border_width: 1,
+        fill_border_color: 'dark',
+        depth_sheen: false,
     };
 
     const SOUND_NAMES: SoundName[] = ['complete', 'bell', 'chime', 'alarm'];
@@ -460,7 +465,7 @@
                         <span class="field-label">Style <InfoTip text={TIP_STYLE} /></span>
                         <StylePicker
                             style={visualStyle}
-                            accentHue={defaultsVisual.accent_hue}
+                            accentHue={defaultsVisual.accent_hue ?? 210}
                             onChange={onStyleChange}
                         />
                     </div>
