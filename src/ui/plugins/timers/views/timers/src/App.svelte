@@ -44,7 +44,12 @@
   });
 
   // rAF loop ticks "now" so countdowns animate smoothly between snapshots.
+  // Gate it on there being at least one timer: with an empty list there is
+  // nothing to animate, so the loop must not run. Reading timers.length makes
+  // this effect re-run when the first timer arrives (starting the loop) and
+  // when the last timer leaves (cleanup cancels the pending frame).
   $effect(() => {
+    if (timers.length === 0) return;
     let raf = 0;
     const loop = (): void => {
       nowUnix = Date.now() / 1000;
