@@ -4,6 +4,8 @@
     remainingFraction,
     displayFraction,
     rampColor,
+    rampToWarning,
+    resolveBaseColor,
     formatTime,
   } from "./fraction";
 
@@ -64,14 +66,52 @@
       : visual.style,
   );
 
-  const stroke = $derived(
-    notify.urgency_ramp
-      ? rampColor(frac, visual.accent_hue, notify.ramp_threshold)
-      : `hsl(${visual.accent_hue} 70% 60%)`,
-  );
+  // The base colour ignores the urgency ramp: it follows the timer's accent
+  // hue, or the theme accent when the hue is null. The fill-border accent and
+  // the lighter gradient stop both derive from this stable base.
+  const baseColor = $derived(resolveBaseColor(visual.accent_hue));
+
+  // The progress colour adds the urgency ramp on top of the base. A custom hue
+  // ramps toward red; the theme-driven base mixes toward the warning token.
+  const stroke = $derived.by(() => {
+    if (visual.accent_hue !== null) {
+      return notify.urgency_ramp
+        ? rampColor(frac, visual.accent_hue, notify.ramp_threshold)
+        : baseColor;
+    }
+    return notify.urgency_ramp
+      ? rampToWarning(frac, baseColor, notify.ramp_threshold)
+      : baseColor;
+  });
+
+  // A faint track derived from the surface token; fully transparent at zero
+  // opacity. `track_opacity` is a 0-100 percentage.
   const trackCol = $derived(
-    `hsl(${visual.accent_hue} 30% 50% / ${visual.track_opacity / 100})`,
+    visual.track_opacity === 0
+      ? "transparent"
+      : `color-mix(in oklab, transparent ${100 - visual.track_opacity}%, var(--color-surface))`,
   );
+
+  // The outline colour that hugs the filling portion when `fill_border` is on.
+  const fillBorderColor = $derived.by(() => {
+    if (visual.fill_border_color === "dark") return "rgba(0,0,0,0.55)";
+    if (visual.fill_border_color === "light") return "rgba(255,255,255,0.85)";
+    return baseColor;
+  });
+
+  // A stable per-instance gradient id, sanitised for use in a `url(#...)`
+  // reference. The list index keeps it unique even if two ids collide after
+  // sanitisation.
+  const gradientId = $derived(
+    `timer-gradient-${indexInList}-${timer.id.replace(/[^a-zA-Z0-9_-]/g, "")}`,
+  );
+
+  // The paint applied to progress strokes and the pie fill: a gradient when
+  // enabled, otherwise the solid progress colour.
+  const strokePaint = $derived(
+    visual.gradient_stroke ? `url(#${gradientId})` : stroke,
+  );
+
   const inRamp = $derived(
     notify.urgency_ramp && frac <= notify.ramp_threshold / 100,
   );
@@ -89,6 +129,50 @@
       : 1,
   );
 
+  // A point on a circle, measured in degrees clockwise from twelve o'clock.
+  function pointOnCircle(
+    centerX: number,
+    centerY: number,
+    pointRadius: number,
+    degrees: number,
+  ): [number, number] {
+    const angleRadians = ((degrees - 90) * Math.PI) / 180;
+    return [
+      centerX + pointRadius * Math.cos(angleRadians),
+      centerY + pointRadius * Math.sin(angleRadians),
+    ];
+  }
+
+  // A filled pie sector from twelve o'clock, clockwise, covering `fraction`
+  // of the disc. Returns an empty path for a vanishing slice and a closed
+  // full-circle arc once the slice covers the whole disc.
+  function sectorPath(
+    centerX: number,
+    centerY: number,
+    sectorRadius: number,
+    fraction: number,
+  ): string {
+    if (fraction >= 0.9999) {
+      return `M ${centerX} ${centerY - sectorRadius} A ${sectorRadius} ${sectorRadius} 0 1 1 ${(
+        centerX - 0.01
+      ).toFixed(2)} ${centerY - sectorRadius} Z`;
+    }
+    if (fraction <= 0.0001) return "";
+    const [startX, startY] = pointOnCircle(centerX, centerY, sectorRadius, 0);
+    const [endX, endY] = pointOnCircle(
+      centerX,
+      centerY,
+      sectorRadius,
+      fraction * 360,
+    );
+    const largeArc = fraction > 0.5 ? 1 : 0;
+    return `M ${centerX} ${centerY} L ${startX.toFixed(2)} ${startY.toFixed(
+      2,
+    )} A ${sectorRadius} ${sectorRadius} 0 ${largeArc} 1 ${endX.toFixed(
+      2,
+    )} ${endY.toFixed(2)} Z`;
+  }
+
   // Geometry.
   const size = $derived(visual.size);
   const thick = $derived(visual.thickness);
@@ -96,11 +180,14 @@
   const radius = $derived((size - thick) / 2);
   const circumference = $derived(2 * Math.PI * radius);
   const dashOffset = $derived(circumference * (1 - displayFrac));
-  const angle = $derived(displayFrac * 360);
-  const innerR = $derived(size / 2 - thick);
-  const wedgeMask = $derived(
-    `radial-gradient(circle at center, transparent ${innerR}px, #000 ${innerR}px)`,
+  // The border width that hugs ring and wedge progress arcs.
+  const underlayWidth = $derived(thick + 2 * visual.fill_border_width);
+  // The pie disc shrinks by the border width so the outline stays inside the
+  // surface bounds, and its sector path follows the displayed fraction.
+  const pieRadius = $derived(
+    size / 2 - (visual.fill_border ? visual.fill_border_width : 0),
   );
+  const sectorD = $derived(sectorPath(center, center, pieRadius, displayFrac));
   const barWidth = $derived(size * 1.4);
   const barHeight = $derived(Math.max(thick, 14));
   const dotCount = 12;
@@ -116,7 +203,7 @@
   );
   const textColor = $derived.by(() => {
     if (visual.text_color === "accent") return stroke;
-    if (visual.text_color === "muted") return "rgba(255,255,255,.62)";
+    if (visual.text_color === "muted") return "var(--color-fg-alt)";
     return "#fff";
   });
   const labelFont = $derived(
@@ -150,45 +237,100 @@
   {/if}
 {/snippet}
 
+{#snippet gradientDefs()}
+  {#if visual.gradient_stroke}
+    <defs>
+      <linearGradient id={gradientId} x1="0" y1="0" x2="1" y2="1">
+        <stop offset="0%" stop-color="color-mix(in oklab, white 20%, {stroke})" />
+        <stop offset="100%" stop-color={stroke} />
+      </linearGradient>
+    </defs>
+  {/if}
+{/snippet}
+
 {#snippet visualBody()}
-  {#if styleId === "ring"}
-    <svg width={size} height={size} viewBox="0 0 {size} {size}">
-      <circle
-        cx={center}
-        cy={center}
-        r={radius}
-        fill="none"
-        stroke={trackCol}
-        stroke-width={thick}
-      />
-      <circle
-        cx={center}
-        cy={center}
-        r={radius}
-        fill="none"
-        stroke={stroke}
-        stroke-width={thick}
-        stroke-linecap="round"
-        stroke-dasharray={circumference}
-        stroke-dashoffset={dashOffset}
-        transform="rotate(-90 {center} {center})"
-      />
-    </svg>
-  {:else if styleId === "wedge"}
-    <div
-      style="width:{size}px;height:{size}px;border-radius:50%;background:conic-gradient({stroke} {angle}deg, {trackCol} {angle}deg);-webkit-mask:{wedgeMask};mask:{wedgeMask};"
-    ></div>
+  {#if styleId === "ring" || styleId === "wedge"}
+    {@const lineCap = styleId === "wedge" ? "butt" : "round"}
+    <div class="circular" style="width:{size}px;height:{size}px;">
+      <svg
+        class="circular-svg"
+        width={size}
+        height={size}
+        viewBox="0 0 {size} {size}"
+      >
+        {@render gradientDefs()}
+        <circle
+          cx={center}
+          cy={center}
+          r={radius}
+          fill="none"
+          stroke={trackCol}
+          stroke-width={thick}
+        />
+        {#if visual.fill_border}
+          <circle
+            cx={center}
+            cy={center}
+            r={radius}
+            fill="none"
+            stroke={fillBorderColor}
+            stroke-width={underlayWidth}
+            stroke-linecap={lineCap}
+            stroke-dasharray={circumference}
+            stroke-dashoffset={dashOffset}
+            transform="rotate(-90 {center} {center})"
+          />
+        {/if}
+        <circle
+          cx={center}
+          cy={center}
+          r={radius}
+          fill="none"
+          stroke={strokePaint}
+          stroke-width={thick}
+          stroke-linecap={lineCap}
+          stroke-dasharray={circumference}
+          stroke-dashoffset={dashOffset}
+          transform="rotate(-90 {center} {center})"
+        />
+      </svg>
+      {#if visual.depth_sheen}
+        <div class="sheen"></div>
+      {/if}
+    </div>
   {:else if styleId === "pie"}
-    <div
-      style="width:{size}px;height:{size}px;border-radius:50%;background:conic-gradient({stroke} {angle}deg, {trackCol} {angle}deg);"
-    ></div>
+    <div class="circular" style="width:{size}px;height:{size}px;">
+      <svg
+        class="circular-svg"
+        width={size}
+        height={size}
+        viewBox="0 0 {size} {size}"
+      >
+        {@render gradientDefs()}
+        <circle cx={center} cy={center} r={pieRadius} fill={trackCol} />
+        {#if sectorD}
+          <path
+            d={sectorD}
+            fill={strokePaint}
+            stroke={visual.fill_border ? fillBorderColor : "none"}
+            stroke-width={visual.fill_border ? visual.fill_border_width : 0}
+            stroke-linejoin="round"
+          />
+        {/if}
+      </svg>
+      {#if visual.depth_sheen}
+        <div class="sheen"></div>
+      {/if}
+    </div>
   {:else if styleId === "bar"}
     <div
       style="width:{barWidth}px;height:{barHeight}px;border-radius:{barHeight}px;background:{trackCol};overflow:hidden;"
     >
       <div
         style="height:100%;width:{displayFrac *
-          100}%;background:{stroke};border-radius:{barHeight}px;"
+          100}%;background:{stroke};border-radius:{barHeight}px;{visual.fill_border
+          ? `box-shadow:inset 0 0 0 ${visual.fill_border_width}px ${fillBorderColor};`
+          : ''}"
       ></div>
     </div>
   {:else if styleId === "dots"}
@@ -200,7 +342,9 @@
         <span
           style="width:{dotSize}px;height:{dotSize}px;border-radius:50%;display:inline-block;background:{lit
             ? stroke
-            : trackCol};"
+            : trackCol};{lit && visual.fill_border
+            ? `box-shadow:inset 0 0 0 ${visual.fill_border_width}px ${fillBorderColor};`
+            : ''}"
         ></span>
       {/each}
     </div>
@@ -262,10 +406,31 @@
     align-items: center;
     gap: 2px;
   }
+  .circular {
+    position: relative;
+  }
+  .circular-svg {
+    position: absolute;
+    inset: 0;
+  }
+  .sheen {
+    position: absolute;
+    inset: 0;
+    border-radius: 50%;
+    pointer-events: none;
+    background: radial-gradient(
+      circle at 32% 26%,
+      rgba(255, 255, 255, 0.28),
+      rgba(255, 255, 255, 0.06) 38%,
+      transparent 60%
+    );
+  }
   .cap {
     text-align: center;
     line-height: 1.2;
     white-space: nowrap;
+    /* Permanent scrim so captions stay legible over any backdrop. */
+    text-shadow: 0 1px 6px rgba(0, 0, 0, 0.7);
   }
   .cap.hoveronly {
     opacity: 0;
