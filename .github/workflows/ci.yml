@@ -89,14 +89,11 @@ jobs:
             set -euo pipefail
             cargo fmt --all -- --check
             cargo clippy --workspace --all-targets -- -D warnings
-            # Compile all test and binary artifacts (including
-            # target/debug/quantumd) without running anything: the e2e test
-            # (quantum-e2e) spawns the compiled target/debug/quantumd, so it
-            # must exist before the test run. `cargo test --no-run` builds it as
-            # part of the workspace bin targets and the subsequent
-            # `cargo test --workspace` reuses those artifacts, avoiding a
-            # separate redundant `cargo build --workspace` codegen pass.
-            cargo test --workspace --no-run
+            # The e2e test (quantum-e2e) spawns the compiled
+            # target/debug/quantumd, which `cargo test` does NOT produce on its
+            # own (it builds test harnesses, not the bin executable). Build the
+            # bin explicitly first so the e2e test can find it.
+            cargo build -p quantumd
             cargo test --workspace
           ' shell.nix
 

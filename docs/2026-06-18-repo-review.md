@@ -660,6 +660,7 @@ Highest-severity verified findings (top of the fix queue):
 - **Raised by:** build (AU).
 
 ### CI compiles the workspace multiple times
+- **Status:** ◐ Partial — the `cargo test --workspace --no-run` attempt was reverted: it does not produce the `target/debug/quantumd` binary the e2e test spawns (caught by CI on a cold tree). Replaced with an explicit `cargo build -p quantumd` (leaner than the original `cargo build --workspace`, builds only the needed bin) before `cargo test --workspace`.
 - **Severity:** low
 - **Verified location:** `.github/workflows/ci.yml:83-89` (`cargo clippy
   --workspace --all-targets`, then `cargo build --workspace`, then `cargo test
