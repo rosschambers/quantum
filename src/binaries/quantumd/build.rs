@@ -29,6 +29,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
     fs::create_dir_all(&staging_root)?;
 
+    // Watch the plugins-source parent directory so a brand-new plugin added
+    // under it is noticed on the FIRST build (cargo re-runs this script when a
+    // directory's entries change). Without this, a new plugin directory was
+    // only discovered on a second build.
+    println!("cargo:rerun-if-changed={}", plugins_source.display());
+
     if !plugins_source.is_dir() {
         println!(
             "cargo:warning=first-party plugins directory not found at {}; embedding no plugins",
@@ -49,6 +55,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         if !views_dir.is_dir() {
             continue;
         }
+        // Watch each plugin's `views/` directory so a brand-new view added to an
+        // existing plugin is likewise picked up on the FIRST build.
+        println!("cargo:rerun-if-changed={}", views_dir.display());
         for view_entry in fs::read_dir(&views_dir)? {
             let view_entry = view_entry?;
             let view_dir = view_entry.path();
@@ -68,10 +77,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 /// preserving the `<plugin>/views/<view>/` layout that
 /// `quantum_plugins::walk_embedded` expects. Emits precise
 /// `rerun-if-changed` paths so cargo never has to scan the pnpm
-/// `node_modules` symlink farms; the cost is that brand-new plugins
-/// added under `src/ui/plugins/`, and brand-new views added to an
-/// existing plugin, each need one manual rebuild to be noticed (their
-/// paths are only registered once this script has seen them).
+/// `node_modules` symlink farms. The parent `plugins/` and per-plugin
+/// `views/` directories are watched separately in `main`, so a brand-new
+/// plugin or view is discovered on the first build rather than the second.
 fn stage_view(
     plugin_name: &str,
     view_name: &str,
