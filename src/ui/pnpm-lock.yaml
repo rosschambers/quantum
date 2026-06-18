@@ -21,6 +21,10 @@ importers:
         version: 2.1.9(@types/node@20.19.41)(@vitest/ui@2.1.9)(happy-dom@15.11.7)(jsdom@29.1.1)
 
   plugins/bar/views/bar:
+    dependencies:
+      '@quantum/client':
+        specifier: workspace:*
+        version: link:../../../../packages/client
     devDependencies:
       '@sveltejs/vite-plugin-svelte':
         specifier: ^4.0.0-next.6

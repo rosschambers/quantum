@@ -8,6 +8,9 @@
     "build": "vite build",
     "test": "vitest run"
   },
+  "dependencies": {
+    "@quantum/client": "workspace:*"
+  },
   "devDependencies": {
     "@sveltejs/vite-plugin-svelte": "^4.0.0-next.6",
     "@testing-library/svelte": "^4",
