@@ -785,13 +785,18 @@ async fn run_nmcli(args: &[&str]) -> Result<String, ProvidersError> {
 /// `password <pw>` when a password is supplied, and `hidden yes` for hidden
 /// networks. Each token is a separate argv item; nmcli accepts the optional
 /// arguments as independent `name value` pairs.
+///
+/// A `--` end-of-options separator is inserted before the user-supplied SSID so
+/// nmcli never parses an SSID (or any following value) that begins with `-` as
+/// an option. Without it, an attacker-chosen SSID like `--help` or `-foo` would
+/// be smuggled in as an nmcli option.
 fn connect_args<'a>(
     ssid: &'a str,
     bssid: Option<&'a str>,
     password: Option<&'a str>,
     hidden: bool,
 ) -> Vec<&'a str> {
-    let mut args: Vec<&str> = vec!["device", "wifi", "connect", ssid];
+    let mut args: Vec<&str> = vec!["device", "wifi", "connect", "--", ssid];
     if let Some(bssid) = bssid.filter(|value| !value.is_empty()) {
         args.push("bssid");
         args.push(bssid);
@@ -1279,6 +1284,7 @@ HomeNet:AA\\:AA\\:AA\\:AA\\:AA\\:02:40:WPA2:2412:yes:*";
                 "device",
                 "wifi",
                 "connect",
+                "--",
                 "HomeNet",
                 "bssid",
                 "AA:BB:CC:DD:EE:FF",
@@ -1291,9 +1297,9 @@ HomeNet:AA\\:AA\\:AA\\:AA\\:AA\\:02:40:WPA2:2412:yes:*";
     #[test]
     fn connect_args_omits_bssid_when_absent_or_empty() {
         let none = connect_args("HomeNet", None, None, false);
-        assert_eq!(none, vec!["device", "wifi", "connect", "HomeNet"]);
+        assert_eq!(none, vec!["device", "wifi", "connect", "--", "HomeNet"]);
         let empty = connect_args("HomeNet", Some(""), None, false);
-        assert_eq!(empty, vec!["device", "wifi", "connect", "HomeNet"]);
+        assert_eq!(empty, vec!["device", "wifi", "connect", "--", "HomeNet"]);
     }
 
     #[test]
@@ -1301,8 +1307,33 @@ HomeNet:AA\\:AA\\:AA\\:AA\\:AA\\:02:40:WPA2:2412:yes:*";
         let args = connect_args("HomeNet", None, Some("pw"), true);
         assert_eq!(
             args,
-            vec!["device", "wifi", "connect", "HomeNet", "password", "pw", "hidden", "yes",]
+            vec![
+                "device", "wifi", "connect", "--", "HomeNet", "password", "pw", "hidden", "yes",
+            ]
         );
+    }
+
+    #[test]
+    fn connect_args_inserts_end_of_options_before_ssid() {
+        // The `--` end-of-options separator must come immediately before the
+        // user-supplied SSID so a leading-dash SSID can never be parsed by
+        // nmcli as an option (option smuggling). This holds for every shape
+        // of the optional arguments.
+        let leading_dash = connect_args("-rogue", None, None, false);
+        let separator_index = leading_dash
+            .iter()
+            .position(|token| *token == "--")
+            .expect("connect_args must contain a -- separator");
+        let ssid_index = leading_dash
+            .iter()
+            .position(|token| *token == "-rogue")
+            .expect("connect_args must contain the SSID");
+        assert_eq!(
+            separator_index + 1,
+            ssid_index,
+            "-- must immediately precede the SSID"
+        );
+        assert_eq!(leading_dash, vec!["device", "wifi", "connect", "--", "-rogue"]);
     }
 
     #[tokio::test]
