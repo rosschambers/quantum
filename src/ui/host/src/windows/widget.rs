@@ -331,10 +331,11 @@ fn build_webview(
     webkit6::prelude::WebViewExt::set_background_color(&webview, &transparent);
 
     // Pipe JS console + enable developer inspector (gated by env var).
+    let inspector_enabled = std::env::var("QUANTUM_INSPECTOR").as_deref() == Ok("1");
     let settings: webkit6::Settings =
         webkit6::prelude::WebViewExt::settings(&webview).unwrap_or_default();
-    settings.set_enable_write_console_messages_to_stdout(true);
-    settings.set_enable_developer_extras(std::env::var("QUANTUM_INSPECTOR").as_deref() == Ok("1"));
+    settings.set_enable_write_console_messages_to_stdout(inspector_enabled);
+    settings.set_enable_developer_extras(inspector_enabled);
     webkit6::prelude::WebViewExt::set_settings(&webview, &settings);
 
     webview.connect_load_failed(|_view, event, uri, err| {
