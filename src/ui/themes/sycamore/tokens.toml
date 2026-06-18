@@ -15,6 +15,7 @@ color-overlay-backdrop = "rgba(20, 17, 14, 0.55)"
 color-bar-bg = "rgba(41, 37, 32, 0.85)"
 color-shadow = "rgba(10, 8, 6, 0.6)"
 color-divider = "rgba(232, 228, 216, 0.25)"
+color-warning = "#c96342"
 
 [radius]
 radius-lg = "6px"
