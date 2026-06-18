@@ -108,7 +108,6 @@ export function createClient(options?: { transport?: Transport }): Client {
   };
 }
 
-export * from './generated';
 export {
   createNotificationStore,
   type PendingNotification,
