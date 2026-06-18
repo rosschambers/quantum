@@ -119,6 +119,7 @@ export {
 export {
   createTimerStore,
   type VisualStyle,
+  type FillBorderColor,
   type TextVisibility,
   type TextPosition,
   type TextColor,

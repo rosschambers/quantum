@@ -30,6 +30,11 @@ const SAMPLE: TimerStoreData = {
       font_scale: 105,
       font_weight: 500,
       uppercase: true,
+      gradient_stroke: true,
+      fill_border: true,
+      fill_border_width: 1,
+      fill_border_color: 'dark',
+      depth_sheen: false,
     },
     defaults_notify: {
       notification: true,
@@ -61,6 +66,11 @@ const SAMPLE: TimerStoreData = {
         font_scale: 105,
         font_weight: 500,
         uppercase: true,
+        gradient_stroke: true,
+        fill_border: true,
+        fill_border_width: 1,
+        fill_border_color: 'dark',
+        depth_sheen: false,
       },
       notify: {
         notification: true,

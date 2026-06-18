@@ -1,7 +1,10 @@
 import type { Client } from './index';
 
 /** Visual rendering style for a timer. Mirrors the Rust `VisualStyle` enum. */
-export type VisualStyle = 'ring' | 'wedge' | 'pie' | 'dots' | 'bar' | 'mixed';
+export type VisualStyle = 'ring' | 'wedge' | 'pie' | 'dots' | 'bar' | 'spiral' | 'pulse' | 'mixed';
+
+/** Color of the outline that hugs a timer's filling portion. */
+export type FillBorderColor = 'dark' | 'light' | 'accent';
 
 /** When text (label or time) is shown relative to the timer surface. */
 export type TextVisibility = 'always' | 'hover' | 'hidden';
@@ -41,7 +44,7 @@ export interface VisualConfig {
   thickness: number;
   fill: boolean;
   reverse: boolean;
-  accent_hue: number;
+  accent_hue: number | null;
   track_opacity: number;
   label_visibility: TextVisibility;
   time_visibility: TextVisibility;
@@ -51,6 +54,11 @@ export interface VisualConfig {
   font_scale: number;
   font_weight: number;
   uppercase: boolean;
+  gradient_stroke: boolean;
+  fill_border: boolean;
+  fill_border_width: number;
+  fill_border_color: FillBorderColor;
+  depth_sheen: boolean;
 }
 
 /** Per-timer notification configuration. */
