@@ -144,7 +144,12 @@ impl WidgetWindow {
             window.set_anchor(Edge::Bottom, true);
             window.set_anchor(Edge::Left, true);
             window.set_anchor(Edge::Right, true);
-            window.set_keyboard_mode(KeyboardMode::None);
+            // On-demand keyboard so interactive content on the fill-output
+            // surface (the per-timer edit form's text fields) can receive
+            // keystrokes when focused. On-demand only grabs the keyboard while a
+            // focusable element is focused and releases it otherwise, so it does
+            // not lock the user out the way Exclusive would.
+            window.set_keyboard_mode(KeyboardMode::OnDemand);
             window.set_exclusive_zone(0);
         } else {
             // Other widgets (clock, etc.): background layer, anchored
