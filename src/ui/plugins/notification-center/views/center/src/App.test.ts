@@ -109,6 +109,40 @@ describe('NotificationCenter App', () => {
         expect(params.action?.data?.payload).toEqual({ command: 'dismiss', id: 9 });
     });
 
+    it('Dismiss all dismisses every notification', async () => {
+        const { container } = render(App);
+        await tick();
+        emit([
+            makeNotification({ id: 7, app_name: 'Spotify' }),
+            makeNotification({ id: 9, app_name: 'Slack' }),
+        ]);
+        await tick();
+        const dismissAll = container.querySelector('.dismiss-all') as HTMLElement;
+        expect(dismissAll).not.toBeNull();
+        await fireEvent.click(dismissAll);
+        await tick();
+        const dismissed = mockCallSpy.mock.calls
+            .filter(([method]) => method === 'action.invoke')
+            .map(
+                ([, params]) =>
+                    (
+                        params as {
+                            action?: { data?: { payload?: { command?: string; id?: number } } };
+                        }
+                    ).action?.data?.payload,
+            )
+            .filter((payload) => payload?.command === 'dismiss')
+            .map((payload) => payload?.id);
+        expect(dismissed).toContain(7);
+        expect(dismissed).toContain(9);
+    });
+
+    it('hides the Dismiss all button when there are no notifications', async () => {
+        const { container } = render(App);
+        await tick();
+        expect(container.querySelector('.dismiss-all')).toBeNull();
+    });
+
     it('action button calls action.invoke with an action envelope carrying the action key', async () => {
         const { container } = render(App);
         await tick();

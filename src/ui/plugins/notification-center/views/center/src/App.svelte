@@ -48,6 +48,12 @@
             .catch(() => {});
     }
 
+    function dismissAll(): void {
+        // Snapshot the ids first: each dismiss triggers a store update that
+        // replaces `notifications`, so iterating it directly would be unsound.
+        for (const notification of [...notifications]) dismiss(notification.id);
+    }
+
     function invokeAction(id: number, actionKey: string): void {
         client
             .call('action.invoke', {
@@ -67,7 +73,12 @@
 <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
 <div class="backdrop" onclick={onBackdropClick}>
     <div class="panel" role="dialog" aria-label="Notifications">
-        <header class="panel-header">Notifications</header>
+        <header class="panel-header">
+            <span class="panel-title">Notifications</span>
+            {#if notifications.length > 0}
+                <button class="dismiss-all" onclick={dismissAll}>Dismiss all</button>
+            {/if}
+        </header>
 
         {#if notifications.length === 0}
             <div class="empty">No notifications</div>
@@ -139,10 +150,28 @@
         overflow: hidden;
     }
     .panel-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
         padding: 14px 16px;
         font-weight: 600;
         font-size: 0.95rem;
         border-bottom: 1px solid var(--color-border, #45475a);
+    }
+    .dismiss-all {
+        font-size: 0.72rem;
+        font-weight: 600;
+        padding: 4px 10px;
+        color: var(--color-fg-muted, #9399b2);
+        background: transparent;
+        border: 1px solid var(--color-border, #45475a);
+        border-radius: 6px;
+        cursor: pointer;
+    }
+    .dismiss-all:hover {
+        background: rgba(255, 255, 255, 0.08);
+        color: var(--color-fg, #cdd6f4);
     }
     .empty {
         padding: 28px 16px;
