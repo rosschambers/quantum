@@ -94,17 +94,22 @@ describe('NotificationToast App', () => {
         expect(hidden).toBe(true);
     });
 
-    it('never auto-dismisses when timeout_ms is 0', async () => {
+    it('auto-dismisses with the default duration when timeout_ms is 0', async () => {
+        // timeout_ms 0 ("never expire") keeps the notification in the center,
+        // but the transient toast popup still auto-dismisses on the default.
         const { container } = render(App);
         await tick();
         emit([makeNotification({ id: 2, timeout_ms: 0 })]);
         await tick();
         expect(container.querySelectorAll('.toast')).toHaveLength(1);
 
-        // Even far past any default the persistent toast stays visible.
-        vi.advanceTimersByTime(600000);
+        vi.advanceTimersByTime(4999);
         await tick();
         expect(container.querySelectorAll('.toast')).toHaveLength(1);
+
+        vi.advanceTimersByTime(2);
+        await tick();
+        expect(container.querySelectorAll('.toast')).toHaveLength(0);
     });
 
     it('floors a very short timeout to the minimum visible duration', async () => {
@@ -125,16 +130,37 @@ describe('NotificationToast App', () => {
         expect(container.querySelectorAll('.toast')).toHaveLength(0);
     });
 
-    it('never auto-dismisses a critical notification', async () => {
+    it('auto-dismisses a critical notification (it persists in the center, not on screen)', async () => {
         const { container } = render(App);
         await tick();
         emit([makeNotification({ id: 4, urgency: 'critical', timeout_ms: 5000 })]);
         await tick();
         expect(container.querySelectorAll('.toast')).toHaveLength(1);
 
-        vi.advanceTimersByTime(600000);
+        vi.advanceTimersByTime(5001);
+        await tick();
+        expect(container.querySelectorAll('.toast')).toHaveLength(0);
+    });
+
+    it('pauses the auto-dismiss while hovered and resumes on mouse leave', async () => {
+        const { container } = render(App);
+        await tick();
+        emit([makeNotification({ id: 7, timeout_ms: 5000 })]);
+        await tick();
+        const toast = container.querySelector('.toast') as HTMLElement;
+        expect(toast).not.toBeNull();
+
+        // Hovering pauses the timer: advancing past the lifetime must not dismiss.
+        await fireEvent.mouseEnter(toast);
+        vi.advanceTimersByTime(6000);
         await tick();
         expect(container.querySelectorAll('.toast')).toHaveLength(1);
+
+        // Leaving resumes with the banked remaining time.
+        await fireEvent.mouseLeave(toast);
+        vi.advanceTimersByTime(5001);
+        await tick();
+        expect(container.querySelectorAll('.toast')).toHaveLength(0);
     });
 
     it('clicking a toast calls action.invoke with a dismiss envelope for that id', async () => {

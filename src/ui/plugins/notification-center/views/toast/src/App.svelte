@@ -7,10 +7,15 @@
     // shown instance from this base name when hiding.
     const VIEW_NAME = 'plugin/notification-center/toast';
 
-    // The shortest time a toast stays on screen, in milliseconds. Apps that
-    // request a very short expiry (a couple of seconds) would otherwise blink
-    // past before they can be read, so positive timeouts are floored to this.
+    // Toast on-screen lifetime, in milliseconds. A toast is the TRANSIENT
+    // popup; the notification itself persists in the notification center
+    // regardless, so every toast auto-dismisses. Apps that request a very short
+    // expiry would blink past unread, so positive timeouts are floored to MIN;
+    // very long (or "never expire", 0) timeouts are capped to MAX/DEFAULT so the
+    // popup never sits on screen indefinitely.
+    const DEFAULT_VISIBLE_MS = 5000;
     const MIN_VISIBLE_MS = 3000;
+    const MAX_VISIBLE_MS = 10000;
 
     // How long the stack may stay empty before the overlay surface is unmapped.
     // The daemon shows this window on every `created` event, so an empty window
@@ -23,14 +28,56 @@
     // Currently-visible toasts, newest first (rendered top to bottom).
     let visible: PendingNotification[] = $state([]);
 
-    // Active auto-dismiss timers keyed by notification id. Lets us clear a
-    // toast's timer on click/unmount without leaking handles.
-    const timers = new Map<number, ReturnType<typeof setTimeout>>();
+    // The on-screen lifetime a toast was armed with. Drives the progress bar's
+    // CSS animation duration.
+    function visibleDurationMs(notification: PendingNotification): number {
+        if (notification.timeout_ms > 0) {
+            return Math.min(Math.max(notification.timeout_ms, MIN_VISIBLE_MS), MAX_VISIBLE_MS);
+        }
+        return DEFAULT_VISIBLE_MS;
+    }
+
+    // Active auto-dismiss timers keyed by notification id. Each tracks its
+    // handle plus enough state to pause on hover and resume on leave.
+    interface ToastTimer {
+        handle: ReturnType<typeof setTimeout>;
+        startedAt: number;
+        remaining: number;
+    }
+    const timers = new Map<number, ToastTimer>();
 
     // Ids we have already surfaced as a toast. Because every snapshot carries
     // the full pending set, a notification that has already timed out visually
     // still appears in later snapshots; tracking seen ids stops it re-popping.
     const seen = new Set<number>();
+
+    function armTimer(id: number, ms: number): void {
+        const handle = setTimeout(() => {
+            timers.delete(id);
+            removeToast(id);
+        }, ms);
+        timers.set(id, { handle, startedAt: Date.now(), remaining: ms });
+    }
+
+    // Pause a toast's auto-dismiss while the pointer is over it, banking the
+    // time left. The progress bar pauses in CSS on the same `:hover`.
+    function pauseTimer(id: number): void {
+        const timer = timers.get(id);
+        if (timer === undefined) return;
+        clearTimeout(timer.handle);
+        timer.remaining = Math.max(0, timer.remaining - (Date.now() - timer.startedAt));
+    }
+
+    // Resume a paused toast with the banked remaining time.
+    function resumeTimer(id: number): void {
+        const timer = timers.get(id);
+        if (timer === undefined) return;
+        timer.startedAt = Date.now();
+        timer.handle = setTimeout(() => {
+            timers.delete(id);
+            removeToast(id);
+        }, timer.remaining);
+    }
 
     $effect(() => {
         const off = createNotificationStore(client).subscribe((list) => {
@@ -39,28 +86,12 @@
                 seen.add(notification.id);
                 // Newest on top.
                 visible = [notification, ...visible];
-                // A timeout_ms of 0 means "never auto-dismiss" (the resolved
-                // server-default already carries a concrete positive value).
-                // Critical notifications also persist until the user acts on
-                // them. Everything else auto-dismisses after its timeout,
-                // floored so it stays readable.
-                const persistent =
-                    notification.urgency === 'critical' || notification.timeout_ms <= 0;
-                if (persistent) continue;
-                const delay = Math.max(notification.timeout_ms, MIN_VISIBLE_MS);
-                const id = notification.id;
-                timers.set(
-                    id,
-                    setTimeout(() => {
-                        timers.delete(id);
-                        removeToast(id);
-                    }, delay),
-                );
+                armTimer(notification.id, visibleDurationMs(notification));
             }
         });
         return () => {
             off?.();
-            for (const handle of timers.values()) clearTimeout(handle);
+            for (const timer of timers.values()) clearTimeout(timer.handle);
             timers.clear();
             client.close();
         };
@@ -83,7 +114,7 @@
     function removeToast(id: number): void {
         const timer = timers.get(id);
         if (timer !== undefined) {
-            clearTimeout(timer);
+            clearTimeout(timer.handle);
             timers.delete(id);
         }
         visible = visible.filter((notification) => notification.id !== id);
@@ -111,7 +142,12 @@
 <div class="stack">
     {#each visible as notification (notification.id)}
         <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
-        <div class="toast urgency-{notification.urgency}" onclick={() => dismiss(notification.id)}>
+        <div
+            class="toast urgency-{notification.urgency}"
+            onclick={() => dismiss(notification.id)}
+            onmouseenter={() => pauseTimer(notification.id)}
+            onmouseleave={() => resumeTimer(notification.id)}
+        >
             <div class="icon" aria-hidden="true">
                 {#if notification.icon}
                     <img src={notification.icon} alt="" />
@@ -126,6 +162,13 @@
                     <div class="body">{notification.body}</div>
                 {/if}
             </div>
+            <!-- Auto-dismiss countdown. The CSS animation runs for the toast's
+                 lifetime and pauses on :hover, in lockstep with the JS timer
+                 paused by onmouseenter/onmouseleave. -->
+            <div
+                class="progress"
+                style="animation-duration: {visibleDurationMs(notification)}ms"
+            ></div>
         </div>
     {/each}
 </div>
@@ -149,6 +192,8 @@
         gap: 8px;
     }
     .toast {
+        position: relative;
+        overflow: hidden;
         display: flex;
         align-items: flex-start;
         gap: 10px;
@@ -168,6 +213,46 @@
     }
     .toast.urgency-critical {
         border-left-color: var(--color-danger, #f38ba8);
+    }
+    /* Auto-dismiss countdown bar across the bottom edge. It shrinks from full
+       to empty over the toast's lifetime, and pauses while the toast is
+       hovered (matching the JS dismiss timer paused on the same hover). */
+    .progress {
+        position: absolute;
+        left: 0;
+        bottom: 0;
+        height: 3px;
+        width: 100%;
+        transform-origin: left;
+        background: var(--color-accent, #6c5ce7);
+        animation-name: toast-progress;
+        animation-timing-function: linear;
+        animation-fill-mode: forwards;
+    }
+    .toast:hover .progress {
+        animation-play-state: paused;
+    }
+    .toast.urgency-low .progress {
+        background: var(--color-info, #89b4fa);
+    }
+    .toast.urgency-normal .progress {
+        background: var(--color-accent, #6c5ce7);
+    }
+    .toast.urgency-critical .progress {
+        background: var(--color-danger, #f38ba8);
+    }
+    @keyframes toast-progress {
+        from {
+            transform: scaleX(1);
+        }
+        to {
+            transform: scaleX(0);
+        }
+    }
+    @media (prefers-reduced-motion: reduce) {
+        .progress {
+            animation: none;
+        }
     }
     .icon {
         flex-shrink: 0;
