@@ -110,25 +110,37 @@ stopped while iterating.
 
 ### (b) Plugin-view (Svelte) changes — bar, timers, launcher, notification-center, power-menu
 
-Today these are embedded, so the reliable loop re-embeds:
+Set `QUANTUM_PLUGIN_DIR` to the plugins root and the daemon serves each view's
+`dist/` straight from the working tree — **no `quantumd` recompile**. Launch the
+dev daemon once with the env var (the `systemd-run` block above; or run it in
+the foreground):
 
 ```bash
-# 1. Rebuild just the view you changed:
+QUANTUM_PLUGIN_DIR=src/ui/plugins RUST_LOG=info QUANTUM_INSPECTOR=1 \
+  ./scripts/devsh.sh ./target/debug/quantumd
+# startup log: "dev plugin mode: serving plugin views from src/ui/plugins"
+```
+
+Then the loop is just:
+
+```bash
+# 1. Rebuild the view you changed:
 ./scripts/devsh.sh pnpm -C src/ui/plugins/bar/views/bar build
-# 2. Relink quantumd so build.rs re-stages the new dist/ (rerun-if-changed):
-./scripts/devsh.sh cargo build --bin quantumd
-# 3. Restart the dev daemon:
+# 2. Reload it: right-click the view -> Reload (QUANTUM_INSPECTOR=1),
+#    or restart the dev daemon to re-read all views from disk:
 systemctl --user restart quantum-dev
 ```
 
-This recompiles `build.rs` and relinks `quantumd` (not the whole dependency
-tree), so it is much faster than a system rebuild — but it is still a cargo
-relink. With `QUANTUM_INSPECTOR=1` you can right-click → Reload the view after
-step 2 instead of restarting.
+`QUANTUM_PLUGIN_DIR` is additive and opt-in: unset, the daemon uses the
+compiled-in embedded views exactly as in production. When set, dev-dir views
+take precedence over embedded ones (and a user plugin under
+`$XDG_CONFIG_HOME/quantum/plugins` still wins over both). The daemon serves the
+view's `dist/` from disk on every request, so a rebuilt bundle is picked up on
+the next page load — no `build.rs` re-embed, no cargo relink.
 
-> A much faster loop for this case (`pnpm build` + reload, **no cargo**) is
-> possible via a disk-serving dev mode — see "Planned: live plugin dev mode"
-> below.
+> Still not fully live: there is no `view.reload` IPC yet, so picking up new
+> bytes needs an inspector reload or a daemon restart. A `view.reload` method
+> plus a plugin-dir watcher would close that gap (see the note at the end).
 
 ### (c) Theme-widget changes — the clock
 
@@ -184,29 +196,25 @@ cannot exercise real providers. (The interactive HTML playgrounds under
 | You changed                  | Command(s)                                                                 | Reload |
 | ---------------------------- | ------------------------------------------------------------------------- | ------ |
 | Rust / daemon                | `cargo build --bin quantumd` → `systemctl --user restart quantum-dev`     | restart |
-| Plugin view (embedded)       | `pnpm -C <view> build` → `cargo build --bin quantumd` → restart           | restart or inspector reload |
+| Plugin view (`QUANTUM_PLUGIN_DIR=src/ui/plugins`) | `pnpm -C <view> build`                               | inspector reload / restart (no cargo) |
 | Theme widget (clock)         | `pnpm -C <view> build` → copy `dist/` to `~/.config/quantum/themes/...`    | inspector reload / restart |
 | Theme tokens (colors)        | `quantum-dev watch` + edit `tokens.toml`                                   | live (recolor only) |
 | Pure UI / layout             | `pnpm -C <view> dev` (browser + mock bridge)                              | live (HMR) |
 
 All `cargo` / `pnpm` commands are prefixed with `./scripts/devsh.sh`.
 
-## Planned: live plugin dev mode
+## Fully-live plugin reload (future)
 
-The slow part above is (b): plugin views require a `quantumd` relink to
-re-embed. The serving path already supports disk shadowing — `get_plugin_file`
-checks `$XDG_CONFIG_HOME/quantum/plugins/` before the embedded copy — so a small
-addition would let `quantumd` serve plugin `dist/` straight from the working
-tree behind an env var (for example `QUANTUM_PLUGIN_DIR=src/ui/plugins`):
+`QUANTUM_PLUGIN_DIR` (loop (b)) removes the cargo recompile, but picking up new
+bytes still needs an inspector reload or a daemon restart, because there is no
+IPC that reloads a view's page (`view.show/hide/toggle` only toggle visibility;
+only an internal `WindowRequest::Close` reconstructs a window, and it is not
+exposed over IPC). Closing that gap would take two additions:
 
-- a disk plugin walker mirroring `walk_embedded` (accept `views/<view>/dist/index.html`
-  + `view.toml`, reuse `parse_view_toml`),
-- a discovery branch in `quantumd`'s `discover_merged_plugins` that prefers the
-  dev dir, and
-- a serving branch in the theme store's `get_plugin_file` that reads the dev dir
-  before the embedded fallback.
+- a `view.reload` (or `view.close`) IPC method that drops the window so the next
+  open re-fetches the URL, and
+- a plugin-dir file watcher (extend `quantum-dev watch`, which today only
+  watches `src/ui/themes` and only triggers a token recolor) that fires
+  `view.reload` when a plugin `dist/` changes.
 
-That turns loop (b) into `pnpm -C <view> build` → restart the dev daemon (or
-inspector-reload) with **no cargo recompile**. A further increment — a
-`view.reload` IPC plus a plugin-dir watcher (extending `quantum-dev watch`) —
-would make it fully live with no restart. Not yet implemented.
+With those, `pnpm -C <view> build` alone would live-reload the running view.
