@@ -79,16 +79,31 @@
         }, timer.remaining);
     }
 
+    // Clear every on-screen toast at once (e.g. when the user opens the
+    // notification center). The notifications themselves are untouched in the
+    // store; only the transient popups are dismissed and the surface unmapped.
+    function clearAllToasts(): void {
+        for (const timer of timers.values()) clearTimeout(timer.handle);
+        timers.clear();
+        visible = [];
+        client.call('view.hide', { name: VIEW_NAME }).catch(() => {});
+    }
+
     $effect(() => {
-        const off = createNotificationStore(client).subscribe((list) => {
-            for (const notification of list) {
-                if (seen.has(notification.id)) continue;
-                seen.add(notification.id);
-                // Newest on top.
-                visible = [notification, ...visible];
-                armTimer(notification.id, visibleDurationMs(notification));
-            }
-        });
+        const off = createNotificationStore(client).subscribe(
+            (list) => {
+                for (const notification of list) {
+                    if (seen.has(notification.id)) continue;
+                    seen.add(notification.id);
+                    // Newest on top.
+                    visible = [notification, ...visible];
+                    armTimer(notification.id, visibleDurationMs(notification));
+                }
+            },
+            (change) => {
+                if (change?.type === 'toasts_cleared') clearAllToasts();
+            },
+        );
         return () => {
             off?.();
             for (const timer of timers.values()) clearTimeout(timer.handle);

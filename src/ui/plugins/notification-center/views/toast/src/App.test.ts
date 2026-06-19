@@ -12,9 +12,14 @@ import type { PendingNotification } from '@quantum/client';
  */
 let mockCallSpy = vi.fn();
 let storeSubscribers: Array<(list: PendingNotification[]) => void> = [];
+let changeSubscribers: Array<(change: { type: string } | null) => void> = [];
 
 function emit(list: PendingNotification[]): void {
     for (const callback of storeSubscribers) callback(list);
+}
+
+function emitChange(change: { type: string } | null): void {
+    for (const callback of changeSubscribers) callback(change);
 }
 
 vi.mock('@quantum/client', () => ({
@@ -27,10 +32,17 @@ vi.mock('@quantum/client', () => ({
         close: vi.fn(),
     }),
     createNotificationStore: () => ({
-        subscribe: (callback: (list: PendingNotification[]) => void) => {
+        subscribe: (
+            callback: (list: PendingNotification[]) => void,
+            onChange?: (change: { type: string } | null) => void,
+        ) => {
             storeSubscribers.push(callback);
+            if (onChange) changeSubscribers.push(onChange);
             return () => {
                 storeSubscribers = storeSubscribers.filter((entry) => entry !== callback);
+                if (onChange) {
+                    changeSubscribers = changeSubscribers.filter((entry) => entry !== onChange);
+                }
             };
         },
     }),
@@ -56,6 +68,7 @@ function makeNotification(overrides: Partial<PendingNotification> = {}): Pending
 beforeEach(() => {
     mockCallSpy = vi.fn();
     storeSubscribers = [];
+    changeSubscribers = [];
     vi.useFakeTimers();
 });
 
@@ -140,6 +153,29 @@ describe('NotificationToast App', () => {
         vi.advanceTimersByTime(5001);
         await tick();
         expect(container.querySelectorAll('.toast')).toHaveLength(0);
+    });
+
+    it('clears all visible toasts on a toasts_cleared change', async () => {
+        const { container } = render(App);
+        await tick();
+        emit([
+            makeNotification({ id: 1, summary: 'One' }),
+            makeNotification({ id: 2, summary: 'Two' }),
+        ]);
+        await tick();
+        expect(container.querySelectorAll('.toast')).toHaveLength(2);
+
+        // The user opened the notification center: clear the transient toasts
+        // and hide the surface.
+        emitChange({ type: 'toasts_cleared' });
+        await tick();
+        expect(container.querySelectorAll('.toast')).toHaveLength(0);
+        const hidden = mockCallSpy.mock.calls.some(
+            ([method, params]) =>
+                method === 'view.hide' &&
+                (params as { name?: string })?.name === 'plugin/notification-center/toast',
+        );
+        expect(hidden).toBe(true);
     });
 
     it('pauses the auto-dismiss while hovered and resumes on mouse leave', async () => {

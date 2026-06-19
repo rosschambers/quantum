@@ -455,6 +455,12 @@ impl ProviderSource for NotificationsProvider {
                     }
                 }
             }
+            Some("clear_toasts") => {
+                // Broadcast a clear signal without touching the store: the
+                // transient toasts dismiss, but the notifications remain in the
+                // center (and the bell count is unchanged).
+                let _ = self.inner.tx.send(NotificationEvent::ToastsCleared);
+            }
             other => {
                 tracing::warn!("notifications: unknown command {other:?}");
             }
@@ -1033,6 +1039,35 @@ mod tests {
         let outcome = provider.invoke(&action).await.unwrap();
         assert!(outcome.message.is_none());
         assert_eq!(provider.count().await, 0);
+    }
+
+    #[tokio::test]
+    async fn invoke_clear_toasts_broadcasts_without_touching_store() {
+        let provider = NotificationsProvider::new();
+        provider
+            .inner
+            .apply_notify(
+                "App".into(),
+                "".into(),
+                0,
+                "T".into(),
+                "B".into(),
+                Vec::new(),
+                0,
+                "normal".into(),
+            )
+            .await;
+        assert_eq!(provider.count().await, 1);
+        let mut rx = provider.inner.tx.subscribe();
+        let action = Action::Custom {
+            kind: "notifications".to_string(),
+            payload: serde_json::json!({ "command": "clear_toasts" }),
+        };
+        let outcome = provider.invoke(&action).await.unwrap();
+        assert!(outcome.message.is_none());
+        // The clear signal is broadcast and the store is left intact.
+        assert!(matches!(rx.try_recv(), Ok(NotificationEvent::ToastsCleared)));
+        assert_eq!(provider.count().await, 1);
     }
 
     #[tokio::test]

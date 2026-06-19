@@ -63,6 +63,10 @@ pub enum NotificationEvent {
     Dismissed { id: u32 },
     /// An existing notification was updated in place.
     Updated { id: u32 },
+    /// The transient on-screen toasts should be cleared (for example because the
+    /// user opened the notification center). The stored notifications are
+    /// unchanged; only the toast popups are dismissed.
+    ToastsCleared,
 }
 
 #[cfg(test)]
@@ -104,5 +108,12 @@ mod tests {
         let json = serde_json::to_value(&e).expect("serde");
         assert_eq!(json["type"], "created");
         assert_eq!(json["data"]["id"], 42);
+    }
+
+    #[test]
+    fn toasts_cleared_serializes_to_tag_only() {
+        let json = serde_json::to_value(NotificationEvent::ToastsCleared).expect("serde");
+        assert_eq!(json["type"], "toasts_cleared");
+        assert!(json.get("data").is_none());
     }
 }

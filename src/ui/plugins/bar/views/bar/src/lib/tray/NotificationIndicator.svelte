@@ -35,6 +35,20 @@
         } catch (err) {
             console.error(`view.toggle ${name} failed:`, err);
         }
+        // Opening the center means the user is now reading their notifications,
+        // so clear the transient on-screen toasts. This is display-only: the
+        // notifications stay in the center and the bell count is unchanged.
+        try {
+            await client.call('action.invoke', {
+                provider: 'notifications',
+                action: {
+                    kind: 'custom',
+                    data: { kind: 'notifications', payload: { command: 'clear_toasts' } },
+                },
+            });
+        } catch (err) {
+            console.error('clear_toasts failed:', err);
+        }
     }
 </script>
 

@@ -15,10 +15,16 @@ export interface PendingNotification {
   actions: Array<[string, string]>;
 }
 
-/** The change descriptor carried alongside every notifications snapshot. */
+/**
+ * The change descriptor carried alongside every notifications snapshot.
+ *
+ * `toasts_cleared` is a display-only signal (the user opened the notification
+ * center): the transient toasts should dismiss while the stored notifications
+ * are unchanged, so it carries no `data`.
+ */
 export interface NotificationChange {
-  type: 'created' | 'updated' | 'dismissed';
-  data: { id: number; timeout_ms: number };
+  type: 'created' | 'updated' | 'dismissed' | 'toasts_cleared';
+  data?: { id: number; timeout_ms: number };
 }
 
 /**
@@ -35,7 +41,16 @@ export interface NotificationEnvelope {
 
 /** A callback-based store over the current notification snapshot. */
 export interface NotificationStore {
-  subscribe(callback: (notifications: PendingNotification[]) => void): () => void;
+  /**
+   * `callback` receives the current notification list on every snapshot.
+   * The optional `onChange` receives the change descriptor (null for the
+   * initial catch-up), letting a consumer react to display-only signals such
+   * as `toasts_cleared` without affecting the list it renders.
+   */
+  subscribe(
+    callback: (notifications: PendingNotification[]) => void,
+    onChange?: (change: NotificationChange | null) => void,
+  ): () => void;
 }
 
 const NOTIFICATION_CHANNEL = 'notifications.event';
@@ -64,7 +79,10 @@ type NotificationClient = Pick<Client, 'call' | 'subscribe'>;
  */
 export function createNotificationStore(client: NotificationClient): NotificationStore {
   return {
-    subscribe(callback: (notifications: PendingNotification[]) => void): () => void {
+    subscribe(
+      callback: (notifications: PendingNotification[]) => void,
+      onChange?: (change: NotificationChange | null) => void,
+    ): () => void {
       // Tracks whether the subscription is still live so a pending retry does
       // not fire a callback after teardown.
       let active = true;
@@ -85,6 +103,7 @@ export function createNotificationStore(client: NotificationClient): Notificatio
             const envelope = parseEnvelope(result);
             if (envelope !== null) {
               callback(envelope.notifications);
+              onChange?.(envelope.change);
             }
           })
           .catch(() => {
@@ -101,6 +120,7 @@ export function createNotificationStore(client: NotificationClient): Notificatio
           return;
         }
         callback(envelope.notifications);
+        onChange?.(envelope.change);
       });
 
       return () => {
