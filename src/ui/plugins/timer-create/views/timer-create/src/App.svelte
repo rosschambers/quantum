@@ -35,7 +35,7 @@
         thickness: 8,
         fill: false,
         reverse: false,
-        accent_hue: 210,
+        accent_hue: null,
         track_opacity: 0.2,
         label_visibility: 'always',
         time_visibility: 'always',
@@ -224,6 +224,11 @@
             ...defaultsVisual,
             style: visualStyle,
             fill: invert,
+            // New timers default to the theme accent (null = follow
+            // --color-accent). A specific hue remains settable per-timer via the
+            // edit form. Forcing null here keeps new timers on-theme even if a
+            // stale persisted settings snapshot carries an old numeric hue.
+            accent_hue: null,
         };
 
         try {
