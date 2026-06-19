@@ -650,6 +650,7 @@ Highest-severity verified findings (top of the fix queue):
 - **Raised by:** build (AT).
 
 ### No faster linker or compilation cache configured
+- **Status:** ✅ Fixed (`6530104`, then corrected) — `mold` is used for dev/CI builds, but configured via `shell.nix`'s shellHook (env `CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUSTFLAGS`), NOT a committed `.cargo/config.toml`. The committed config forced mold on every cargo build of the repo and broke packaged/downstream nix builds (which lack mold) — it was removed. sccache not added.
 - **Severity:** low
 - **Verified locations:** no `.cargo/config.toml` (directory absent);
   `shell.nix:8-29` lists neither `mold`/`lld` nor `sccache`.

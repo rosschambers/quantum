@@ -44,6 +44,13 @@ pkgs.mkShell {
            "$PKG_CONFIG_SHIM/gtk4-layer-shell.pc"
     export PKG_CONFIG_PATH="$PKG_CONFIG_SHIM:$PKG_CONFIG_PATH"
 
+    # Use the mold linker for the link-heavy gtk/webkit tree. This is set here
+    # (only inside the dev/CI nix-shell where mold is on PATH) rather than in a
+    # committed .cargo/config.toml, so packaged/downstream cargo builds that do
+    # not source shell.nix still link with the default linker and do not require
+    # mold to be installed.
+    export CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUSTFLAGS="-C link-arg=-fuse-ld=mold"
+
     echo "quantum host shell ready"
     echo "  rustc:           $(rustc --version)"
     echo "  gtk4:            $(pkg-config --modversion gtk4)"
