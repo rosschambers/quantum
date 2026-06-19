@@ -1066,7 +1066,10 @@ mod tests {
         let outcome = provider.invoke(&action).await.unwrap();
         assert!(outcome.message.is_none());
         // The clear signal is broadcast and the store is left intact.
-        assert!(matches!(rx.try_recv(), Ok(NotificationEvent::ToastsCleared)));
+        assert!(matches!(
+            rx.try_recv(),
+            Ok(NotificationEvent::ToastsCleared)
+        ));
         assert_eq!(provider.count().await, 1);
     }
 
