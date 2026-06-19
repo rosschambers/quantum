@@ -152,6 +152,12 @@ pub struct ThemeStore {
     /// (the quantumd build script strips everything else). Consulted by
     /// `get_plugin_file` only after the user plugins directory misses.
     embedded_plugins: Option<&'static include_dir::Dir<'static>>,
+    /// Opt-in developer override directory (set from `QUANTUM_PLUGIN_DIR`).
+    /// When `Some`, `get_plugin_file` consults this filesystem tree before
+    /// the user plugins directory and the embedded tree, so first-party
+    /// plugin views are served straight from the working tree without
+    /// recompiling the daemon. When `None`, behavior is exactly as before.
+    dev_plugins_dir: Option<PathBuf>,
     active_theme: RwLock<String>,
     /// Memoized resolved token maps keyed by theme name.
     ///
@@ -174,6 +180,7 @@ impl ThemeStore {
             themes_dir,
             plugins_dir,
             embedded_plugins: None,
+            dev_plugins_dir: None,
             active_theme: RwLock::new(active),
             cached_tokens: StdRwLock::new(HashMap::new()),
         }
@@ -193,6 +200,17 @@ impl ThemeStore {
         self
     }
 
+    /// Attach an opt-in developer plugin directory. When set, `get_plugin_file`
+    /// reads from this filesystem tree before the user plugins directory and
+    /// the embedded tree, using the same `dist/`-insertion candidate resolution
+    /// as the user plugins path. Intended for `QUANTUM_PLUGIN_DIR` dev mode so a
+    /// frontend change is just `pnpm build` plus a daemon restart, with no
+    /// `quantumd` recompile. Leaving it unset preserves the current behavior.
+    pub fn with_dev_plugins(mut self, dev_plugins_dir: PathBuf) -> Self {
+        self.dev_plugins_dir = Some(dev_plugins_dir);
+        self
+    }
+
     /// Create a theme store with an explicit themes directory.
     /// Intended for tests that need to isolate from the user's real config.
     #[cfg(test)]
@@ -202,6 +220,7 @@ impl ThemeStore {
             themes_dir,
             plugins_dir: Self::plugins_dir(),
             embedded_plugins: None,
+            dev_plugins_dir: None,
             active_theme: RwLock::new(active),
             cached_tokens: StdRwLock::new(HashMap::new()),
         }
@@ -216,6 +235,7 @@ impl ThemeStore {
             themes_dir: Self::themes_dir(),
             plugins_dir,
             embedded_plugins: None,
+            dev_plugins_dir: None,
             active_theme: RwLock::new("default".to_string()),
             cached_tokens: StdRwLock::new(HashMap::new()),
         }
@@ -244,8 +264,10 @@ impl ThemeStore {
     /// scheme handler. Refuses traversal (`..`), dot segments, and absolute
     /// paths before touching the disk or the embedded tree.
     ///
-    /// Lookup order: the user plugins directory first, then the embedded
-    /// first-party tree attached via `with_embedded_plugins`. Both sources
+    /// Lookup order: the optional developer override directory (set via
+    /// `with_dev_plugins` from `QUANTUM_PLUGIN_DIR`) first, then the user
+    /// plugins directory, then the embedded first-party tree attached via
+    /// `with_embedded_plugins`. All sources
     /// try each candidate from `candidate_paths`, so a request for
     /// `views/<view>/index.html` also resolves against
     /// `views/<view>/dist/index.html` — required for embedded views, whose
@@ -266,6 +288,18 @@ impl ThemeStore {
         }
 
         let candidates = candidate_paths(path);
+
+        // Developer override: when QUANTUM_PLUGIN_DIR is set, serve from the
+        // working tree first using the same candidate resolution as the user
+        // plugins directory. A miss falls through to the unchanged behavior.
+        if let Some(dev_plugins_dir) = &self.dev_plugins_dir {
+            let dev_plugin_dir = dev_plugins_dir.join(plugin_name);
+            for candidate in &candidates {
+                if let Ok(data) = std::fs::read(dev_plugin_dir.join(candidate)) {
+                    return Some(data);
+                }
+            }
+        }
 
         let plugin_dir = self.plugins_dir.join(plugin_name);
         for candidate in &candidates {
@@ -1152,6 +1186,82 @@ mod tests {
         assert!(store
             .get_plugin_file("epsilon", "views/main/index.html")
             .is_none());
+    }
+
+    #[test]
+    fn get_plugin_file_dev_dir_serves_with_dist_insertion() {
+        // A dev plugins directory serves a Vite-built view whose only
+        // index.html lives under dist/, addressed by its conceptual path.
+        let tmp_dev = tempfile::tempdir().unwrap();
+        let plugin = tmp_dev.path().join("bar");
+        std::fs::create_dir_all(plugin.join("views/bar/dist")).unwrap();
+        std::fs::write(
+            plugin.join("views/bar/dist/index.html"),
+            b"<html>dev bar</html>",
+        )
+        .unwrap();
+
+        let tmp_user = tempfile::tempdir().unwrap();
+        let store = ThemeStore::with_plugins_dir(tmp_user.path().to_path_buf())
+            .with_dev_plugins(tmp_dev.path().to_path_buf());
+
+        let bytes = store
+            .get_plugin_file("bar", "views/bar/index.html")
+            .expect("dev file served via dist insertion");
+        assert_eq!(bytes, b"<html>dev bar</html>");
+    }
+
+    #[test]
+    fn get_plugin_file_dev_dir_shadows_embedded() {
+        // With a dev directory set, a dev copy of an embedded plugin wins.
+        let tmp_dev = tempfile::tempdir().unwrap();
+        let plugin = tmp_dev.path().join("epsilon");
+        std::fs::create_dir_all(plugin.join("views/main/dist")).unwrap();
+        std::fs::write(
+            plugin.join("views/main/dist/index.html"),
+            b"<html>dev epsilon</html>",
+        )
+        .unwrap();
+
+        let tmp_user = tempfile::tempdir().unwrap();
+        let store = ThemeStore::with_plugins_dir(tmp_user.path().to_path_buf())
+            .with_embedded_plugins(&TEST_EMBEDDED_PLUGINS)
+            .with_dev_plugins(tmp_dev.path().to_path_buf());
+
+        let bytes = store
+            .get_plugin_file("epsilon", "views/main/index.html")
+            .expect("dev copy shadows the embedded one");
+        assert_eq!(bytes, b"<html>dev epsilon</html>");
+    }
+
+    #[test]
+    fn get_plugin_file_no_dev_dir_falls_through_to_embedded() {
+        // Without a dev directory, serving is exactly as before: the
+        // embedded copy is returned unchanged.
+        let tmp_user = tempfile::tempdir().unwrap();
+        let store = ThemeStore::with_plugins_dir(tmp_user.path().to_path_buf())
+            .with_embedded_plugins(&TEST_EMBEDDED_PLUGINS);
+
+        let bytes = store
+            .get_plugin_file("epsilon", "views/main/index.html")
+            .expect("embedded served when no dev dir is set");
+        assert_eq!(bytes, b"<html><body>embedded epsilon</body></html>\n");
+    }
+
+    #[test]
+    fn get_plugin_file_dev_dir_miss_falls_through() {
+        // A dev directory that does not contain the requested plugin must
+        // fall through to the existing user-disk and embedded lookup.
+        let tmp_dev = tempfile::tempdir().unwrap();
+        let tmp_user = tempfile::tempdir().unwrap();
+        let store = ThemeStore::with_plugins_dir(tmp_user.path().to_path_buf())
+            .with_embedded_plugins(&TEST_EMBEDDED_PLUGINS)
+            .with_dev_plugins(tmp_dev.path().to_path_buf());
+
+        let bytes = store
+            .get_plugin_file("epsilon", "views/main/index.html")
+            .expect("falls through to embedded when dev dir misses");
+        assert_eq!(bytes, b"<html><body>embedded epsilon</body></html>\n");
     }
 
     #[test]
