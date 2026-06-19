@@ -20,6 +20,8 @@ use quantum_hyprland::{HyprlandEvent, HyprlandSocketClient};
 pub(crate) struct MonitorSeed {
     pub name: String,
     pub focused: bool,
+    pub workspace_id: i64,
+    pub workspace_name: String,
 }
 
 /// Pure event-application function. Factored out of the spawned event-loop
@@ -29,8 +31,15 @@ pub(crate) struct MonitorSeed {
 /// `docs/plans/2026-06-01-multi-monitor-bar.md` Task A.3.
 pub(crate) fn apply_event(state: &mut MonitorActiveWindowState, ev: HyprlandEvent) {
     match ev {
-        HyprlandEvent::FocusedMon { monitor, .. } => {
-            state.monitors.entry(monitor.clone()).or_default();
+        HyprlandEvent::FocusedMon { monitor, workspace } => {
+            let entry = state.monitors.entry(monitor.clone()).or_default();
+            // A focus change carries the newly focused monitor's active
+            // workspace; apply it so the bar tracks the workspace across
+            // monitor switches, not only on explicit `workspace>>` events.
+            if !workspace.is_empty() {
+                entry.workspace_id = workspace.parse().unwrap_or(entry.workspace_id);
+                entry.workspace_name = workspace;
+            }
             state.focused_monitor = Some(monitor);
         }
         HyprlandEvent::MonitorAdded { monitor } => {
@@ -79,7 +88,20 @@ async fn fetch_initial_monitors() -> Result<Vec<MonitorSeed>, ProvidersError> {
         .filter_map(|v| {
             let name = v["name"].as_str()?.to_string();
             let focused = v["focused"].as_bool().unwrap_or(false);
-            Some(MonitorSeed { name, focused })
+            // `hyprctl monitors -j` reports each monitor's currently active
+            // workspace; seed it so the bar shows the real workspace on
+            // startup instead of the default 0 until the first switch.
+            let workspace_id = v["activeWorkspace"]["id"].as_i64().unwrap_or(0);
+            let workspace_name = v["activeWorkspace"]["name"]
+                .as_str()
+                .unwrap_or("")
+                .to_string();
+            Some(MonitorSeed {
+                name,
+                focused,
+                workspace_id,
+                workspace_name,
+            })
         })
         .collect())
 }
@@ -109,16 +131,28 @@ impl HyprlandActiveWindowProvider {
         // connected yet at construction time — the snapshot in
         // `subscribe()` covers late subscribers.
         let state_for_seed = state.clone();
+        let tx_for_seed = tx.clone();
         runtime.spawn(async move {
             match fetch_initial_monitors().await {
                 Ok(seeds) => {
-                    let mut guard = state_for_seed.lock().unwrap();
-                    for seed in seeds {
-                        guard.monitors.entry(seed.name.clone()).or_default();
-                        if seed.focused {
-                            guard.focused_monitor = Some(seed.name);
+                    let snapshot = {
+                        let mut guard = state_for_seed.lock().unwrap();
+                        for seed in seeds {
+                            let entry = guard.monitors.entry(seed.name.clone()).or_default();
+                            entry.workspace_id = seed.workspace_id;
+                            entry.workspace_name = seed.workspace_name;
+                            if seed.focused {
+                                guard.focused_monitor = Some(seed.name);
+                            }
                         }
-                    }
+                        serde_json::to_value(&*guard).unwrap_or(serde_json::Value::Null)
+                    };
+                    // Broadcast the seeded snapshot so a bar that subscribed
+                    // before the seed completed updates from workspace 0 to the
+                    // real current workspace. Harmless if no subscriber yet
+                    // (send returns Err, ignored); late subscribers get the
+                    // seeded state from `subscribe()`'s initial snapshot.
+                    let _ = tx_for_seed.send(snapshot);
                 }
                 Err(e) => {
                     tracing::warn!("hyprctl monitor seed failed: {e:?}; relying on event stream");
@@ -260,6 +294,24 @@ mod tests {
         );
         assert_eq!(state.focused_monitor.as_deref(), Some("DP-2"));
         assert_eq!(state.monitors["DP-1"].class, "firefox");
+    }
+
+    #[test]
+    fn focusedmon_applies_its_workspace_to_the_focused_monitor() {
+        let mut state = state_with("DP-1", "firefox");
+        state
+            .monitors
+            .insert("DP-2".into(), ActiveWindowState::default());
+        apply_event(
+            &mut state,
+            HyprlandEvent::FocusedMon {
+                monitor: "DP-2".into(),
+                workspace: "7".into(),
+            },
+        );
+        assert_eq!(state.focused_monitor.as_deref(), Some("DP-2"));
+        assert_eq!(state.monitors["DP-2"].workspace_id, 7);
+        assert_eq!(state.monitors["DP-2"].workspace_name, "7");
     }
 
     #[test]
