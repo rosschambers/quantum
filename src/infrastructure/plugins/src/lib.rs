@@ -13,7 +13,7 @@ pub mod view_metadata;
 pub mod walker;
 
 pub use description::{ActionScript, IdleScript, PluginDescription, PolledScript, ViewBundle};
-pub use embedded::{merge_plugins, walk_embedded};
+pub use embedded::{merge_plugins, walk_dev, walk_embedded};
 pub use error::PluginsError;
 pub use manifest::{parse_manifest, Manifest, ScriptConfig};
 pub use quantum_domain::{ViewAnchor, ViewDescriptor, ViewKind};

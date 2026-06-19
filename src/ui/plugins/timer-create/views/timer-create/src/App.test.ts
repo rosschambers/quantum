@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, fireEvent } from '@testing-library/svelte/svelte5';
 import { tick } from 'svelte';
-import type { NotifyConfig, VisualConfig, TimerStoreData } from '@quantum/client';
+import type { NotifyConfig, VisualConfig, TimerStoreData, Timer } from '@quantum/client';
 
 /*
  * Module-level mock state. Each test resets these via beforeEach so the
@@ -10,6 +10,21 @@ import type { NotifyConfig, VisualConfig, TimerStoreData } from '@quantum/client
  */
 let mockCallSpy = vi.fn();
 let mockSubscribeSpy = vi.fn();
+
+/*
+ * Mock timer-store state. `createTimerStore().subscribe(callback)` captures the
+ * callback here and immediately delivers the current `mockTimers`; `emitTimers`
+ * lets a test push a new snapshot. Mirrors the live store's behaviour.
+ */
+let mockTimers: Timer[] = [];
+let storeCallback: ((data: TimerStoreData) => void) | null = null;
+
+function emitTimers(timers: Timer[]): void {
+    mockTimers = timers;
+    if (storeCallback !== null) {
+        storeCallback({ ...timerListResult(), timers });
+    }
+}
 
 function defaultNotify(): NotifyConfig {
     return {
@@ -56,7 +71,20 @@ function timerListResult(): TimerStoreData {
             defaults_visual: defaultVisual(),
             defaults_notify: defaultNotify(),
         },
-        timers: [],
+        timers: mockTimers,
+    };
+}
+
+function oneShotTimer(overrides: Partial<Timer> = {}): Timer {
+    return {
+        id: 'timer-1',
+        label: 'Steep tea',
+        kind: { type: 'one_shot', end_unix: Math.floor(Date.now() / 1000) + 300 },
+        visual: defaultVisual(),
+        notify: defaultNotify(),
+        status: 'active',
+        scatter_pos: null,
+        ...overrides,
     };
 }
 
@@ -76,6 +104,15 @@ vi.mock('@quantum/client', () => ({
         },
         close: vi.fn(),
     }),
+    createTimerStore: () => ({
+        subscribe: (callback: (data: TimerStoreData) => void) => {
+            storeCallback = callback;
+            callback(timerListResult());
+            return () => {
+                storeCallback = null;
+            };
+        },
+    }),
     __esModule: true,
 }));
 
@@ -84,6 +121,8 @@ import App from './App.svelte';
 beforeEach(() => {
     mockCallSpy = vi.fn();
     mockSubscribeSpy = vi.fn();
+    mockTimers = [];
+    storeCallback = null;
 });
 
 async function settle(): Promise<void> {

@@ -1,5 +1,5 @@
 <script lang="ts">
-    import { createClient } from '@quantum/client';
+    import { createClient, createTimerStore } from '@quantum/client';
     import type {
         Weekday,
         SoundName,
@@ -7,10 +7,12 @@
         VisualConfig,
         VisualStyle,
         TimerStoreData,
+        Timer,
     } from '@quantum/client';
     import { DURATION_PRESETS, formatDuration, stepDuration } from './lib/duration';
     import { to12Hour, setPeriod } from './lib/time';
     import { ALL_WEEKDAYS, recurrenceDays, type Recurrence } from './lib/recurrence';
+    import { formatRemaining, formatClock, summarizeDays } from './lib/schedule';
     import StylePicker from './lib/StylePicker.svelte';
     import InfoTip from './lib/InfoTip.svelte';
 
@@ -103,6 +105,17 @@
     // Visual style, fed from StylePicker.
     let visualStyle: VisualStyle = $state('ring');
 
+    // Live list of existing timers, refreshed from the timer store, plus a
+    // ticking wall-clock used to render remaining time. Seconds since epoch.
+    let timers: Timer[] = $state([]);
+    let now: number = $state(Math.floor(Date.now() / 1000));
+
+    // Edit mode. When `editingId` is set the form is editing that timer; the
+    // captured `editingTimer` preserves the fields the form does not touch
+    // (for example `accent_hue`) so they survive the edit.
+    let editingId: string | null = $state(null);
+    let editingTimer: Timer | null = $state(null);
+
     const period = $derived(to12Hour(hour).period);
     const hourDisplay = $derived(to12Hour(hour).hour12);
 
@@ -166,6 +179,23 @@
             });
     });
 
+    // Subscribe to the live timer snapshot so the "Active timers" list stays
+    // current as timers are created, edited, dismissed, or fire elsewhere.
+    $effect(() => {
+        const store = createTimerStore(client);
+        return store.subscribe((data: TimerStoreData) => {
+            timers = data.timers;
+        });
+    });
+
+    // Tick once a second so one-shot remaining times count down live.
+    $effect(() => {
+        const interval = setInterval(() => {
+            now = Math.floor(Date.now() / 1000);
+        }, 1000);
+        return () => clearInterval(interval);
+    });
+
     $effect(() => {
         document.addEventListener('keydown', onKeyDown);
         return () => {
@@ -173,6 +203,70 @@
             client.close();
         };
     });
+
+    /** A short, human schedule summary for a timer row. */
+    function scheduleSummary(timer: Timer): string {
+        if (timer.kind.type === 'one_shot') {
+            return formatRemaining(timer.kind.end_unix - now);
+        }
+        return `${formatClock(timer.kind.time)} · ${summarizeDays(timer.kind.days)}`;
+    }
+
+    /** Dismiss (cancel) a timer; the list refreshes from the store. */
+    function dismiss(timer: Timer): void {
+        client.call('timer.dismiss', { id: timer.id }).catch((err) => {
+            console.error('timer.dismiss failed:', err);
+        });
+    }
+
+    /** Enter edit mode for a timer, prefilling the form from its current state. */
+    function startEdit(timer: Timer): void {
+        editingId = timer.id;
+        editingTimer = timer;
+        error = null;
+        label = timer.label;
+
+        if (timer.kind.type === 'one_shot') {
+            mode = 'in';
+            durationSecs = Math.max(1, Math.round(timer.kind.end_unix - now));
+            recurrence = 'none';
+            customDays = [];
+        } else {
+            mode = 'at';
+            hour = timer.kind.time.hour;
+            minute = timer.kind.time.minute;
+            const days = timer.kind.days;
+            if (days.length === 7) {
+                recurrence = 'daily';
+                customDays = [];
+            } else {
+                recurrence = 'custom';
+                customDays = ALL_WEEKDAYS.filter((day) => days.includes(day));
+            }
+        }
+
+        visualStyle = timer.visual.style === 'mixed' ? 'ring' : timer.visual.style;
+        invert = timer.visual.fill;
+        notification = timer.notify.notification;
+        soundOn = timer.notify.sound !== null;
+        soundName = timer.notify.sound ?? 'complete';
+        urgencyRamp = timer.notify.urgency_ramp;
+    }
+
+    /** Leave edit mode and reset every control back to create defaults. */
+    function resetForm(): void {
+        editingId = null;
+        editingTimer = null;
+        error = null;
+        label = '';
+        mode = 'in';
+        durationSecs = 900;
+        hour = 9;
+        minute = 0;
+        recurrence = 'none';
+        customDays = [];
+        applyDefaults(defaultsNotify, defaultsVisual);
+    }
 
     function onKeyDown(event: KeyboardEvent): void {
         if (event.key === 'Escape') {
@@ -207,8 +301,73 @@
         return { kind: 'recurring', days, time };
     }
 
+    /**
+     * Build the `changes` payload for `timer.edit` from the current form. Only
+     * the fields the form edits are included; `accent_hue` and other untouched
+     * visual/notify fields are preserved by spreading the captured timer. The
+     * mapping is driven by the form's `mode`/`recurrence`, so switching a timer
+     * between one-shot and recurring during the edit re-arms it accordingly.
+     * Returns `null` (and sets an inline error) when a custom recurrence has no
+     * days selected.
+     */
+    function buildChanges(): Record<string, unknown> | null {
+        const timer = editingTimer;
+        if (timer === null) return null;
+
+        const changes: Record<string, unknown> = { label };
+
+        if (mode === 'in') {
+            // Re-arms as a one-shot ending now + duration.
+            changes.duration_secs = durationSecs;
+        } else {
+            const time = { hour, minute };
+            changes.time = time;
+            if (recurrence !== 'none') {
+                const days = recurrenceDays(recurrence, customDays);
+                if (days === null) {
+                    error = 'Pick at least one day for a custom recurrence.';
+                    return null;
+                }
+                changes.days = days;
+            }
+        }
+
+        // Preserve accent_hue (and every other untouched field) as-is so a
+        // per-timer theme or custom colour survives the edit.
+        changes.visual = {
+            ...timer.visual,
+            style: visualStyle,
+            fill: invert,
+        };
+        changes.notify = {
+            ...timer.notify,
+            notification,
+            sound: soundOn ? soundName : null,
+            urgency_ramp: urgencyRamp,
+        };
+
+        return changes;
+    }
+
     async function submit(): Promise<void> {
         error = null;
+
+        if (editingId !== null) {
+            const changes = buildChanges();
+            if (changes === null) return;
+            try {
+                await client.call('timer.edit', { id: editingId, changes });
+            } catch (err) {
+                console.error('timer.edit failed:', err);
+                error = 'Could not save the timer.';
+                return;
+            }
+            // Stay open so the user can keep managing timers; just reset to
+            // create mode.
+            resetForm();
+            return;
+        }
+
         const start = buildStart();
         if (start === null) return;
 
@@ -245,7 +404,50 @@
 <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
 <div class="backdrop" onclick={onBackdropClick}>
     <div class="card" role="dialog" aria-label="New timer">
-        <h2 class="title">New timer</h2>
+        <h2 class="title">{editingId !== null ? 'Edit timer' : 'New timer'}</h2>
+
+        {#if timers.length > 0}
+            <section class="timer-list" aria-label="Active timers">
+                <span class="field-label">Active timers</span>
+                {#each timers as timer (timer.id)}
+                    <div
+                        class="timer-row"
+                        class:editing={editingId === timer.id}
+                        data-timer-row
+                        data-timer-id={timer.id}
+                    >
+                        <div class="timer-meta">
+                            <span class="timer-row-label" data-field="row-label">
+                                {timer.label || 'Untitled timer'}
+                            </span>
+                            <span class="timer-row-schedule" data-field="row-schedule">
+                                {scheduleSummary(timer)}
+                            </span>
+                        </div>
+                        <div class="timer-actions">
+                            <button
+                                type="button"
+                                class="row-button"
+                                data-action="edit"
+                                data-timer-id={timer.id}
+                                onclick={() => startEdit(timer)}
+                                title="Edit timer"
+                                aria-label="Edit timer">Edit</button
+                            >
+                            <button
+                                type="button"
+                                class="row-button"
+                                data-action="dismiss"
+                                data-timer-id={timer.id}
+                                onclick={() => dismiss(timer)}
+                                title="Dismiss timer"
+                                aria-label="Dismiss timer">Dismiss</button
+                            >
+                        </div>
+                    </div>
+                {/each}
+            </section>
+        {/if}
 
         <div class="field">
             <label class="field-label" for="timer-label">Label</label>
@@ -482,9 +684,21 @@
             <p class="form-error" role="alert">{error}</p>
         {/if}
 
-        <button type="button" data-action="submit" class="create-button" onclick={submit}>
-            Create timer
-        </button>
+        <div class="form-actions">
+            {#if editingId !== null}
+                <button
+                    type="button"
+                    data-action="cancel-edit"
+                    class="secondary-button"
+                    onclick={resetForm}
+                >
+                    New timer
+                </button>
+            {/if}
+            <button type="button" data-action="submit" class="create-button" onclick={submit}>
+                {editingId !== null ? 'Save changes' : 'Create timer'}
+            </button>
+        </div>
     </div>
 </div>
 
@@ -722,6 +936,77 @@
         color: var(--color-error, #f38ba8);
         font-size: 0.85rem;
     }
+    .timer-list {
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+        border-bottom: 1px solid var(--color-border, #2a3142);
+        padding-bottom: 12px;
+    }
+    .timer-row {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 10px;
+        background: var(--color-bg, #1c2230);
+        border: 1px solid var(--color-border, #2a3142);
+        border-radius: 10px;
+        padding: 8px 10px;
+    }
+    .timer-row.editing {
+        border-color: var(--color-accent, #5b9dff);
+        background: var(--color-accent-soft, rgba(91, 157, 255, 0.15));
+    }
+    .timer-meta {
+        display: flex;
+        flex-direction: column;
+        gap: 2px;
+        min-width: 0;
+    }
+    .timer-row-label {
+        font-size: 0.88rem;
+        font-weight: 600;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+    }
+    .timer-row-schedule {
+        font-size: 0.75rem;
+        color: var(--color-fg-muted, #8b94a7);
+        font-family: var(--font-mono, ui-monospace, monospace);
+    }
+    .timer-actions {
+        display: flex;
+        gap: 6px;
+        flex-shrink: 0;
+    }
+    .row-button {
+        border: 1px solid var(--color-border, #2a3142);
+        background: var(--color-bg-alt, #161b26);
+        color: var(--color-fg, #e6e9ef);
+        border-radius: 8px;
+        padding: 6px 10px;
+        font-size: 0.78rem;
+        cursor: pointer;
+    }
+    .row-button:hover {
+        border-color: var(--color-accent, #5b9dff);
+    }
+    .form-actions {
+        display: flex;
+        gap: 8px;
+        margin-top: 4px;
+    }
+    .secondary-button {
+        background: var(--color-bg, #1c2230);
+        color: var(--color-fg, #e6e9ef);
+        border: 1px solid var(--color-border, #2a3142);
+        border-radius: 10px;
+        padding: 12px 16px;
+        font-size: 0.9rem;
+        font-weight: 600;
+        cursor: pointer;
+    }
     .create-button {
         background: var(--color-accent, #5b9dff);
         color: var(--color-bg, #08111f);
@@ -731,6 +1016,6 @@
         font-size: 0.9rem;
         font-weight: 600;
         cursor: pointer;
-        margin-top: 4px;
+        flex: 1;
     }
 </style>
