@@ -170,6 +170,7 @@ fn plugins_dir() -> PathBuf {
 fn discover_merged_plugins(
     user_plugins_dir: &std::path::Path,
     embedded: &include_dir::Dir<'static>,
+    dev_plugins_dir: Option<&std::path::Path>,
 ) -> (Vec<quantum_plugins::PluginDescription>, usize, usize) {
     let user_plugins = match quantum_plugins::walk(user_plugins_dir) {
         Ok(d) => d,
@@ -190,7 +191,30 @@ fn discover_merged_plugins(
     };
     let embedded_count = embedded_plugins.len();
     let user_count = user_plugins.len();
-    let merged = quantum_plugins::merge_plugins(user_plugins, embedded_plugins);
+
+    // Developer override: when QUANTUM_PLUGIN_DIR is set, walk that
+    // filesystem tree and let it shadow the embedded catalog by name, so a
+    // first-party plugin view is served from the working tree without a
+    // quantumd recompile. User plugins still shadow everything else, so the
+    // unset-env path stays exactly merge_plugins(user, embedded).
+    let base = match dev_plugins_dir {
+        Some(dir) => {
+            let dev_plugins = match quantum_plugins::walk_dev(dir) {
+                Ok(d) => d,
+                Err(e) => {
+                    tracing::warn!(
+                        "failed to walk dev plugins directory {}: {e}; continuing without dev override",
+                        dir.display()
+                    );
+                    Vec::new()
+                }
+            };
+            quantum_plugins::merge_plugins(dev_plugins, embedded_plugins)
+        }
+        None => embedded_plugins,
+    };
+
+    let merged = quantum_plugins::merge_plugins(user_plugins, base);
     (merged, embedded_count, user_count)
 }
 
@@ -201,6 +225,10 @@ fn discover_merged_plugins(
 struct FilesystemPluginCatalog {
     plugins_dir: PathBuf,
     embedded: &'static include_dir::Dir<'static>,
+    /// Optional developer override directory (from `QUANTUM_PLUGIN_DIR`),
+    /// threaded through so `plugin.reload` sees the same merged catalog as
+    /// startup.
+    dev_plugins_dir: Option<PathBuf>,
 }
 
 #[async_trait::async_trait]
@@ -208,14 +236,16 @@ impl quantum_domain::PluginCatalog for FilesystemPluginCatalog {
     async fn discover(&self) -> std::result::Result<usize, quantum_domain::DomainError> {
         let plugins_dir = self.plugins_dir.clone();
         let embedded = self.embedded;
+        let dev_plugins_dir = self.dev_plugins_dir.clone();
         // Walk the filesystem on a blocking pool so we never park the
         // async runtime on disk I/O.
-        let (merged, _, _) =
-            tokio::task::spawn_blocking(move || discover_merged_plugins(&plugins_dir, embedded))
-                .await
-                .map_err(|e| {
-                    quantum_domain::DomainError::Unsupported(format!("plugin walk join error: {e}"))
-                })?;
+        let (merged, _, _) = tokio::task::spawn_blocking(move || {
+            discover_merged_plugins(&plugins_dir, embedded, dev_plugins_dir.as_deref())
+        })
+        .await
+        .map_err(|e| {
+            quantum_domain::DomainError::Unsupported(format!("plugin walk join error: {e}"))
+        })?;
         Ok(merged.len())
     }
 }
@@ -459,8 +489,27 @@ async fn setup_daemon(
 
     let active_theme = config.general.active_theme.clone();
 
-    let theme_store =
-        Arc::new(ThemeStore::new(active_theme).with_embedded_plugins(&EMBEDDED_PLUGINS));
+    // Opt-in developer mode: QUANTUM_PLUGIN_DIR points at a plugins root
+    // (for example src/ui/plugins) whose first-party views are served from
+    // the working tree instead of the compiled-in embedded copy. Unset or
+    // empty leaves behavior exactly as today.
+    let dev_plugins_dir: Option<PathBuf> = std::env::var("QUANTUM_PLUGIN_DIR")
+        .ok()
+        .filter(|value| !value.is_empty())
+        .map(PathBuf::from);
+    if let Some(dir) = &dev_plugins_dir {
+        info!(
+            "dev plugin mode: serving plugin views from {}",
+            dir.display()
+        );
+    }
+
+    let mut theme_store_builder =
+        ThemeStore::new(active_theme).with_embedded_plugins(&EMBEDDED_PLUGINS);
+    if let Some(dir) = &dev_plugins_dir {
+        theme_store_builder = theme_store_builder.with_dev_plugins(dir.clone());
+    }
+    let theme_store = Arc::new(theme_store_builder);
     let shell_executor = Arc::new(TokioShellExecutor::new());
     let registry = Arc::new(InMemoryProviderRegistry::new());
 
@@ -658,8 +707,11 @@ async fn setup_daemon(
     // daemon must come up with built-in providers regardless of plugin
     // state.
     let plugins_directory = plugins_dir();
-    let (plugin_descs, embedded_plugin_count, user_plugin_count) =
-        discover_merged_plugins(&plugins_directory, &EMBEDDED_PLUGINS);
+    let (plugin_descs, embedded_plugin_count, user_plugin_count) = discover_merged_plugins(
+        &plugins_directory,
+        &EMBEDDED_PLUGINS,
+        dev_plugins_dir.as_deref(),
+    );
     info!(
         "plugins discovered: {embedded_plugin_count} embedded, {user_plugin_count} user, {} after merge",
         plugin_descs.len()
@@ -794,6 +846,7 @@ async fn setup_daemon(
         Arc::new(FilesystemPluginCatalog {
             plugins_dir: plugins_directory,
             embedded: &EMBEDDED_PLUGINS,
+            dev_plugins_dir: dev_plugins_dir.clone(),
         });
     let reload_plugins_use_case = Arc::new(ReloadPluginsUseCase::new(plugin_catalog));
     let dispatcher = Arc::new(AppDispatcher::new(
@@ -995,6 +1048,7 @@ mod tests {
         let catalog = FilesystemPluginCatalog {
             plugins_dir: user_dir.path().to_path_buf(),
             embedded: &TEST_EMBEDDED_PLUGINS,
+            dev_plugins_dir: None,
         };
         let count = quantum_domain::PluginCatalog::discover(&catalog)
             .await
@@ -1012,10 +1066,54 @@ mod tests {
         let catalog = FilesystemPluginCatalog {
             plugins_dir: PathBuf::from("/nonexistent/quantum/plugins"),
             embedded: &TEST_EMBEDDED_PLUGINS,
+            dev_plugins_dir: None,
         };
         let count = quantum_domain::PluginCatalog::discover(&catalog)
             .await
             .expect("discover");
         assert_eq!(count, 2);
+    }
+
+    /// A dev plugin directory (QUANTUM_PLUGIN_DIR) shadows the embedded
+    /// catalog: a dev copy of an embedded plugin replaces it in the merged
+    /// list, pointing at the dev path, while other embedded plugins remain.
+    #[test]
+    fn discover_merged_plugins_dev_shadows_embedded() {
+        let user_dir = tempfile::tempdir().expect("user tempdir");
+        let dev_dir = tempfile::tempdir().expect("dev tempdir");
+        let alpha_view = dev_dir.path().join("alpha/views/main/dist");
+        std::fs::create_dir_all(&alpha_view).expect("mkdir");
+        std::fs::write(alpha_view.join("index.html"), b"<html>dev alpha</html>")
+            .expect("write dev alpha");
+
+        let (merged, embedded_count, _user_count) = discover_merged_plugins(
+            user_dir.path(),
+            &TEST_EMBEDDED_PLUGINS,
+            Some(dev_dir.path()),
+        );
+
+        assert_eq!(
+            embedded_count, 2,
+            "embedded count is unaffected by dev override"
+        );
+        let alpha = merged.iter().find(|p| p.name == "alpha").expect("alpha");
+        assert!(
+            alpha.dir.starts_with(dev_dir.path()),
+            "dev alpha must replace the embedded one"
+        );
+        assert!(
+            merged.iter().any(|p| p.name == "beta"),
+            "embedded beta still present"
+        );
+    }
+
+    /// With no dev directory, discovery is exactly as before: embedded only.
+    #[test]
+    fn discover_merged_plugins_without_dev_dir_is_embedded_only() {
+        let user_dir = tempfile::tempdir().expect("user tempdir");
+        let (merged, _embedded_count, _user_count) =
+            discover_merged_plugins(user_dir.path(), &TEST_EMBEDDED_PLUGINS, None);
+        let names: Vec<&str> = merged.iter().map(|p| p.name.as_str()).collect();
+        assert_eq!(names, vec!["alpha", "beta"]);
     }
 }
