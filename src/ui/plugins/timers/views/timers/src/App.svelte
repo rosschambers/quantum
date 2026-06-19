@@ -34,6 +34,13 @@
 
   $effect(() => {
     const off = createTimerStore(client).subscribe((data) => {
+      // Refresh "now" on every snapshot. The rAF loop below is gated off while
+      // the timer list is empty, so without this `nowUnix` would stay frozen at
+      // widget-load time; the first render of a newly created timer would then
+      // compute a wildly inflated remaining span (uptime + duration), which
+      // `trackTotal` would latch as the timer's total and corrupt the fill
+      // fraction. Setting it here guarantees the first render uses current time.
+      nowUnix = Date.now() / 1000;
       settings = data.settings;
       timers = data.timers;
     });
