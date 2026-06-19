@@ -135,11 +135,18 @@ impl WidgetWindow {
             window.set_exclusive_zone(bar_height);
             window.set_default_height(bar_height);
         } else if fill_output {
-            // Fill-output widgets (the timers scatter surface): background
-            // layer, anchored on all four edges so the transparent surface
-            // covers the whole monitor. The Svelte view positions its content
-            // absolutely within this full-screen area. `position` is ignored.
-            window.set_layer(Layer::Background);
+            // Fill-output widgets (the timers scatter surface): anchored on all
+            // four edges so the transparent surface covers the whole monitor.
+            // The Svelte view positions its content absolutely within this
+            // full-screen area. `position` is ignored.
+            //
+            // Uses the Bottom layer (not Background): it still sits behind
+            // normal application windows, but wlroots routes pointer and
+            // keyboard input to Bottom-layer surfaces, whereas Background-layer
+            // surfaces are treated as non-interactive wallpaper and do not
+            // receive button clicks. The interactive per-timer controls (edit /
+            // dismiss) and the edit form need that input.
+            window.set_layer(Layer::Bottom);
             window.set_anchor(Edge::Top, true);
             window.set_anchor(Edge::Bottom, true);
             window.set_anchor(Edge::Left, true);
