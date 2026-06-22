@@ -137,23 +137,34 @@ impl WidgetWindow {
         if top_anchored {
             // Bar widget: top layer, full monitor height.
             //
-            // The surface anchors all four edges so it spans the whole
-            // monitor; the exclusive zone stays at `bar_height` so other
-            // windows only avoid the visible strip and do not reflow when a
-            // dropdown opens below it. The visible 32-pixel row comes from the
-            // view's `.bar { height: var(--bar-height) }` CSS over the
-            // transparent body, not from the surface size — so opening a
-            // menu no longer resizes the surface (no flicker).
+            // The surface anchors the top, left, and right edges (NOT bottom)
+            // and is sized to the full monitor height via `set_default_height`.
+            // Anchoring a single horizontal edge keeps the exclusive zone
+            // working: `bar_height` is reserved at the top so windows tile
+            // below the visible strip. Anchoring BOTH top and bottom makes the
+            // compositor ignore the exclusive zone (the surface spans the
+            // screen), which leaves windows rendering behind the bar.
+            //
+            // The visible 32-pixel row comes from the view's
+            // `.bar { height: var(--bar-height) }` CSS over the transparent
+            // body, not from the surface size — so opening a dropdown in the
+            // tall transparent area below the strip never resizes the surface
+            // (no flicker).
             //
             // Because a full-height Top surface would otherwise capture every
             // click on the monitor, the pointer input region is clipped to
             // the visible strip on map (see below) and expanded to include an
             // open menu via `set_input_region`.
+            let monitor_height = monitor
+                .as_ref()
+                .map(|m| m.geometry().height())
+                .filter(|h| *h > 0)
+                .unwrap_or(2160);
             window.set_layer(Layer::Top);
             window.set_anchor(Edge::Top, true);
-            window.set_anchor(Edge::Bottom, true);
             window.set_anchor(Edge::Left, true);
             window.set_anchor(Edge::Right, true);
+            window.set_default_height(monitor_height);
             // OnDemand (not None) so an interactive dropdown rendered inside
             // the bar surface can take keyboard focus while open, without
             // locking the user out the way Exclusive would.
