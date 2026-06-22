@@ -8,7 +8,7 @@ use gtk4::gio;
 use gtk4::glib;
 use gtk4::prelude::*;
 use gtk4_layer_shell::{Edge, KeyboardMode, Layer, LayerShell};
-use quantum_domain::{ports::ThemeStore, EventEnvelope, ViewAnchor, ViewPosition};
+use quantum_domain::{ports::ThemeStore, EventEnvelope, ViewAnchor, ViewPosition, WindowInputRegion};
 use std::sync::Arc;
 use tokio::runtime::Handle;
 use tokio::sync::broadcast;
@@ -118,22 +118,47 @@ impl WidgetWindow {
         let bar_height = height.map(|h| h as i32).unwrap_or(BAR_HEIGHT);
 
         if top_anchored {
-            // Bar widget: top layer, full width.
+            // Bar widget: top layer, full monitor height.
             //
-            // Surface starts the same height as the visible bar
-            // (bar_height) so the unused area below cannot intercept
-            // input. Apps cover that area normally and remain clickable.
-            // When the frontend opens a popover it calls the
-            // `view.set_height` IPC method to grow the surface; the
-            // exclusive zone stays at bar_height so other windows do
-            // not reflow.
+            // The surface anchors all four edges so it spans the whole
+            // monitor; the exclusive zone stays at `bar_height` so other
+            // windows only avoid the visible strip and do not reflow when a
+            // dropdown opens below it. The visible 32px row comes from the
+            // view's `.bar { height: var(--bar-height) }` CSS over the
+            // transparent body, not from the surface size — so opening a
+            // menu no longer resizes the surface (no flicker).
+            //
+            // Because a full-height Top surface would otherwise capture every
+            // click on the monitor, the pointer input region is clipped to
+            // the visible strip on map (see below) and expanded to include an
+            // open menu via `set_input_region`.
             window.set_layer(Layer::Top);
             window.set_anchor(Edge::Top, true);
+            window.set_anchor(Edge::Bottom, true);
             window.set_anchor(Edge::Left, true);
             window.set_anchor(Edge::Right, true);
-            window.set_keyboard_mode(KeyboardMode::None);
+            // OnDemand (not None) so an interactive dropdown rendered inside
+            // the bar surface can take keyboard focus while open, without
+            // locking the user out the way Exclusive would.
+            window.set_keyboard_mode(KeyboardMode::OnDemand);
             window.set_exclusive_zone(bar_height);
-            window.set_default_height(bar_height);
+
+            // Clip the input region to the visible strip as soon as the
+            // GdkSurface exists. `connect_map` fires once the surface is
+            // mapped; if the surface is somehow not yet available the helper
+            // is a no-op and a later map fires again. Re-apply on surface
+            // width changes (monitor geometry / hotplug) so the strip always
+            // spans the full bar width.
+            let window_for_map = window.clone();
+            window.connect_map(move |win| {
+                apply_input_region(win, bar_height, None);
+                if let Some(surface) = gtk4::prelude::NativeExt::surface(win) {
+                    let window_for_width = window_for_map.clone();
+                    surface.connect_width_notify(move |_| {
+                        apply_input_region(&window_for_width, bar_height, None);
+                    });
+                }
+            });
         } else if fill_output {
             // Fill-output widgets (the timers scatter surface): anchored on all
             // four edges so the transparent surface covers the whole monitor.
@@ -514,4 +539,37 @@ impl crate::registry::WindowOps for WidgetWindow {
         // next GTK redraw cycle, which can lag visibly.
         gtk4::prelude::WidgetExt::queue_resize(&self.window);
     }
+}
+
+/// Clip the bar surface's pointer input region to the visible strip
+/// `(0, 0, surface_width, bar_height)`, optionally unioned with an `extra`
+/// rectangle (an open dropdown menu). A no-op if the `GdkSurface` does not
+/// yet exist (the caller re-runs once it is mapped).
+///
+/// Coordinates are surface-local pixels at scale 1. HiDPI surfaces report a
+/// `scale_factor()` greater than one; if on-device testing shows the region
+/// is mis-scaled, convert here at the single marked point. This is left at
+/// scale 1 for now per the plan (HiDPI verification is a later manual step).
+fn apply_input_region(
+    window: &gtk4::ApplicationWindow,
+    bar_height: i32,
+    extra: Option<WindowInputRegion>,
+) {
+    let Some(surface) = gtk4::prelude::NativeExt::surface(window) else {
+        return;
+    };
+    // Single scale-conversion point (currently scale 1; see doc comment).
+    let width = surface.width().max(1);
+    let region = gtk4::cairo::Region::create_rectangle(&gtk4::cairo::RectangleInt::new(
+        0, 0, width, bar_height,
+    ));
+    if let Some(rect) = extra {
+        let _ = region.union_rectangle(&gtk4::cairo::RectangleInt::new(
+            rect.x,
+            rect.y,
+            rect.width,
+            rect.height,
+        ));
+    }
+    gtk4::prelude::SurfaceExt::set_input_region(&surface, &region);
 }
