@@ -201,6 +201,11 @@ impl PanelWindow {
         settings.set_javascript_can_open_windows_automatically(false);
         webkit6::prelude::WebViewExt::set_settings(&webview, &settings);
 
+        // Replace WebKit's browser right-click menu (back/forward/reload) with
+        // nothing; the launcher/overlays drive their own interactions. Kept
+        // only under the inspector flag so "Inspect Element" stays available.
+        crate::windows::suppress_browser_context_menu(&webview, inspector_enabled);
+
         // Surface load failures so we can diagnose missing assets etc.
         webview.connect_load_failed(|_view, event, uri, err| {
             tracing::error!(

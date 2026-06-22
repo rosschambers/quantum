@@ -31,6 +31,22 @@ pub(crate) fn theme_reload_push_js(store: &Arc<dyn ThemeStore>) -> String {
     json_to_js_expression(&crate::scheme::token_push_js(&css))
 }
 
+/// Disable WebKit's default browser context menu on a Quantum WebView.
+///
+/// These surfaces are a widget/launcher host, not a browser, so the native
+/// right-click menu (Back / Forward / Reload / Stop / "Open Link" ...) is
+/// meaningless and looks out of place. Suppressing it lets each view define its
+/// own right-click behavior through the DOM `contextmenu` event (the bar's tray
+/// indicators already do) or have none at all.
+///
+/// When the inspector is enabled (`QUANTUM_INSPECTOR=1`) the menu is left in
+/// place so "Inspect Element" stays available for debugging.
+pub(crate) fn suppress_browser_context_menu(webview: &webkit6::WebView, inspector_enabled: bool) {
+    use webkit6::prelude::WebViewExt;
+    // Returning true from the handler tells WebKit not to display its menu.
+    webview.connect_context_menu(move |_view, _menu, _hit_test| !inspector_enabled);
+}
+
 /// The shared host context every window constructor needs: the GTK
 /// application to attach to, the IPC dispatcher and theme store, the Tokio
 /// runtime handle and broadcast sender for event forwarding, and the optional

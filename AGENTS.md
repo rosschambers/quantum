@@ -269,6 +269,13 @@ broken CI before; do not reintroduce them:
   reliably under Svelte 5 runes mode.
 - All Svelte views consume IPC through `@quantum/client`. Never reach into
   `window.__quantum_*` directly from view code.
+- **WebKit's default browser context menu is suppressed on every view**
+  (`suppress_browser_context_menu` in `src/ui/host/src/windows/mod.rs`, called
+  from both WebView builders) — back/forward/reload are meaningless in a
+  widget/launcher host. It is left in place only under `QUANTUM_INSPECTOR=1` so
+  "Inspect Element" stays available. Views that want a right-click menu handle
+  the DOM `contextmenu` event themselves (the bar's tray indicators do); there
+  is no shared WebKit-level menu to customize.
 - **Widget layer depends on interactivity. `Layer::Background` surfaces are
   NON-interactive in Hyprland — they receive no pointer clicks and no keyboard.**
   Content-sized widgets (the clock) sit on `Layer::Background` and anchor per the

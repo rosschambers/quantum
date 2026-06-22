@@ -350,6 +350,11 @@ fn build_webview(
     settings.set_enable_developer_extras(inspector_enabled);
     webkit6::prelude::WebViewExt::set_settings(&webview, &settings);
 
+    // Replace WebKit's browser right-click menu (back/forward/reload) with
+    // nothing; views provide their own DOM contextmenu where useful. Kept only
+    // under the inspector flag so "Inspect Element" is available in dev.
+    crate::windows::suppress_browser_context_menu(&webview, inspector_enabled);
+
     webview.connect_load_failed(|_view, event, uri, err| {
         tracing::error!(
             "widget WebView load_failed: event={:?} uri={} err={}",
