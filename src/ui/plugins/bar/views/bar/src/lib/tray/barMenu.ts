@@ -50,7 +50,7 @@ export function barViewName(): string {
 export function wireBarMenu(
     node: HTMLElement,
     client: Client,
-    buildItems: () => MenuItem[],
+    buildItems: () => MenuItem[] | Promise<MenuItem[]>,
 ): () => void {
     const expandInputRegion = (rect: {
         x: number;
@@ -77,8 +77,11 @@ export function wireBarMenu(
             .catch(console.error);
     };
 
-    const listener = (event: MouseEvent): void => {
-        const items = normalizeSeparators(buildItems());
+    // Open the menu from a resolved item list. The anchor rectangle is read
+    // here (after any async resolve) so the menu drops from the button's
+    // current position rather than where it was when right-clicked.
+    const open = (event: MouseEvent, built: MenuItem[]): void => {
+        const items = normalizeSeparators(built);
         // An indicator whose provider is unavailable builds no items; opening
         // an empty floating box and expanding the input region for it is both
         // useless and a momentary pointer-capture lockout, so bail early.
@@ -88,6 +91,23 @@ export function wireBarMenu(
             onPlaced: expandInputRegion,
             onClose: resetInputRegion,
         });
+    };
+
+    const listener = (event: MouseEvent): void => {
+        // Suppress the browser context menu synchronously, before any await,
+        // so a builder that fetches its items asynchronously (for example the
+        // kill menu querying the window list) cannot let the default menu slip
+        // through while the promise resolves.
+        event.preventDefault();
+        const built = buildItems();
+        // A synchronous builder (every indicator other than the kill menu)
+        // opens the menu in the same tick, preserving its existing timing. An
+        // async builder defers the open until the promise resolves.
+        if (built instanceof Promise) {
+            built.then((items) => open(event, items)).catch(console.error);
+        } else {
+            open(event, built);
+        }
     };
 
     node.addEventListener('contextmenu', listener);

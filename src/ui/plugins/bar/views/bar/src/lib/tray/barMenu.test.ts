@@ -119,6 +119,47 @@ describe('wireBarMenu', () => {
         expect(menu!.querySelectorAll('hr')).toHaveLength(1);
     });
 
+    function setupAsync(builder: () => Promise<MenuItem[]>) {
+        const node = document.createElement('button');
+        document.body.appendChild(node);
+        const { client, call } = makeMockClient();
+        const teardown = wireBarMenu(node, client as never, builder);
+        return { node, call, teardown };
+    }
+
+    async function flushMicrotasks(): Promise<void> {
+        await Promise.resolve();
+        await Promise.resolve();
+    }
+
+    it('opens a menu with items resolved from an async builder', async () => {
+        const onSelect = vi.fn();
+        const { node } = setupAsync(() =>
+            Promise.resolve([{ label: 'Async thing', onSelect }]),
+        );
+
+        node.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true }));
+        expect(contextMenu()).toBeNull();
+
+        await flushMicrotasks();
+
+        expect(contextMenu()).not.toBeNull();
+        expect(menuItem('Async thing')).toBeTruthy();
+    });
+
+    it('opens no menu and touches no input region when async builder resolves empty', async () => {
+        const { node, call } = setupAsync(() => Promise.resolve([]));
+
+        node.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true }));
+        await flushMicrotasks();
+
+        expect(contextMenu()).toBeNull();
+        expect(call).not.toHaveBeenCalledWith(
+            'view.set_input_region',
+            expect.anything(),
+        );
+    });
+
     it('closes an open menu and resets the region on teardown', () => {
         const { node, call, teardown } = setup([{ label: 'X' }]);
         node.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true }));
