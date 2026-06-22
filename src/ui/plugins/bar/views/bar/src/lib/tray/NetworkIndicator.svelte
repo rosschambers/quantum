@@ -1,10 +1,11 @@
 <script lang="ts">
-    import type { Client } from '@quantum/client';
+    import type { Client, MenuItem } from '@quantum/client';
     import type { NetworkState } from '../types';
     import { NETWORK_CHANNEL, NETWORK_PROVIDER } from '../channels';
     import { networkIcon } from '../icons';
     import Icon from '../Icon.svelte';
     import BarButton from '../BarButton.svelte';
+    import { monitorView, wireBarMenu } from './barMenu';
 
     interface Props {
         client: Client;
@@ -18,6 +19,7 @@
         wifi_enabled: false,
         wifi_signal_percent: null,
     });
+    let buttonEl: HTMLButtonElement | undefined = $state(undefined);
 
     $effect(() => {
         client
@@ -32,13 +34,44 @@
         return () => unsubscribe?.();
     });
 
+    // Right-click toggles the Wi-Fi radio (network provider, kind 'network')
+    // and links to the full Wi-Fi settings overlay.
+    $effect(() => {
+        const node = buttonEl;
+        if (!node) return;
+        return wireBarMenu(node, client, buildMenuItems);
+    });
+
+    function buildMenuItems(): MenuItem[] {
+        const enabled = state.wifi_enabled;
+        return [
+            {
+                label: `Turn Wi-Fi ${enabled ? 'off' : 'on'}`,
+                onSelect: () =>
+                    client
+                        .call('action.invoke', {
+                            provider: 'network',
+                            action: {
+                                kind: 'custom',
+                                data: {
+                                    kind: 'network',
+                                    payload: { command: 'set_wifi_enabled', value: !enabled },
+                                },
+                            },
+                        })
+                        .catch((err) => console.error('network set_wifi_enabled failed:', err)),
+            },
+            { separator: true, label: '' },
+            { label: 'Wi-Fi settings...', onSelect: openWifiMenu },
+        ];
+    }
+
     async function openWifiMenu(): Promise<void> {
         // The bar widget is injected with a per-monitor `__quantum_monitor`
         // so the menu opens on the same display as the bar that was clicked.
         // When unknown, the bare name lets the daemon place it on the focused
         // monitor.
-        const monitor = window.__quantum_monitor;
-        const name = monitor ? `widgets/wifi-menu@${monitor}` : 'widgets/wifi-menu';
+        const name = monitorView('widgets/wifi-menu');
         try {
             await client.call('view.show', { name });
         } catch (err) {
@@ -61,6 +94,7 @@
         ariaLabel="Network"
         title={tooltipFor(state)}
         onclick={openWifiMenu}
+        bindRef={(el) => (buttonEl = el)}
     >
         <span
             class="network-icon"

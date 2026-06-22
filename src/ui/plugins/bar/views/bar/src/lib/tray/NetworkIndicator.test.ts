@@ -1,8 +1,20 @@
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi, afterEach } from 'vitest';
 import { render, fireEvent } from '@testing-library/svelte/svelte5';
 import { tick } from 'svelte';
+import { closeContextMenu } from '@quantum/client';
 import NetworkIndicator from './NetworkIndicator.svelte';
 import type { NetworkState } from '../types';
+
+function menuItem(text: string): HTMLButtonElement | undefined {
+	return Array.from(
+		document.querySelectorAll('[data-quantum-context-menu] [role="menuitem"]'),
+	).find((el) => el.textContent?.includes(text)) as HTMLButtonElement | undefined;
+}
+
+afterEach(() => {
+	closeContextMenu();
+	(window as unknown as { __quantum_monitor?: string }).__quantum_monitor = undefined;
+});
 
 function mockClient(): {
 	client: any;
@@ -153,5 +165,37 @@ describe('NetworkIndicator', () => {
 		await tick();
 		expect(client.call).toHaveBeenCalledWith('view.show', { name: 'widgets/wifi-menu@DP-1' });
 		(window as unknown as { __quantum_monitor?: string }).__quantum_monitor = undefined;
+	});
+
+	it('toggles Wi-Fi from the right-click menu with the negated value', async () => {
+		const { client, emit } = mockClient();
+		const { container } = render(NetworkIndicator, { props: { client } });
+		await emit({
+			available: true,
+			connectivity: 'full',
+			primary: { kind: 'wifi', id: 'wlan0', ssid: 'HomeWifi' },
+			wifi_enabled: true,
+			wifi_signal_percent: 90,
+		});
+
+		const btn = container.querySelector('.bar-button') as HTMLButtonElement;
+		await fireEvent.contextMenu(btn);
+		await tick();
+
+		const toggle = menuItem('Turn Wi-Fi off');
+		expect(toggle).toBeTruthy();
+		await fireEvent.click(toggle as HTMLButtonElement);
+		await tick();
+
+		expect(client.call).toHaveBeenCalledWith('action.invoke', {
+			provider: 'network',
+			action: {
+				kind: 'custom',
+				data: {
+					kind: 'network',
+					payload: { command: 'set_wifi_enabled', value: false },
+				},
+			},
+		});
 	});
 });
