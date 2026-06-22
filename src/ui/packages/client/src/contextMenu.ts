@@ -207,20 +207,23 @@ export function openContextMenu(event: MouseEvent, items: MenuItem[], options?: 
   }
   doc.body.appendChild(root);
 
-  position(doc, root, event.clientX, event.clientY);
-
   if (options?.ensureSpace) {
+    // The surface must grow before the menu can be placed: positioning now
+    // would clamp it against the pre-grow viewport (a thin bar forces it to
+    // the top), then it would visibly jump once the surface grows. Keep it
+    // hidden until the grow resolves, then position and reveal in one paint.
+    root.style.visibility = 'hidden';
     const needed = Math.ceil(event.clientY + root.getBoundingClientRect().height);
-    options
-      .ensureSpace(needed)
-      .then(() => {
-        if (active?.root === root) {
-          position(doc, root, event.clientX, event.clientY);
-        }
-      })
-      .catch(() => {
-        /* surface growth is best-effort; the menu still renders */
-      });
+    const reveal = (): void => {
+      if (active?.root !== root) {
+        return;
+      }
+      position(doc, root, event.clientX, event.clientY);
+      root.style.visibility = '';
+    };
+    options.ensureSpace(needed).then(reveal).catch(reveal);
+  } else {
+    position(doc, root, event.clientX, event.clientY);
   }
 
   const onKeyDown = (keyEvent: KeyboardEvent): void => {

@@ -151,4 +151,29 @@ describe('options', () => {
     closeContextMenu();
     expect(onClose).toHaveBeenCalledTimes(1);
   });
+
+  it('keeps the menu hidden until ensureSpace resolves, then reveals it', async () => {
+    let resolveSpace: () => void = () => {};
+    const ensureSpace = vi.fn(
+      () =>
+        new Promise<void>((resolve) => {
+          resolveSpace = resolve;
+        }),
+    );
+    openContextMenu(rightClickAt(10, 40), [{ label: 'X' }], { ensureSpace });
+    const root = menuRoot();
+    expect(root).not.toBeNull();
+    // Hidden while the surface is still growing, so it cannot paint at the
+    // pre-grow position and then jump.
+    expect(root!.style.visibility).toBe('hidden');
+    resolveSpace();
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(root!.style.visibility).toBe('');
+  });
+
+  it('positions immediately when no ensureSpace hook is given', () => {
+    openContextMenu(rightClickAt(10, 10), [{ label: 'X' }]);
+    expect(menuRoot()!.style.visibility).toBe('');
+  });
 });
