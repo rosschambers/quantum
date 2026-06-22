@@ -1,9 +1,10 @@
 <script lang="ts">
-    import type { Client } from '@quantum/client';
+    import type { Client, MenuItem } from '@quantum/client';
     import type { BluetoothState } from '../types';
     import { BLUETOOTH_CHANNEL, BLUETOOTH_PROVIDER } from '../channels';
     import Icon from '../Icon.svelte';
     import BarButton from '../BarButton.svelte';
+    import { wireBarMenu } from './barMenu';
 
     interface Props {
         client: Client;
@@ -16,6 +17,7 @@
         discovering: false,
         connected_devices: [],
     });
+    let buttonEl: HTMLButtonElement | undefined = $state(undefined);
 
     $effect(() => {
         client
@@ -29,6 +31,48 @@
         });
         return () => unsubscribe?.();
     });
+
+    // Right-click opens quick Bluetooth actions built from the current radio
+    // state and connected devices.
+    $effect(() => {
+        const node = buttonEl;
+        if (!node) return;
+        return wireBarMenu(node, client, buildMenuItems);
+    });
+
+    function invoke(payload: Record<string, unknown>): Promise<unknown> {
+        return client.call('action.invoke', {
+            provider: 'bluetooth',
+            action: {
+                kind: 'custom',
+                data: { kind: 'bluetooth', payload },
+            },
+        });
+    }
+
+    function buildMenuItems(): MenuItem[] {
+        const items: MenuItem[] = [];
+        const powered = state.powered;
+        items.push({
+            label: `Turn Bluetooth ${powered ? 'off' : 'on'}`,
+            onSelect: () =>
+                invoke({ command: 'set_powered', value: !powered }).catch((err) =>
+                    console.error('bluetooth set_powered failed:', err),
+                ),
+        });
+        for (const device of state.connected_devices) {
+            items.push({
+                label: `Disconnect ${device.name}`,
+                onSelect: () =>
+                    invoke({ command: 'disconnect', address: device.address }).catch((err) =>
+                        console.error('bluetooth disconnect failed:', err),
+                    ),
+            });
+        }
+        items.push({ separator: true, label: '' });
+        items.push({ label: 'Open Bluetooth manager', onSelect: launchBluemanManager });
+        return items;
+    }
 
     async function launchBluemanManager(): Promise<void> {
         try {
@@ -63,6 +107,7 @@
         ariaLabel="Bluetooth"
         title={tooltipFor(state)}
         onclick={launchBluemanManager}
+        bindRef={(el) => (buttonEl = el)}
     >
         <span
             class="bluetooth-icon"
