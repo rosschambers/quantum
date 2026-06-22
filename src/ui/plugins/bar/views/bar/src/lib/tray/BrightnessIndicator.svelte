@@ -1,10 +1,14 @@
 <script lang="ts">
-    import type { Client } from '@quantum/client';
-    import type { BrightnessState } from '../types';
+    import type { Client, MenuItem } from '@quantum/client';
+    import type { BrightnessDisplay, BrightnessState } from '../types';
     import { BRIGHTNESS_CHANNEL, BRIGHTNESS_PROVIDER } from '../channels';
     import { gradientColor } from '../gradient';
+    import { wireBarMenu } from './barMenu';
 
     import { onClick, onScroll } from './interaction';
+
+    /** Preset brightness levels offered in the right-click quick menu. */
+    const MENU_PERCENTS = [25, 50, 75, 100];
 
     /** Click toggles between these two brightness percentages. The
      *  threshold (15%) splits them so the click does the opposite of
@@ -45,6 +49,51 @@
             offClick();
         };
     });
+
+    // Right-click offers preset brightness levels for the primary backlight.
+    $effect(() => {
+        const node = root;
+        if (!node) return;
+        return wireBarMenu(node, client, buildMenuItems);
+    });
+
+    function primaryDisplay(): BrightnessDisplay | undefined {
+        const displays = state.displays;
+        if (displays.length === 0) return undefined;
+        return displays.find((d) => d.subsystem === 'backlight') ?? displays[0];
+    }
+
+    function buildMenuItems(): MenuItem[] {
+        const display = primaryDisplay();
+        if (!display || display.max === 0) return [];
+        const currentPercent = Math.round((display.current / display.max) * 100);
+        const closest = MENU_PERCENTS.reduce((best, pct) =>
+            Math.abs(pct - currentPercent) < Math.abs(best - currentPercent) ? pct : best,
+        );
+        return MENU_PERCENTS.map((pct) => ({
+            label: `${pct}%`,
+            // Mark the preset closest to the current level with a leading dot.
+            icon: pct === closest ? '\u2022' : undefined,
+            onSelect: () =>
+                client
+                    .call('action.invoke', {
+                        provider: 'brightness',
+                        action: {
+                            kind: 'custom',
+                            data: {
+                                kind: 'brightness',
+                                payload: {
+                                    command: 'set',
+                                    subsystem: display.subsystem,
+                                    name: display.name,
+                                    value: Math.round((pct / 100) * display.max),
+                                },
+                            },
+                        },
+                    })
+                    .catch((err) => console.error('brightness set failed:', err)),
+        }));
+    }
 
     async function handleClick(): Promise<void> {
         if (!state.available || state.displays.length === 0) return;

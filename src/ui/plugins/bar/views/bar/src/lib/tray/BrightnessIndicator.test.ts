@@ -1,8 +1,19 @@
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi, afterEach } from 'vitest';
 import { render, fireEvent } from '@testing-library/svelte/svelte5';
 import { tick } from 'svelte';
+import { closeContextMenu } from '@quantum/client';
 import BrightnessIndicator from './BrightnessIndicator.svelte';
 import type { BrightnessState } from '../types';
+
+function menuItem(text: string): HTMLButtonElement | undefined {
+	return Array.from(
+		document.querySelectorAll('[data-quantum-context-menu] [role="menuitem"]'),
+	).find((el) => el.textContent?.includes(text)) as HTMLButtonElement | undefined;
+}
+
+afterEach(() => {
+	closeContextMenu();
+});
 
 function mockClient(): {
 	client: any;
@@ -171,5 +182,46 @@ describe('BrightnessIndicator', () => {
 		expect(el).not.toBeNull();
 		expect(el!.title).toContain('backlight/intel_backlight');
 		expect(el!.title).toContain('50%');
+	});
+
+	it('sets the backlight to a preset percent from the right-click menu', async () => {
+		const { client, emit } = mockClient();
+		const { container } = render(BrightnessIndicator, { props: { client } });
+		await emit({
+			available: true,
+			displays: [
+				{
+					subsystem: 'backlight',
+					name: 'intel_backlight',
+					current: 2000,
+					max: 10000,
+				},
+			],
+		});
+
+		const el = container.querySelector('.bar-button') as HTMLButtonElement;
+		await fireEvent.contextMenu(el);
+		await tick();
+
+		const fifty = menuItem('50%');
+		expect(fifty).toBeTruthy();
+		await fireEvent.click(fifty as HTMLButtonElement);
+		await tick();
+
+		expect(client.call).toHaveBeenCalledWith('action.invoke', {
+			provider: 'brightness',
+			action: {
+				kind: 'custom',
+				data: {
+					kind: 'brightness',
+					payload: {
+						command: 'set',
+						subsystem: 'backlight',
+						name: 'intel_backlight',
+						value: Math.round(0.5 * 10000),
+					},
+				},
+			},
+		});
 	});
 });
