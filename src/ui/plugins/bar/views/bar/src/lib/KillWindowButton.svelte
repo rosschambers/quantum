@@ -8,32 +8,48 @@
     import type { Client } from '@quantum/client';
     import Icon from './Icon.svelte';
     import BarButton from './BarButton.svelte';
+    import { wireBarMenu } from './tray/barMenu';
 
     interface Props {
         client: Client;
     }
 
     let { client }: Props = $props();
+    let buttonElement: HTMLButtonElement | undefined = $state(undefined);
+
+    function runShell(command: string[]): void {
+        client
+            .call('action.invoke', {
+                provider: 'shell',
+                action: { kind: 'shell', data: { command, terminal: false } },
+            })
+            .catch((err) => console.error(`${command.join(' ')} failed:`, err));
+    }
 
     async function invokeKill(): Promise<void> {
-        try {
-            await client.call('action.invoke', {
-                provider: 'shell',
-                action: {
-                    kind: 'shell',
-                    data: { command: ['hyprctl', 'kill'], terminal: false },
-                },
-            });
-        } catch (err) {
-            console.error('hyprctl kill failed:', err);
-        }
+        runShell(['hyprctl', 'kill']);
     }
+
+    // Right-click: kill the focused window directly, or enter the picker.
+    $effect(() => {
+        const node = buttonElement;
+        if (!node) return;
+        return wireBarMenu(node, client, () => [
+            {
+                label: 'Kill active window',
+                danger: true,
+                onSelect: () => runShell(['hyprctl', 'dispatch', 'killactive']),
+            },
+            { label: 'Pick window to kill', onSelect: () => runShell(['hyprctl', 'kill']) },
+        ]);
+    });
 </script>
 
 <BarButton
     ariaLabel="Kill window"
     title="Click then pick a window to kill"
     onclick={invokeKill}
+    bindRef={(el) => (buttonElement = el)}
 >
     <Icon name="pacman" size={18} />
 </BarButton>
