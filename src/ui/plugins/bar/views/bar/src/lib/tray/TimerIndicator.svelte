@@ -18,30 +18,40 @@
         return () => off?.();
     });
 
-    // The bar is a thin strip (Layer::Top), so a downward menu is clipped
-    // until the surface grows. ensureSpace/restoreHeight grow this monitor's
-    // bar surface via view.set_height for the lifetime of the menu.
-    const BAR_HEIGHT = 32;
-
+    // The bar surface is a full-height strip whose input region is gated to the
+    // visible bar strip; pointer events outside the strip pass through to
+    // windows beneath. A downward menu therefore needs the bar's input region
+    // expanded to cover it (onPlaced) for the lifetime of the menu, then reset
+    // back to the strip on close (onClose) via view.set_input_region.
     function barViewName(): string {
         const monitor = (window as unknown as { __quantum_monitor?: string })
             .__quantum_monitor;
         return monitor ? `plugin/bar/bar@${monitor}` : 'plugin/bar/bar';
     }
 
-    function ensureSpace(neededPixels: number): Promise<void> {
-        return client
-            .call('view.set_height', {
+    function expandInputRegion(rect: {
+        x: number;
+        y: number;
+        width: number;
+        height: number;
+    }): void {
+        client
+            .call('view.set_input_region', {
                 name: barViewName(),
-                height: Math.ceil(neededPixels) + 8,
+                region: {
+                    x: Math.round(rect.x),
+                    y: Math.round(rect.y),
+                    width: Math.round(rect.width),
+                    height: Math.round(rect.height),
+                },
             })
-            .then(() => undefined);
+            .catch((err) => console.error('view.set_input_region failed:', err));
     }
 
-    function restoreHeight(): void {
+    function resetInputRegion(): void {
         client
-            .call('view.set_height', { name: barViewName(), height: BAR_HEIGHT })
-            .catch(() => {});
+            .call('view.set_input_region', { name: barViewName(), region: null })
+            .catch((err) => console.error('view.set_input_region failed:', err));
     }
 
     // Right-click opens the quick-actions menu via the shared context-menu
@@ -57,7 +67,7 @@
                     { label: 'Open timers', onSelect: openCreate },
                     { label: 'Dismiss all', onSelect: dismissAll },
                 ],
-                { ensureSpace, onClose: restoreHeight },
+                { onPlaced: expandInputRegion, onClose: resetInputRegion },
             );
         };
         node.addEventListener('contextmenu', listener);

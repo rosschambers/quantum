@@ -210,6 +210,38 @@ describe('TimerIndicator', () => {
         expect(contextMenu()).toBeNull();
     });
 
+    it('expands the input region on open and resets it on close', async () => {
+        const { client, call } = makeMockClient();
+        const { container } = render(TimerIndicator, {
+            props: { client: client as never },
+        });
+        await tick();
+
+        await fireEvent.contextMenu(container.querySelector('button') as HTMLButtonElement);
+        await tick();
+
+        const openCall = call.mock.calls.find(
+            (args) =>
+                args[0] === 'view.set_input_region' &&
+                (args[1] as { region: unknown }).region !== null,
+        );
+        expect(openCall).toBeTruthy();
+        const region = (openCall![1] as { region: { x: number; y: number; width: number; height: number } }).region;
+        expect(typeof region.x).toBe('number');
+        expect(typeof region.y).toBe('number');
+        expect(typeof region.width).toBe('number');
+        expect(typeof region.height).toBe('number');
+
+        call.mockClear();
+        closeContextMenu();
+        await tick();
+
+        expect(call).toHaveBeenCalledWith('view.set_input_region', {
+            name: 'plugin/bar/bar',
+            region: null,
+        });
+    });
+
     it('closes the menu on Escape', async () => {
         const { client } = makeMockClient();
         const { container } = render(TimerIndicator, {
