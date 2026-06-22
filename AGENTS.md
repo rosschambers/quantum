@@ -112,6 +112,34 @@ Commit per task in the implementation plan. Small commits beat big ones.
   the prebuilt binary directly through the same wrapper:
   `devsh.sh ./target/debug/quantumd` (the wrapper still supplies the GTK and
   WebKit runtime libraries; `cargo run` does not).
+- **The `mold` linker is wired in `shell.nix`'s shellHook, NOT a committed
+  `.cargo/config.toml`.** A committed `rustflags = ["-C", "link-arg=-fuse-ld=mold"]`
+  applies to *every* cargo build of the repo, including the downstream nix
+  package build (`rustPlatform.buildRustPackage`), whose sandbox has no `mold`
+  — that breaks `nixos-rebuild` with a linker-not-found error on `quantumctl`.
+  Keep mold (and any linker choice) in `shell.nix` so only the dev/CI nix-shell
+  uses it and packaged builds fall back to the default linker.
+- **Fast local iteration: see `docs/development.md`.** Run a dev daemon instead
+  of rebuilding the system, and set `QUANTUM_PLUGIN_DIR=src/ui/plugins` so
+  `quantumd` serves plugin views' `dist/` from the working tree (a `pnpm build`
+  + reload, no cargo recompile). Theme widgets already serve from disk;
+  `quantum-dev watch` hot-reloads theme tokens only.
+
+## Continuous Integration
+
+`.github/workflows/ci.yml` builds inside the nix-shell (`shell.nix`) on a pinned
+`nixos-unstable` revision — NOT via apt (the GTK4/WebKitGTK/gtk4-layer-shell
+packages are not apt-installable under those names). Two gotchas that have
+broken CI before; do not reintroduce them:
+- **The frontend build must stay topological — do NOT use `pnpm -r --parallel
+  build`.** The view packages import `@quantum/client`, which must build first;
+  a parallel build races and fails to resolve it on a cold tree.
+- **The Rust step must `cargo build -p quantumd` before `cargo test
+  --workspace`.** The `quantum-e2e` test spawns the compiled
+  `target/debug/quantumd`, which `cargo test --no-run` does *not* produce.
+- Run `devsh.sh cargo fmt --all` before committing Rust — CI runs
+  `cargo fmt --all -- --check` (rustfmt 1.95) and a single unformatted line
+  fails the whole run.
 
 ## Running and Testing the Daemon Locally
 
@@ -156,7 +184,18 @@ Commit per task in the implementation plan. Small commits beat big ones.
 
 - `ProviderSource` trait (in `src/domain/src/ports.rs`) has an optional
   `fn subscribe(&self) -> Option<BoxStream<'static, serde_json::Value>>`.
-  Streaming providers override it; one-shot query providers do not.
+  Streaming providers override it; one-shot query providers do not. It also has
+  an optional `async fn snapshot(&self) -> Option<Value>` for one-shot
+  `provider.query` reads; `QueryProviderUseCase` prefers it and falls back to
+  the stream's first emission. Override `snapshot` when the provider can return
+  its current state cheaply (notifications does).
+- **Seed AND broadcast current state at startup; do not rely on events alone.**
+  A streaming provider whose state is only updated by events shows a default
+  (e.g. workspace `0`) until the first event arrives. Query the real initial
+  state at construction (the hyprland active-window provider seeds the current
+  workspace from `hyprctl monitors -j`'s `activeWorkspace`) AND send it on the
+  broadcast channel so an already-subscribed frontend updates, not just late
+  subscribers picking it up from `subscribe()`/`snapshot()`.
 - `EventBus::publish` takes `(channel: &str, payload: &str)`, not an
   `EventEnvelope`. The daemon's `BroadcastingEventBus` adapter converts
   string payloads to `EventEnvelope` for the broadcast channel.
@@ -176,6 +215,16 @@ Commit per task in the implementation plan. Small commits beat big ones.
   store at `$XDG_STATE_HOME/quantum/timers.json` (atomic temp-file plus rename)
   — the first and only writable store in the project; `ConfigStore` remains
   read-only TOML. Re-armed on startup via `TimerService::load_and_arm`.
+- **Notifications: toast vs center.** A toast is the *transient* popup (it
+  always auto-dismisses); the notification itself lives in the *center* until
+  dismissed. `timeout_ms == 0` means "never expire" — it persists in the center
+  but the toast still auto-dismisses. The provider resolves the D-Bus
+  `expire_timeout` (`-1` server-default vs `0` never) and rejects remote
+  (`http(s)://`) icon URLs before they reach the webview. `action.invoke`
+  commands on the `notifications` provider: `dismiss` (one id), `action`
+  (activate an action), `clear_toasts` (broadcasts `NotificationEvent::
+  ToastsCleared` — display-only, store untouched; the bell sends it when opening
+  the center). The store is capped (`MAX_NOTIFICATIONS`).
 
 ## UI and Frontend Conventions
 
@@ -220,19 +269,23 @@ Commit per task in the implementation plan. Small commits beat big ones.
   reliably under Svelte 5 runes mode.
 - All Svelte views consume IPC through `@quantum/client`. Never reach into
   `window.__quantum_*` directly from view code.
-- **Background-layer widgets honor `ViewPosition`, and `fill_output` fills the
-  monitor.** A non-bar `WidgetWindow` sits on `Layer::Background` and anchors
-  per the descriptor's `ViewPosition` (`Center` maps to top-right for backward
-  compatibility with the clock). Set `fill_output = true` in `view.toml` to make
-  the surface span the whole monitor (anchors all four edges) — required for
-  free-placement / scatter widgets such as the timers view; omit it for
-  content-sized widgets such as the clock.
+- **Widget layer depends on interactivity. `Layer::Background` surfaces are
+  NON-interactive in Hyprland — they receive no pointer clicks and no keyboard.**
+  Content-sized widgets (the clock) sit on `Layer::Background` and anchor per the
+  descriptor's `ViewPosition` (`Center` maps to top-right for the clock). A
+  `fill_output = true` widget that needs interaction (the timers scatter
+  surface: drag, the inline edit/dismiss controls, the edit form) sits on
+  `Layer::Bottom` with `KeyboardMode::OnDemand` instead, so it still renders
+  behind app windows but DOES receive clicks and keyboard. `fill_output` anchors
+  all four edges to span the monitor (see `src/ui/host/src/windows/widget.rs`).
+  If you add an interactive background widget, use Bottom + OnDemand, not
+  Background/None.
 - **Layer-shell surfaces capture pointer input across their whole region, even
-  when transparent.** A mapped overlay/background surface swallows clicks over
-  its area. Until input-region passthrough is implemented (known follow-up),
+  when transparent.** A mapped overlay/bottom surface swallows clicks over its
+  area. Until input-region passthrough is implemented (known follow-up),
   transient surfaces (toasts) must be HIDDEN when empty via `view.hide`, and
-  full-screen background widgets (timers) will capture bare-desktop clicks in
-  their empty regions. Keep this in mind for any new layer-shell window.
+  the full-screen timers surface captures bare-desktop clicks in its empty
+  regions. Keep this in mind for any new layer-shell window.
 - **The `ViewMultiplexer` only auto-opens views with BOTH `per_monitor = true`
   and `auto_show = true`** (`src/binaries/quantumd/src/main.rs`). A
   `per_monitor = false, auto_show = true` view is not opened by the multiplexer;
