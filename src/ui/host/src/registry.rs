@@ -461,6 +461,11 @@ impl<C: WindowConstructor> WindowRegistry<C> {
                     warn!("set_height: view {} not open", view);
                 }
             }
+            WindowRequest::SetInputRegion { .. } => {
+                // Routed through the registry to the target window in a
+                // follow-up step; the message variant and host adapters land
+                // first so the channel plumbing can be tested in isolation.
+            }
             WindowRequest::Close { view } => {
                 match self
                     .windows

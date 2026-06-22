@@ -1,5 +1,5 @@
 use async_trait::async_trait;
-use quantum_domain::{ports::WindowHost, DomainError, WindowMode};
+use quantum_domain::{ports::WindowHost, DomainError, WindowInputRegion, WindowMode};
 use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender};
 
 use crate::messages::WindowRequest;
@@ -41,6 +41,19 @@ impl WindowHost for GtkWindowHost {
             })
             .map_err(|_| DomainError::Unsupported("window host receiver dropped".into()))
     }
+
+    async fn set_view_input_region(
+        &self,
+        view: &str,
+        region: Option<WindowInputRegion>,
+    ) -> Result<(), DomainError> {
+        self.tx
+            .send(WindowRequest::SetInputRegion {
+                view: view.to_string(),
+                region,
+            })
+            .map_err(|_| DomainError::Unsupported("window host receiver dropped".into()))
+    }
 }
 
 /// Dummy window host for headless mode.
@@ -66,6 +79,14 @@ impl WindowHost for DummyWindowHost {
     }
 
     async fn set_view_height(&self, _view: &str, _height: u32) -> Result<(), DomainError> {
+        Ok(())
+    }
+
+    async fn set_view_input_region(
+        &self,
+        _view: &str,
+        _region: Option<WindowInputRegion>,
+    ) -> Result<(), DomainError> {
         Ok(())
     }
 }
@@ -112,6 +133,44 @@ mod tests {
             }
             other => panic!("expected SetHeight, got {other:?}"),
         }
+    }
+
+    #[tokio::test]
+    async fn sends_set_input_region_request_on_channel() {
+        let (host, mut rx) = GtkWindowHost::new();
+        let region = quantum_domain::WindowInputRegion {
+            x: 0,
+            y: 0,
+            width: 300,
+            height: 32,
+        };
+        host.set_view_input_region("widgets/bar", Some(region))
+            .await
+            .unwrap();
+        let msg = rx.recv().await.expect("message");
+        match msg {
+            WindowRequest::SetInputRegion { view, region } => {
+                assert_eq!(view, "widgets/bar");
+                assert_eq!(
+                    region,
+                    Some(quantum_domain::WindowInputRegion {
+                        x: 0,
+                        y: 0,
+                        width: 300,
+                        height: 32,
+                    })
+                );
+            }
+            other => panic!("expected SetInputRegion, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn set_input_region_fails_when_receiver_dropped() {
+        let (host, rx) = GtkWindowHost::new();
+        drop(rx);
+        let result = host.set_view_input_region("widgets/bar", None).await;
+        assert!(result.is_err());
     }
 
     #[tokio::test]
