@@ -2,6 +2,7 @@
   import {
     createClient,
     createTimerStore,
+    openContextMenu,
     type Timer,
     type TimerSettings,
     type Point,
@@ -25,6 +26,53 @@
     client.call("timer.dismiss", { id }).catch((error: unknown) => {
       console.error("timer.dismiss failed", error);
     });
+  }
+
+  function cancel(id: string): void {
+    client.call("timer.cancel", { id }).catch((error: unknown) => {
+      console.error("timer.cancel failed", error);
+    });
+  }
+
+  function dismissAll(): void {
+    client.call("timer.dismiss_all", {}).catch((error: unknown) => {
+      console.error("timer.dismiss_all failed", error);
+    });
+  }
+
+  function openCreate(): void {
+    // Match TimerIndicator: pin the create overlay to this bar's monitor by
+    // appending the per-monitor `@<connector>` suffix when present.
+    const monitor = (window as unknown as { __quantum_monitor?: string })
+      .__quantum_monitor;
+    const name = monitor
+      ? `plugin/timer-create/timer-create@${monitor}`
+      : "plugin/timer-create/timer-create";
+    client.call("view.toggle", { name }).catch((error: unknown) => {
+      console.error(`view.toggle ${name} failed`, error);
+    });
+  }
+
+  // Right-click a timer: quick actions for that specific timer.
+  function timerMenu(event: MouseEvent, timer: Timer): void {
+    openContextMenu(event, [
+      { label: "Edit timer", onSelect: () => (editingId = timer.id) },
+      { label: "Dismiss", onSelect: () => dismiss(timer.id) },
+      { separator: true },
+      { label: "Cancel timer", danger: true, onSelect: () => cancel(timer.id) },
+    ]);
+  }
+
+  // Right-click the empty surface: surface-wide actions.
+  function surfaceMenu(event: MouseEvent): void {
+    openContextMenu(event, [
+      { label: "New timer", onSelect: openCreate },
+      {
+        label: "Dismiss all",
+        disabled: timers.length === 0,
+        onSelect: dismissAll,
+      },
+    ]);
   }
 
   // In-flight scatter overrides keyed by timer id. During a drag we update
@@ -191,9 +239,15 @@
   }
 </script>
 
-<div class="stage {layout}" style={containerStyle}>
+<!-- svelte-ignore a11y_no_static_element_interactions -->
+<div
+  class="stage {layout}"
+  style={containerStyle}
+  oncontextmenu={surfaceMenu}
+>
   {#each timers as timer, index (timer.id)}
     {#if layout === "scatter"}
+      <!-- svelte-ignore a11y_no_static_element_interactions -->
       <div
         class="slot scatter-slot"
         style="left:{scatterPosFor(timer, index).x}px;top:{scatterPosFor(
@@ -201,6 +255,7 @@
           index,
         ).y}px;"
         use:draggable={{ id: timer.id, enabled: true }}
+        oncontextmenu={(event) => timerMenu(event, timer)}
       >
         <TimerVisual
           {timer}
@@ -211,7 +266,8 @@
         />
       </div>
     {:else}
-      <div class="slot">
+      <!-- svelte-ignore a11y_no_static_element_interactions -->
+      <div class="slot" oncontextmenu={(event) => timerMenu(event, timer)}>
         <TimerVisual
           {timer}
           {nowUnix}

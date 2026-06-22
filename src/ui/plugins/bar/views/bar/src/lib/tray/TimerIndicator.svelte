@@ -1,8 +1,7 @@
 <script lang="ts">
-    import { createTimerStore, type Client } from '@quantum/client';
+    import { createTimerStore, openContextMenu, type Client } from '@quantum/client';
     import Icon from '../Icon.svelte';
     import BarButton from '../BarButton.svelte';
-    import { onClick } from './interaction';
 
     interface Props {
         client: Client;
@@ -10,8 +9,6 @@
 
     let { client }: Props = $props();
     let count = $state(0);
-    let menuOpen = $state(false);
-    let root: HTMLElement | undefined = $state(undefined);
     let buttonEl: HTMLButtonElement | undefined = $state(undefined);
 
     $effect(() => {
@@ -21,37 +18,50 @@
         return () => off?.();
     });
 
-    // Right-click opens the quick-actions popover.
-    //
-    // WebKit caveat: `onClick(..., 'right')` (in interaction.ts) calls
-    // `event.preventDefault()` on the `contextmenu` event, which suppresses
-    // WebKitGTK's native context menu for the button. No host-side WebKit
-    // context-menu policy change is required because the popover itself is
-    // plain DOM rendered inside the bar view.
+    // The bar is a thin strip (Layer::Top), so a downward menu is clipped
+    // until the surface grows. ensureSpace/restoreHeight grow this monitor's
+    // bar surface via view.set_height for the lifetime of the menu.
+    const BAR_HEIGHT = 32;
+
+    function barViewName(): string {
+        const monitor = (window as unknown as { __quantum_monitor?: string })
+            .__quantum_monitor;
+        return monitor ? `plugin/bar/bar@${monitor}` : 'plugin/bar/bar';
+    }
+
+    function ensureSpace(neededPixels: number): Promise<void> {
+        return client
+            .call('view.set_height', {
+                name: barViewName(),
+                height: Math.ceil(neededPixels) + 8,
+            })
+            .then(() => undefined);
+    }
+
+    function restoreHeight(): void {
+        client
+            .call('view.set_height', { name: barViewName(), height: BAR_HEIGHT })
+            .catch(() => {});
+    }
+
+    // Right-click opens the quick-actions menu via the shared context-menu
+    // runtime. The runtime calls preventDefault, so WebKitGTK's native menu is
+    // suppressed without any host-side policy change.
     $effect(() => {
         const node = buttonEl;
         if (!node) return;
-        return onClick(node, () => {
-            menuOpen = true;
-        }, 'right');
-    });
-
-    // While the popover is open, close it on Escape or on any click that
-    // lands outside the indicator's root element.
-    $effect(() => {
-        if (!menuOpen) return;
-        const onKeyDown = (event: KeyboardEvent) => {
-            if (event.key === 'Escape') menuOpen = false;
+        const listener = (event: MouseEvent): void => {
+            openContextMenu(
+                event,
+                [
+                    { label: 'Open timers', onSelect: openCreate },
+                    { label: 'Dismiss all', onSelect: dismissAll },
+                ],
+                { ensureSpace, onClose: restoreHeight },
+            );
         };
-        const onDocumentClick = (event: MouseEvent) => {
-            if (root && !root.contains(event.target as Node)) menuOpen = false;
-        };
-        window.addEventListener('keydown', onKeyDown);
-        document.addEventListener('click', onDocumentClick);
-        return () => {
-            window.removeEventListener('keydown', onKeyDown);
-            document.removeEventListener('click', onDocumentClick);
-        };
+        node.addEventListener('contextmenu', listener);
+        return () => node.removeEventListener('contextmenu', listener);
     });
 
     function badgeLabel(n: number): string {
@@ -75,21 +85,15 @@
     }
 
     async function dismissAll(): Promise<void> {
-        menuOpen = false;
         try {
             await client.call('timer.dismiss_all', {});
         } catch (err) {
             console.error('timer.dismiss_all failed:', err);
         }
     }
-
-    async function openFromMenu(): Promise<void> {
-        menuOpen = false;
-        await openCreate();
-    }
 </script>
 
-<div class="timer-root" bind:this={root}>
+<div class="timer-root">
     <BarButton ariaLabel="Timers" onclick={openCreate} bindRef={(el) => (buttonEl = el)}>
         <span class="timer-icon">
             <Icon name="timer" size={18} />
@@ -98,12 +102,6 @@
             {/if}
         </span>
     </BarButton>
-    {#if menuOpen}
-        <div class="timer-menu" role="menu">
-            <button type="button" role="menuitem" onclick={dismissAll}>Dismiss all</button>
-            <button type="button" role="menuitem" onclick={openFromMenu}>Open timers</button>
-        </div>
-    {/if}
 </div>
 
 <style>
@@ -134,39 +132,5 @@
         font-size: 10px;
         line-height: 1;
         font-weight: 600;
-    }
-    .timer-menu {
-        position: absolute;
-        top: calc(100% + 6px);
-        right: 0;
-        z-index: 10;
-        display: flex;
-        flex-direction: column;
-        min-width: 140px;
-        padding: 4px;
-        border-radius: 10px;
-        background: var(--color-surface, hsla(230, 14%, 22%, 0.98));
-        border: 1px solid rgba(255, 255, 255, 0.08);
-        box-shadow: 0 6px 18px rgba(0, 0, 0, 0.35);
-    }
-    .timer-menu button {
-        display: block;
-        width: 100%;
-        text-align: left;
-        background: transparent;
-        border: none;
-        border-radius: 6px;
-        padding: 6px 10px;
-        color: var(--color-fg-alt, #a6adc8);
-        font-family: inherit;
-        font-size: inherit;
-        line-height: 1.2;
-        cursor: pointer;
-    }
-    .timer-menu button:hover,
-    .timer-menu button:focus-visible {
-        background: var(--color-surface-hover, hsla(230, 14%, 42%, 1));
-        color: var(--color-fg, #cdd6f4);
-        outline: none;
     }
 </style>

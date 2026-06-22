@@ -6,9 +6,10 @@
     items: Match[];
     highlighted: number;
     onSelect: (item: Match) => void;
+    onContext?: (event: MouseEvent, item: Match) => void;
   }
 
-  let { items = [], highlighted = 0, onSelect }: Props = $props();
+  let { items = [], highlighted = 0, onSelect, onContext }: Props = $props();
 
   function handleClick(item: Match) {
     onSelect(item);
@@ -28,6 +29,7 @@
       tabindex="-1"
       aria-selected={index === highlighted ? 'true' : 'false'}
       onclick={() => handleClick(item)}
+      oncontextmenu={onContext ? (event) => onContext(event, item) : undefined}
     >
       {#if resolveIcon(item.icon)}
         <img class="icon" src={resolveIcon(item.icon)} alt="" loading="lazy" onerror={() => (item.icon = undefined)} />

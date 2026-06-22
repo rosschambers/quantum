@@ -1,5 +1,5 @@
 <script lang="ts">
-    import { createClient } from '@quantum/client';
+    import { createClient, openContextMenu, type MenuItem } from '@quantum/client';
     import { WIFI_PROVIDER, WIFI_CHANNEL } from './lib/channels';
     import type { WifiState, WifiNetwork, SavedNetwork, Ipv4Method } from './lib/types';
     import NetworkRow from './lib/NetworkRow.svelte';
@@ -228,12 +228,47 @@
         passwordFor = null;
         hiddenOpen = false;
     }
+
+    // Right-click an available network: connect, autoconnect toggle, forget.
+    function networkMenu(event: MouseEvent, network: WifiNetwork): void {
+        const saved = state.saved.find((entry) => entry.ssid === network.ssid);
+        const items: MenuItem[] = [];
+        if (!network.active) {
+            items.push({ label: 'Connect', onSelect: () => onNetworkSelect(network) });
+        }
+        if (saved) {
+            items.push({
+                label: saved.autoconnect ? 'Disable autoconnect' : 'Enable autoconnect',
+                onSelect: () => onSetAutoconnect(saved.id, !saved.autoconnect),
+            });
+            items.push({ separator: true });
+            items.push({
+                label: 'Forget network',
+                danger: true,
+                onSelect: () => onForget(saved.id),
+            });
+        }
+        if (items.length === 0) return;
+        openContextMenu(event, items);
+    }
+
+    // Right-click the header: rescan and toggle the radio.
+    function headerMenu(event: MouseEvent): void {
+        openContextMenu(event, [
+            { label: 'Rescan', disabled: !state.radio_enabled, onSelect: rescan },
+            {
+                label: state.radio_enabled ? 'Turn Wi-Fi off' : 'Turn Wi-Fi on',
+                onSelect: toggleRadio,
+            },
+        ]);
+    }
 </script>
 
 <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
 <div class="backdrop" onclick={onBackdropClick}>
     <div class="card" role="dialog" aria-label="Wi-Fi">
-        <div class="card-head">
+        <!-- svelte-ignore a11y_no_static_element_interactions -->
+        <div class="card-head" oncontextmenu={headerMenu}>
             <span class="title">Wi-Fi</span>
             <span class="toggle-pill">
                 {state.radio_enabled ? 'On' : 'Off'}
@@ -320,14 +355,20 @@
                         <div class="empty">Searching for networks...</div>
                     {/if}
                     {#each state.networks as network (rowKey(network))}
-                        <NetworkRow
-                            {network}
-                            status={status[rowKey(network)] ?? null}
-                            onSelect={() => onNetworkSelect(network)}
-                            onSettings={network.saved
-                                ? () => openAdvancedForNetwork(network)
-                                : null}
-                        />
+                        <!-- svelte-ignore a11y_no_static_element_interactions -->
+                        <div
+                            class="row-context"
+                            oncontextmenu={(event) => networkMenu(event, network)}
+                        >
+                            <NetworkRow
+                                {network}
+                                status={status[rowKey(network)] ?? null}
+                                onSelect={() => onNetworkSelect(network)}
+                                onSettings={network.saved
+                                    ? () => openAdvancedForNetwork(network)
+                                    : null}
+                            />
+                        </div>
                         {#if passwordFor === rowKey(network)}
                             <PasswordForm
                                 ssid={network.ssid}

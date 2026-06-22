@@ -1,5 +1,11 @@
 <script lang="ts">
-    import { createClient, createNotificationStore, type PendingNotification } from '@quantum/client';
+    import {
+        createClient,
+        createNotificationStore,
+        openContextMenu,
+        type MenuItem,
+        type PendingNotification,
+    } from '@quantum/client';
 
     const client = createClient();
 
@@ -68,12 +74,41 @@
             })
             .catch(() => {});
     }
+
+    // Right-click a notification: its own actions plus Dismiss.
+    function notificationMenu(event: MouseEvent, notification: PendingNotification): void {
+        const items: MenuItem[] = notification.actions.map(([key, label]) => ({
+            label,
+            onSelect: () => invokeAction(notification.id, key),
+        }));
+        if (items.length > 0) {
+            items.push({ separator: true });
+        }
+        items.push({
+            label: 'Dismiss',
+            danger: true,
+            onSelect: () => dismiss(notification.id),
+        });
+        openContextMenu(event, items);
+    }
+
+    // Right-click the header: clear everything.
+    function headerMenu(event: MouseEvent): void {
+        openContextMenu(event, [
+            {
+                label: 'Dismiss all',
+                disabled: notifications.length === 0,
+                onSelect: dismissAll,
+            },
+        ]);
+    }
 </script>
 
 <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
 <div class="backdrop" onclick={onBackdropClick}>
     <div class="panel" role="dialog" aria-label="Notifications">
-        <header class="panel-header">
+        <!-- svelte-ignore a11y_no_static_element_interactions -->
+        <header class="panel-header" oncontextmenu={headerMenu}>
             <span class="panel-title">Notifications</span>
             {#if notifications.length > 0}
                 <button class="dismiss-all" onclick={dismissAll}>Dismiss all</button>
@@ -85,7 +120,11 @@
         {:else}
             <div class="list">
                 {#each notifications as notification (notification.id)}
-                    <div class="card urgency-{notification.urgency}">
+                    <!-- svelte-ignore a11y_no_static_element_interactions -->
+                    <div
+                        class="card urgency-{notification.urgency}"
+                        oncontextmenu={(event) => notificationMenu(event, notification)}
+                    >
                         <div class="icon" aria-hidden="true">
                             {#if notification.icon}
                                 <img src={notification.icon} alt="" />

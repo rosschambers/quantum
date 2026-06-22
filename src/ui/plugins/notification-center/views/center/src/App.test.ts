@@ -1,7 +1,7 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, fireEvent } from '@testing-library/svelte/svelte5';
 import { tick } from 'svelte';
-import type { PendingNotification } from '@quantum/client';
+import { closeContextMenu, type PendingNotification } from '@quantum/client';
 
 /*
  * Module-level mock state. `beforeEach` resets these so the `vi.mock`
@@ -17,25 +17,32 @@ function emit(list: PendingNotification[]): void {
     for (const callback of storeSubscribers) callback(list);
 }
 
-vi.mock('@quantum/client', () => ({
-    createClient: () => ({
-        call: (...args: unknown[]) => {
-            mockCallSpy(...args);
-            return Promise.resolve(undefined);
-        },
-        subscribe: () => () => {},
-        close: vi.fn(),
-    }),
-    createNotificationStore: () => ({
-        subscribe: (callback: (list: PendingNotification[]) => void) => {
-            storeSubscribers.push(callback);
-            return () => {
-                storeSubscribers = storeSubscribers.filter((entry) => entry !== callback);
-            };
-        },
-    }),
-    __esModule: true,
-}));
+// Spread the actual module so the real context-menu runtime
+// (openContextMenu/closeContextMenu) stays intact; only the client and store
+// factories are stubbed.
+vi.mock('@quantum/client', async (importActual) => {
+    const actual = await importActual<typeof import('@quantum/client')>();
+    return {
+        ...actual,
+        createClient: () => ({
+            call: (...args: unknown[]) => {
+                mockCallSpy(...args);
+                return Promise.resolve(undefined);
+            },
+            subscribe: () => () => {},
+            close: vi.fn(),
+        }),
+        createNotificationStore: () => ({
+            subscribe: (callback: (list: PendingNotification[]) => void) => {
+                storeSubscribers.push(callback);
+                return () => {
+                    storeSubscribers = storeSubscribers.filter((entry) => entry !== callback);
+                };
+            },
+        }),
+        __esModule: true,
+    };
+});
 
 import App from './App.svelte';
 
@@ -56,6 +63,10 @@ function makeNotification(overrides: Partial<PendingNotification> = {}): Pending
 beforeEach(() => {
     mockCallSpy = vi.fn();
     storeSubscribers = [];
+});
+
+afterEach(() => {
+    closeContextMenu();
 });
 
 describe('NotificationCenter App', () => {
@@ -165,6 +176,38 @@ describe('NotificationCenter App', () => {
             id: 3,
             action_key: 'reply',
         });
+    });
+
+    it('right-click on a card opens a menu whose Dismiss calls action.invoke', async () => {
+        const { container } = render(App);
+        await tick();
+        emit([makeNotification({ id: 5, app_name: 'Spotify' })]);
+        await tick();
+
+        expect(document.querySelector('[data-quantum-context-menu]')).toBeNull();
+        await fireEvent.contextMenu(container.querySelector('.card') as HTMLElement);
+        await tick();
+
+        const menu = document.querySelector('[data-quantum-context-menu]');
+        expect(menu).not.toBeNull();
+        const dismiss = Array.from(menu!.querySelectorAll('[role="menuitem"]')).find((el) =>
+            el.textContent?.includes('Dismiss'),
+        ) as HTMLButtonElement;
+        expect(dismiss).toBeTruthy();
+        await fireEvent.click(dismiss);
+        await tick();
+
+        const invokeCall = mockCallSpy.mock.calls.find(
+            ([method, params]) =>
+                method === 'action.invoke' &&
+                (params as { action?: { data?: { payload?: { command?: string } } } }).action?.data
+                    ?.payload?.command === 'dismiss',
+        );
+        expect(invokeCall).toBeDefined();
+        const params = invokeCall![1] as {
+            action?: { data?: { payload?: { command?: string; id?: number } } };
+        };
+        expect(params.action?.data?.payload).toEqual({ command: 'dismiss', id: 5 });
     });
 
     it('backdrop click calls view.hide with the base center name', async () => {

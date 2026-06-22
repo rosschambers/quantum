@@ -1,7 +1,7 @@
 <script lang="ts">
   // Consuming real @quantum/client APIs for search, action.invoke, and view.hide.
   // In browser, the client auto-detects WebKit bridge. In tests, it's mocked.
-  import { createClient } from '@quantum/client';
+  import { createClient, openContextMenu } from '@quantum/client';
   import { onMount, untrack } from 'svelte';
   import SearchInput from './lib/SearchInput.svelte';
   import Results from './lib/Results.svelte';
@@ -93,6 +93,19 @@
     }
   }
 
+  // Right-click a result: open it, or copy its name without launching.
+  function resultMenu(event: MouseEvent, match: Match) {
+    openContextMenu(event, [
+      { label: 'Open', onSelect: () => invokeAction(match) },
+      {
+        label: 'Copy name',
+        onSelect: () => {
+          navigator.clipboard?.writeText(match.title).catch(() => {});
+        },
+      },
+    ]);
+  }
+
   $effect(() => {
     // Clamp highlighted index if matches length changes
     if (matches.length > 0) {
@@ -147,6 +160,7 @@
           items={matches}
           highlighted={highlightedIndex}
           onSelect={invokeAction}
+          onContext={resultMenu}
         />
       {:else if isLoading}
         <div class="loading">Searching...</div>
