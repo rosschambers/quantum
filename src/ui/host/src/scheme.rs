@@ -71,6 +71,10 @@ pub fn register_quantum_scheme(context: &WebContext, theme_store: Arc<dyn ThemeS
             let tokens = theme_store.resolved_tokens();
             let mut injected = inject_tokens(&html, &tokens);
             if is_plugin {
+                // Third-party plugin pages may lack the token placeholder;
+                // guarantee a `#quantum-tokens` block so shared UI themes and
+                // live-reloads. No-op for pages that already have one.
+                injected = ensure_token_style(&injected, &tokens);
                 injected = inject_plugin_client(&injected);
             }
             injected.into_bytes()
@@ -423,6 +427,46 @@ pub fn inject_tokens(html: &str, tokens: &std::collections::HashMap<String, Stri
     html.replace("/* QUANTUM_TOKENS */", &css)
 }
 
+/// Ensure plugin HTML carries a `#quantum-tokens` style block.
+///
+/// First-party views embed a `<style id="quantum-tokens">/* QUANTUM_TOKENS */
+/// </style>` placeholder that [`inject_tokens`] fills. Third-party plugin pages
+/// may have no placeholder, leaving them with no theme variables and no target
+/// for live theme reloads ([`token_push_js`] looks the element up by id). This
+/// injects a filled block when the page does not already declare one, so shared
+/// UI (notably the context menu) themes correctly and recolors on reload.
+///
+/// No-op when an element with id `quantum-tokens` is already present (the
+/// placeholder having been filled, or the page declaring its own).
+pub fn ensure_token_style(
+    html: &str,
+    tokens: &std::collections::HashMap<String, String>,
+) -> String {
+    if html.contains("quantum-tokens") {
+        return html.to_string();
+    }
+    let css = quantum_domain::tokens_to_css(tokens);
+    let block = format!("<style id=\"quantum-tokens\">{css}</style>");
+    if let Some(idx) = html.find("</head>") {
+        let mut out = String::with_capacity(html.len() + block.len());
+        out.push_str(&html[..idx]);
+        out.push_str(&block);
+        out.push_str(&html[idx..]);
+        return out;
+    }
+    if let Some(idx) = html.find('>') {
+        let mut out = String::with_capacity(html.len() + block.len());
+        out.push_str(&html[..=idx]);
+        out.push_str(&block);
+        out.push_str(&html[idx + 1..]);
+        return out;
+    }
+    let mut out = String::with_capacity(html.len() + block.len());
+    out.push_str(&block);
+    out.push_str(html);
+    out
+}
+
 /// Build a JavaScript statement that replaces the live token stylesheet's
 /// content with `css`.
 ///
@@ -485,6 +529,32 @@ mod inject_tests {
         assert!(js.contains("\\\""));
         // The raw newline must not survive into the emitted statement.
         assert!(!js.contains("\n  --x"));
+    }
+
+    #[test]
+    fn ensure_token_style_injects_block_when_absent() {
+        // A third-party page with no `/* QUANTUM_TOKENS */` placeholder still
+        // gets a filled `#quantum-tokens` style block so its menus theme and
+        // live-reload (token_push_js looks the element up by id).
+        let html = "<html><head><title>x</title></head><body></body></html>";
+        let mut t = HashMap::new();
+        t.insert("color-surface".into(), "#222".into());
+        let out = ensure_token_style(html, &t);
+        assert!(out.contains(r#"id="quantum-tokens""#));
+        assert!(out.contains("--color-surface: #222;"));
+        // Injected into the head, before the body.
+        let style_pos = out.find("quantum-tokens").expect("present");
+        let body_pos = out.find("<body>").expect("present");
+        assert!(style_pos < body_pos, "token style must precede the body");
+    }
+
+    #[test]
+    fn ensure_token_style_noop_when_already_present() {
+        // A page that already declares the element (for example a first-party
+        // view after placeholder replacement) is left untouched.
+        let html = r#"<style id="quantum-tokens">:root { --color-bg: #fff; }</style>"#;
+        let out = ensure_token_style(html, &HashMap::new());
+        assert_eq!(out, html);
     }
 
     #[test]
