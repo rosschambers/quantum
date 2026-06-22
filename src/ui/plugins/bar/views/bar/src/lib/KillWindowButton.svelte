@@ -27,10 +27,10 @@
                 provider: 'shell',
                 action: { kind: 'shell', data: { command, terminal: false } },
             })
-            .catch((err) => console.error(`${command.join(' ')} failed:`, err));
+            .catch((error) => console.error(`${command.join(' ')} failed:`, error));
     }
 
-    async function invokeKill(): Promise<void> {
+    function invokeKill(): void {
         runShell(['hyprctl', 'kill']);
     }
 
@@ -46,8 +46,8 @@
                 id: 'hyprland-windows',
             })) as WindowList | undefined;
             return result?.windows ?? [];
-        } catch (err) {
-            console.error('window list query failed:', err);
+        } catch (error) {
+            console.error('window list query failed:', error);
             return [];
         }
     }

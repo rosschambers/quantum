@@ -152,4 +152,32 @@ describe('KillWindowButton', () => {
 		expect(menuItem('Kill active window')).toBeTruthy();
 		expect(menuItem('Pick window to kill')).toBeTruthy();
 	});
+
+	it('dismissing the menu without selecting performs no kill', async () => {
+		const windows: WindowListEntry[] = [
+			{
+				address: '0xabc',
+				class: 'firefox',
+				title: 'Mozilla Firefox',
+				workspace_id: 1,
+				workspace_name: '1',
+			},
+		];
+		const { client } = mockClientWithWindows(windows);
+		const { container } = render(KillWindowButton, { props: { client } });
+		const btn = container.querySelector('.bar-button') as HTMLButtonElement;
+		flushSync();
+
+		btn.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true }));
+		await waitForMenu();
+		expect(menuItem('firefox')).toBeTruthy();
+
+		// Dismiss the menu without selecting any item.
+		closeContextMenu();
+
+		const invokeCalls = client.call.mock.calls.filter(
+			(args: unknown[]) => args[0] === 'action.invoke',
+		);
+		expect(invokeCalls).toHaveLength(0);
+	});
 });
