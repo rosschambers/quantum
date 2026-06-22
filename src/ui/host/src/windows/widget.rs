@@ -8,7 +8,9 @@ use gtk4::gio;
 use gtk4::glib;
 use gtk4::prelude::*;
 use gtk4_layer_shell::{Edge, KeyboardMode, Layer, LayerShell};
-use quantum_domain::{ports::ThemeStore, EventEnvelope, ViewAnchor, ViewPosition, WindowInputRegion};
+use quantum_domain::{
+    ports::ThemeStore, EventEnvelope, ViewAnchor, ViewPosition, WindowInputRegion,
+};
 use std::cell::Cell;
 use std::rc::Rc;
 use std::sync::Arc;
