@@ -67,7 +67,13 @@
                     { label: 'Open timers', onSelect: openCreate },
                     { label: 'Dismiss all', onSelect: dismissAll },
                 ],
-                { onPlaced: expandInputRegion, onClose: resetInputRegion },
+                {
+                    // Drop the menu down from the button (true dropdown) rather
+                    // than the click point on the icon.
+                    anchorRect: node.getBoundingClientRect(),
+                    onPlaced: expandInputRegion,
+                    onClose: resetInputRegion,
+                },
             );
         };
         node.addEventListener('contextmenu', listener);

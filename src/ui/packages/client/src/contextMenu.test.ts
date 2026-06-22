@@ -177,6 +177,15 @@ describe('options', () => {
     expect(menuRoot()!.style.visibility).toBe('');
   });
 
+  it('drops down from the anchor rect bottom-left, ignoring the cursor', () => {
+    openContextMenu(rightClickAt(300, 400), [{ label: 'X' }], {
+      anchorRect: { x: 50, y: 0, width: 40, height: 30 },
+    });
+    const root = menuRoot()!;
+    expect(root.style.left).toBe('50px');
+    expect(root.style.top).toBe('30px');
+  });
+
   it('calls onPlaced exactly once with a numeric rectangle on open', () => {
     const onPlaced = vi.fn();
     openContextMenu(rightClickAt(10, 10), [{ label: 'X' }], { onPlaced });

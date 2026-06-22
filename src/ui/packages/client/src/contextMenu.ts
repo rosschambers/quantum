@@ -40,6 +40,14 @@ export interface MenuOptions {
    * menu so it is clickable.
    */
   onPlaced?: (rect: { x: number; y: number; width: number; height: number }) => void;
+  /**
+   * Optional anchor rectangle (for example a triggering button's bounding
+   * box). When given, the menu drops down from the anchor's bottom-left edge
+   * instead of the cursor position, giving a true dropdown for toolbar/bar
+   * buttons. Still clamped to the viewport. Omit for cursor placement (the
+   * default for right-click menus on roomy surfaces).
+   */
+  anchorRect?: { x: number; y: number; width: number; height: number };
 }
 
 interface ActiveMenu {
@@ -227,24 +235,31 @@ export function openContextMenu(event: MouseEvent, items: MenuItem[], options?: 
   }
   doc.body.appendChild(root);
 
+  // Placement origin: a bar/toolbar button passes its anchor rectangle so the
+  // menu drops down from just below the button; otherwise the cursor is used.
+  const originX = options?.anchorRect ? options.anchorRect.x : event.clientX;
+  const originY = options?.anchorRect
+    ? options.anchorRect.y + options.anchorRect.height
+    : event.clientY;
+
   if (options?.ensureSpace) {
     // The surface must grow before the menu can be placed: positioning now
     // would clamp it against the pre-grow viewport (a thin bar forces it to
     // the top), then it would visibly jump once the surface grows. Keep it
     // hidden until the grow resolves, then position and reveal in one paint.
     root.style.visibility = 'hidden';
-    const needed = Math.ceil(event.clientY + root.getBoundingClientRect().height);
+    const needed = Math.ceil(originY + root.getBoundingClientRect().height);
     const reveal = (): void => {
       if (active?.root !== root) {
         return;
       }
-      position(doc, root, event.clientX, event.clientY);
+      position(doc, root, originX, originY);
       root.style.visibility = '';
       reportPlacement(root, options);
     };
     options.ensureSpace(needed).then(reveal).catch(reveal);
   } else {
-    position(doc, root, event.clientX, event.clientY);
+    position(doc, root, originX, originY);
     reportPlacement(root, options);
   }
 
