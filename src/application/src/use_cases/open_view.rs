@@ -51,10 +51,12 @@ mod tests {
     use quantum_domain::{DomainError, WindowInputRegion};
     use std::sync::Mutex;
 
+    type InputRegionCalls = Arc<Mutex<Vec<(String, Option<WindowInputRegion>)>>>;
+
     #[derive(Clone, Default)]
     struct FakeWindowHost {
         calls: Arc<Mutex<Vec<(String, String)>>>,
-        input_region_calls: Arc<Mutex<Vec<(String, Option<WindowInputRegion>)>>>,
+        input_region_calls: InputRegionCalls,
         should_fail: bool,
     }
 
