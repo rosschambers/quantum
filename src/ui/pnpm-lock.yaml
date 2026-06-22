@@ -13,6 +13,9 @@ importers:
       '@types/node':
         specifier: ^20.0.0
         version: 20.19.41
+      jsdom:
+        specifier: ^29.1.1
+        version: 29.1.1
       typescript:
         specifier: ^5.6.0
         version: 5.9.3

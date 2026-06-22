@@ -109,6 +109,13 @@ export function createClient(options?: { transport?: Transport }): Client {
 }
 
 export {
+  openContextMenu,
+  closeContextMenu,
+  clampToViewport,
+  type MenuItem,
+  type MenuOptions,
+} from './contextMenu';
+export {
   createNotificationStore,
   type PendingNotification,
   type NotificationChange,
