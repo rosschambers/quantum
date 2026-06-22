@@ -1,5 +1,5 @@
 use crate::Result;
-use quantum_domain::{WindowHost, WindowMode};
+use quantum_domain::{WindowHost, WindowInputRegion, WindowMode};
 use std::sync::Arc;
 
 pub struct OpenViewUseCase {
@@ -27,18 +27,34 @@ impl OpenViewUseCase {
             .await
             .map_err(crate::ApplicationError::Domain)
     }
+
+    /// Forward a runtime input-region request to the window host. Used by the
+    /// `view.set_input_region` IPC method so the bar can clip its full-height
+    /// surface's pointer input to the visible strip (plus any open menu).
+    /// `None` resets the region to the strip-only default.
+    pub async fn set_input_region(
+        &self,
+        view_name: String,
+        region: Option<WindowInputRegion>,
+    ) -> Result<()> {
+        self.window_host
+            .set_view_input_region(&view_name, region)
+            .await
+            .map_err(crate::ApplicationError::Domain)
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use async_trait::async_trait;
-    use quantum_domain::DomainError;
+    use quantum_domain::{DomainError, WindowInputRegion};
     use std::sync::Mutex;
 
-    #[derive(Clone)]
+    #[derive(Clone, Default)]
     struct FakeWindowHost {
         calls: Arc<Mutex<Vec<(String, String)>>>,
+        input_region_calls: Arc<Mutex<Vec<(String, Option<WindowInputRegion>)>>>,
         should_fail: bool,
     }
 
@@ -66,6 +82,18 @@ mod tests {
         ) -> std::result::Result<(), DomainError> {
             Ok(())
         }
+
+        async fn set_view_input_region(
+            &self,
+            view: &str,
+            region: Option<WindowInputRegion>,
+        ) -> std::result::Result<(), DomainError> {
+            self.input_region_calls
+                .lock()
+                .unwrap()
+                .push((view.to_string(), region));
+            Ok(())
+        }
     }
 
     #[tokio::test]
@@ -73,6 +101,7 @@ mod tests {
         let host = FakeWindowHost {
             calls: Arc::new(Mutex::new(Vec::new())),
             should_fail: false,
+            ..Default::default()
         };
 
         let uc = OpenViewUseCase::new(Arc::new(host.clone()));
@@ -86,10 +115,33 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn set_input_region_forwards_to_window_host() {
+        let host = FakeWindowHost::default();
+
+        let uc = OpenViewUseCase::new(Arc::new(host.clone()));
+        let region = WindowInputRegion {
+            x: 0,
+            y: 0,
+            width: 300,
+            height: 32,
+        };
+        let result = uc
+            .set_input_region("plugin/bar/bar".to_string(), Some(region))
+            .await;
+
+        assert!(result.is_ok());
+        let calls = host.input_region_calls.lock().unwrap();
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].0, "plugin/bar/bar".to_string());
+        assert_eq!(calls[0].1, Some(region));
+    }
+
+    #[tokio::test]
     async fn execute_with_hide_mode_calls_window_host_open_with_hide() {
         let host = FakeWindowHost {
             calls: Arc::new(Mutex::new(Vec::new())),
             should_fail: false,
+            ..Default::default()
         };
 
         let uc = OpenViewUseCase::new(Arc::new(host.clone()));
@@ -107,6 +159,7 @@ mod tests {
         let host = FakeWindowHost {
             calls: Arc::new(Mutex::new(Vec::new())),
             should_fail: false,
+            ..Default::default()
         };
 
         let uc = OpenViewUseCase::new(Arc::new(host.clone()));
@@ -124,6 +177,7 @@ mod tests {
         let host = FakeWindowHost {
             calls: Arc::new(Mutex::new(Vec::new())),
             should_fail: true,
+            ..Default::default()
         };
 
         let uc = OpenViewUseCase::new(Arc::new(host.clone()));

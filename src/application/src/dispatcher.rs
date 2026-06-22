@@ -85,6 +85,7 @@ impl Dispatcher {
             "view.show" => self.handle_view(params, WindowMode::Show).await,
             "view.hide" => self.handle_view(params, WindowMode::Hide).await,
             "view.set_height" => self.handle_view_set_height(params).await,
+            "view.set_input_region" => self.handle_view_set_input_region(params).await,
             "theme.reload" => self.handle_theme_reload(params).await,
             "theme.set" => self.handle_theme_set(params).await,
             "plugin.reload" => self.handle_plugin_reload(params).await,
@@ -146,6 +147,19 @@ impl Dispatcher {
         let params: SetHeightParams = parse_params(params, "view.set_height")?;
         self.open_view
             .set_height(params.name, params.height)
+            .await?;
+        Ok(json!({}))
+    }
+
+    async fn handle_view_set_input_region(&self, params: Option<&RawValue>) -> Result<Value> {
+        #[derive(serde::Deserialize)]
+        struct SetInputRegionParams {
+            name: String,
+            region: Option<quantum_domain::WindowInputRegion>,
+        }
+        let params: SetInputRegionParams = parse_params(params, "view.set_input_region")?;
+        self.open_view
+            .set_input_region(params.name, params.region)
             .await?;
         Ok(json!({}))
     }
@@ -410,6 +424,14 @@ mod tests {
         ) -> std::result::Result<(), DomainError> {
             Ok(())
         }
+
+        async fn set_view_input_region(
+            &self,
+            _view: &str,
+            _region: Option<quantum_domain::WindowInputRegion>,
+        ) -> std::result::Result<(), DomainError> {
+            Ok(())
+        }
     }
 
     struct FakePluginCatalog;
@@ -591,6 +613,31 @@ mod tests {
         let dispatcher = build_dispatcher();
         let params = raw(json!({ "name": "launcher" }));
         let resp = dispatcher.dispatch("view.hide", Some(&params)).await;
+
+        assert!(resp.is_ok());
+    }
+
+    #[tokio::test]
+    async fn dispatches_view_set_input_region() {
+        let dispatcher = build_dispatcher();
+        let params = raw(json!({
+            "name": "plugin/bar/bar",
+            "region": { "x": 0, "y": 0, "width": 300, "height": 32 }
+        }));
+        let resp = dispatcher
+            .dispatch("view.set_input_region", Some(&params))
+            .await;
+
+        assert!(resp.is_ok());
+    }
+
+    #[tokio::test]
+    async fn dispatches_view_set_input_region_with_null_region() {
+        let dispatcher = build_dispatcher();
+        let params = raw(json!({ "name": "plugin/bar/bar", "region": null }));
+        let resp = dispatcher
+            .dispatch("view.set_input_region", Some(&params))
+            .await;
 
         assert!(resp.is_ok());
     }
