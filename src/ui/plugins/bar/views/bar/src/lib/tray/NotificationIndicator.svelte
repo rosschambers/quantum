@@ -1,21 +1,76 @@
 <script lang="ts">
-    import { createNotificationStore, type Client } from '@quantum/client';
+    import {
+        createNotificationStore,
+        type Client,
+        type MenuItem,
+        type PendingNotification,
+    } from '@quantum/client';
     import Icon from '../Icon.svelte';
     import BarButton from '../BarButton.svelte';
+    import { monitorView, wireBarMenu } from './barMenu';
 
     interface Props {
         client: Client;
     }
 
     let { client }: Props = $props();
-    let count = $state(0);
+    let notifications: PendingNotification[] = $state([]);
+    let buttonEl: HTMLButtonElement | undefined = $state(undefined);
+    let count = $derived(notifications.length);
 
     $effect(() => {
         const off = createNotificationStore(client).subscribe((list) => {
-            count = list.length;
+            notifications = list;
         });
         return () => off?.();
     });
+
+    // Right-click opens quick actions built from the current notification list.
+    $effect(() => {
+        const node = buttonEl;
+        if (!node) return;
+        return wireBarMenu(node, client, buildMenuItems);
+    });
+
+    function buildMenuItems(): MenuItem[] {
+        return [
+            {
+                label: `Dismiss all (${count})`,
+                disabled: count === 0,
+                onSelect: dismissAll,
+            },
+            { label: 'Clear toasts', onSelect: clearToasts },
+            { separator: true, label: '' },
+            { label: 'Open notifications', onSelect: openCenter },
+        ];
+    }
+
+    function invoke(payload: Record<string, unknown>): Promise<unknown> {
+        return client.call('action.invoke', {
+            provider: 'notifications',
+            action: {
+                kind: 'custom',
+                data: { kind: 'notifications', payload },
+            },
+        });
+    }
+
+    function dismissAll(): void {
+        // Snapshot the list first so concurrent updates do not skip ids, the
+        // same way the notification center dismisses everything.
+        const ids = notifications.map((notification) => notification.id);
+        for (const id of ids) {
+            invoke({ command: 'dismiss', id }).catch((err) =>
+                console.error('notifications dismiss failed:', err),
+            );
+        }
+    }
+
+    function clearToasts(): void {
+        invoke({ command: 'clear_toasts' }).catch((err) =>
+            console.error('clear_toasts failed:', err),
+        );
+    }
 
     function badgeLabel(n: number): string {
         return n > 9 ? '9+' : String(n);
@@ -26,10 +81,7 @@
         // global (e.g. "DP-1") by the WebView host. Append it as an
         // `@monitor` suffix so the registry pins the notification center to
         // the same monitor as the bar that triggered it.
-        const monitor = window.__quantum_monitor;
-        const name = monitor
-            ? `plugin/notification-center/center@${monitor}`
-            : 'plugin/notification-center/center';
+        const name = monitorView('plugin/notification-center/center');
         try {
             await client.call('view.toggle', { name });
         } catch (err) {
@@ -52,7 +104,7 @@
     }
 </script>
 
-<BarButton ariaLabel="Notifications" onclick={openCenter}>
+<BarButton ariaLabel="Notifications" onclick={openCenter} bindRef={(el) => (buttonEl = el)}>
     <span class="notification-icon">
         <Icon name="bell" size={18} />
         {#if count > 0}

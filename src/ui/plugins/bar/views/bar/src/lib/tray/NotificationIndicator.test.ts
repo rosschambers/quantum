@@ -1,7 +1,18 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { render, fireEvent } from '@testing-library/svelte/svelte5';
 import { tick } from 'svelte';
+import { closeContextMenu } from '@quantum/client';
 import NotificationIndicator from './NotificationIndicator.svelte';
+
+function contextMenu(): HTMLElement | null {
+    return document.querySelector('[data-quantum-context-menu]');
+}
+
+function menuItem(text: string): HTMLButtonElement | undefined {
+    return Array.from(
+        document.querySelectorAll('[data-quantum-context-menu] [role="menuitem"]'),
+    ).find((el) => el.textContent?.includes(text)) as HTMLButtonElement | undefined;
+}
 
 /**
  * Build a hand-rolled mock client that captures the subscription
@@ -32,6 +43,7 @@ function makeMockClient() {
 }
 
 afterEach(() => {
+    closeContextMenu();
     (window as unknown as { __quantum_monitor?: string }).__quantum_monitor = undefined;
 });
 
@@ -84,6 +96,44 @@ describe('NotificationIndicator', () => {
 
         expect(call).toHaveBeenCalledWith('view.toggle', {
             name: 'plugin/notification-center/center@DP-1',
+        });
+    });
+
+    it('opens a quick-actions menu on right-click', async () => {
+        const { client } = makeMockClient();
+        const { container } = render(NotificationIndicator, {
+            props: { client: client as never },
+        });
+        await tick();
+
+        expect(contextMenu()).toBeNull();
+        await fireEvent.contextMenu(container.querySelector('button') as HTMLButtonElement);
+        await tick();
+
+        expect(contextMenu()).not.toBeNull();
+    });
+
+    it('clears toasts from the menu via action.invoke', async () => {
+        const { client, call } = makeMockClient();
+        const { container } = render(NotificationIndicator, {
+            props: { client: client as never },
+        });
+        await tick();
+
+        await fireEvent.contextMenu(container.querySelector('button') as HTMLButtonElement);
+        await tick();
+
+        const clear = menuItem('Clear toasts');
+        expect(clear).toBeTruthy();
+        await fireEvent.click(clear as HTMLButtonElement);
+        await tick();
+
+        expect(call).toHaveBeenCalledWith('action.invoke', {
+            provider: 'notifications',
+            action: {
+                kind: 'custom',
+                data: { kind: 'notifications', payload: { command: 'clear_toasts' } },
+            },
         });
     });
 });
