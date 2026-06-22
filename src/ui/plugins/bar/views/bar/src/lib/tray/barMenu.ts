@@ -10,7 +10,12 @@
 // already subscribes to, so `wireBarMenu` takes a `buildItems` closure that is
 // evaluated fresh every time the menu opens.
 
-import { openContextMenu, type Client, type MenuItem } from '@quantum/client';
+import {
+    closeContextMenu,
+    openContextMenu,
+    type Client,
+    type MenuItem,
+} from '@quantum/client';
 
 /** The per-monitor global injected onto the bar webview by the host. */
 function currentMonitor(): string | undefined {
@@ -73,7 +78,12 @@ export function wireBarMenu(
     };
 
     const listener = (event: MouseEvent): void => {
-        openContextMenu(event, buildItems(), {
+        const items = normalizeSeparators(buildItems());
+        // An indicator whose provider is unavailable builds no items; opening
+        // an empty floating box and expanding the input region for it is both
+        // useless and a momentary pointer-capture lockout, so bail early.
+        if (items.length === 0) return;
+        openContextMenu(event, items, {
             anchorRect: node.getBoundingClientRect(),
             onPlaced: expandInputRegion,
             onClose: resetInputRegion,
@@ -81,5 +91,24 @@ export function wireBarMenu(
     };
 
     node.addEventListener('contextmenu', listener);
-    return () => node.removeEventListener('contextmenu', listener);
+    return () => {
+        node.removeEventListener('contextmenu', listener);
+        // Unmounting an indicator while its menu is open must dismiss the menu
+        // and reset the bar's input region via the runtime's onClose hook.
+        closeContextMenu();
+    };
+}
+
+/**
+ * Drop leading, trailing, and consecutive separators. Indicators build their
+ * items by conditionally pushing entries (gated on capability/state), which can
+ * leave a separator with nothing on one side; this keeps every menu's dividers
+ * meaningful regardless of which entries were included.
+ */
+function normalizeSeparators(items: MenuItem[]): MenuItem[] {
+    return items.filter(
+        (item, index, list) =>
+            !item.separator ||
+            (index > 0 && index < list.length - 1 && !list[index - 1].separator),
+    );
 }

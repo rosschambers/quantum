@@ -136,4 +136,47 @@ describe('NotificationIndicator', () => {
             },
         });
     });
+
+    it('dismisses every notification individually from the menu', async () => {
+        const { client, call, emit } = makeMockClient();
+        const { container } = render(NotificationIndicator, {
+            props: { client: client as never },
+        });
+        await tick();
+
+        emit([{ id: 1 }, { id: 2 }]);
+        await tick();
+
+        await fireEvent.contextMenu(container.querySelector('button') as HTMLButtonElement);
+        await tick();
+
+        const dismissAll = menuItem('Dismiss all (2)');
+        expect(dismissAll).toBeTruthy();
+
+        call.mockClear();
+        await fireEvent.click(dismissAll as HTMLButtonElement);
+        await tick();
+
+        const dismissCalls = call.mock.calls.filter(
+            (args) =>
+                args[0] === 'action.invoke' &&
+                (args[1] as { action: { data: { payload: { command: string } } } }).action.data
+                    .payload.command === 'dismiss',
+        );
+        expect(dismissCalls).toHaveLength(2);
+        expect(call).toHaveBeenCalledWith('action.invoke', {
+            provider: 'notifications',
+            action: {
+                kind: 'custom',
+                data: { kind: 'notifications', payload: { command: 'dismiss', id: 1 } },
+            },
+        });
+        expect(call).toHaveBeenCalledWith('action.invoke', {
+            provider: 'notifications',
+            action: {
+                kind: 'custom',
+                data: { kind: 'notifications', payload: { command: 'dismiss', id: 2 } },
+            },
+        });
+    });
 });

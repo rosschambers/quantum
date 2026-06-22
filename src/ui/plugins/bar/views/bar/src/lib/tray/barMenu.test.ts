@@ -88,4 +88,49 @@ describe('wireBarMenu', () => {
         node.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true }));
         expect(contextMenu()).toBeNull();
     });
+
+    it('opens no menu and touches no input region when there are no items', () => {
+        const { node, call } = setup([]);
+        node.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true }));
+
+        expect(contextMenu()).toBeNull();
+        expect(call).not.toHaveBeenCalledWith(
+            'view.set_input_region',
+            expect.anything(),
+        );
+    });
+
+    it('drops leading, trailing, and consecutive separators', () => {
+        const { node } = setup([
+            { separator: true, label: '' },
+            { label: 'A' },
+            { separator: true, label: '' },
+            { separator: true, label: '' },
+            { label: 'B' },
+            { separator: true, label: '' },
+        ]);
+        node.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true }));
+
+        const menu = contextMenu();
+        expect(menu).not.toBeNull();
+        expect(menuItem('A')).toBeTruthy();
+        expect(menuItem('B')).toBeTruthy();
+        // One divider survives, between A and B.
+        expect(menu!.querySelectorAll('hr')).toHaveLength(1);
+    });
+
+    it('closes an open menu and resets the region on teardown', () => {
+        const { node, call, teardown } = setup([{ label: 'X' }]);
+        node.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true }));
+        expect(contextMenu()).not.toBeNull();
+
+        call.mockClear();
+        teardown();
+
+        expect(contextMenu()).toBeNull();
+        expect(call).toHaveBeenCalledWith('view.set_input_region', {
+            name: 'plugin/bar/bar',
+            region: null,
+        });
+    });
 });
