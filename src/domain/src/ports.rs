@@ -9,6 +9,19 @@ pub struct ActionOutcome {
     pub message: Option<String>,
 }
 
+/// A rectangular region, in surface-local pixels, used to describe the
+/// pointer input region of a layer-shell surface. The bar's full-height
+/// surface clips its input region to the visible strip (plus, while a menu
+/// is open, the menu rectangle) so the otherwise-transparent area below the
+/// bar does not capture screen-wide clicks.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct WindowInputRegion {
+    pub x: i32,
+    pub y: i32,
+    pub width: i32,
+    pub height: i32,
+}
+
 /// A provider source that can search and invoke actions.
 #[async_trait]
 pub trait ProviderSource: Send + Sync {
@@ -119,6 +132,21 @@ pub trait WindowHost: Send + Sync {
     /// popovers. Implementations that don't resize must explicitly
     /// return Ok(()).
     async fn set_view_height(&self, view: &str, height: u32) -> Result<(), DomainError>;
+
+    /// Set the pointer input region of an already-open window. `Some(region)`
+    /// clips pointer input to the union of the bar's visible strip and the
+    /// supplied rectangle (the open menu); `None` resets the region to the
+    /// strip-only default. Used by the bar so its full-height surface only
+    /// captures clicks over the visible row and any open dropdown.
+    ///
+    /// No default impl: a forgotten override would leave a full-height
+    /// surface capturing screen-wide clicks. Implementations that don't
+    /// manage input regions must explicitly return Ok(()).
+    async fn set_view_input_region(
+        &self,
+        view: &str,
+        region: Option<WindowInputRegion>,
+    ) -> Result<(), DomainError>;
 }
 
 /// A source of wall-clock time. Synchronous: callers need the current instant
@@ -220,6 +248,24 @@ mod subscribe_tests {
         let mut stream = p.subscribe().expect("stream");
         let event = stream.next().await.expect("event");
         assert_eq!(event, serde_json::json!({"x": 1}));
+    }
+}
+
+#[cfg(test)]
+mod input_region_tests {
+    use super::*;
+
+    #[test]
+    fn window_input_region_json_round_trips() {
+        let region = WindowInputRegion {
+            x: 10,
+            y: 20,
+            width: 300,
+            height: 32,
+        };
+        let json = serde_json::to_string(&region).expect("serialize");
+        let parsed: WindowInputRegion = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(parsed, region);
     }
 }
 

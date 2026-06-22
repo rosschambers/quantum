@@ -31,7 +31,7 @@ pub use notifications::{Notification, NotificationEvent, NotificationUrgency};
 pub use ports::{
     ActionOutcome, Clock, EventBus, HyprlandClient, PluginCatalog, ProviderRegistry,
     ProviderSource, ShellExecutor, ShellOutput, ThemeStore, TimerBroadcast, TimerNotifier,
-    TimerStore, WindowHost,
+    TimerStore, WindowHost, WindowInputRegion,
 };
 pub use query::Query;
 pub use score::MatchScore;
