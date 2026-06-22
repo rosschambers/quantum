@@ -140,7 +140,7 @@ impl WidgetWindow {
             // The surface anchors all four edges so it spans the whole
             // monitor; the exclusive zone stays at `bar_height` so other
             // windows only avoid the visible strip and do not reflow when a
-            // dropdown opens below it. The visible 32px row comes from the
+            // dropdown opens below it. The visible 32-pixel row comes from the
             // view's `.bar { height: var(--bar-height) }` CSS over the
             // transparent body, not from the surface size — so opening a
             // menu no longer resizes the surface (no flicker).
@@ -160,24 +160,38 @@ impl WidgetWindow {
             window.set_keyboard_mode(KeyboardMode::OnDemand);
             window.set_exclusive_zone(bar_height);
 
-            // Clip the input region to the visible strip as soon as the
-            // GdkSurface exists. `connect_map` fires once the surface is
-            // mapped; if the surface is somehow not yet available the helper
-            // is a no-op and a later map fires again. Re-apply on surface
-            // width changes (monitor geometry / hotplug) so the strip always
-            // spans the full bar width, preserving any open-menu rectangle.
-            let window_for_map = window.clone();
-            let region_for_map = input_region.clone();
-            window.connect_map(move |win| {
-                apply_input_region(win, bar_height, region_for_map.get());
-                if let Some(surface) = gtk4::prelude::NativeExt::surface(win) {
-                    let window_for_width = window_for_map.clone();
-                    let region_for_width = region_for_map.clone();
-                    surface.connect_width_notify(move |_| {
-                        apply_input_region(&window_for_width, bar_height, region_for_width.get());
-                    });
+            // Clip the input region to the visible strip on `realize`, which
+            // fires once the GdkSurface exists but before it is presented, so
+            // the full-height surface never has the default (full) input
+            // region for even one frame. Re-apply on surface width changes
+            // (monitor geometry / hotplug) so the strip always spans the full
+            // bar width, preserving any open-menu rectangle.
+            //
+            // Both closures capture `window` WEAK (only the `Rc` cell is
+            // strong): the realize handler is owned by the window and the
+            // width handler by its surface, so a strong capture would form a
+            // `window -> surface -> handler -> window` cycle and leak the bar
+            // (and its WebView) when the registry drops it on monitor
+            // disconnect. Connecting on `realize` rather than `map` also
+            // avoids re-subscribing the width handler on every hide/show.
+            window.connect_realize(glib::clone!(
+                #[weak]
+                window,
+                #[strong]
+                input_region,
+                move |win| {
+                    apply_input_region(win, bar_height, input_region.get());
+                    if let Some(surface) = gtk4::prelude::NativeExt::surface(win) {
+                        surface.connect_width_notify(glib::clone!(
+                            #[weak]
+                            window,
+                            #[strong]
+                            input_region,
+                            move |_| apply_input_region(&window, bar_height, input_region.get())
+                        ));
+                    }
                 }
-            });
+            ));
         } else if fill_output {
             // Fill-output widgets (the timers scatter surface): anchored on all
             // four edges so the transparent surface covers the whole monitor.
@@ -551,9 +565,13 @@ impl crate::registry::WindowOps for WidgetWindow {
     }
 
     fn set_height(&mut self, height: u32) {
-        // Only top-anchored (bar) widgets are meant to resize at runtime.
-        // Other widgets ignore the request to avoid accidental geometry
-        // changes from misuse of the IPC method.
+        // The bar is now full-height (anchored on all four edges), so
+        // `set_default_height` is geometrically inert for it: the surface
+        // already spans the monitor and the visible row is CSS-driven. This
+        // method is retained for other resizable callers and the toast
+        // sizing TODO; it stays guarded to top-anchored widgets so a stray
+        // IPC request cannot resize a background widget. Behavior is
+        // unchanged.
         if !self.top_anchored {
             tracing::debug!("set_height ignored for non-bar widget");
             return;
@@ -574,18 +592,38 @@ impl crate::registry::WindowOps for WidgetWindow {
             tracing::debug!("set_input_region ignored for non-bar widget");
             return;
         }
-        // Remember the extra rect so the map / surface-width handlers
-        // re-apply strip ∪ menu rather than dropping the menu on a width
-        // change, then apply it now.
+        // Remember the extra rectangle so the realize / surface-width
+        // handlers re-apply strip ∪ menu rather than dropping the menu on a
+        // width change, then apply it now.
         self.input_region.set(region);
         apply_input_region(&self.window, self.bar_height, region);
     }
 }
 
-/// Clip the bar surface's pointer input region to the visible strip
-/// `(0, 0, surface_width, bar_height)`, optionally unioned with an `extra`
-/// rectangle (an open dropdown menu). A no-op if the `GdkSurface` does not
-/// yet exist (the caller re-runs once it is mapped).
+/// Compute the pointer input-region rectangles, in surface-local pixels, for
+/// a bar surface of the given width and strip height: always the visible
+/// strip `(0, 0, width, bar_height)`, plus the `extra` rectangle (an open
+/// dropdown menu) when present. `width` is clamped to at least 1 so a
+/// zero-width surface still yields a valid strip. Pure function so the
+/// geometry can be unit-tested without GTK; [`apply_input_region`] is a thin
+/// shell that turns these tuples into a cairo region.
+fn input_region_rects(
+    width: i32,
+    bar_height: i32,
+    extra: Option<WindowInputRegion>,
+) -> Vec<(i32, i32, i32, i32)> {
+    let clamped_width = width.max(1);
+    let mut rectangles = vec![(0, 0, clamped_width, bar_height)];
+    if let Some(menu) = extra {
+        rectangles.push((menu.x, menu.y, menu.width, menu.height));
+    }
+    rectangles
+}
+
+/// Clip the bar surface's pointer input region to the visible strip,
+/// optionally unioned with an `extra` rectangle (an open dropdown menu). A
+/// no-op if the `GdkSurface` does not yet exist (the caller re-runs once it
+/// is realized).
 ///
 /// Coordinates are surface-local pixels at scale 1. HiDPI surfaces report a
 /// `scale_factor()` greater than one; if on-device testing shows the region
@@ -600,17 +638,40 @@ fn apply_input_region(
         return;
     };
     // Single scale-conversion point (currently scale 1; see doc comment).
-    let width = surface.width().max(1);
-    let region = gtk4::cairo::Region::create_rectangle(&gtk4::cairo::RectangleInt::new(
-        0, 0, width, bar_height,
-    ));
-    if let Some(rect) = extra {
-        let _ = region.union_rectangle(&gtk4::cairo::RectangleInt::new(
-            rect.x,
-            rect.y,
-            rect.width,
-            rect.height,
-        ));
-    }
+    let rectangles: Vec<gtk4::cairo::RectangleInt> =
+        input_region_rects(surface.width(), bar_height, extra)
+            .into_iter()
+            .map(|(x, y, width, height)| gtk4::cairo::RectangleInt::new(x, y, width, height))
+            .collect();
+    let region = gtk4::cairo::Region::create_rectangles(&rectangles);
     gtk4::prelude::SurfaceExt::set_input_region(&surface, &region);
+}
+
+#[cfg(test)]
+mod input_region_geometry_tests {
+    use super::*;
+
+    #[test]
+    fn strip_only_when_extra_is_none() {
+        let rectangles = input_region_rects(300, 32, None);
+        assert_eq!(rectangles, vec![(0, 0, 300, 32)]);
+    }
+
+    #[test]
+    fn strip_plus_menu_when_extra_present() {
+        let menu = WindowInputRegion {
+            x: 10,
+            y: 32,
+            width: 200,
+            height: 150,
+        };
+        let rectangles = input_region_rects(300, 32, Some(menu));
+        assert_eq!(rectangles, vec![(0, 0, 300, 32), (10, 32, 200, 150)]);
+    }
+
+    #[test]
+    fn width_is_clamped_to_at_least_one() {
+        assert_eq!(input_region_rects(0, 32, None), vec![(0, 0, 1, 32)]);
+        assert_eq!(input_region_rects(-5, 32, None), vec![(0, 0, 1, 32)]);
+    }
 }
