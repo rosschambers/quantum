@@ -33,6 +33,13 @@ export interface MenuOptions {
    * Surfaces that grew via `ensureSpace` use this to shrink back.
    */
   onClose?: () => void;
+  /**
+   * Called once after the menu has been positioned, with the menu root's
+   * bounding rectangle rounded to integers. Surfaces that gate pointer input
+   * by region (the bar) use this to expand their input region to cover the
+   * menu so it is clickable.
+   */
+  onPlaced?: (rect: { x: number; y: number; width: number; height: number }) => void;
 }
 
 interface ActiveMenu {
@@ -184,6 +191,19 @@ function position(doc: Document, root: HTMLElement, clientX: number, clientY: nu
   root.style.top = `${y}px`;
 }
 
+function reportPlacement(root: HTMLElement, options?: MenuOptions): void {
+  if (!options?.onPlaced) {
+    return;
+  }
+  const rect = root.getBoundingClientRect();
+  options.onPlaced({
+    x: Math.round(rect.x),
+    y: Math.round(rect.y),
+    width: Math.round(rect.width),
+    height: Math.round(rect.height),
+  });
+}
+
 /**
  * Open a context menu at the event's cursor position. Call from a DOM
  * `contextmenu` handler; this calls `preventDefault` for you.
@@ -220,10 +240,12 @@ export function openContextMenu(event: MouseEvent, items: MenuItem[], options?: 
       }
       position(doc, root, event.clientX, event.clientY);
       root.style.visibility = '';
+      reportPlacement(root, options);
     };
     options.ensureSpace(needed).then(reveal).catch(reveal);
   } else {
     position(doc, root, event.clientX, event.clientY);
+    reportPlacement(root, options);
   }
 
   const onKeyDown = (keyEvent: KeyboardEvent): void => {

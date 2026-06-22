@@ -176,4 +176,35 @@ describe('options', () => {
     openContextMenu(rightClickAt(10, 10), [{ label: 'X' }]);
     expect(menuRoot()!.style.visibility).toBe('');
   });
+
+  it('calls onPlaced exactly once with a numeric rectangle on open', () => {
+    const onPlaced = vi.fn();
+    openContextMenu(rightClickAt(10, 10), [{ label: 'X' }], { onPlaced });
+    expect(onPlaced).toHaveBeenCalledTimes(1);
+    const rect = onPlaced.mock.calls[0][0];
+    expect(typeof rect.x).toBe('number');
+    expect(typeof rect.y).toBe('number');
+    expect(typeof rect.width).toBe('number');
+    expect(typeof rect.height).toBe('number');
+  });
+
+  it('calls onPlaced after the menu is revealed in the ensureSpace path', async () => {
+    let resolveSpace: () => void = () => {};
+    const ensureSpace = vi.fn(
+      () =>
+        new Promise<void>((resolve) => {
+          resolveSpace = resolve;
+        }),
+    );
+    const onPlaced = vi.fn();
+    openContextMenu(rightClickAt(10, 40), [{ label: 'X' }], { ensureSpace, onPlaced });
+    expect(onPlaced).not.toHaveBeenCalled();
+    resolveSpace();
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(onPlaced).toHaveBeenCalledTimes(1);
+    const rect = onPlaced.mock.calls[0][0];
+    expect(typeof rect.x).toBe('number');
+    expect(typeof rect.width).toBe('number');
+  });
 });
