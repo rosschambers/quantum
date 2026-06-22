@@ -1,7 +1,8 @@
 <script lang="ts">
-    import { createTimerStore, openContextMenu, type Client } from '@quantum/client';
+    import { createTimerStore, type Client } from '@quantum/client';
     import Icon from '../Icon.svelte';
     import BarButton from '../BarButton.svelte';
+    import { wireBarMenu } from './barMenu';
 
     interface Props {
         client: Client;
@@ -18,66 +19,15 @@
         return () => off?.();
     });
 
-    // The bar surface is a full-height strip whose input region is gated to the
-    // visible bar strip; pointer events outside the strip pass through to
-    // windows beneath. A downward menu therefore needs the bar's input region
-    // expanded to cover it (onPlaced) for the lifetime of the menu, then reset
-    // back to the strip on close (onClose) via view.set_input_region.
-    function barViewName(): string {
-        const monitor = (window as unknown as { __quantum_monitor?: string })
-            .__quantum_monitor;
-        return monitor ? `plugin/bar/bar@${monitor}` : 'plugin/bar/bar';
-    }
-
-    function expandInputRegion(rect: {
-        x: number;
-        y: number;
-        width: number;
-        height: number;
-    }): void {
-        client
-            .call('view.set_input_region', {
-                name: barViewName(),
-                region: {
-                    x: Math.round(rect.x),
-                    y: Math.round(rect.y),
-                    width: Math.round(rect.width),
-                    height: Math.round(rect.height),
-                },
-            })
-            .catch((err) => console.error('view.set_input_region failed:', err));
-    }
-
-    function resetInputRegion(): void {
-        client
-            .call('view.set_input_region', { name: barViewName(), region: null })
-            .catch((err) => console.error('view.set_input_region failed:', err));
-    }
-
-    // Right-click opens the quick-actions menu via the shared context-menu
-    // runtime. The runtime calls preventDefault, so WebKitGTK's native menu is
-    // suppressed without any host-side policy change.
+    // Right-click opens the quick-actions menu via the shared bar-menu helper,
+    // which handles the bar's input-region passthrough and dropdown anchoring.
     $effect(() => {
         const node = buttonEl;
         if (!node) return;
-        const listener = (event: MouseEvent): void => {
-            openContextMenu(
-                event,
-                [
-                    { label: 'Open timers', onSelect: openCreate },
-                    { label: 'Dismiss all', onSelect: dismissAll },
-                ],
-                {
-                    // Drop the menu down from the button (true dropdown) rather
-                    // than the click point on the icon.
-                    anchorRect: node.getBoundingClientRect(),
-                    onPlaced: expandInputRegion,
-                    onClose: resetInputRegion,
-                },
-            );
-        };
-        node.addEventListener('contextmenu', listener);
-        return () => node.removeEventListener('contextmenu', listener);
+        return wireBarMenu(node, client, () => [
+            { label: 'Open timers', onSelect: openCreate },
+            { label: 'Dismiss all', onSelect: dismissAll },
+        ]);
     });
 
     function badgeLabel(n: number): string {

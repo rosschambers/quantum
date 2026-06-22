@@ -1,0 +1,91 @@
+import { describe, it, expect, vi, afterEach } from 'vitest';
+import { closeContextMenu, type MenuItem } from '@quantum/client';
+import { barViewName, monitorView, wireBarMenu } from './barMenu';
+
+function contextMenu(): HTMLElement | null {
+    return document.querySelector('[data-quantum-context-menu]');
+}
+
+function menuItem(text: string): HTMLButtonElement | undefined {
+    return Array.from(
+        document.querySelectorAll('[data-quantum-context-menu] [role="menuitem"]'),
+    ).find((el) => el.textContent?.includes(text)) as HTMLButtonElement | undefined;
+}
+
+function makeMockClient() {
+    const call = vi.fn(() => Promise.resolve(undefined));
+    const client = { call, subscribe: vi.fn(), close: vi.fn() };
+    return { client, call };
+}
+
+afterEach(() => {
+    closeContextMenu();
+    (window as unknown as { __quantum_monitor?: string }).__quantum_monitor = undefined;
+    document.body.innerHTML = '';
+});
+
+describe('barViewName / monitorView', () => {
+    it('returns bare names with no monitor set', () => {
+        expect(barViewName()).toBe('plugin/bar/bar');
+        expect(monitorView('widgets/power-menu')).toBe('widgets/power-menu');
+    });
+
+    it('appends the @monitor suffix when set', () => {
+        (window as unknown as { __quantum_monitor?: string }).__quantum_monitor = 'DP-1';
+        expect(barViewName()).toBe('plugin/bar/bar@DP-1');
+        expect(monitorView('widgets/power-menu')).toBe('widgets/power-menu@DP-1');
+    });
+});
+
+describe('wireBarMenu', () => {
+    function setup(items: MenuItem[]) {
+        const node = document.createElement('button');
+        document.body.appendChild(node);
+        const { client, call } = makeMockClient();
+        const teardown = wireBarMenu(node, client as never, () => items);
+        return { node, call, teardown };
+    }
+
+    it('opens a menu with the built items on right-click', async () => {
+        const onSelect = vi.fn();
+        const { node } = setup([{ label: 'Do thing', onSelect }]);
+
+        expect(contextMenu()).toBeNull();
+        node.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true }));
+
+        expect(contextMenu()).not.toBeNull();
+        expect(menuItem('Do thing')).toBeTruthy();
+    });
+
+    it('expands the input region on open and resets it on close', () => {
+        const { node, call } = setup([{ label: 'X' }]);
+        node.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true }));
+
+        const openCall = call.mock.calls.find(
+            (args) =>
+                args[0] === 'view.set_input_region' &&
+                (args[1] as { region: unknown }).region !== null,
+        );
+        expect(openCall).toBeTruthy();
+        const region = (openCall![1] as {
+            region: { x: number; y: number; width: number; height: number };
+        }).region;
+        expect(typeof region.x).toBe('number');
+        expect(typeof region.width).toBe('number');
+
+        call.mockClear();
+        closeContextMenu();
+
+        expect(call).toHaveBeenCalledWith('view.set_input_region', {
+            name: 'plugin/bar/bar',
+            region: null,
+        });
+    });
+
+    it('removes the listener on teardown', () => {
+        const { node, teardown } = setup([{ label: 'X' }]);
+        teardown();
+        node.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true }));
+        expect(contextMenu()).toBeNull();
+    });
+});
