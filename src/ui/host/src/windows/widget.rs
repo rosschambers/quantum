@@ -9,6 +9,8 @@ use gtk4::glib;
 use gtk4::prelude::*;
 use gtk4_layer_shell::{Edge, KeyboardMode, Layer, LayerShell};
 use quantum_domain::{ports::ThemeStore, EventEnvelope, ViewAnchor, ViewPosition, WindowInputRegion};
+use std::cell::Cell;
+use std::rc::Rc;
 use std::sync::Arc;
 use tokio::runtime::Handle;
 use tokio::sync::broadcast;
@@ -41,6 +43,16 @@ pub struct WidgetWindow {
     /// widgets (clock, manifest-less plugins) sit on the background layer and
     /// ignore runtime resize requests.
     top_anchored: bool,
+    /// Pixel height of the visible bar strip. The full-height bar surface
+    /// clips its pointer input region to `(0, 0, surface_width, bar_height)`
+    /// so the transparent area below the strip never captures clicks. Zero
+    /// for non-bar widgets, which do not manage an input region.
+    bar_height: i32,
+    /// The current "extra" input rectangle (an open dropdown menu) unioned
+    /// into the strip. Shared with the GTK `map` and surface `notify::width`
+    /// handlers so a surface-width change re-applies strip ∪ menu rather than
+    /// dropping the menu's clickable region. `None` means strip-only.
+    input_region: Rc<Cell<Option<WindowInputRegion>>>,
 }
 
 impl WidgetWindow {
@@ -116,6 +128,9 @@ impl WidgetWindow {
         // back to BAR_HEIGHT).
         let top_anchored = anchor == ViewAnchor::Top;
         let bar_height = height.map(|h| h as i32).unwrap_or(BAR_HEIGHT);
+        // Shared current "extra" input rectangle (an open menu). Read by the
+        // map / surface-width handlers and updated by `set_input_region`.
+        let input_region: Rc<Cell<Option<WindowInputRegion>>> = Rc::new(Cell::new(None));
 
         if top_anchored {
             // Bar widget: top layer, full monitor height.
@@ -148,14 +163,16 @@ impl WidgetWindow {
             // mapped; if the surface is somehow not yet available the helper
             // is a no-op and a later map fires again. Re-apply on surface
             // width changes (monitor geometry / hotplug) so the strip always
-            // spans the full bar width.
+            // spans the full bar width, preserving any open-menu rectangle.
             let window_for_map = window.clone();
+            let region_for_map = input_region.clone();
             window.connect_map(move |win| {
-                apply_input_region(win, bar_height, None);
+                apply_input_region(win, bar_height, region_for_map.get());
                 if let Some(surface) = gtk4::prelude::NativeExt::surface(win) {
                     let window_for_width = window_for_map.clone();
+                    let region_for_width = region_for_map.clone();
                     surface.connect_width_notify(move |_| {
-                        apply_input_region(&window_for_width, bar_height, None);
+                        apply_input_region(&window_for_width, bar_height, region_for_width.get());
                     });
                 }
             });
@@ -234,6 +251,10 @@ impl WidgetWindow {
             window,
             webview,
             top_anchored,
+            // Only the bar manages an input region; non-bar widgets store 0
+            // and ignore `set_input_region`.
+            bar_height: if top_anchored { bar_height } else { 0 },
+            input_region,
         }
     }
 
@@ -340,6 +361,9 @@ impl WidgetWindow {
             webview,
             // Toasts are never top-anchored: runtime `set_height` is ignored.
             top_anchored: false,
+            // Toasts do not manage an input region.
+            bar_height: 0,
+            input_region: Rc::new(Cell::new(None)),
         }
     }
 }
@@ -538,6 +562,21 @@ impl crate::registry::WindowOps for WidgetWindow {
         // height immediately; without this the change waits until the
         // next GTK redraw cycle, which can lag visibly.
         gtk4::prelude::WidgetExt::queue_resize(&self.window);
+    }
+
+    fn set_input_region(&mut self, region: Option<WindowInputRegion>) {
+        // Only the top-anchored bar manages an input region; other widgets
+        // ignore the request (mirroring the `set_height` guard) to avoid
+        // accidentally clipping a full-surface widget's input.
+        if !self.top_anchored {
+            tracing::debug!("set_input_region ignored for non-bar widget");
+            return;
+        }
+        // Remember the extra rect so the map / surface-width handlers
+        // re-apply strip ∪ menu rather than dropping the menu on a width
+        // change, then apply it now.
+        self.input_region.set(region);
+        apply_input_region(&self.window, self.bar_height, region);
     }
 }
 
