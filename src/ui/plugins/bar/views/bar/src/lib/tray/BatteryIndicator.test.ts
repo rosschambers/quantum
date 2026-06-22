@@ -1,9 +1,16 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, fireEvent } from '@testing-library/svelte/svelte5';
 import { tick } from 'svelte';
+import { closeContextMenu } from '@quantum/client';
 import BatteryIndicator from './BatteryIndicator.svelte';
 import type { PowerState, PowerProfileState } from '../types';
 import { POWER_CHANNEL, POWER_PROFILE_CHANNEL } from '../channels';
+
+function menuItem(text: string): HTMLButtonElement | undefined {
+    return Array.from(
+        document.querySelectorAll('[data-quantum-context-menu] [role="menuitem"]'),
+    ).find((el) => el.textContent?.includes(text)) as HTMLButtonElement | undefined;
+}
 
 interface Mock {
     client: any;
@@ -44,6 +51,7 @@ describe('BatteryIndicator', () => {
         (window as any).__quantum_monitor = undefined;
     });
     afterEach(() => {
+        closeContextMenu();
         (window as any).__quantum_monitor = undefined;
     });
 
@@ -261,6 +269,40 @@ describe('BatteryIndicator', () => {
         await tick();
         expect(client.call).toHaveBeenCalledWith('view.show', {
             name: 'widgets/power-profile-menu@DP-1',
+        });
+    });
+
+    it('switches the power profile from the right-click menu', async () => {
+        const { client, emitBattery, emitProfile } = mockClient();
+        const { container } = render(BatteryIndicator, { props: { client } });
+        await emitBattery({
+            available: true,
+            on_battery: true,
+            percentage: 50,
+            state: 'discharging',
+            time_to_empty_secs: 1800,
+            time_to_full_secs: null,
+        });
+        await emitProfile(BALANCED);
+
+        const btn = container.querySelector('.bar-button') as HTMLButtonElement;
+        await fireEvent.contextMenu(btn);
+        await tick();
+
+        const performance = menuItem('Performance');
+        expect(performance).toBeTruthy();
+        await fireEvent.click(performance as HTMLButtonElement);
+        await tick();
+
+        expect(client.call).toHaveBeenCalledWith('action.invoke', {
+            provider: 'power_profile',
+            action: {
+                kind: 'custom',
+                data: {
+                    kind: 'power_profile',
+                    payload: { command: 'set', profile: 'performance' },
+                },
+            },
         });
     });
 });

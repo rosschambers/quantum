@@ -22,8 +22,8 @@
      * We render whenever a percentage is present so the indicator
      * does not flicker in and out.
      */
-    import type { Client } from '@quantum/client';
-    import type { PowerState, PowerProfileState } from '../types';
+    import type { Client, MenuItem } from '@quantum/client';
+    import type { PowerProfile, PowerState, PowerProfileState } from '../types';
     import {
         POWER_CHANNEL,
         POWER_PROVIDER,
@@ -34,6 +34,7 @@
     import { powerProfileIcon } from '../icons';
     import Ring from '../Ring.svelte';
     import BarButton from '../BarButton.svelte';
+    import { monitorView, wireBarMenu } from './barMenu';
 
     interface Props {
         client: Client;
@@ -56,6 +57,8 @@
         profiles: [],
         performance_inhibited: null,
     });
+
+    let buttonEl: HTMLButtonElement | undefined = $state(undefined);
 
     $effect(() => {
         client
@@ -82,15 +85,50 @@
         };
     });
 
+    // Right-click switches the active power profile directly and links to the
+    // full power-profile overlay.
+    $effect(() => {
+        const node = buttonEl;
+        if (!node) return;
+        return wireBarMenu(node, client, buildMenuItems);
+    });
+
+    function humanizeProfile(value: PowerProfile): string {
+        const spaced = value.replace(/[_-]/g, ' ');
+        return spaced.charAt(0).toUpperCase() + spaced.slice(1);
+    }
+
+    function buildMenuItems(): MenuItem[] {
+        if (!profile.available) return [];
+        const items: MenuItem[] = profile.profiles.map((value) => ({
+            label: humanizeProfile(value),
+            // Mark the active profile with a leading dot.
+            icon: value === profile.active ? '\u2022' : undefined,
+            onSelect: () =>
+                client
+                    .call('action.invoke', {
+                        provider: 'power_profile',
+                        action: {
+                            kind: 'custom',
+                            data: {
+                                kind: 'power_profile',
+                                payload: { command: 'set', profile: value },
+                            },
+                        },
+                    })
+                    .catch((err) => console.error('power_profile set failed:', err)),
+        }));
+        items.push({ separator: true, label: '' });
+        items.push({ label: 'Power profile settings...', onSelect: openProfileMenu });
+        return items;
+    }
+
     async function openProfileMenu(): Promise<void> {
         // Append the per-monitor suffix so the menu opens on the bar's
         // own monitor (see `window.__quantum_monitor` injection in
         // `crates/ui/src/windows/widget.rs`). Same pattern as
         // PowerMenuIndicator.
-        const monitor = window.__quantum_monitor;
-        const name = monitor
-            ? `widgets/power-profile-menu@${monitor}`
-            : 'widgets/power-profile-menu';
+        const name = monitorView('widgets/power-profile-menu');
         try {
             await client.call('view.show', { name });
         } catch (err) {
@@ -146,6 +184,7 @@
         ariaLabel="Open power profile menu"
         title={tooltipFor(battery, profile)}
         onclick={openProfileMenu}
+        bindRef={(el) => (buttonEl = el)}
     >
         <span class="ring-container">
             <Ring
