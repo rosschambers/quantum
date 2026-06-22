@@ -84,15 +84,13 @@ impl HyprlandWindowsProvider {
         self.refresh_windows().await
     }
 
-    /// Refresh the list of windows from Hyprland.
-    async fn refresh_windows(&self) -> Result<(), DomainError> {
-        // Request clients from Hyprland
-        let response = self.client.command("j/clients").await?;
+    /// Parse a Hyprland `j/clients` JSON response into window records. Shared by
+    /// the cached search path and the one-shot `snapshot` so the parsing lives
+    /// in one place. A malformed response yields an empty list.
+    fn parse_windows(response: &str) -> Vec<WindowInfo> {
+        let mut windows = Vec::new();
 
-        // Parse the JSON response
-        if let Ok(json) = serde_json::from_str::<serde_json::Value>(&response) {
-            let mut windows = Vec::new();
-
+        if let Ok(json) = serde_json::from_str::<serde_json::Value>(response) {
             if let Some(clients) = json.as_array() {
                 for client in clients {
                     if let (Some(address), Some(title), Some(class), Some(workspace_id)) = (
@@ -121,9 +119,17 @@ impl HyprlandWindowsProvider {
                     }
                 }
             }
-
-            *self.windows.write().await = windows;
         }
+
+        windows
+    }
+
+    /// Refresh the list of windows from Hyprland.
+    async fn refresh_windows(&self) -> Result<(), DomainError> {
+        // Request clients from Hyprland
+        let response = self.client.command("j/clients").await?;
+
+        *self.windows.write().await = Self::parse_windows(&response);
 
         if let Ok(mut guard) = self.last_refresh.lock() {
             *guard = Some(Instant::now());
@@ -218,6 +224,31 @@ impl ProviderSource for HyprlandWindowsProvider {
             )),
         }
     }
+
+    async fn snapshot(&self) -> Option<serde_json::Value> {
+        // Query the live window list fresh so a freshly opened kill menu
+        // reflects the current windows. On any Hyprland error degrade to an
+        // empty list so the menu falls back to its static items.
+        let windows = match self.client.command("j/clients").await {
+            Ok(response) => Self::parse_windows(&response),
+            Err(_) => return Some(json!({ "windows": [] })),
+        };
+
+        let entries: Vec<serde_json::Value> = windows
+            .iter()
+            .map(|window| {
+                json!({
+                    "address": window.address,
+                    "class": window.class,
+                    "title": window.title,
+                    "workspace_id": window.workspace_id,
+                    "workspace_name": window.workspace_name,
+                })
+            })
+            .collect();
+
+        Some(json!({ "windows": entries }))
+    }
 }
 
 #[cfg(test)]
@@ -269,6 +300,17 @@ mod tests {
                 self.clients_calls.fetch_add(1, Ordering::SeqCst);
             }
             Ok(self.response.clone())
+        }
+    }
+
+    /// Mock that always fails, used to assert `snapshot` degrades to an empty
+    /// window list instead of panicking when Hyprland is unavailable.
+    struct ErroringHyprlandClient;
+
+    #[async_trait]
+    impl HyprlandClient for ErroringHyprlandClient {
+        async fn command(&self, _cmd: &str) -> Result<String, DomainError> {
+            Err(DomainError::Unsupported("hyprland unavailable".to_string()))
         }
     }
 
@@ -378,6 +420,56 @@ mod tests {
             1,
             "expected the TTL gate to skip the refresh on back-to-back searches"
         );
+    }
+
+    #[tokio::test]
+    async fn snapshot_returns_window_list() {
+        let response = r#"[
+            {
+                "address": "0x123",
+                "title": "Firefox",
+                "class": "firefox",
+                "workspace": {"id": 1, "name": "1"}
+            },
+            {
+                "address": "0x456",
+                "title": "VSCode",
+                "class": "code",
+                "workspace": {"id": 2, "name": "code"}
+            }
+        ]"#
+        .to_string();
+
+        let client = Arc::new(MockHyprlandClient::new(response));
+        let provider = HyprlandWindowsProvider::new(client).await.unwrap();
+
+        let snapshot = provider.snapshot().await.unwrap();
+        let windows = snapshot["windows"]
+            .as_array()
+            .expect("windows should be an array");
+
+        assert_eq!(windows.len(), 2);
+        assert_eq!(windows[0]["address"], "0x123");
+        assert_eq!(windows[0]["class"], "firefox");
+        assert_eq!(windows[0]["title"], "Firefox");
+        assert_eq!(windows[0]["workspace_id"], 1);
+        assert_eq!(windows[0]["workspace_name"], "1");
+        assert_eq!(windows[1]["address"], "0x456");
+        assert_eq!(windows[1]["class"], "code");
+        assert_eq!(windows[1]["title"], "VSCode");
+    }
+
+    #[tokio::test]
+    async fn snapshot_on_query_error_returns_empty_windows() {
+        let client = Arc::new(ErroringHyprlandClient);
+        let provider = HyprlandWindowsProvider::new(client).await.unwrap();
+
+        let snapshot = provider.snapshot().await.unwrap();
+        let windows = snapshot["windows"]
+            .as_array()
+            .expect("windows should be an array");
+
+        assert!(windows.is_empty());
     }
 
     #[test]
