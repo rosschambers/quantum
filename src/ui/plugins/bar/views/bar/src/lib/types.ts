@@ -1,3 +1,15 @@
+export interface WindowListEntry {
+  address: string;
+  class: string;
+  title: string;
+  workspace_id: number;
+  workspace_name: string;
+}
+
+export interface WindowList {
+  windows: WindowListEntry[];
+}
+
 export interface SystemStats {
   cpu_percent: number;
   mem_used_bytes: number;
