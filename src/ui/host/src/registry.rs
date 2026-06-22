@@ -184,6 +184,11 @@ pub trait WindowOps {
     /// visible row. Default no-op for windows that don't care about
     /// runtime resizing.
     fn set_height(&mut self, _height: u32) {}
+    /// Set the pointer input region of the window. The bar uses this so its
+    /// full-height surface only captures clicks over the visible strip and
+    /// any open menu. `None` resets to the strip-only default. Default no-op
+    /// for windows that do not manage an input region.
+    fn set_input_region(&mut self, _region: Option<quantum_domain::WindowInputRegion>) {}
 }
 
 /// Abstraction for constructing windows, allowing test injection.
@@ -397,6 +402,13 @@ impl WindowOps for ManagedWindow {
             ManagedWindow::Widget(w) => w.set_height(height),
         }
     }
+
+    fn set_input_region(&mut self, region: Option<quantum_domain::WindowInputRegion>) {
+        match self {
+            ManagedWindow::Panel(w) => w.set_input_region(region),
+            ManagedWindow::Widget(w) => w.set_input_region(region),
+        }
+    }
 }
 
 /// Registry for managing all windows on the GTK main thread.
@@ -461,10 +473,18 @@ impl<C: WindowConstructor> WindowRegistry<C> {
                     warn!("set_height: view {} not open", view);
                 }
             }
-            WindowRequest::SetInputRegion { .. } => {
-                // Routed through the registry to the target window in a
-                // follow-up step; the message variant and host adapters land
-                // first so the channel plumbing can be tested in isolation.
+            WindowRequest::SetInputRegion { view, region } => {
+                tracing::debug!(
+                    "WindowRegistry::handle set_input_region view={} region={:?}",
+                    view,
+                    region
+                );
+                let key = canonical_view_key(&view, &self.catalog);
+                if let Some(window) = self.windows.get_mut(&key) {
+                    window.set_input_region(region);
+                } else {
+                    warn!("set_input_region: view {} not open", view);
+                }
             }
             WindowRequest::Close { view } => {
                 match self
@@ -615,6 +635,11 @@ mod tests {
 
     struct FakeWindow {
         shown: Rc<Cell<bool>>,
+        /// Records the most recent `set_input_region` call. `None` means the
+        /// method was never called; `Some(inner)` captures the argument
+        /// (itself `Option`, distinguishing a strip-only reset from a menu
+        /// rectangle).
+        input_region: Rc<Cell<Option<Option<quantum_domain::WindowInputRegion>>>>,
     }
 
     impl WindowOps for FakeWindow {
@@ -627,6 +652,9 @@ mod tests {
         fn toggle(&mut self) {
             self.shown.set(!self.shown.get());
         }
+        fn set_input_region(&mut self, region: Option<quantum_domain::WindowInputRegion>) {
+            self.input_region.set(Some(region));
+        }
     }
 
     /// A `FakeCtor` that mirrors `ManagedWindowConstructor`'s dispatch
@@ -637,6 +665,7 @@ mod tests {
     struct FakeCtor {
         construct_count: Rc<Cell<usize>>,
         shown: Rc<Cell<bool>>,
+        input_region: Rc<Cell<Option<Option<quantum_domain::WindowInputRegion>>>>,
     }
 
     impl WindowConstructor for FakeCtor {
@@ -660,6 +689,7 @@ mod tests {
                 self.construct_count.set(self.construct_count.get() + 1);
                 Some(FakeWindow {
                     shown: self.shown.clone(),
+                    input_region: self.input_region.clone(),
                 })
             } else {
                 None
@@ -713,6 +743,20 @@ mod tests {
         FakeCtor {
             construct_count: count.clone(),
             shown: shown.clone(),
+            input_region: Rc::new(Cell::new(None)),
+        }
+    }
+
+    #[allow(clippy::type_complexity)]
+    fn fake_ctor_with_region(
+        count: &Rc<Cell<usize>>,
+        shown: &Rc<Cell<bool>>,
+        input_region: &Rc<Cell<Option<Option<quantum_domain::WindowInputRegion>>>>,
+    ) -> FakeCtor {
+        FakeCtor {
+            construct_count: count.clone(),
+            shown: shown.clone(),
+            input_region: input_region.clone(),
         }
     }
 
@@ -859,6 +903,50 @@ mod tests {
         });
         assert_eq!(count.get(), 2, "window was reconstructed after close");
         assert!(shown.get(), "reopened window is visible");
+    }
+
+    #[test]
+    fn set_input_region_request_routes_to_open_window() {
+        let count = Rc::new(Cell::new(0));
+        let shown = Rc::new(Cell::new(false));
+        let region_cell = Rc::new(Cell::new(None));
+        let mut reg = WindowRegistry::new(
+            fake_ctor_with_region(&count, &shown, &region_cell),
+            first_party_catalog(),
+        );
+        reg.handle(WindowRequest::Open {
+            view: "plugin/bar/bar@DP-1".into(),
+            mode: WindowMode::Show,
+        });
+        let region = quantum_domain::WindowInputRegion {
+            x: 0,
+            y: 0,
+            width: 300,
+            height: 32,
+        };
+        reg.handle(WindowRequest::SetInputRegion {
+            view: "plugin/bar/bar@DP-1".into(),
+            region: Some(region),
+        });
+        assert_eq!(region_cell.get(), Some(Some(region)));
+    }
+
+    #[test]
+    fn set_input_region_for_unopened_view_does_not_panic() {
+        let count = Rc::new(Cell::new(0));
+        let shown = Rc::new(Cell::new(false));
+        let region_cell = Rc::new(Cell::new(None));
+        let mut reg = WindowRegistry::new(
+            fake_ctor_with_region(&count, &shown, &region_cell),
+            first_party_catalog(),
+        );
+        // No prior Open: the registry is empty, so the request must be a
+        // no-op warning rather than a panic.
+        reg.handle(WindowRequest::SetInputRegion {
+            view: "plugin/bar/bar@DP-1".into(),
+            region: None,
+        });
+        assert_eq!(region_cell.get(), None, "no window received the region");
     }
 
     #[test]
