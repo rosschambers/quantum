@@ -8,7 +8,7 @@
     import { onClick, onScroll } from './interaction';
 
     /** Preset brightness levels offered in the right-click quick menu. */
-    const MENU_PERCENTS = [25, 50, 75, 100];
+    const MENU_PERCENTS = [1, 25, 50, 75, 100];
 
     /** Click toggles between these two brightness percentages. The
      *  threshold (15%) splits them so the click does the opposite of
