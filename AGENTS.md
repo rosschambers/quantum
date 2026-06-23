@@ -124,6 +124,14 @@ Commit per task in the implementation plan. Small commits beat big ones.
   `quantumd` serves plugin views' `dist/` from the working tree (a `pnpm build`
   + reload, no cargo recompile). Theme widgets already serve from disk;
   `quantum-dev watch` hot-reloads theme tokens only.
+- **Theme `tokens.toml` is embedded, and the active theme may not be `default`.**
+  The `default` and `sycamore` themes are baked into `quantumd` via `include_dir!`
+  (`src/infrastructure/theme-store/src/store.rs`), so editing a `tokens.toml`
+  only takes effect after a `quantumd` rebuild — and `include_dir` does not
+  reliably notice the change, so `touch src/infrastructure/theme-store/src/store.rs`
+  to force a recompile. A disk theme at the configured themes directory shadows
+  the embedded copy. Check `active_theme` in the config before editing tokens
+  (the maintainer's is `sycamore`, not `default`).
 
 ## Continuous Integration
 
@@ -273,9 +281,14 @@ broken CI before; do not reintroduce them:
   (`suppress_browser_context_menu` in `src/ui/host/src/windows/mod.rs`, called
   from both WebView builders) — back/forward/reload are meaningless in a
   widget/launcher host. It is left in place only under `QUANTUM_INSPECTOR=1` so
-  "Inspect Element" stays available. Views that want a right-click menu handle
-  the DOM `contextmenu` event themselves (the bar's tray indicators do); there
-  is no shared WebKit-level menu to customize.
+  "Inspect Element" stays available. Views build right-click menus with the
+  shared `openContextMenu` runtime in `@quantum/client`
+  (`src/ui/packages/client/src/contextMenu.ts`): a themed DOM popover, viewport-
+  clamped, dismissing on Escape/outside-click/scroll/blur, with optional
+  `anchorRect` (drop down from a button), `onPlaced`, and `onClose`. Bar
+  indicators wire it through `wireBarMenu`
+  (`src/ui/plugins/bar/views/bar/src/lib/tray/barMenu.ts`), which handles the
+  anchor and the bar input-region expand/reset (below).
 - **Widget layer depends on interactivity. `Layer::Background` surfaces are
   NON-interactive in Hyprland — they receive no pointer clicks and no keyboard.**
   Content-sized widgets (the clock) sit on `Layer::Background` and anchor per the
@@ -289,10 +302,21 @@ broken CI before; do not reintroduce them:
   Background/None.
 - **Layer-shell surfaces capture pointer input across their whole region, even
   when transparent.** A mapped overlay/bottom surface swallows clicks over its
-  area. Until input-region passthrough is implemented (known follow-up),
-  transient surfaces (toasts) must be HIDDEN when empty via `view.hide`, and
-  the full-screen timers surface captures bare-desktop clicks in its empty
-  regions. Keep this in mind for any new layer-shell window.
+  area. The **bar** avoids this with input-region passthrough: it is a
+  full-height transparent `Layer::Top` surface whose GdkSurface input region is
+  clipped to the visible strip and expanded to cover an open dropdown via the
+  `view.set_input_region` IPC (`WidgetWindow`, `src/ui/host/src/windows/widget.rs`);
+  `wireBarMenu`'s `onPlaced`/`onClose` drive it. Surfaces without it still need
+  the old workarounds: toasts are HIDDEN when empty via `view.hide`, and the
+  full-screen timers surface captures bare-desktop clicks in its empty regions.
+- **A full-height bar must anchor top/left/right only — never top AND bottom.**
+  Anchoring opposite edges makes the compositor ignore the exclusive zone, so
+  app windows tile *behind* the bar. The bar spans the monitor via
+  `set_default_height(monitor_height)` with a single top-edge anchor while
+  keeping `set_exclusive_zone(bar_height)` (`widget.rs`). It also runs on
+  `KeyboardMode::OnDemand` so an open dropdown can take keyboard focus. (The
+  `fill_output` timers surface is different: it anchors all four edges with
+  exclusive zone 0.)
 - **The `ViewMultiplexer` only auto-opens views with BOTH `per_monitor = true`
   and `auto_show = true`** (`src/binaries/quantumd/src/main.rs`). A
   `per_monitor = false, auto_show = true` view is not opened by the multiplexer;
