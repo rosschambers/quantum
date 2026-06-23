@@ -31,6 +31,7 @@ pub(crate) enum AudioCommand {
     SetVolume(u8),
     ToggleMute,
     AdjustVolume(i32),
+    ToggleMicMute,
 }
 
 impl PulseAudioProvider {
@@ -117,6 +118,7 @@ pub(crate) fn parse_audio_action(payload: &serde_json::Value) -> Result<AudioCom
             Ok(AudioCommand::SetVolume((percent as u8).min(150)))
         }
         "toggle_mute" => Ok(AudioCommand::ToggleMute),
+        "toggle_mic_mute" => Ok(AudioCommand::ToggleMicMute),
         "adjust_volume" => {
             let delta = payload
                 .get("delta")
@@ -220,6 +222,20 @@ pub(crate) fn parse_pactl_sink_block(stdout: &str, sink_name: &str) -> Option<(S
 
 /// Execute an audio command via pactl.
 async fn execute_audio_command(command: &AudioCommand) -> Result<(), ProvidersError> {
+    // The microphone toggle targets the default source via the `@DEFAULT_SOURCE@`
+    // alias, so it is handled before (and independently of) the default sink
+    // lookup that the sink commands need.
+    if let AudioCommand::ToggleMicMute = command {
+        Command::new("pactl")
+            .args(["set-source-mute", "@DEFAULT_SOURCE@", "toggle"])
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .output()
+            .await
+            .map_err(|e| ProvidersError::Spawn(e.to_string()))?;
+        return Ok(());
+    }
+
     let sink = get_default_sink().await.ok_or_else(|| {
         ProvidersError::ServiceUnavailable("no default sink available".to_string())
     })?;
@@ -257,6 +273,8 @@ async fn execute_audio_command(command: &AudioCommand) -> Result<(), ProvidersEr
                 .map_err(|e| ProvidersError::Spawn(e.to_string()))?;
             Ok(())
         }
+        // Handled by the early return above; never reached here.
+        AudioCommand::ToggleMicMute => Ok(()),
     }
 }
 
@@ -310,6 +328,55 @@ async fn get_sink_info(sink_name: &str) -> Option<AudioSink> {
     })
 }
 
+/// Get the default PulseAudio source (microphone) name.
+async fn get_default_source() -> Option<String> {
+    let output = Command::new("pactl")
+        .args(["get-default-source"])
+        .output()
+        .await
+        .ok()?;
+
+    if output.status.success() {
+        String::from_utf8(output.stdout)
+            .ok()
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+    } else {
+        None
+    }
+}
+
+/// Fetch current source (microphone) info and build an `AudioSink` DTO. Sources
+/// share the sink block layout in `pactl list sources` (`Name:`, `Description:`,
+/// `Volume:`, `Mute:`), so the sink block parser is reused.
+async fn get_source_info(source_name: &str) -> Option<AudioSink> {
+    let output = Command::new("pactl")
+        .args(["list", "sources"])
+        .output()
+        .await
+        .ok()?;
+
+    if !output.status.success() {
+        return None;
+    }
+
+    let stdout = String::from_utf8(output.stdout).ok()?;
+    let (description, volume_percent, muted) = parse_pactl_sink_block(&stdout, source_name)?;
+
+    Some(AudioSink {
+        name: source_name.to_string(),
+        description,
+        volume_percent,
+        muted,
+    })
+}
+
+/// Fetch the default source (microphone) state, if a default source exists.
+async fn current_source() -> Option<AudioSink> {
+    let source_name = get_default_source().await?;
+    get_source_info(&source_name).await
+}
+
 /// Decide whether a single line from `pactl subscribe` should trigger a
 /// re-fetch of the default sink's state.
 ///
@@ -325,7 +392,12 @@ pub(crate) fn should_refresh_for_pactl_line(line: &str) -> bool {
         return false;
     };
     let facility = rest.split_whitespace().next().unwrap_or("");
-    matches!(facility, "sink" | "server")
+    // `source` is included so a microphone mute toggle is reflected live. Plain
+    // `source` events (mute/volume/port) are infrequent; the constant-firing
+    // recording traffic is on the separate `source-output` facility, which is
+    // not matched here. Change-gating in the stream still suppresses no-op
+    // emissions.
+    matches!(facility, "sink" | "source" | "server")
 }
 
 /// Fetch the current `AudioState` from `pactl` and return it as a JSON value.
@@ -337,6 +409,7 @@ async fn current_audio_state_value() -> serde_json::Value {
             Some(sink) => AudioState {
                 available: true,
                 default_sink: Some(sink),
+                default_source: current_source().await,
             },
             None => AudioState::default(),
         },
@@ -552,15 +625,36 @@ mod tests {
     }
 
     #[test]
+    fn parses_toggle_mic_mute() {
+        let payload = json!({"command": "toggle_mic_mute"});
+        match parse_audio_action(&payload) {
+            Ok(AudioCommand::ToggleMicMute) => {}
+            other => panic!("expected ToggleMicMute, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn pactl_subscribe_source_change_triggers_refresh() {
+        // A microphone mute/volume change emits a `source` event; we refresh so
+        // the bar reflects the new mic mute state live.
+        assert!(should_refresh_for_pactl_line("Event 'change' on source #4"));
+        assert!(should_refresh_for_pactl_line("Event 'new' on source #1"));
+    }
+
+    #[test]
     fn pactl_subscribe_unrelated_events_do_not_trigger_refresh() {
-        // Sink-input and source events fire constantly during playback /
+        // Sink-input and source-output events fire constantly during playback /
         // recording; ignoring them is the entire point of moving off
         // polling. If we refreshed on every sink-input change we'd be
-        // back to 5+Hz wakeups during playback.
+        // back to 5+Hz wakeups during playback. Note `source-output` (the
+        // recording stream) is distinct from `source` (the device) and must
+        // NOT refresh.
         assert!(!should_refresh_for_pactl_line(
             "Event 'change' on sink-input #123"
         ));
-        assert!(!should_refresh_for_pactl_line("Event 'new' on source #4"));
+        assert!(!should_refresh_for_pactl_line(
+            "Event 'change' on source-output #7"
+        ));
         assert!(!should_refresh_for_pactl_line(
             "Event 'change' on client #99"
         ));

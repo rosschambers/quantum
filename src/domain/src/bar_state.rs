@@ -153,6 +153,11 @@ pub enum PowerProfile {
 pub struct AudioState {
     pub available: bool,
     pub default_sink: Option<AudioSink>,
+    /// The default input device (microphone), when one is present. Reuses
+    /// [`AudioSink`] because a source carries the same name/description/volume/
+    /// mute fields. Used by the bar to show and toggle microphone mute.
+    #[serde(default)]
+    pub default_source: Option<AudioSink>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -431,6 +436,12 @@ mod tests {
                 description: "Built-in Audio".into(),
                 volume_percent: 65,
                 muted: false,
+            }),
+            default_source: Some(AudioSink {
+                name: "alsa_input.pci-0000_00_1f.3.analog-stereo".into(),
+                description: "Built-in Microphone".into(),
+                volume_percent: 80,
+                muted: true,
             }),
         };
         let v = serde_json::to_value(&s).unwrap();

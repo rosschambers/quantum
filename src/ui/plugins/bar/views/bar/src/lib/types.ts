@@ -101,6 +101,8 @@ export interface AudioSink {
 export interface AudioState {
   available: boolean;
   default_sink: AudioSink | null;
+  /** The default input device (microphone), reusing the sink shape. */
+  default_source?: AudioSink | null;
 }
 
 export interface BrightnessDisplay {
