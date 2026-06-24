@@ -130,7 +130,27 @@
         style.textContent = p.css;
       }
     });
-    return () => unsubscribe?.();
+
+    // Re-query every time the launcher is shown again. The view persists across
+    // hide/show, so the one-shot mount query below is not enough on its own: if
+    // it ever returns empty (it raced the IPC bridge, or a `nixos-rebuild
+    // switch` churned the daemon), the list would stay empty until the daemon
+    // recreated the view. Re-running the search when the window regains focus or
+    // becomes visible makes it self-heal and also refreshes the list each open.
+    const requeryOnShow = () => handleSearch(searchText);
+    const onVisibility = () => {
+      if (document.visibilityState === 'visible') {
+        requeryOnShow();
+      }
+    };
+    window.addEventListener('focus', requeryOnShow);
+    document.addEventListener('visibilitychange', onVisibility);
+
+    return () => {
+      unsubscribe?.();
+      window.removeEventListener('focus', requeryOnShow);
+      document.removeEventListener('visibilitychange', onVisibility);
+    };
   });
 
   $effect(() => {
