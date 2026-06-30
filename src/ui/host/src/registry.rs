@@ -415,6 +415,12 @@ impl WindowOps for ManagedWindow {
 pub struct WindowRegistry<C: WindowConstructor> {
     constructor: C,
     windows: HashMap<String, C::Window>,
+    /// The `@<monitor>` suffix each stored window was constructed for, keyed
+    /// by the same storage key as `windows`. Single-instance views strip the
+    /// suffix from their key, so this is the only record of which monitor a
+    /// reused window is pinned to; an Open that asks for a different monitor
+    /// uses it to decide the window must be rebuilt there.
+    window_monitor: HashMap<String, Option<String>>,
     catalog: crate::ViewCatalog,
 }
 
@@ -426,6 +432,7 @@ impl<C: WindowConstructor> WindowRegistry<C> {
         Self {
             constructor,
             windows: HashMap::new(),
+            window_monitor: HashMap::new(),
             catalog,
         }
     }
@@ -444,7 +451,24 @@ impl<C: WindowConstructor> WindowRegistry<C> {
             WindowRequest::Open { view, mode } => {
                 tracing::debug!("WindowRegistry::handle view={} mode={:?}", view, mode);
                 let key = canonical_view_key(&view, &self.catalog);
-                let window = match self.windows.entry(key) {
+                let (_, requested_suffix) = split_view_key(&view);
+                let requested = requested_suffix.map(str::to_string);
+                // A single-instance view (overlay/panel) keeps one window under
+                // a suffix-stripped key, fixing its monitor at construction. If
+                // it was last built for a different monitor, evict it so the
+                // Open below reconstructs and re-anchors it on the monitor that
+                // asked. (Per-monitor views embed the suffix in their key, so
+                // the stored suffix always matches and this never fires.)
+                if self
+                    .window_monitor
+                    .get(&key)
+                    .is_some_and(|built| *built != requested)
+                {
+                    if let Some(mut old) = self.windows.remove(&key) {
+                        old.hide();
+                    }
+                }
+                let window = match self.windows.entry(key.clone()) {
                     std::collections::hash_map::Entry::Occupied(e) => e.into_mut(),
                     std::collections::hash_map::Entry::Vacant(v) => {
                         let Some(w) = self.constructor.construct(&view) else {
@@ -454,6 +478,7 @@ impl<C: WindowConstructor> WindowRegistry<C> {
                         v.insert(w)
                     }
                 };
+                self.window_monitor.insert(key, requested);
                 match mode {
                     WindowMode::Toggle => window.toggle(),
                     WindowMode::Show => window.show(),
@@ -487,10 +512,9 @@ impl<C: WindowConstructor> WindowRegistry<C> {
                 }
             }
             WindowRequest::Close { view } => {
-                match self
-                    .windows
-                    .remove(&canonical_view_key(&view, &self.catalog))
-                {
+                let key = canonical_view_key(&view, &self.catalog);
+                self.window_monitor.remove(&key);
+                match self.windows.remove(&key) {
                     Some(mut window) => {
                         // Hide before drop so the layer-shell surface is
                         // released cleanly. The window's Drop releases the
@@ -842,6 +866,47 @@ mod tests {
             mode: WindowMode::Show,
         });
         assert_eq!(count.get(), 2);
+    }
+
+    #[test]
+    fn single_instance_overlay_reuses_on_same_monitor() {
+        // Re-opening a single-instance overlay from the same monitor reuses
+        // the one stored window (here toggling it back off), never rebuilding.
+        let count = Rc::new(Cell::new(0));
+        let shown = Rc::new(Cell::new(false));
+        let mut reg = WindowRegistry::new(fake_ctor(&count, &shown), first_party_catalog());
+        reg.handle(WindowRequest::Open {
+            view: "plugin/power-menu/power-menu@DP-1".into(),
+            mode: WindowMode::Show,
+        });
+        reg.handle(WindowRequest::Open {
+            view: "plugin/power-menu/power-menu@DP-1".into(),
+            mode: WindowMode::Toggle,
+        });
+        assert_eq!(count.get(), 1);
+        assert!(!shown.get());
+    }
+
+    #[test]
+    fn single_instance_overlay_reconstructs_on_different_monitor() {
+        // A single-instance overlay (notification center, power menu, ...)
+        // drops its `@<monitor>` suffix from the storage key, so the monitor
+        // is fixed at construction. Opening it from a bar on another monitor
+        // must move it there: evict the surface pinned to the old monitor and
+        // construct a fresh one on the monitor that asked.
+        let count = Rc::new(Cell::new(0));
+        let shown = Rc::new(Cell::new(false));
+        let mut reg = WindowRegistry::new(fake_ctor(&count, &shown), first_party_catalog());
+        reg.handle(WindowRequest::Open {
+            view: "plugin/power-menu/power-menu@DP-1".into(),
+            mode: WindowMode::Show,
+        });
+        reg.handle(WindowRequest::Open {
+            view: "plugin/power-menu/power-menu@DP-2".into(),
+            mode: WindowMode::Show,
+        });
+        assert_eq!(count.get(), 2);
+        assert!(shown.get());
     }
 
     #[test]
