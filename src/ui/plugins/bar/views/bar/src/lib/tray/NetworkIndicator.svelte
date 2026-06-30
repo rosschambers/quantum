@@ -71,7 +71,7 @@
         // so the menu opens on the same display as the bar that was clicked.
         // When unknown, the bare name lets the daemon place it on the focused
         // monitor.
-        const name = monitorView('widgets/wifi-menu');
+        const name = monitorView('plugin/wifi-menu/wifi-menu');
         try {
             await client.call('view.show', { name });
         } catch (err) {

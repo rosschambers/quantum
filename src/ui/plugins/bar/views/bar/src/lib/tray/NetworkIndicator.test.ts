@@ -145,7 +145,9 @@ describe('NetworkIndicator', () => {
         expect(btn).not.toBeNull();
         await fireEvent.click(btn!);
         await tick();
-        expect(client.call).toHaveBeenCalledWith('view.show', { name: 'widgets/wifi-menu' });
+        expect(client.call).toHaveBeenCalledWith('view.show', {
+            name: 'plugin/wifi-menu/wifi-menu',
+        });
     });
 
     it('click appends the @monitor suffix when __quantum_monitor is set', async () => {
@@ -163,7 +165,9 @@ describe('NetworkIndicator', () => {
         expect(btn).not.toBeNull();
         await fireEvent.click(btn!);
         await tick();
-        expect(client.call).toHaveBeenCalledWith('view.show', { name: 'widgets/wifi-menu@DP-1' });
+        expect(client.call).toHaveBeenCalledWith('view.show', {
+            name: 'plugin/wifi-menu/wifi-menu@DP-1',
+        });
         (window as unknown as { __quantum_monitor?: string }).__quantum_monitor = undefined;
     });
 
