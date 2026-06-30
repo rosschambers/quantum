@@ -171,6 +171,28 @@ describe('NetworkIndicator', () => {
         (window as unknown as { __quantum_monitor?: string }).__quantum_monitor = undefined;
     });
 
+    it('click starts the Wi-Fi scan session via open_session', async () => {
+        const { client, emit } = mockClient();
+        const { container } = render(NetworkIndicator, { props: { client } });
+        await emit({
+            available: true,
+            connectivity: 'full',
+            primary: { kind: 'ethernet', id: 'eth0', ssid: null },
+            wifi_enabled: false,
+            wifi_signal_percent: null,
+        });
+        const btn = container.querySelector('.bar-button') as HTMLButtonElement | null;
+        await fireEvent.click(btn!);
+        await tick();
+        expect(client.call).toHaveBeenCalledWith('action.invoke', {
+            provider: 'wifi',
+            action: {
+                kind: 'custom',
+                data: { kind: 'wifi', payload: { command: 'open_session' } },
+            },
+        });
+    });
+
     it('toggles Wi-Fi from the right-click menu with the negated value', async () => {
         const { client, emit } = mockClient();
         const { container } = render(NetworkIndicator, { props: { client } });

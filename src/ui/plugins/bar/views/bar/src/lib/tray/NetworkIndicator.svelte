@@ -1,7 +1,7 @@
 <script lang="ts">
     import type { Client, MenuItem } from '@quantum/client';
     import type { NetworkState } from '../types';
-    import { NETWORK_CHANNEL, NETWORK_PROVIDER } from '../channels';
+    import { NETWORK_CHANNEL, NETWORK_PROVIDER, WIFI_PROVIDER } from '../channels';
     import { networkIcon } from '../icons';
     import Icon from '../Icon.svelte';
     import BarButton from '../BarButton.svelte';
@@ -77,6 +77,20 @@
         } catch (err) {
             console.error(`view.show ${name} failed:`, err);
         }
+        // Start the Wi-Fi provider's scan session. The overlay's webview is
+        // kept warm across hide/show, so on a re-open it does not re-mount to
+        // start scanning itself; the bar (which just showed it) kicks the
+        // session so the network list is live. The overlay stops the session
+        // when it is dismissed.
+        client
+            .call('action.invoke', {
+                provider: WIFI_PROVIDER,
+                action: {
+                    kind: 'custom',
+                    data: { kind: 'wifi', payload: { command: 'open_session' } },
+                },
+            })
+            .catch((err) => console.error('wifi open_session failed:', err));
     }
 
     function tooltipFor(s: NetworkState): string {

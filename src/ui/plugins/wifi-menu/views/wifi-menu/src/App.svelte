@@ -98,7 +98,16 @@
     }
 
     function close(): void {
-        client.call('view.hide', { name: 'widgets/wifi-menu' }).catch(() => {});
+        // Stop the scan session explicitly: the overlay's webview is kept warm
+        // (hidden, not destroyed), so the on-unmount `close_session` cleanup
+        // does not run on dismiss. Without this the provider would keep
+        // rescanning every few seconds in the background, slowing the whole
+        // system while the overlay is not even visible.
+        sendFireAndForget({ command: 'close_session' });
+        // Hide by the canonical plugin view name (the name the bar opens it
+        // under); the legacy `widgets/wifi-menu` name resolves to nothing, so
+        // the surface never hid and the overlay could not be closed.
+        client.call('view.hide', { name: 'plugin/wifi-menu/wifi-menu' }).catch(() => {});
     }
 
     /**

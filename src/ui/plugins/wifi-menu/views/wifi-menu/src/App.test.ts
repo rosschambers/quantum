@@ -152,6 +152,22 @@ function lastCommand(command: string):
 }
 
 describe('WifiMenu App', () => {
+    it('Escape stops the scan session and hides by the canonical view name', async () => {
+        render(App);
+        await settle();
+        mockCallSpy.mockClear();
+        await fireEvent.keyDown(document, { key: 'Escape' });
+        await tick();
+        // The overlay is kept warm (hidden, not destroyed), so it must stop
+        // the background scan itself rather than rely on unmount cleanup.
+        expect(lastCommand('close_session')).toBeDefined();
+        // And it must hide by the name the bar opens it under, or the surface
+        // never hides and the overlay cannot be closed.
+        expect(mockCallSpy).toHaveBeenCalledWith('view.hide', {
+            name: 'plugin/wifi-menu/wifi-menu',
+        });
+    });
+
     it('radio-off state renders a "Turn on WiFi" affordance that sends set_radio enabled:true', async () => {
         mockState = radioOffState();
         const { getByText } = render(App);

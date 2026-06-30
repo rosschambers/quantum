@@ -21,6 +21,10 @@ export const POWER_CHANNEL = 'power.event';
 export const NETWORK_PROVIDER = 'network';
 export const NETWORK_CHANNEL = 'network.event';
 
+// The Wi-Fi overlay's own provider. The bar opens that overlay, so it starts
+// the provider's scan session on open; the overlay ends it on dismiss.
+export const WIFI_PROVIDER = 'wifi';
+
 export const BLUETOOTH_PROVIDER = 'bluetooth';
 export const BLUETOOTH_CHANNEL = 'bluetooth.event';
 
