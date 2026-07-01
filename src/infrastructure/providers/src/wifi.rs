@@ -755,6 +755,21 @@ impl ProviderSource for WifiProvider {
         }
         Some(self.event_driven_stream())
     }
+
+    /// Return the last state the streaming task cached, so `provider.query`
+    /// resolves instantly instead of building a fresh state on demand.
+    ///
+    /// Building fresh runs several `nmcli` calls and, while a scan is in
+    /// flight, can exceed the query's timeout. When that happened the overlay's
+    /// initial query rejected and it stayed on its default radio-off state even
+    /// though Wi-Fi was on. The stream is pre-subscribed at startup, so the
+    /// cache is warm by the time the overlay opens; if it is somehow empty we
+    /// return `None` and the caller falls back to the stream's first emission.
+    async fn snapshot(&self) -> Option<serde_json::Value> {
+        let last = self.scan.last.lock().await;
+        last.as_ref()
+            .map(|state| serde_json::to_value(state).unwrap_or(serde_json::Value::Null))
+    }
 }
 
 /// Run an `nmcli` invocation with no shell, each argument passed as a separate
@@ -1166,6 +1181,42 @@ HomeNet:AA\\:AA\\:AA\\:AA\\:AA\\:02:40:WPA2:2412:yes:*";
             payload: serde_json::json!({"command":"open_session"}),
         };
         assert!(provider.invoke(&action).await.is_err());
+    }
+
+    #[tokio::test]
+    async fn snapshot_returns_cached_last_state_without_running_nmcli() {
+        // `provider.query` prefers snapshot() over waiting for the stream's
+        // first emission. The overlay depends on that query for its initial
+        // radio state; if snapshot() is absent the query builds a fresh state
+        // (several nmcli calls, slow while a scan is in flight) and can time
+        // out, leaving the overlay stuck on its default radio-off state.
+        let scan = std::sync::Arc::new(ScanSession::default());
+        {
+            let mut last = scan.last.lock().await;
+            *last = Some(assemble_state(true, false, vec![], vec![]));
+        }
+        let provider = WifiProvider {
+            id: quantum_domain::ProviderId::from("wifi"),
+            available: true,
+            scan: scan.clone(),
+        };
+        let snap = provider
+            .snapshot()
+            .await
+            .expect("snapshot must return the cached state");
+        assert_eq!(snap["radio_enabled"], serde_json::json!(true));
+        assert_eq!(snap["available"], serde_json::json!(true));
+    }
+
+    #[tokio::test]
+    async fn snapshot_is_none_before_first_emission() {
+        // No cached state yet: fall back to the stream's first emission.
+        let provider = WifiProvider {
+            id: quantum_domain::ProviderId::from("wifi"),
+            available: true,
+            scan: std::sync::Arc::new(ScanSession::default()),
+        };
+        assert!(provider.snapshot().await.is_none());
     }
 
     #[tokio::test]
