@@ -466,10 +466,13 @@ impl WifiProvider {
             }
             WifiAction::CloseSession => {
                 self.scan.active.store(false, Ordering::Relaxed);
-                {
-                    let mut last = self.scan.last.lock().await;
-                    *last = None;
-                }
+                // Do NOT clear `scan.last` here: it is the cache `snapshot()`
+                // serves to `provider.query`, which the overlay relies on for
+                // its initial radio state. The `notify_one()` below wakes the
+                // streaming task, which rebuilds the (now not-scanning) state
+                // and refreshes the cache; clearing it first would leave a
+                // window where a re-open queries an empty snapshot, falls back
+                // to the slow stream, and shows Wi-Fi off even when it is on.
                 self.scan.notify.notify_one();
                 Ok(ActionOutcome { message: None })
             }
@@ -779,7 +782,54 @@ impl ProviderSource for WifiProvider {
 /// `map_nmcli_error` to `DomainError::ActionFailed`. If the process could not be
 /// started at all it returns `ProvidersError::Spawn`, which `map_nmcli_error`
 /// turns into `DomainError::Unsupported`.
+/// Default bound for a single nmcli read or mutation. NetworkManager can wedge
+/// (a stuck scan, a hung supplicant), and an unbounded `.output().await` would
+/// then block the streaming task or a `provider.query` indefinitely. Connect is
+/// the one operation that legitimately runs longer and passes its own bound.
+const NMCLI_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(15);
+/// Associating with a network (scan, authentication, DHCP) legitimately takes
+/// longer than a read, so connect is bounded more generously. Still bounded, so
+/// a failed association surfaces an error instead of spinning forever.
+const NMCLI_CONNECT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(45);
+
+/// Run an nmcli invocation under the default timeout.
 async fn run_nmcli(args: &[&str]) -> Result<String, ProvidersError> {
+    run_nmcli_within(NMCLI_TIMEOUT, args).await
+}
+
+/// Run an nmcli invocation under an explicit timeout. A timeout is reported as
+/// `ServiceUnavailable` so callers map it exactly like any other nmcli failure
+/// (empty list / error state) rather than hanging.
+async fn run_nmcli_within(
+    timeout: std::time::Duration,
+    args: &[&str],
+) -> Result<String, ProvidersError> {
+    bounded(args.join(" "), timeout, run_nmcli_raw(args)).await
+}
+
+/// Wrap a future in a timeout, turning elapsed time into a `ServiceUnavailable`
+/// error carrying the label. Split out from `run_nmcli_within` so the timeout
+/// behaviour is unit-testable without spawning a real nmcli process.
+async fn bounded<F>(
+    label: String,
+    timeout: std::time::Duration,
+    fut: F,
+) -> Result<String, ProvidersError>
+where
+    F: std::future::Future<Output = Result<String, ProvidersError>>,
+{
+    match tokio::time::timeout(timeout, fut).await {
+        Ok(result) => result,
+        Err(_) => Err(ProvidersError::ServiceUnavailable(format!(
+            "nmcli {label} timed out after {}s",
+            timeout.as_secs()
+        ))),
+    }
+}
+
+/// Execute nmcli with no shell and no timeout. Callers go through
+/// `run_nmcli` / `run_nmcli_within` so every invocation is bounded.
+async fn run_nmcli_raw(args: &[&str]) -> Result<String, ProvidersError> {
     let output = Command::new("nmcli")
         .args(args)
         .stdin(Stdio::null())
@@ -837,7 +887,10 @@ async fn connect_to_network(
     hidden: bool,
 ) -> Result<String, ProvidersError> {
     let args = connect_args(ssid, bssid, password, hidden);
-    run_nmcli(&args).await
+    // Connect on the longer bound: association can take a while, but it must
+    // still be bounded so a stalled connect surfaces an error to the overlay
+    // (which then leaves the row's "connecting" state) rather than spinning.
+    run_nmcli_within(NMCLI_CONNECT_TIMEOUT, &args).await
 }
 
 /// Bring down the active wireless connection.
@@ -1206,6 +1259,59 @@ HomeNet:AA\\:AA\\:AA\\:AA\\:AA\\:02:40:WPA2:2412:yes:*";
             .expect("snapshot must return the cached state");
         assert_eq!(snap["radio_enabled"], serde_json::json!(true));
         assert_eq!(snap["available"], serde_json::json!(true));
+    }
+
+    #[tokio::test]
+    async fn close_session_keeps_cached_state_for_snapshot() {
+        // close_session stops scanning but must NOT clear the cache that
+        // snapshot() serves, or a re-open queries an empty snapshot and shows
+        // Wi-Fi off until the stream re-populates.
+        let scan = std::sync::Arc::new(ScanSession::default());
+        {
+            let mut last = scan.last.lock().await;
+            *last = Some(assemble_state(true, false, vec![], vec![]));
+        }
+        let provider = WifiProvider {
+            id: quantum_domain::ProviderId::from("wifi"),
+            available: true,
+            scan: scan.clone(),
+        };
+        provider.execute(WifiAction::CloseSession).await.unwrap();
+        assert!(
+            scan.last.lock().await.is_some(),
+            "close_session must not clear the snapshot cache"
+        );
+        assert!(
+            !scan.active.load(Ordering::Relaxed),
+            "close_session must stop scanning"
+        );
+    }
+
+    #[tokio::test]
+    async fn bounded_elapses_to_service_unavailable_error() {
+        let slow = async {
+            tokio::time::sleep(std::time::Duration::from_secs(30)).await;
+            Ok(String::new())
+        };
+        let result = bounded(
+            "radio wifi".to_string(),
+            std::time::Duration::from_millis(20),
+            slow,
+        )
+        .await;
+        assert!(result.is_err(), "a call over its bound must error, not hang");
+    }
+
+    #[tokio::test]
+    async fn bounded_passes_through_a_fast_result() {
+        let fast = async { Ok("enabled".to_string()) };
+        let result = bounded(
+            "radio wifi".to_string(),
+            std::time::Duration::from_secs(5),
+            fast,
+        )
+        .await;
+        assert_eq!(result.unwrap(), "enabled");
     }
 
     #[tokio::test]
