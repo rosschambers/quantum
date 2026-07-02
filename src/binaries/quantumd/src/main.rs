@@ -1,6 +1,7 @@
 mod gtk_loop;
 mod plugin_loop;
 mod runtime;
+mod toast_monitor;
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -405,6 +406,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         // toast view hides itself once its last card clears, so this task only
         // needs to show the window on a `created` change. The enriched
         // `notifications.event` payload is `{ "change": <event>, "notifications": [...] }`.
+        //
+        // Toasts are daemon-triggered (no bar click supplies a monitor), so
+        // this task queries the hyprland active-window provider for the
+        // focused monitor at show time and requests the toast with that
+        // suffix; the window registry re-anchors the single-instance surface
+        // whenever the requested monitor changes. The query reads in-memory
+        // state (the stream's immediate first emission), so it is cheap and
+        // race-free; without Hyprland it errors and the bare name keeps the
+        // old compositor-default behaviour.
         let dispatcher_for_toast = setup.ipc_dispatcher.clone();
         let mut toast_event_rx = setup.event_tx.subscribe();
         worker.handle.spawn(async move {
@@ -426,8 +436,19 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                                 })
                                 .unwrap_or(false);
                         if is_created {
-                            let params =
-                                serde_json::json!({"name": "plugin/notification-center/toast"});
+                            let focused_monitor = dispatcher_for_toast
+                                .dispatch(
+                                    "provider.query",
+                                    serde_json::json!({"id": "hyprland.activewindow"}),
+                                )
+                                .await
+                                .ok()
+                                .and_then(|state| {
+                                    crate::toast_monitor::extract_focused_monitor(&state)
+                                });
+                            let view_name =
+                                crate::toast_monitor::toast_view_name(focused_monitor.as_deref());
+                            let params = serde_json::json!({"name": view_name});
                             if let Err(err) =
                                 dispatcher_for_toast.dispatch("view.show", params).await
                             {
