@@ -174,6 +174,22 @@ pub(crate) fn canonical_view_key(view: &str, catalog: &crate::ViewCatalog) -> St
     }
 }
 
+/// Whether the given view opts into destroy-on-dismiss, resolved the same way
+/// as `canonical_view_key` derives its descriptor key: alias-resolve the
+/// prefix, ignore any `@monitor` suffix, and read the catalog. A catalog miss
+/// defaults to false (park hidden, today's behavior).
+pub(crate) fn view_destroy_on_dismiss(view: &str, catalog: &crate::ViewCatalog) -> bool {
+    let (prefix, _suffix) = split_view_key(view);
+    let canonical = match resolve_alias(prefix) {
+        Some(c) => c.to_string(),
+        None => prefix.to_string(),
+    };
+    catalog
+        .get(&canonical)
+        .map(|d| d.destroy_on_dismiss)
+        .unwrap_or(false)
+}
+
 /// Operations that all managed windows must support.
 pub trait WindowOps {
     fn show(&mut self);
@@ -455,6 +471,23 @@ impl<C: WindowConstructor> WindowRegistry<C> {
         &self.catalog
     }
 
+    /// Tear a stored window down for good: drop its `window_monitor` record,
+    /// remove it from the map, and (if it was present) hide then destroy it.
+    /// Hiding first releases the layer-shell surface cleanly; destroying
+    /// removes the window from the `GtkApplication` and disposes its `WebView`
+    /// so the web process terminates. Shared by the `Close` handler and the
+    /// flagged destroy-on-dismiss path.
+    fn remove_and_destroy(&mut self, key: &str)
+    where
+        C::Window: WindowOps,
+    {
+        self.window_monitor.remove(key);
+        if let Some(mut window) = self.windows.remove(key) {
+            window.hide();
+            window.destroy();
+        }
+    }
+
     /// Handle a window request (construct or reuse window, then apply the operation).
     pub fn handle(&mut self, req: WindowRequest)
     where
@@ -464,6 +497,28 @@ impl<C: WindowConstructor> WindowRegistry<C> {
             WindowRequest::Open { view, mode } => {
                 tracing::debug!("WindowRegistry::handle view={} mode={:?}", view, mode);
                 let key = canonical_view_key(&view, &self.catalog);
+                // A flagged view treats dismiss (Hide, or Toggle while shown)
+                // as a full teardown: remove and destroy so the renderer is
+                // freed. "Present in the map" is equivalent to "currently
+                // shown" for flagged views, since nothing else parks them.
+                if view_destroy_on_dismiss(&view, &self.catalog) {
+                    let present = self.windows.contains_key(&key);
+                    let is_dismiss = matches!(mode, WindowMode::Hide)
+                        || (matches!(mode, WindowMode::Toggle) && present);
+                    if is_dismiss {
+                        self.remove_and_destroy(&key);
+                        tracing::info!("dismissed (destroyed) window: {view}");
+                        return;
+                    }
+                }
+                // For a flagged view, any non-dismiss request must end up
+                // shown: normalize so a freshly constructed window is never
+                // toggled back to hidden.
+                let mode = if view_destroy_on_dismiss(&view, &self.catalog) {
+                    WindowMode::Show
+                } else {
+                    mode
+                };
                 let (_, requested_suffix) = split_view_key(&view);
                 let requested = requested_suffix.map(str::to_string);
                 // A single-instance view (overlay/panel) keeps one window under
@@ -527,22 +582,17 @@ impl<C: WindowConstructor> WindowRegistry<C> {
             }
             WindowRequest::Close { view } => {
                 let key = canonical_view_key(&view, &self.catalog);
-                self.window_monitor.remove(&key);
-                match self.windows.remove(&key) {
-                    Some(mut window) => {
-                        // Hide first to release the layer-shell surface
-                        // cleanly, then destroy to remove the window from the
-                        // GtkApplication and dispose its WebView so the web
-                        // process terminates. Dropping the struct alone does
-                        // not do this, because the application holds its own
-                        // reference to the window.
-                        window.hide();
-                        window.destroy();
-                        tracing::info!("closed window: {view}");
-                    }
-                    None => {
-                        tracing::debug!("close request for unknown view: {view}");
-                    }
+                if self.windows.contains_key(&key) {
+                    // remove_and_destroy hides first to release the layer-shell
+                    // surface cleanly, then destroys to remove the window from
+                    // the GtkApplication and dispose its WebView so the web
+                    // process terminates. Dropping the struct alone does not do
+                    // this, because the application holds its own reference.
+                    self.remove_and_destroy(&key);
+                    tracing::info!("closed window: {view}");
+                } else {
+                    self.window_monitor.remove(&key);
+                    tracing::debug!("close request for unknown view: {view}");
                 }
             }
         }
@@ -776,6 +826,7 @@ mod tests {
                 "plugin/power-menu/power-menu".to_string(),
                 ViewDescriptor {
                     kind: ViewKind::Overlay,
+                    destroy_on_dismiss: true,
                     ..ViewDescriptor::default()
                 },
             ),
@@ -1062,6 +1113,106 @@ mod tests {
             "eviction must reconstruct on the new monitor"
         );
         assert_eq!(destroyed.get(), 1, "eviction must destroy the old window");
+    }
+
+    #[test]
+    fn flagged_view_hide_destroys_window() {
+        let count = Rc::new(Cell::new(0));
+        let shown = Rc::new(Cell::new(false));
+        let destroyed = Rc::new(Cell::new(0));
+        let mut reg = WindowRegistry::new(
+            fake_ctor_with_destroy(&count, &shown, &destroyed),
+            first_party_catalog(),
+        );
+        reg.handle(WindowRequest::Open {
+            view: "plugin/power-menu/power-menu@DP-1".into(),
+            mode: WindowMode::Show,
+        });
+        assert_eq!(count.get(), 1);
+        reg.handle(WindowRequest::Open {
+            view: "plugin/power-menu/power-menu@DP-1".into(),
+            mode: WindowMode::Hide,
+        });
+        assert_eq!(destroyed.get(), 1, "flagged Hide must destroy");
+    }
+
+    #[test]
+    fn flagged_view_reconstructs_after_dismiss() {
+        let count = Rc::new(Cell::new(0));
+        let shown = Rc::new(Cell::new(false));
+        let destroyed = Rc::new(Cell::new(0));
+        let mut reg = WindowRegistry::new(
+            fake_ctor_with_destroy(&count, &shown, &destroyed),
+            first_party_catalog(),
+        );
+        reg.handle(WindowRequest::Open {
+            view: "plugin/power-menu/power-menu@DP-1".into(),
+            mode: WindowMode::Show,
+        });
+        reg.handle(WindowRequest::Open {
+            view: "plugin/power-menu/power-menu@DP-1".into(),
+            mode: WindowMode::Hide,
+        });
+        reg.handle(WindowRequest::Open {
+            view: "plugin/power-menu/power-menu@DP-1".into(),
+            mode: WindowMode::Show,
+        });
+        assert_eq!(count.get(), 2, "reopen after dismiss reconstructs");
+        assert_eq!(destroyed.get(), 1);
+    }
+
+    #[test]
+    fn flagged_view_toggle_off_destroys_toggle_on_constructs() {
+        let count = Rc::new(Cell::new(0));
+        let shown = Rc::new(Cell::new(false));
+        let destroyed = Rc::new(Cell::new(0));
+        let mut reg = WindowRegistry::new(
+            fake_ctor_with_destroy(&count, &shown, &destroyed),
+            first_party_catalog(),
+        );
+        // Toggle when absent -> construct + show.
+        reg.handle(WindowRequest::Open {
+            view: "plugin/power-menu/power-menu@DP-1".into(),
+            mode: WindowMode::Toggle,
+        });
+        assert_eq!(count.get(), 1);
+        assert_eq!(destroyed.get(), 0);
+        // Toggle when present -> destroy.
+        reg.handle(WindowRequest::Open {
+            view: "plugin/power-menu/power-menu@DP-1".into(),
+            mode: WindowMode::Toggle,
+        });
+        assert_eq!(destroyed.get(), 1, "flagged toggle-off must destroy");
+    }
+
+    #[test]
+    fn unflagged_view_hide_does_not_destroy() {
+        // launcher is NOT flagged: Hide parks it, reused on next Show.
+        let count = Rc::new(Cell::new(0));
+        let shown = Rc::new(Cell::new(false));
+        let destroyed = Rc::new(Cell::new(0));
+        let mut reg = WindowRegistry::new(
+            fake_ctor_with_destroy(&count, &shown, &destroyed),
+            first_party_catalog(),
+        );
+        reg.handle(WindowRequest::Open {
+            view: "plugin/launcher/launcher".into(),
+            mode: WindowMode::Show,
+        });
+        reg.handle(WindowRequest::Open {
+            view: "plugin/launcher/launcher".into(),
+            mode: WindowMode::Hide,
+        });
+        assert_eq!(destroyed.get(), 0, "unflagged Hide must not destroy");
+        reg.handle(WindowRequest::Open {
+            view: "plugin/launcher/launcher".into(),
+            mode: WindowMode::Show,
+        });
+        assert_eq!(
+            count.get(),
+            1,
+            "unflagged view is reused, not reconstructed"
+        );
     }
 
     #[test]
