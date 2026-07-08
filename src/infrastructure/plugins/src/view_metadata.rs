@@ -22,6 +22,7 @@ pub fn parse_view_toml(text: &str) -> Result<ViewDescriptor, PluginsError> {
         width: Option<u32>,
         single_instance: Option<bool>,
         fill_output: Option<bool>,
+        destroy_on_dismiss: Option<bool>,
     }
 
     let raw: RawView =
@@ -77,6 +78,9 @@ pub fn parse_view_toml(text: &str) -> Result<ViewDescriptor, PluginsError> {
         width: raw.width,
         single_instance: raw.single_instance,
         fill_output: raw.fill_output.unwrap_or(defaults.fill_output),
+        destroy_on_dismiss: raw
+            .destroy_on_dismiss
+            .unwrap_or(defaults.destroy_on_dismiss),
     })
 }
 
@@ -121,6 +125,7 @@ single_instance = false
                 width: Some(600),
                 single_instance: Some(false),
                 fill_output: false,
+                destroy_on_dismiss: false,
             }
         );
     }
@@ -232,6 +237,18 @@ single_instance = false
         let toml = "kind = \"widget\"\nfuture_option = \"whatever\"\nshiny = 9\n";
         let descriptor = parse_view_toml(toml).expect("unknown fields are fine");
         assert_eq!(descriptor.kind, ViewKind::Widget);
+    }
+
+    #[test]
+    fn destroy_on_dismiss_true_parses() {
+        let descriptor = parse_view_toml("destroy_on_dismiss = true\n").expect("valid");
+        assert!(descriptor.destroy_on_dismiss);
+    }
+
+    #[test]
+    fn destroy_on_dismiss_defaults_false_when_missing() {
+        let descriptor = parse_view_toml("kind = \"overlay\"\n").expect("valid");
+        assert!(!descriptor.destroy_on_dismiss);
     }
 
     #[test]
