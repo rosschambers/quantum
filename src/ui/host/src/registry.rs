@@ -479,6 +479,7 @@ impl<C: WindowConstructor> WindowRegistry<C> {
                 {
                     if let Some(mut old) = self.windows.remove(&key) {
                         old.hide();
+                        old.destroy();
                     }
                 }
                 let window = match self.windows.entry(key.clone()) {
@@ -529,10 +530,14 @@ impl<C: WindowConstructor> WindowRegistry<C> {
                 self.window_monitor.remove(&key);
                 match self.windows.remove(&key) {
                     Some(mut window) => {
-                        // Hide before drop so the layer-shell surface is
-                        // released cleanly. The window's Drop releases the
-                        // underlying GTK resources.
+                        // Hide first to release the layer-shell surface
+                        // cleanly, then destroy to remove the window from the
+                        // GtkApplication and dispose its WebView so the web
+                        // process terminates. Dropping the struct alone does
+                        // not do this, because the application holds its own
+                        // reference to the window.
                         window.hide();
+                        window.destroy();
                         tracing::info!("closed window: {view}");
                     }
                     None => {
