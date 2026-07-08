@@ -807,6 +807,22 @@ mod tests {
         }
     }
 
+    /// A `FakeCtor` that threads an explicit `destroyed` counter into every
+    /// window it builds, so tests can assert that a removal path (close or
+    /// monitor eviction) tore the window down instead of merely hiding it.
+    fn fake_ctor_with_destroy(
+        count: &Rc<Cell<usize>>,
+        shown: &Rc<Cell<bool>>,
+        destroyed: &Rc<Cell<usize>>,
+    ) -> FakeCtor {
+        FakeCtor {
+            construct_count: count.clone(),
+            shown: shown.clone(),
+            input_region: Rc::new(Cell::new(None)),
+            destroyed: destroyed.clone(),
+        }
+    }
+
     #[test]
     fn resolve_alias_maps_legacy_names_to_canonical() {
         assert_eq!(resolve_alias("widgets/bar"), Some("plugin/bar/bar"));
@@ -991,6 +1007,52 @@ mod tests {
         });
         assert_eq!(count.get(), 2, "window was reconstructed after close");
         assert!(shown.get(), "reopened window is visible");
+    }
+
+    #[test]
+    fn close_request_destroys_window() {
+        // Closing a window must tear it down for good, not just hide it, so the
+        // embedded WebView is finalized and its WebKitWebProcess terminates.
+        let count = Rc::new(Cell::new(0));
+        let shown = Rc::new(Cell::new(false));
+        let destroyed = Rc::new(Cell::new(0));
+        let mut reg = WindowRegistry::new(
+            fake_ctor_with_destroy(&count, &shown, &destroyed),
+            first_party_catalog(),
+        );
+        reg.handle(WindowRequest::Open {
+            view: "plugin/launcher/launcher".into(),
+            mode: WindowMode::Show,
+        });
+        reg.handle(WindowRequest::Close {
+            view: "plugin/launcher/launcher".into(),
+        });
+        assert_eq!(destroyed.get(), 1, "close must destroy the window");
+    }
+
+    #[test]
+    fn monitor_eviction_destroys_old_window() {
+        // Opening a single-instance overlay on one monitor and then another
+        // evicts the surface pinned to the old monitor and reconstructs it on
+        // the new one. The evicted window must be destroyed, not just hidden,
+        // or its WebKitWebProcess leaks.
+        let count = Rc::new(Cell::new(0));
+        let shown = Rc::new(Cell::new(false));
+        let destroyed = Rc::new(Cell::new(0));
+        let mut reg = WindowRegistry::new(
+            fake_ctor_with_destroy(&count, &shown, &destroyed),
+            first_party_catalog(),
+        );
+        reg.handle(WindowRequest::Open {
+            view: "plugin/power-menu/power-menu@DP-1".into(),
+            mode: WindowMode::Show,
+        });
+        reg.handle(WindowRequest::Open {
+            view: "plugin/power-menu/power-menu@DP-2".into(),
+            mode: WindowMode::Show,
+        });
+        assert_eq!(count.get(), 2, "eviction must reconstruct on the new monitor");
+        assert_eq!(destroyed.get(), 1, "eviction must destroy the old window");
     }
 
     #[test]
