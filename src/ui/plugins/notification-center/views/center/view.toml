@@ -1,2 +1,3 @@
 kind = "overlay"
 position = "top_right"
+destroy_on_dismiss = true
