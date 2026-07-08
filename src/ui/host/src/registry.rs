@@ -1056,7 +1056,11 @@ mod tests {
             view: "plugin/power-menu/power-menu@DP-2".into(),
             mode: WindowMode::Show,
         });
-        assert_eq!(count.get(), 2, "eviction must reconstruct on the new monitor");
+        assert_eq!(
+            count.get(),
+            2,
+            "eviction must reconstruct on the new monitor"
+        );
         assert_eq!(destroyed.get(), 1, "eviction must destroy the old window");
     }
 
