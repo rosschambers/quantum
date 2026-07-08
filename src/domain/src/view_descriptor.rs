@@ -66,6 +66,12 @@ pub struct ViewDescriptor {
     /// content freely across the whole output. Ignored for top-anchored bars.
     #[serde(default)]
     pub fill_output: bool,
+    /// When true, dismissing this view (hide or toggle-off) destroys its
+    /// window and renderer instead of hiding it, freeing memory at the cost of
+    /// a cold reconstruction on the next open. Default false: parked hidden and
+    /// reused, giving instant reopen.
+    #[serde(default)]
+    pub destroy_on_dismiss: bool,
 }
 
 impl Default for ViewDescriptor {
@@ -80,6 +86,7 @@ impl Default for ViewDescriptor {
             width: None,
             single_instance: None,
             fill_output: false,
+            destroy_on_dismiss: false,
         }
     }
 }
@@ -161,6 +168,18 @@ mod tests {
     }
 
     #[test]
+    fn destroy_on_dismiss_defaults_false_and_round_trips() {
+        assert!(!ViewDescriptor::default().destroy_on_dismiss);
+        let descriptor = ViewDescriptor {
+            destroy_on_dismiss: true,
+            ..ViewDescriptor::default()
+        };
+        let json = serde_json::to_string(&descriptor).unwrap();
+        let restored: ViewDescriptor = serde_json::from_str(&json).unwrap();
+        assert_eq!(restored, descriptor);
+    }
+
+    #[test]
     fn full_descriptor_serde_round_trip() {
         let descriptor = ViewDescriptor {
             kind: ViewKind::Panel,
@@ -172,6 +191,7 @@ mod tests {
             width: Some(1920),
             single_instance: Some(true),
             fill_output: true,
+            destroy_on_dismiss: true,
         };
         let json = serde_json::to_string(&descriptor).unwrap();
         let restored: ViewDescriptor = serde_json::from_str(&json).unwrap();
