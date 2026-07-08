@@ -1299,7 +1299,10 @@ HomeNet:AA\\:AA\\:AA\\:AA\\:AA\\:02:40:WPA2:2412:yes:*";
             slow,
         )
         .await;
-        assert!(result.is_err(), "a call over its bound must error, not hang");
+        assert!(
+            result.is_err(),
+            "a call over its bound must error, not hang"
+        );
     }
 
     #[tokio::test]
