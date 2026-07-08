@@ -575,6 +575,10 @@ impl crate::registry::WindowOps for WidgetWindow {
         self.window.set_visible(!v);
     }
 
+    fn destroy(&mut self) {
+        gtk4::prelude::GtkWindowExt::destroy(&self.window);
+    }
+
     fn set_height(&mut self, height: u32) {
         // The bar is now full-height (anchored on all four edges), so
         // `set_default_height` is geometrically inert for it: the surface
@@ -608,6 +612,17 @@ impl crate::registry::WindowOps for WidgetWindow {
         // width change, then apply it now.
         self.input_region.set(region);
         apply_input_region(&self.window, self.bar_height, region);
+    }
+}
+
+impl Drop for WidgetWindow {
+    /// Safety net: if a `WidgetWindow` handle is dropped without an explicit
+    /// `destroy` call, tear the surface out of the `GtkApplication` here so
+    /// the embedded `WebView` still finalizes and its `WebKitWebProcess`
+    /// terminates. `gtk_window_destroy` is idempotent, so this plus an
+    /// explicit earlier `destroy` is harmless.
+    fn drop(&mut self) {
+        gtk4::prelude::GtkWindowExt::destroy(&self.window);
     }
 }
 

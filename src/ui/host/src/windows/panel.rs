@@ -356,6 +356,24 @@ impl crate::registry::WindowOps for PanelWindow {
             self.show();
         }
     }
+
+    /// Tear the panel down: remove it from the `GtkApplication` and dispose
+    /// the widget tree so the embedded `WebView` is finalized and its
+    /// `WebKitWebProcess` terminates.
+    fn destroy(&mut self) {
+        gtk4::prelude::GtkWindowExt::destroy(&self.window);
+    }
+}
+
+impl Drop for PanelWindow {
+    /// Safety net: if a `PanelWindow` handle is dropped without an explicit
+    /// `destroy` call, tear the surface out of the `GtkApplication` here so
+    /// the embedded `WebView` still finalizes and its `WebKitWebProcess`
+    /// terminates. `gtk_window_destroy` is idempotent, so this plus an
+    /// explicit earlier `destroy` is harmless.
+    fn drop(&mut self) {
+        gtk4::prelude::GtkWindowExt::destroy(&self.window);
+    }
 }
 
 #[cfg(test)]

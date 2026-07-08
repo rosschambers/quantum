@@ -179,6 +179,12 @@ pub trait WindowOps {
     fn show(&mut self);
     fn hide(&mut self);
     fn toggle(&mut self);
+    /// Tear the window down for good: remove it from the `GtkApplication`
+    /// and dispose the widget tree so the embedded `WebView` is finalized
+    /// and its `WebKitWebProcess` terminates. Merely hiding a window leaves
+    /// the application holding a strong reference, so the renderer process
+    /// leaks. Every removal path must call this before dropping the handle.
+    fn destroy(&mut self);
     /// Resize the window to the given pixel height. The bar uses this
     /// when a popover opens so the popover has room to render below the
     /// visible row. Default no-op for windows that don't care about
@@ -393,6 +399,13 @@ impl WindowOps for ManagedWindow {
         match self {
             ManagedWindow::Panel(w) => w.toggle(),
             ManagedWindow::Widget(w) => w.toggle(),
+        }
+    }
+
+    fn destroy(&mut self) {
+        match self {
+            ManagedWindow::Panel(w) => w.destroy(),
+            ManagedWindow::Widget(w) => w.destroy(),
         }
     }
 
@@ -664,6 +677,9 @@ mod tests {
         /// (itself `Option`, distinguishing a strip-only reset from a menu
         /// rectangle).
         input_region: Rc<Cell<Option<Option<quantum_domain::WindowInputRegion>>>>,
+        /// Counts how many times `destroy` was called, so tests can assert
+        /// teardown happened on the removal paths.
+        destroyed: Rc<Cell<usize>>,
     }
 
     impl WindowOps for FakeWindow {
@@ -675,6 +691,9 @@ mod tests {
         }
         fn toggle(&mut self) {
             self.shown.set(!self.shown.get());
+        }
+        fn destroy(&mut self) {
+            self.destroyed.set(self.destroyed.get() + 1);
         }
         fn set_input_region(&mut self, region: Option<quantum_domain::WindowInputRegion>) {
             self.input_region.set(Some(region));
@@ -690,6 +709,7 @@ mod tests {
         construct_count: Rc<Cell<usize>>,
         shown: Rc<Cell<bool>>,
         input_region: Rc<Cell<Option<Option<quantum_domain::WindowInputRegion>>>>,
+        destroyed: Rc<Cell<usize>>,
     }
 
     impl WindowConstructor for FakeCtor {
@@ -714,6 +734,7 @@ mod tests {
                 Some(FakeWindow {
                     shown: self.shown.clone(),
                     input_region: self.input_region.clone(),
+                    destroyed: self.destroyed.clone(),
                 })
             } else {
                 None
@@ -768,6 +789,7 @@ mod tests {
             construct_count: count.clone(),
             shown: shown.clone(),
             input_region: Rc::new(Cell::new(None)),
+            destroyed: Rc::new(Cell::new(0)),
         }
     }
 
@@ -781,6 +803,7 @@ mod tests {
             construct_count: count.clone(),
             shown: shown.clone(),
             input_region: input_region.clone(),
+            destroyed: Rc::new(Cell::new(0)),
         }
     }
 
