@@ -410,3 +410,55 @@ describe('SoundMenu stream sections', () => {
         });
     });
 });
+
+describe('SoundMenu profiles section', () => {
+    it('renders a collapsed profiles section with the card description', async () => {
+        const { container } = render(App);
+        await settle();
+        const profiles = container.querySelector(
+            'details[data-section="profiles"]',
+        ) as HTMLDetailsElement;
+        expect(profiles).not.toBeNull();
+        expect(profiles.open).toBe(false);
+        expect(profiles.textContent).toContain('Arrow Lake cAVS');
+    });
+
+    it('selects the active profile and lists all options', async () => {
+        const { container } = render(App);
+        await settle();
+        const select = container.querySelector(
+            '[data-card-index="48"] select[data-action="profile"]',
+        ) as HTMLSelectElement;
+        expect(select).not.toBeNull();
+        expect(select.value).toBe('HiFi');
+        expect(Array.from(select.options).map((option) => option.value)).toEqual(['HiFi', 'off']);
+    });
+
+    it('changing the profile select sends the exact set_card_profile envelope', async () => {
+        const { container } = render(App);
+        await settle();
+        const select = container.querySelector(
+            '[data-card-index="48"] select[data-action="profile"]',
+        ) as HTMLSelectElement;
+        await fireEvent.change(select, { target: { value: 'off' } });
+        await tick();
+        const call = mockCallSpy.mock.calls.find(
+            ([method, parameters]) =>
+                method === 'action.invoke' &&
+                (parameters as { action?: { data?: { payload?: { command?: string } } } }).action
+                    ?.data?.payload?.command === 'set_card_profile',
+        );
+        expect(call).toBeDefined();
+        const [, parameters] = call!;
+        expect(parameters).toEqual({
+            provider: 'audio',
+            action: {
+                kind: 'custom',
+                data: {
+                    kind: 'audio',
+                    payload: { command: 'set_card_profile', card_index: 48, profile: 'off' },
+                },
+            },
+        });
+    });
+});

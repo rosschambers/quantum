@@ -123,7 +123,9 @@
         });
     }
 
-    // Task 9: profile handlers go here.
+    function setCardProfile(cardIndex: number, profile: string): void {
+        sendFireAndForget({ command: 'set_card_profile', card_index: cardIndex, profile });
+    }
 </script>
 
 <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
@@ -196,7 +198,29 @@
                         {/each}
                     </div>
                 {/if}
-                <!-- Task 9: Profiles section. -->
+                <details class="section profiles" data-section="profiles">
+                    <summary class="section-title">Profiles</summary>
+                    {#each state.cards as card (card.index)}
+                        <div class="profile-row" data-card-index={card.index}>
+                            <span class="profile-card-name">{card.description}</span>
+                            <select
+                                data-action="profile"
+                                value={card.active_profile}
+                                onchange={(event) =>
+                                    setCardProfile(
+                                        card.index,
+                                        (event.currentTarget as HTMLSelectElement).value,
+                                    )}
+                            >
+                                {#each card.profiles as profile (profile.name)}
+                                    <option value={profile.name} disabled={!profile.available}>
+                                        {profile.description}
+                                    </option>
+                                {/each}
+                            </select>
+                        </div>
+                    {/each}
+                </details>
             </div>
         {/if}
     </div>
@@ -271,5 +295,33 @@
         text-transform: uppercase;
         letter-spacing: 0.06em;
         padding: 8px 10px 4px;
+    }
+    .profiles summary {
+        cursor: pointer;
+        list-style: revert;
+    }
+    .profile-row {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        padding: 8px 10px;
+    }
+    .profile-card-name {
+        font-size: 12px;
+        flex: 1;
+        min-width: 0;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+    }
+    .profile-row select {
+        background: var(--color-bg, #1e1e2e);
+        color: var(--color-fg, #cdd6f4);
+        border: 1px solid var(--color-border, #45475a);
+        border-radius: 6px;
+        padding: 3px 8px;
+        font-size: 11px;
+        font-family: inherit;
+        max-width: 55%;
     }
 </style>
