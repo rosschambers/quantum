@@ -18,7 +18,9 @@ use quantum_domain::{
 
 use std::sync::Arc;
 
-use crate::bluetooth_agent::{PairingReply, PendingPairingMap};
+use crate::bluetooth_agent::{
+    BluezPairingAgent, PairingReply, PendingPairingMap, AGENT_OBJECT_PATH,
+};
 use crate::error::ProvidersError;
 
 pub struct BluezProvider {
@@ -142,6 +144,53 @@ impl BluezProvider {
                 reason: format!("{method}: {error}"),
             }),
         }
+    }
+
+    /// Serve the pairing agent on the system bus and register it as the
+    /// default agent with BlueZ. Called once from daemon startup, after
+    /// provider registration. Failure is non-fatal: pairing prompts simply
+    /// will not work until the daemon restarts with BlueZ present.
+    pub async fn start_pairing_agent(
+        &self,
+        event_bus: std::sync::Arc<dyn quantum_domain::EventBus>,
+    ) -> Result<(), ProvidersError> {
+        let connection = self.conn.as_ref().ok_or_else(|| {
+            ProvidersError::ServiceUnavailable("no system bus for pairing agent".to_string())
+        })?;
+        let agent = BluezPairingAgent::new(self.pairing.clone(), event_bus);
+        connection
+            .object_server()
+            .at(AGENT_OBJECT_PATH, agent)
+            .await
+            .map_err(|error| {
+                ProvidersError::ServiceUnavailable(format!("serve pairing agent: {error}"))
+            })?;
+        let manager = zbus::Proxy::new(
+            connection,
+            "org.bluez",
+            "/org/bluez",
+            "org.bluez.AgentManager1",
+        )
+        .await
+        .map_err(|error| {
+            ProvidersError::ServiceUnavailable(format!("agent manager proxy: {error}"))
+        })?;
+        let agent_path = zbus::zvariant::ObjectPath::try_from(AGENT_OBJECT_PATH)
+            .map_err(|error| ProvidersError::ServiceUnavailable(format!("agent path: {error}")))?;
+        manager
+            .call_method("RegisterAgent", &(&agent_path, "KeyboardDisplay"))
+            .await
+            .map_err(|error| {
+                ProvidersError::ServiceUnavailable(format!("RegisterAgent: {error}"))
+            })?;
+        manager
+            .call_method("RequestDefaultAgent", &(&agent_path,))
+            .await
+            .map_err(|error| {
+                ProvidersError::ServiceUnavailable(format!("RequestDefaultAgent: {error}"))
+            })?;
+        tracing::info!("bluetooth pairing agent registered (KeyboardDisplay)");
+        Ok(())
     }
 }
 
