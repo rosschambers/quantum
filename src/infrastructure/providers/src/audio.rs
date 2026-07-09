@@ -9,13 +9,14 @@
 
 use async_trait::async_trait;
 use futures::stream::BoxStream;
+use std::collections::BTreeMap;
 use std::process::Stdio;
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::Command;
 
 use quantum_domain::{
-    Action, ActionOutcome, AudioSink, AudioState, DomainError, Match, ProviderId, ProviderSource,
-    Query,
+    Action, ActionOutcome, AudioCard, AudioCardProfile, AudioDevice, AudioSink, AudioState,
+    AudioStream, DomainError, Match, ProviderId, ProviderSource, Query,
 };
 
 use crate::error::ProvidersError;
@@ -218,6 +219,175 @@ pub(crate) fn parse_pactl_sink_block(stdout: &str, sink_name: &str) -> Option<(S
         return Some((description, volume_percent, muted));
     }
     None
+}
+
+/// One channel's volume in pactl's JSON output. `value_percent` is a string
+/// like "55%".
+#[derive(Debug, serde::Deserialize)]
+pub(crate) struct PactlChannelVolume {
+    pub value_percent: String,
+}
+
+/// One entry of a device's `ports` array.
+#[derive(Debug, serde::Deserialize)]
+pub(crate) struct PactlPort {
+    pub name: String,
+    pub description: String,
+}
+
+/// One sink or source from `pactl --format=json list sinks|sources`.
+/// Unknown fields (state, driver, latency, and so on) are ignored.
+#[derive(Debug, serde::Deserialize)]
+pub(crate) struct PactlDevice {
+    pub index: u32,
+    pub name: String,
+    pub description: String,
+    pub mute: bool,
+    #[serde(default)]
+    pub volume: BTreeMap<String, PactlChannelVolume>,
+    #[serde(default)]
+    pub active_port: Option<String>,
+    #[serde(default)]
+    pub ports: Vec<PactlPort>,
+    #[serde(default)]
+    pub properties: BTreeMap<String, serde_json::Value>,
+}
+
+/// One sink-input or source-output from
+/// `pactl --format=json list sink-inputs|source-outputs`. Sink-inputs carry
+/// `sink`, source-outputs carry `source`; the other is absent.
+#[derive(Debug, serde::Deserialize)]
+pub(crate) struct PactlStream {
+    pub index: u32,
+    #[serde(default)]
+    pub sink: Option<u32>,
+    #[serde(default)]
+    pub source: Option<u32>,
+    pub mute: bool,
+    #[serde(default)]
+    pub volume: BTreeMap<String, PactlChannelVolume>,
+    #[serde(default)]
+    pub properties: BTreeMap<String, serde_json::Value>,
+}
+
+/// One profile value in a card's `profiles` map (keyed by profile name).
+#[derive(Debug, serde::Deserialize)]
+pub(crate) struct PactlCardProfile {
+    pub description: String,
+    pub available: bool,
+}
+
+/// One card from `pactl --format=json list cards`. Cards have no top-level
+/// description; the human-readable name is `properties["device.description"]`.
+#[derive(Debug, serde::Deserialize)]
+pub(crate) struct PactlCard {
+    pub index: u32,
+    pub name: String,
+    pub active_profile: String,
+    #[serde(default)]
+    pub profiles: BTreeMap<String, PactlCardProfile>,
+    #[serde(default)]
+    pub properties: BTreeMap<String, serde_json::Value>,
+}
+
+/// Parse one `pactl --format=json list <kind>` buffer into DTOs.
+pub(crate) fn parse_pactl_json_list<T: serde::de::DeserializeOwned>(
+    raw: &str,
+) -> Result<Vec<T>, serde_json::Error> {
+    serde_json::from_str(raw)
+}
+
+/// Extract the first channel's percent from a volume map, matching the text
+/// parser's first-percent-token behavior. serde_json's default map preserves
+/// alphabetical key order, so for stereo layouts the first entry is
+/// front-left — the same channel the long-form text output lists first.
+pub(crate) fn percent_from_volume_map(
+    volume: &BTreeMap<String, PactlChannelVolume>,
+) -> Option<u8> {
+    let channel = volume.values().next()?;
+    channel.value_percent.strip_suffix('%')?.trim().parse::<u8>().ok()
+}
+
+/// Read a string-valued property, when present.
+fn property_string(
+    properties: &BTreeMap<String, serde_json::Value>,
+    key: &str,
+) -> Option<String> {
+    properties
+        .get(key)
+        .and_then(|value| value.as_str())
+        .map(|value| value.to_string())
+}
+
+/// A source is a monitor (loopback of a sink) when its device class says so
+/// or its name carries the conventional `.monitor` suffix. Monitors are
+/// filtered out of the sound window's input-device list.
+pub(crate) fn is_monitor_source(device: &PactlDevice) -> bool {
+    device.name.ends_with(".monitor")
+        || device
+            .properties
+            .get("device.class")
+            .and_then(|value| value.as_str())
+            == Some("monitor")
+}
+
+/// Map a pactl device DTO to the domain type, marking it default when its
+/// name matches the default device name and resolving the active port name
+/// to that port's description (falling back to the raw name).
+pub(crate) fn map_device(device: &PactlDevice, default_name: &str) -> AudioDevice {
+    let port = device.active_port.as_ref().map(|active_port_name| {
+        device
+            .ports
+            .iter()
+            .find(|port| &port.name == active_port_name)
+            .map(|port| port.description.clone())
+            .unwrap_or_else(|| active_port_name.clone())
+    });
+    AudioDevice {
+        index: device.index,
+        name: device.name.clone(),
+        description: device.description.clone(),
+        volume_percent: percent_from_volume_map(&device.volume).unwrap_or(0),
+        muted: device.mute,
+        is_default: device.name == default_name,
+        port,
+    }
+}
+
+/// Map a pactl stream DTO to the domain type. `device_index` comes from
+/// `sink` for playback streams and `source` for recording streams.
+pub(crate) fn map_stream(stream: &PactlStream) -> AudioStream {
+    AudioStream {
+        index: stream.index,
+        application_name: property_string(&stream.properties, "application.name")
+            .unwrap_or_default(),
+        media_name: property_string(&stream.properties, "media.name").unwrap_or_default(),
+        icon: property_string(&stream.properties, "application.icon_name"),
+        volume_percent: percent_from_volume_map(&stream.volume).unwrap_or(0),
+        muted: stream.mute,
+        device_index: stream.sink.or(stream.source).unwrap_or(0),
+    }
+}
+
+/// Map a pactl card DTO to the domain type, flattening the profiles map into
+/// a vector (BTreeMap order: alphabetical by profile name).
+pub(crate) fn map_card(card: &PactlCard) -> AudioCard {
+    AudioCard {
+        index: card.index,
+        name: card.name.clone(),
+        description: property_string(&card.properties, "device.description")
+            .unwrap_or_else(|| card.name.clone()),
+        active_profile: card.active_profile.clone(),
+        profiles: card
+            .profiles
+            .iter()
+            .map(|(profile_name, profile)| AudioCardProfile {
+                name: profile_name.clone(),
+                description: profile.description.clone(),
+                available: profile.available,
+            })
+            .collect(),
+    }
 }
 
 /// Execute an audio command via pactl.
@@ -679,5 +849,237 @@ mod tests {
             .expect("first state within 2s")
             .expect("Some");
         let _state: AudioState = serde_json::from_value(v).expect("AudioState");
+    }
+
+    // Real `pactl --format=json list sinks` output (pactl 17.0, PipeWire),
+    // trimmed: properties shortened, second sink's mute flipped to true so
+    // mute mapping is exercised.
+    const SINKS_JSON_FIXTURE: &str = r#"[
+      {
+        "index": 59,
+        "state": "RUNNING",
+        "name": "alsa_output.pci-0000_00_1f.3-platform-skl_hda_dsp_generic.HiFi__Speaker__sink",
+        "description": "Arrow Lake cAVS Speaker",
+        "driver": "PipeWire",
+        "sample_specification": "s32le 2ch 48000Hz",
+        "mute": false,
+        "volume": {
+          "front-left": { "value": 36036, "value_percent": "55%", "db": "-15.58 dB" },
+          "front-right": { "value": 36036, "value_percent": "55%", "db": "-15.58 dB" }
+        },
+        "balance": 0.0,
+        "base_volume": { "value": 65536, "value_percent": "100%", "db": "0.00 dB" },
+        "active_port": "[Out] Speaker",
+        "ports": [
+          { "name": "[Out] Speaker", "description": "Speaker", "type": "Speaker", "priority": 100, "availability": "availability unknown" }
+        ],
+        "properties": { "device.icon_name": "audio-card", "media.class": "Audio/Sink" },
+        "formats": ["pcm"]
+      },
+      {
+        "index": 56,
+        "state": "SUSPENDED",
+        "name": "alsa_output.pci-0000_00_1f.3-platform-skl_hda_dsp_generic.HiFi__HDMI3__sink",
+        "description": "Arrow Lake cAVS HDMI / DisplayPort 3 Output",
+        "driver": "PipeWire",
+        "mute": true,
+        "volume": {
+          "front-left": { "value": 65536, "value_percent": "100%", "db": "0.00 dB" },
+          "front-right": { "value": 65536, "value_percent": "100%", "db": "0.00 dB" }
+        },
+        "active_port": "[Out] HDMI3",
+        "ports": [
+          { "name": "[Out] HDMI3", "description": "HDMI / DisplayPort 3 Output", "type": "HDMI", "priority": 700, "availability": "not available" }
+        ],
+        "properties": { "device.icon_name": "video-display", "media.class": "Audio/Sink" }
+      }
+    ]"#;
+
+    // Real `pactl --format=json list sources`: one monitor source (must be
+    // filtered) and one real microphone.
+    const SOURCES_JSON_FIXTURE: &str = r#"[
+      {
+        "index": 59,
+        "name": "alsa_output.pci-0000_00_1f.3-platform-skl_hda_dsp_generic.HiFi__Speaker__sink.monitor",
+        "description": "Monitor of Arrow Lake cAVS Speaker",
+        "mute": false,
+        "volume": {
+          "front-left": { "value": 65536, "value_percent": "100%", "db": "0.00 dB" },
+          "front-right": { "value": 65536, "value_percent": "100%", "db": "0.00 dB" }
+        },
+        "active_port": "[Out] Speaker",
+        "properties": { "device.class": "monitor" }
+      },
+      {
+        "index": 61,
+        "name": "alsa_input.pci-0000_00_1f.3-platform-skl_hda_dsp_generic.HiFi__Mic1__source",
+        "description": "Arrow Lake cAVS Digital Microphone",
+        "mute": false,
+        "volume": {
+          "front-left": { "value": 65536, "value_percent": "100%", "db": "0.00 dB" },
+          "front-right": { "value": 65536, "value_percent": "100%", "db": "0.00 dB" }
+        },
+        "active_port": "[In] Mic1",
+        "ports": [
+          { "name": "[In] Mic1", "description": "Digital Microphone", "type": "Mic", "priority": 200, "availability": "availability unknown" }
+        ],
+        "properties": { "device.class": "sound" }
+      }
+    ]"#;
+
+    // Real `pactl --format=json list sink-inputs` while paplay was running.
+    const SINK_INPUTS_JSON_FIXTURE: &str = r#"[
+      {
+        "index": 900,
+        "driver": "protocol-native.c",
+        "owner_module": 4294967295,
+        "client": 901,
+        "sink": 59,
+        "mute": false,
+        "corked": false,
+        "volume": {
+          "front-left": { "value": 65536, "value_percent": "100%", "db": "0.00 dB" },
+          "front-right": { "value": 65536, "value_percent": "100%", "db": "0.00 dB" }
+        },
+        "properties": {
+          "application.name": "paplay",
+          "media.name": "/dev/zero",
+          "application.process.binary": "paplay"
+        }
+      }
+    ]"#;
+
+    // Real `pactl --format=json list source-outputs` while parecord was running.
+    const SOURCE_OUTPUTS_JSON_FIXTURE: &str = r#"[
+      {
+        "index": 932,
+        "driver": "protocol-native.c",
+        "client": 933,
+        "source": 61,
+        "mute": false,
+        "corked": false,
+        "volume": {
+          "front-left": { "value": 65536, "value_percent": "100%", "db": "0.00 dB" },
+          "front-right": { "value": 65536, "value_percent": "100%", "db": "0.00 dB" }
+        },
+        "properties": {
+          "application.name": "parecord",
+          "media.name": "/dev/null"
+        }
+      }
+    ]"#;
+
+    // Real `pactl --format=json list cards`, trimmed to three profiles.
+    // Note: cards carry NO top-level "description"; the human-readable name
+    // is properties["device.description"].
+    const CARDS_JSON_FIXTURE: &str = r#"[
+      {
+        "index": 48,
+        "name": "alsa_card.pci-0000_00_1f.3-platform-skl_hda_dsp_generic",
+        "driver": "alsa",
+        "owner_module": 4294967295,
+        "active_profile": "HiFi (HDMI1, HDMI2, HDMI3, Mic1, Mic2, Speaker)",
+        "profiles": {
+          "off": { "description": "Off", "sinks": 0, "sources": 0, "priority": 0, "available": true },
+          "HiFi (HDMI1, HDMI2, HDMI3, Headphones, Mic1, Mic2)": { "description": "Play HiFi quality Music (HDMI1, HDMI2, HDMI3, Headphones, Mic1, Mic2)", "sinks": 4, "sources": 2, "priority": 10300, "available": false },
+          "HiFi (HDMI1, HDMI2, HDMI3, Mic1, Mic2, Speaker)": { "description": "Play HiFi quality Music (HDMI1, HDMI2, HDMI3, Mic1, Mic2, Speaker)", "sinks": 4, "sources": 2, "priority": 10200, "available": true }
+        },
+        "properties": { "device.description": "Arrow Lake cAVS", "device.nick": "sof-hda-dsp" }
+      }
+    ]"#;
+
+    #[test]
+    fn parses_sinks_json_and_maps_devices() {
+        let devices: Vec<PactlDevice> =
+            parse_pactl_json_list(SINKS_JSON_FIXTURE).expect("sinks fixture parses");
+        assert_eq!(devices.len(), 2);
+        let default_name =
+            "alsa_output.pci-0000_00_1f.3-platform-skl_hda_dsp_generic.HiFi__Speaker__sink";
+        let speaker = map_device(&devices[0], default_name);
+        assert_eq!(speaker.index, 59);
+        assert_eq!(speaker.description, "Arrow Lake cAVS Speaker");
+        assert_eq!(speaker.volume_percent, 55);
+        assert!(!speaker.muted);
+        assert!(speaker.is_default);
+        // Active port name "[Out] Speaker" resolves to its description.
+        assert_eq!(speaker.port.as_deref(), Some("Speaker"));
+        let hdmi = map_device(&devices[1], default_name);
+        assert!(hdmi.muted);
+        assert!(!hdmi.is_default);
+        assert_eq!(hdmi.volume_percent, 100);
+    }
+
+    #[test]
+    fn monitor_sources_are_detected() {
+        let devices: Vec<PactlDevice> =
+            parse_pactl_json_list(SOURCES_JSON_FIXTURE).expect("sources fixture parses");
+        assert_eq!(devices.len(), 2);
+        assert!(is_monitor_source(&devices[0]));
+        assert!(!is_monitor_source(&devices[1]));
+    }
+
+    #[test]
+    fn parses_sink_inputs_json_and_maps_streams() {
+        let streams: Vec<PactlStream> =
+            parse_pactl_json_list(SINK_INPUTS_JSON_FIXTURE).expect("sink-inputs fixture parses");
+        assert_eq!(streams.len(), 1);
+        let stream = map_stream(&streams[0]);
+        assert_eq!(stream.index, 900);
+        assert_eq!(stream.application_name, "paplay");
+        assert_eq!(stream.media_name, "/dev/zero");
+        assert_eq!(stream.icon, None);
+        assert_eq!(stream.volume_percent, 100);
+        assert!(!stream.muted);
+        assert_eq!(stream.device_index, 59);
+    }
+
+    #[test]
+    fn parses_source_outputs_json_and_maps_streams() {
+        let streams: Vec<PactlStream> = parse_pactl_json_list(SOURCE_OUTPUTS_JSON_FIXTURE)
+            .expect("source-outputs fixture parses");
+        let stream = map_stream(&streams[0]);
+        assert_eq!(stream.index, 932);
+        assert_eq!(stream.application_name, "parecord");
+        assert_eq!(stream.device_index, 61);
+    }
+
+    #[test]
+    fn parses_cards_json_and_maps_profiles() {
+        let cards: Vec<PactlCard> =
+            parse_pactl_json_list(CARDS_JSON_FIXTURE).expect("cards fixture parses");
+        assert_eq!(cards.len(), 1);
+        let card = map_card(&cards[0]);
+        assert_eq!(card.index, 48);
+        // Description comes from properties["device.description"], not a
+        // top-level field (cards have none).
+        assert_eq!(card.description, "Arrow Lake cAVS");
+        assert_eq!(
+            card.active_profile,
+            "HiFi (HDMI1, HDMI2, HDMI3, Mic1, Mic2, Speaker)"
+        );
+        assert_eq!(card.profiles.len(), 3);
+        let unavailable = card
+            .profiles
+            .iter()
+            .find(|profile| profile.name.contains("Headphones"))
+            .expect("headphones profile present");
+        assert!(!unavailable.available);
+        assert!(unavailable.description.starts_with("Play HiFi"));
+    }
+
+    #[test]
+    fn percent_from_volume_map_reads_first_channel() {
+        let devices: Vec<PactlDevice> =
+            parse_pactl_json_list(SINKS_JSON_FIXTURE).expect("fixture parses");
+        assert_eq!(percent_from_volume_map(&devices[0].volume), Some(55));
+        let empty: std::collections::BTreeMap<String, PactlChannelVolume> =
+            std::collections::BTreeMap::new();
+        assert_eq!(percent_from_volume_map(&empty), None);
+    }
+
+    #[test]
+    fn malformed_json_is_a_parse_error_not_a_panic() {
+        let result: Result<Vec<PactlDevice>, _> = parse_pactl_json_list("not json at all");
+        assert!(result.is_err());
     }
 }
