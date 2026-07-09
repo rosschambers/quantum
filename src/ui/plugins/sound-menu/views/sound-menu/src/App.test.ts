@@ -277,3 +277,136 @@ describe('SoundMenu device sections', () => {
         });
     });
 });
+
+describe('SoundMenu stream sections', () => {
+    it('renders a playback row with application and media names', async () => {
+        const { container } = render(App);
+        await settle();
+        const playback = container.querySelector('[data-section="playback"]')!;
+        const row = playback.querySelector('[data-stream-index="900"]')!;
+        expect(row.textContent).toContain('Firefox');
+        expect(row.textContent).toContain('Song Title');
+    });
+
+    it('shows "Nothing playing" when there are no playback streams', async () => {
+        mockState = fixtureState();
+        mockState.playback_streams = [];
+        const { container } = render(App);
+        await settle();
+        const playback = container.querySelector('[data-section="playback"]')!;
+        expect(playback.textContent).toContain('Nothing playing');
+    });
+
+    it('hides the recording section entirely when nothing records', async () => {
+        const { container } = render(App);
+        await settle();
+        expect(container.querySelector('[data-section="recording"]')).toBeNull();
+    });
+
+    it('shows the recording section when a source-output exists', async () => {
+        mockState = fixtureState();
+        mockState.recording_streams = [
+            { index: 932, application_name: 'OBS', media_name: 'Microphone capture', icon: null, volume_percent: 100, muted: false, device_index: 61 },
+        ];
+        const { container } = render(App);
+        await settle();
+        const recording = container.querySelector('[data-section="recording"]')!;
+        expect(recording.textContent).toContain('OBS');
+    });
+
+    it('stream mute sends set_stream_mute with kind playback', async () => {
+        const { container } = render(App);
+        await settle();
+        const muteButton = container.querySelector(
+            '[data-stream-index="900"] [data-action="mute"]',
+        ) as HTMLButtonElement;
+        await fireEvent.click(muteButton);
+        await tick();
+        expect(lastCommand('set_stream_mute')!.data!.payload).toEqual({
+            command: 'set_stream_mute',
+            kind: 'playback',
+            index: 900,
+            muted: true,
+        });
+    });
+
+    it('releasing a stream slider sends set_stream_volume', async () => {
+        const { container } = render(App);
+        await settle();
+        const slider = container.querySelector(
+            '[data-stream-index="900"] input[type="range"]',
+        ) as HTMLInputElement;
+        await fireEvent.input(slider, { target: { value: '65' } });
+        await fireEvent.change(slider, { target: { value: '65' } });
+        await tick();
+        expect(lastCommand('set_stream_volume')!.data!.payload).toEqual({
+            command: 'set_stream_volume',
+            kind: 'playback',
+            index: 900,
+            percent: 65,
+        });
+    });
+
+    it('the device dropdown lists sinks and selecting one sends the exact move_stream envelope', async () => {
+        const { container } = render(App);
+        await settle();
+        const pickButton = container.querySelector(
+            '[data-stream-index="900"] [data-action="pick-device"]',
+        ) as HTMLButtonElement;
+        await fireEvent.click(pickButton);
+        await tick();
+        expect(capturedMenuItems).not.toBeNull();
+        expect(capturedMenuItems!.map((item) => item.label)).toEqual([
+            'Speaker',
+            'HDMI / DisplayPort 3 Output',
+        ]);
+        capturedMenuItems![1].onSelect!();
+        await tick();
+        const call = mockCallSpy.mock.calls.find(
+            ([method, parameters]) =>
+                method === 'action.invoke' &&
+                (parameters as { action?: { data?: { payload?: { command?: string } } } }).action
+                    ?.data?.payload?.command === 'move_stream',
+        );
+        expect(call).toBeDefined();
+        const [, parameters] = call!;
+        expect(parameters).toEqual({
+            provider: 'audio',
+            action: {
+                kind: 'custom',
+                data: {
+                    kind: 'audio',
+                    payload: {
+                        command: 'move_stream',
+                        kind: 'playback',
+                        index: 900,
+                        device_name: 'hdmi-sink',
+                    },
+                },
+            },
+        });
+    });
+
+    it('a recording row dropdown lists sources and fires move_stream with kind record', async () => {
+        mockState = fixtureState();
+        mockState.recording_streams = [
+            { index: 932, application_name: 'OBS', media_name: 'Microphone capture', icon: null, volume_percent: 100, muted: false, device_index: 61 },
+        ];
+        const { container } = render(App);
+        await settle();
+        const pickButton = container.querySelector(
+            '[data-section="recording"] [data-stream-index="932"] [data-action="pick-device"]',
+        ) as HTMLButtonElement;
+        await fireEvent.click(pickButton);
+        await tick();
+        expect(capturedMenuItems!.map((item) => item.label)).toEqual(['Digital Microphone']);
+        capturedMenuItems![0].onSelect!();
+        await tick();
+        expect(lastCommand('move_stream')!.data!.payload).toEqual({
+            command: 'move_stream',
+            kind: 'record',
+            index: 932,
+            device_name: 'microphone-source',
+        });
+    });
+});

@@ -3,6 +3,7 @@
     import { AUDIO_PROVIDER, AUDIO_CHANNEL } from './lib/channels';
     import type { AudioState, AudioStream } from './lib/types';
     import DeviceRow from './lib/DeviceRow.svelte';
+    import StreamRow from './lib/StreamRow.svelte';
 
     const client = createClient();
 
@@ -90,7 +91,38 @@
         sendFireAndForget({ command: 'set_device_mute', kind, name, muted });
     }
 
-    // Task 8: stream handlers go here.
+    function setStreamVolume(kind: 'playback' | 'record', index: number, percent: number): void {
+        sendFireAndForget({ command: 'set_stream_volume', kind, index, percent });
+    }
+
+    function toggleStreamMute(kind: 'playback' | 'record', index: number, muted: boolean): void {
+        sendFireAndForget({ command: 'set_stream_mute', kind, index, muted });
+    }
+
+    /**
+     * Device-picker dropdown for a stream row: one entry per candidate
+     * device (sinks for playback, sources for recording), anchored below the
+     * button, firing move_stream on selection.
+     */
+    function openMoveMenu(event: MouseEvent, kind: 'playback' | 'record', stream: AudioStream): void {
+        const devices = kind === 'playback' ? state.sinks : state.sources;
+        const items: MenuItem[] = devices.map((device) => ({
+            label: device.description,
+            icon: device.index === stream.device_index ? '\u2022' : undefined,
+            onSelect: () =>
+                sendFireAndForget({
+                    command: 'move_stream',
+                    kind,
+                    index: stream.index,
+                    device_name: device.name,
+                }),
+        }));
+        if (items.length === 0) return;
+        openContextMenu(event, items, {
+            anchorRect: (event.currentTarget as HTMLElement).getBoundingClientRect(),
+        });
+    }
+
     // Task 9: profile handlers go here.
 </script>
 
@@ -131,7 +163,39 @@
                         />
                     {/each}
                 </div>
-                <!-- Task 8: Playback and Recording sections. -->
+                <div class="section" data-section="playback">
+                    <div class="section-title">Playback</div>
+                    {#if state.playback_streams.length === 0}
+                        <div class="empty">Nothing playing</div>
+                    {/if}
+                    {#each state.playback_streams as stream (stream.index)}
+                        <StreamRow
+                            {stream}
+                            pickLabel="Output"
+                            onSetVolume={(percent) =>
+                                setStreamVolume('playback', stream.index, percent)}
+                            onToggleMute={() =>
+                                toggleStreamMute('playback', stream.index, !stream.muted)}
+                            onPickDevice={(event) => openMoveMenu(event, 'playback', stream)}
+                        />
+                    {/each}
+                </div>
+                {#if state.recording_streams.length > 0}
+                    <div class="section" data-section="recording">
+                        <div class="section-title">Recording</div>
+                        {#each state.recording_streams as stream (stream.index)}
+                            <StreamRow
+                                {stream}
+                                pickLabel="Input"
+                                onSetVolume={(percent) =>
+                                    setStreamVolume('record', stream.index, percent)}
+                                onToggleMute={() =>
+                                    toggleStreamMute('record', stream.index, !stream.muted)}
+                                onPickDevice={(event) => openMoveMenu(event, 'record', stream)}
+                            />
+                        {/each}
+                    </div>
+                {/if}
                 <!-- Task 9: Profiles section. -->
             </div>
         {/if}
