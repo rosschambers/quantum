@@ -17,11 +17,12 @@ pub mod window_mode;
 
 pub use action::Action;
 pub use bar_state::{
-    ActiveWifi, ActiveWindowState, AudioSink, AudioState, BatteryChargeState, BluetoothDevice,
-    BluetoothState, BrightnessDisplay, BrightnessState, Ipv4Method, MonitorActiveWindowState,
-    MprisState, NetworkConnection, NetworkConnectivity, NetworkKind, NetworkState, PlaybackStatus,
-    PowerProfile, PowerProfileState, PowerState, SavedNetwork, SystemPowerState, SystemStats,
-    WifiBand, WifiConnectionDetails, WifiNetwork, WifiSecurity, WifiState,
+    ActiveWifi, ActiveWindowState, AudioCard, AudioCardProfile, AudioDevice, AudioSink, AudioState,
+    AudioStream, BatteryChargeState, BluetoothDevice, BluetoothState, BrightnessDisplay,
+    BrightnessState, Ipv4Method, MonitorActiveWindowState, MprisState, NetworkConnection,
+    NetworkConnectivity, NetworkKind, NetworkState, PlaybackStatus, PowerProfile,
+    PowerProfileState, PowerState, SavedNetwork, SystemPowerState, SystemStats, WifiBand,
+    WifiConnectionDetails, WifiNetwork, WifiSecurity, WifiState,
 };
 pub use error::DomainError;
 pub use event_bus::EventEnvelope;

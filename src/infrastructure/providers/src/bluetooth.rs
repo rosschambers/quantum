@@ -353,17 +353,16 @@ pub(crate) fn map_managed_objects(
         }
     }
 
-    if adapter_path.is_none() {
+    let Some(adapter_path_str) = adapter_path else {
         return BluetoothState {
             available: false,
             powered: false,
             discovering: false,
-            connected_devices: vec![],
+            devices: vec![],
+            adapter_path: String::new(),
         };
-    }
-
-    let adapter_path_str = adapter_path.unwrap();
-    let mut connected_devices = Vec::new();
+    };
+    let mut devices = Vec::new();
 
     // Find connected devices.
     for (path, interfaces) in objects.iter() {
@@ -406,10 +405,15 @@ pub(crate) fn map_managed_objects(
                     .and_then(|v| u8::try_from(v).ok())
             });
 
-            connected_devices.push(BluetoothDevice {
+            devices.push(BluetoothDevice {
                 address,
                 name,
                 battery_percent,
+                paired: false,
+                trusted: false,
+                connected: true,
+                icon: None,
+                rssi: None,
             });
         }
     }
@@ -418,7 +422,8 @@ pub(crate) fn map_managed_objects(
         available: true,
         powered,
         discovering,
-        connected_devices,
+        devices,
+        adapter_path: adapter_path_str,
     }
 }
 
@@ -435,7 +440,7 @@ mod tests {
         assert!(!state.available);
         assert!(!state.powered);
         assert!(!state.discovering);
-        assert!(state.connected_devices.is_empty());
+        assert!(state.devices.is_empty());
     }
 
     #[test]
@@ -456,7 +461,7 @@ mod tests {
         assert!(state.available);
         assert!(state.powered);
         assert!(!state.discovering);
-        assert!(state.connected_devices.is_empty());
+        assert!(state.devices.is_empty());
     }
 
     #[test]
@@ -501,10 +506,10 @@ mod tests {
 
         let state = map_managed_objects(&objects);
         assert!(state.available);
-        assert_eq!(state.connected_devices.len(), 1);
-        assert_eq!(state.connected_devices[0].address, "AA:BB:CC:DD:EE:FF");
-        assert_eq!(state.connected_devices[0].name, "Headphones");
-        assert_eq!(state.connected_devices[0].battery_percent, None);
+        assert_eq!(state.devices.len(), 1);
+        assert_eq!(state.devices[0].address, "AA:BB:CC:DD:EE:FF");
+        assert_eq!(state.devices[0].name, "Headphones");
+        assert_eq!(state.devices[0].battery_percent, None);
     }
 
     #[test]
@@ -541,7 +546,7 @@ mod tests {
 
         let state = map_managed_objects(&objects);
         assert!(state.available);
-        assert!(state.connected_devices.is_empty());
+        assert!(state.devices.is_empty());
     }
 
     #[test]
@@ -589,8 +594,8 @@ mod tests {
 
         let state = map_managed_objects(&objects);
         assert!(state.available);
-        assert_eq!(state.connected_devices.len(), 1);
-        assert_eq!(state.connected_devices[0].battery_percent, Some(60));
+        assert_eq!(state.devices.len(), 1);
+        assert_eq!(state.devices[0].battery_percent, Some(60));
     }
 
     #[test]

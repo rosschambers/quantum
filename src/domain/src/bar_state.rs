@@ -123,7 +123,14 @@ pub struct BluetoothState {
     pub available: bool,
     pub powered: bool,
     pub discovering: bool,
-    pub connected_devices: Vec<BluetoothDevice>,
+    /// Every known `org.bluez.Device1` object: connected,
+    /// paired-but-disconnected, and discovered-unpaired.
+    #[serde(default)]
+    pub devices: Vec<BluetoothDevice>,
+    /// The DBus object path of the selected adapter, resolved dynamically.
+    /// Empty when no adapter is present.
+    #[serde(default)]
+    pub adapter_path: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -131,6 +138,18 @@ pub struct BluetoothDevice {
     pub address: String,
     pub name: String,
     pub battery_percent: Option<u8>,
+    #[serde(default)]
+    pub paired: bool,
+    #[serde(default)]
+    pub trusted: bool,
+    #[serde(default)]
+    pub connected: bool,
+    /// BlueZ device-class icon name (for example "audio-headset").
+    #[serde(default)]
+    pub icon: Option<String>,
+    /// Received signal strength, present while the device is in discovery range.
+    #[serde(default)]
+    pub rssi: Option<i16>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -158,6 +177,21 @@ pub struct AudioState {
     /// mute fields. Used by the bar to show and toggle microphone mute.
     #[serde(default)]
     pub default_source: Option<AudioSink>,
+    /// Every output device, for the sound window's Output devices section.
+    #[serde(default)]
+    pub sinks: Vec<AudioDevice>,
+    /// Every real input device (monitor sources filtered out).
+    #[serde(default)]
+    pub sources: Vec<AudioDevice>,
+    /// Sink-inputs. Populated only while a sound-window session is open.
+    #[serde(default)]
+    pub playback_streams: Vec<AudioStream>,
+    /// Source-outputs. Populated only while a sound-window session is open.
+    #[serde(default)]
+    pub recording_streams: Vec<AudioStream>,
+    /// Cards with their switchable profiles.
+    #[serde(default)]
+    pub cards: Vec<AudioCard>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -166,6 +200,52 @@ pub struct AudioSink {
     pub description: String,
     pub volume_percent: u8,
     pub muted: bool,
+}
+
+/// One audio device (sink or source) in the sound window's device lists.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AudioDevice {
+    pub index: u32,
+    pub name: String,
+    pub description: String,
+    pub volume_percent: u8,
+    pub muted: bool,
+    pub is_default: bool,
+    /// Description of the active port (for example "Speaker"), when the
+    /// device reports one. Shown as the row subtitle.
+    pub port: Option<String>,
+}
+
+/// One playback (sink-input) or recording (source-output) stream.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AudioStream {
+    pub index: u32,
+    pub application_name: String,
+    pub media_name: String,
+    pub icon: Option<String>,
+    pub volume_percent: u8,
+    pub muted: bool,
+    /// Index of the sink (playback) or source (recording) the stream is
+    /// currently routed to.
+    pub device_index: u32,
+}
+
+/// One switchable profile on a card.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AudioCardProfile {
+    pub name: String,
+    pub description: String,
+    pub available: bool,
+}
+
+/// One sound card with its profiles.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AudioCard {
+    pub index: u32,
+    pub name: String,
+    pub description: String,
+    pub active_profile: String,
+    pub profiles: Vec<AudioCardProfile>,
 }
 
 /// Security type of a WiFi network. Distinguishes WPA versions for the
@@ -388,15 +468,44 @@ mod tests {
             available: true,
             powered: true,
             discovering: false,
-            connected_devices: vec![BluetoothDevice {
+            devices: vec![BluetoothDevice {
                 address: "AA:BB:CC:DD:EE:FF".into(),
                 name: "Headphones".into(),
                 battery_percent: Some(60),
+                paired: true,
+                trusted: true,
+                connected: true,
+                icon: Some("audio-headset".into()),
+                rssi: Some(-42),
             }],
+            adapter_path: "/org/bluez/hci0".into(),
         };
         let v = serde_json::to_value(&s).unwrap();
         let back: BluetoothState = serde_json::from_value(v).unwrap();
         assert_eq!(s, back);
+    }
+
+    #[test]
+    fn bluetooth_state_deserializes_legacy_payload_without_new_fields() {
+        let v = json!({"available": true, "powered": true, "discovering": false});
+        let s: BluetoothState = serde_json::from_value(v).unwrap();
+        assert!(s.devices.is_empty());
+        assert_eq!(s.adapter_path, "");
+    }
+
+    #[test]
+    fn bluetooth_device_deserializes_without_new_fields() {
+        let v = json!({
+            "address": "AA:BB:CC:DD:EE:FF",
+            "name": "Headphones",
+            "battery_percent": null
+        });
+        let d: BluetoothDevice = serde_json::from_value(v).unwrap();
+        assert!(!d.paired);
+        assert!(!d.trusted);
+        assert!(!d.connected);
+        assert_eq!(d.icon, None);
+        assert_eq!(d.rssi, None);
     }
 
     #[test]
@@ -443,6 +552,11 @@ mod tests {
                 volume_percent: 80,
                 muted: true,
             }),
+            sinks: vec![],
+            sources: vec![],
+            playback_streams: vec![],
+            recording_streams: vec![],
+            cards: vec![],
         };
         let v = serde_json::to_value(&s).unwrap();
         let back: AudioState = serde_json::from_value(v).unwrap();
@@ -452,6 +566,85 @@ mod tests {
     #[test]
     fn audio_state_default_is_unavailable() {
         assert!(!AudioState::default().available);
+    }
+
+    #[test]
+    fn extended_audio_state_round_trips() {
+        let s = AudioState {
+            available: true,
+            default_sink: Some(AudioSink {
+                name: "alsa_output.speaker".into(),
+                description: "Speaker".into(),
+                volume_percent: 55,
+                muted: false,
+            }),
+            default_source: None,
+            sinks: vec![AudioDevice {
+                index: 59,
+                name: "alsa_output.speaker".into(),
+                description: "Speaker".into(),
+                volume_percent: 55,
+                muted: false,
+                is_default: true,
+                port: Some("Speaker".into()),
+            }],
+            sources: vec![AudioDevice {
+                index: 61,
+                name: "alsa_input.microphone".into(),
+                description: "Digital Microphone".into(),
+                volume_percent: 100,
+                muted: true,
+                is_default: true,
+                port: None,
+            }],
+            playback_streams: vec![AudioStream {
+                index: 900,
+                application_name: "paplay".into(),
+                media_name: "/dev/zero".into(),
+                icon: None,
+                volume_percent: 100,
+                muted: false,
+                device_index: 59,
+            }],
+            recording_streams: vec![],
+            cards: vec![AudioCard {
+                index: 48,
+                name: "alsa_card.pci".into(),
+                description: "Arrow Lake cAVS".into(),
+                active_profile: "HiFi".into(),
+                profiles: vec![AudioCardProfile {
+                    name: "HiFi".into(),
+                    description: "Play HiFi quality Music".into(),
+                    available: true,
+                }],
+            }],
+        };
+        let v = serde_json::to_value(&s).unwrap();
+        assert_eq!(v["sinks"][0]["is_default"], json!(true));
+        assert_eq!(v["cards"][0]["profiles"][0]["available"], json!(true));
+        let back: AudioState = serde_json::from_value(v).unwrap();
+        assert_eq!(s, back);
+    }
+
+    #[test]
+    fn audio_state_without_new_fields_still_deserializes() {
+        let v = json!({
+            "available": true,
+            "default_sink": {
+                "name": "s",
+                "description": "Built-in",
+                "volume_percent": 65,
+                "muted": false
+            },
+            "default_source": null
+        });
+        let back: AudioState = serde_json::from_value(v).unwrap();
+        assert!(back.available);
+        assert!(back.sinks.is_empty());
+        assert!(back.sources.is_empty());
+        assert!(back.playback_streams.is_empty());
+        assert!(back.recording_streams.is_empty());
+        assert!(back.cards.is_empty());
     }
 
     #[test]
