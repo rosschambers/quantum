@@ -1,0 +1,164 @@
+<script lang="ts">
+    import { createClient, openContextMenu, type MenuItem } from '@quantum/client';
+    import { AUDIO_PROVIDER, AUDIO_CHANNEL } from './lib/channels';
+    import type { AudioState, AudioStream } from './lib/types';
+
+    const client = createClient();
+
+    let state: AudioState = $state({
+        available: false,
+        default_sink: null,
+        default_source: null,
+        sinks: [],
+        sources: [],
+        playback_streams: [],
+        recording_streams: [],
+        cards: [],
+    });
+
+    /**
+     * The single command envelope. Every action goes through here so the
+     * nested custom shape is defined in exactly one place.
+     */
+    function send(payload: Record<string, unknown>): Promise<unknown> {
+        return client.call('action.invoke', {
+            provider: AUDIO_PROVIDER,
+            action: { kind: 'custom', data: { kind: 'audio', payload } },
+        });
+    }
+
+    function sendFireAndForget(payload: Record<string, unknown>): void {
+        send(payload).catch((error) => {
+            console.error(`audio ${String(payload.command)} failed:`, error);
+        });
+    }
+
+    $effect(() => {
+        client
+            .call('provider.query', { id: AUDIO_PROVIDER })
+            .then((result: unknown) => {
+                if (result) state = result as AudioState;
+            })
+            .catch(() => {});
+        const off = client.subscribe(AUDIO_CHANNEL, (payload: unknown) => {
+            state = payload as AudioState;
+        });
+        sendFireAndForget({ command: 'open_session' });
+        return () => {
+            sendFireAndForget({ command: 'close_session' });
+            off?.();
+            client.close();
+        };
+    });
+
+    $effect(() => {
+        document.addEventListener('keydown', onKeyDown);
+        return () => document.removeEventListener('keydown', onKeyDown);
+    });
+
+    function onKeyDown(event: KeyboardEvent): void {
+        if (event.key === 'Escape') {
+            event.preventDefault();
+            close();
+        }
+    }
+
+    function onBackdropClick(event: MouseEvent): void {
+        if (event.target === event.currentTarget) close();
+    }
+
+    function close(): void {
+        // Stop the stream session explicitly: the overlay webview is kept
+        // warm (hidden, not destroyed), so on-unmount cleanup does not run on
+        // dismiss. Without this the provider would keep fetching sink-inputs
+        // in the background while the window is invisible.
+        sendFireAndForget({ command: 'close_session' });
+        client.call('view.hide', { name: 'plugin/sound-menu/sound-menu' }).catch(() => {});
+    }
+
+    // Task 7: device handlers go here.
+    // Task 8: stream handlers go here.
+    // Task 9: profile handlers go here.
+</script>
+
+<!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
+<div class="backdrop" onclick={onBackdropClick}>
+    <div class="card" role="dialog" aria-label="Sound">
+        <div class="card-head">
+            <span class="title">Sound</span>
+            <button type="button" class="close-button" data-action="close" onclick={close}>
+                Close
+            </button>
+        </div>
+        {#if !state.available}
+            <div class="empty unavailable">Audio service unavailable.</div>
+        {:else}
+            <div class="scroll">
+                <!-- Task 7: Output devices and Input devices sections. -->
+                <!-- Task 8: Playback and Recording sections. -->
+                <!-- Task 9: Profiles section. -->
+            </div>
+        {/if}
+    </div>
+</div>
+
+<style>
+    .backdrop {
+        position: fixed;
+        inset: 0;
+        background: var(--color-overlay-backdrop, rgba(0, 0, 0, 0.5));
+        backdrop-filter: blur(4px);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+    }
+    .card {
+        background: var(--color-bg-alt, #313244);
+        color: var(--color-fg, #cdd6f4);
+        border-radius: 12px;
+        width: min(520px, 92vw);
+        max-height: 80vh;
+        box-sizing: border-box;
+        display: flex;
+        flex-direction: column;
+        overflow: hidden;
+        box-shadow: 0 14px 40px var(--color-shadow, rgba(0, 0, 0, 0.6));
+        border: 1px solid var(--color-border, #45475a);
+    }
+    .card-head {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        padding: 14px 16px;
+        border-bottom: 1px solid var(--color-border, #45475a);
+    }
+    .card-head .title {
+        font-size: 14px;
+        font-weight: 600;
+        flex: 1;
+    }
+    .close-button {
+        background: var(--color-bg, #1e1e2e);
+        color: var(--color-fg-alt, #a6adc8);
+        border: 1px solid var(--color-border, #45475a);
+        border-radius: 6px;
+        padding: 3px 8px;
+        font-size: 11px;
+        cursor: pointer;
+        font-family: inherit;
+    }
+    .scroll {
+        overflow-y: auto;
+        padding: 6px;
+        flex: 1;
+    }
+    .empty {
+        text-align: center;
+        color: var(--color-fg-alt, #a6adc8);
+        font-size: 12px;
+        padding: 40px 20px;
+    }
+    .unavailable {
+        padding: 60px 20px;
+    }
+</style>

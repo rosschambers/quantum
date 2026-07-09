@@ -1,0 +1,20 @@
+{
+  "name": "default-widget-sound-menu",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "test": "vitest run --passWithNoTests"
+  },
+  "devDependencies": {
+    "@sveltejs/vite-plugin-svelte": "^4.0.0-next.6",
+    "@testing-library/svelte": "^4",
+    "jsdom": "^29.1.1",
+    "svelte": "^5",
+    "typescript": "^5",
+    "vite": "^5",
+    "vitest": "^2"
+  }
+}
