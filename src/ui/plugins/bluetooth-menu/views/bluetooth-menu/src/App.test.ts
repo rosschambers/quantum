@@ -320,3 +320,110 @@ describe('BluetoothMenu devices', () => {
         });
     });
 });
+
+describe('BluetoothMenu pairing dialog', () => {
+    function pushPairingRequest(request: string, passkey: number | null = 123456): void {
+        capturedSubscribeCallback!({
+            event: 'pairing_request',
+            request,
+            address: 'AA:00:00:00:00:04',
+            device_path: '/org/bluez/hci0/dev_AA_00_00_00_00_04',
+            passkey,
+            service_uuid: null,
+        });
+    }
+
+    it('confirm request shows the passkey and Confirm sends an accepting pairing_response', async () => {
+        const { container, getByText } = render(App);
+        await settle();
+        pushPairingRequest('confirm');
+        await settle();
+        expect(container.querySelector('.pairing-dialog')).not.toBeNull();
+        expect(getByText('123456')).not.toBeNull();
+        await fireEvent.click(getByText('Confirm'));
+        await tick();
+        expect(invokePayloads()).toContainEqual({
+            command: 'pairing_response',
+            address: 'AA:00:00:00:00:04',
+            accept: true,
+        });
+        expect(container.querySelector('.pairing-dialog')).toBeNull();
+    });
+
+    it('confirm request Cancel sends a rejecting pairing_response', async () => {
+        const { container, getByText } = render(App);
+        await settle();
+        pushPairingRequest('confirm');
+        await settle();
+        await fireEvent.click(getByText('Cancel'));
+        await tick();
+        expect(invokePayloads()).toContainEqual({
+            command: 'pairing_response',
+            address: 'AA:00:00:00:00:04',
+            accept: false,
+        });
+        expect(container.querySelector('.pairing-dialog')).toBeNull();
+    });
+
+    it('request_pin submits the typed pin', async () => {
+        const { container, getByText } = render(App);
+        await settle();
+        pushPairingRequest('request_pin', null);
+        await settle();
+        const input = container.querySelector('.pairing-dialog input') as HTMLInputElement;
+        await fireEvent.input(input, { target: { value: '0000' } });
+        await fireEvent.click(getByText('Pair'));
+        await tick();
+        expect(invokePayloads()).toContainEqual({
+            command: 'pairing_response',
+            address: 'AA:00:00:00:00:04',
+            accept: true,
+            pin: '0000',
+        });
+    });
+
+    it('request_passkey submits the typed passkey as a number', async () => {
+        const { container, getByText } = render(App);
+        await settle();
+        pushPairingRequest('request_passkey', null);
+        await settle();
+        const input = container.querySelector('.pairing-dialog input') as HTMLInputElement;
+        await fireEvent.input(input, { target: { value: '654321' } });
+        await fireEvent.click(getByText('Pair'));
+        await tick();
+        expect(invokePayloads()).toContainEqual({
+            command: 'pairing_response',
+            address: 'AA:00:00:00:00:04',
+            accept: true,
+            passkey: 654321,
+        });
+    });
+
+    it('pairing_cancelled dismisses the dialog without a response', async () => {
+        const { container } = render(App);
+        await settle();
+        pushPairingRequest('confirm');
+        await settle();
+        expect(container.querySelector('.pairing-dialog')).not.toBeNull();
+        capturedSubscribeCallback!({ event: 'pairing_cancelled', address: 'AA:00:00:00:00:04' });
+        await settle();
+        expect(container.querySelector('.pairing-dialog')).toBeNull();
+        expect(
+            invokePayloads().filter((payload) => payload.command === 'pairing_response'),
+        ).toEqual([]);
+    });
+
+    it('authorize_service offers Allow and Deny', async () => {
+        const { getByText } = render(App);
+        await settle();
+        pushPairingRequest('authorize_service', null);
+        await settle();
+        await fireEvent.click(getByText('Allow'));
+        await tick();
+        expect(invokePayloads()).toContainEqual({
+            command: 'pairing_response',
+            address: 'AA:00:00:00:00:04',
+            accept: true,
+        });
+    });
+});

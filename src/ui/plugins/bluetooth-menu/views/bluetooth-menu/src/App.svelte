@@ -7,6 +7,7 @@
     } from './lib/channels';
     import type { BluetoothState, BluetoothDevice, PairingRequest } from './lib/types';
     import DeviceRow from './lib/DeviceRow.svelte';
+    import PairingDialog from './lib/PairingDialog.svelte';
 
     const client = createClient();
 
@@ -166,6 +167,23 @@
         ];
         openContextMenu(event, items);
     }
+
+    function onPairingResponse(
+        accept: boolean,
+        passkey: number | null,
+        pin: string | null,
+    ): void {
+        if (pairingRequest === null) return;
+        const payload: Record<string, unknown> = {
+            command: 'pairing_response',
+            address: pairingRequest.address,
+            accept,
+        };
+        if (passkey !== null) payload.passkey = passkey;
+        if (pin !== null) payload.pin = pin;
+        sendFireAndForget(payload);
+        pairingRequest = null;
+    }
 </script>
 
 <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
@@ -204,6 +222,9 @@
             </div>
         {:else}
             <div class="scroll">
+                {#if pairingRequest !== null}
+                    <PairingDialog request={pairingRequest} onRespond={onPairingResponse} />
+                {/if}
                 {#if connectedDevices.length > 0}
                     <div class="section" data-section="connected">
                         <div class="section-title">Connected</div>
