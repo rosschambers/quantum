@@ -4,7 +4,7 @@
     import { BLUETOOTH_CHANNEL, BLUETOOTH_PROVIDER } from '../channels';
     import Icon from '../Icon.svelte';
     import BarButton from '../BarButton.svelte';
-    import { wireBarMenu } from './barMenu';
+    import { monitorView, wireBarMenu } from './barMenu';
 
     interface Props {
         client: Client;
@@ -15,9 +15,12 @@
         available: false,
         powered: false,
         discovering: false,
-        connected_devices: [],
+        devices: [],
+        adapter_path: '',
     });
     let buttonEl: HTMLButtonElement | undefined = $state(undefined);
+
+    const connectedDevices = $derived(state.devices.filter((device) => device.connected));
 
     $effect(() => {
         client
@@ -27,6 +30,9 @@
             })
             .catch(() => {});
         const unsubscribe = client.subscribe(BLUETOOTH_CHANNEL, (payload: unknown) => {
+            // Pairing events share the channel; only state payloads (which
+            // never carry an `event` key) may replace indicator state.
+            if ((payload as { event?: string }).event !== undefined) return;
             state = payload as BluetoothState;
         });
         return () => unsubscribe?.();
@@ -60,7 +66,7 @@
                     console.error('bluetooth set_powered failed:', err),
                 ),
         });
-        for (const device of state.connected_devices) {
+        for (const device of connectedDevices) {
             items.push({
                 label: `Disconnect ${device.name}`,
                 onSelect: () =>
@@ -70,28 +76,31 @@
             });
         }
         items.push({ separator: true, label: '' });
-        items.push({ label: 'Open Bluetooth manager', onSelect: launchBluemanManager });
+        items.push({ label: 'Open Bluetooth manager', onSelect: () => void openBluetoothManager() });
         return items;
     }
 
-    async function launchBluemanManager(): Promise<void> {
+    async function openBluetoothManager(): Promise<void> {
+        // The bar widget is injected with a per-monitor `__quantum_monitor`
+        // so the window opens on the same display as the bar that was clicked.
+        const name = monitorView('plugin/bluetooth-menu/bluetooth-menu');
         try {
-            await client.call('action.invoke', {
-                provider: 'shell',
-                action: {
-                    kind: 'shell',
-                    data: { command: ['blueman-manager'], terminal: false },
-                },
-            });
+            await client.call('view.show', { name });
         } catch (err) {
-            console.error('blueman-manager launch failed:', err);
+            console.error(`view.show ${name} failed:`, err);
         }
+        // Kick the discovery session from the bar: the overlay's webview may
+        // be served warm across hide/show, in which case its mount effect
+        // does not re-run (same pattern as NetworkIndicator.openWifiMenu).
+        invoke({ command: 'open_session' }).catch((err) =>
+            console.error('bluetooth open_session failed:', err),
+        );
     }
 
-    function tooltipFor(s: BluetoothState): string {
-        if (!s.powered) return 'bluetooth off';
-        if (s.connected_devices.length === 0) return 'bluetooth on, no devices';
-        const names = s.connected_devices
+    function tooltipFor(devices: BluetoothState['devices']): string {
+        if (!state.powered) return 'bluetooth off';
+        if (devices.length === 0) return 'bluetooth on, no devices';
+        const names = devices
             .map((dev) => {
                 const battery =
                     dev.battery_percent !== null ? ` (${dev.battery_percent}%)` : '';
@@ -105,14 +114,14 @@
 {#if state.available}
     <BarButton
         ariaLabel="Bluetooth"
-        title={tooltipFor(state)}
-        onclick={launchBluemanManager}
+        title={tooltipFor(connectedDevices)}
+        onclick={openBluetoothManager}
         bindRef={(el) => (buttonEl = el)}
     >
         <span
             class="bluetooth-icon"
             class:powered={state.powered}
-            class:has-devices={state.connected_devices.length > 0}
+            class:has-devices={connectedDevices.length > 0}
         >
             <Icon name="bluetooth" size={18} />
         </span>

@@ -73,13 +73,19 @@ export interface BluetoothDevice {
   address: string;
   name: string;
   battery_percent: number | null;
+  paired: boolean;
+  trusted: boolean;
+  connected: boolean;
+  icon: string | null;
+  rssi: number | null;
 }
 
 export interface BluetoothState {
   available: boolean;
   powered: boolean;
   discovering: boolean;
-  connected_devices: BluetoothDevice[];
+  devices: BluetoothDevice[];
+  adapter_path: string;
 }
 
 export type PowerProfile = 'power_saver' | 'balanced' | 'performance';
@@ -98,11 +104,52 @@ export interface AudioSink {
   muted: boolean;
 }
 
+export interface AudioDevice {
+  index: number;
+  name: string;
+  description: string;
+  volume_percent: number;
+  muted: boolean;
+  is_default: boolean;
+  port: string | null;
+}
+
+export interface AudioStream {
+  index: number;
+  application_name: string;
+  media_name: string;
+  icon: string | null;
+  volume_percent: number;
+  muted: boolean;
+  device_index: number;
+}
+
+export interface AudioCardProfile {
+  name: string;
+  description: string;
+  available: boolean;
+}
+
+export interface AudioCard {
+  index: number;
+  name: string;
+  description: string;
+  active_profile: string;
+  profiles: AudioCardProfile[];
+}
+
 export interface AudioState {
   available: boolean;
   default_sink: AudioSink | null;
   /** The default input device (microphone), reusing the sink shape. */
   default_source?: AudioSink | null;
+  /** Extended state for the sound window; optional because the bar only
+   *  reads the defaults. */
+  sinks?: AudioDevice[];
+  sources?: AudioDevice[];
+  playback_streams?: AudioStream[];
+  recording_streams?: AudioStream[];
+  cards?: AudioCard[];
 }
 
 export interface BrightnessDisplay {
