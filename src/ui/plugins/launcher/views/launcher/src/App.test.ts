@@ -295,6 +295,30 @@ describe('App.svelte', () => {
     expect(input.value).toBe('a');
   });
 
+  it('clears the search text when the launcher is reopened', async () => {
+    const user = userEvent.setup();
+    mockCall.mockResolvedValue({ matches: [] });
+
+    render(App);
+    await act();
+    const input = screen.getByPlaceholderText('Search...') as HTMLInputElement;
+
+    // The user searches for something.
+    await user.type(input, 'asd');
+    await waitFor(() => expect(input.value).toBe('asd'));
+
+    // The user dismisses the launcher with Escape (the view is hidden but the
+    // Svelte view persists across hide/show).
+    await fireEvent.keyDown(input, { key: 'Escape' });
+
+    // The launcher is shown again: the window regains focus. The stale query
+    // must not survive the reopen.
+    window.dispatchEvent(new Event('focus'));
+    await act();
+
+    await waitFor(() => expect(input.value).toBe(''));
+  });
+
   it('window focus event refocuses input', async () => {
     mockCall.mockResolvedValue({ matches: [] });
 
