@@ -11,8 +11,11 @@ use async_trait::async_trait;
 use futures::stream::BoxStream;
 use std::collections::BTreeMap;
 use std::process::Stdio;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::Command;
+use tokio::sync::{Mutex, Notify};
 
 use quantum_domain::{
     Action, ActionOutcome, AudioCard, AudioCardProfile, AudioDevice, AudioSink, AudioState,
@@ -25,6 +28,32 @@ use crate::error::ProvidersError;
 pub struct PulseAudioProvider {
     id: ProviderId,
     available: bool,
+    session: Arc<AudioSession>,
+}
+
+/// Shared session state for the audio provider (wifi ScanSession pattern).
+///
+/// The sound window drives stream visibility explicitly: `open_session`
+/// flips `active` on so state fetches include sink-inputs/source-outputs and
+/// the subscribe loop honors their events; `close_session` flips it off.
+/// `notify` lets any write command wake the streaming task immediately so
+/// the next emitted `AudioState` reflects the change without waiting for a
+/// pactl event. `last` caches the most recently emitted state for
+/// change-gating and for `snapshot()`.
+pub(crate) struct AudioSession {
+    pub(crate) active: AtomicBool,
+    pub(crate) notify: Notify,
+    pub(crate) last: Mutex<Option<AudioState>>,
+}
+
+impl Default for AudioSession {
+    fn default() -> Self {
+        Self {
+            active: AtomicBool::new(false),
+            notify: Notify::new(),
+            last: Mutex::new(None),
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -87,12 +116,134 @@ pub(crate) enum AudioCommand {
 impl PulseAudioProvider {
     /// Attempt to connect to PulseAudio via `pactl`.
     ///
-    /// If `pactl` is not found in PATH, returns `Ok(Self { available: false })`.
+    /// Unavailable (with a logged warning) when the binary is missing OR its
+    /// `--format=json` output is unsupported/unparseable — the JSON state
+    /// path is now load-bearing, so a pactl too old for it cannot serve
+    /// real state.
     pub async fn connect(_runtime: tokio::runtime::Handle) -> Result<Self, ProvidersError> {
-        let available = which::which("pactl").is_ok();
+        let available = which::which("pactl").is_ok() && probe_pactl_json_support().await;
         Ok(Self {
             id: ProviderId::from("audio"),
             available,
+            session: Arc::new(AudioSession::default()),
+        })
+    }
+
+    /// Execute a parsed audio command. Session commands flip shared flags;
+    /// table-mapped commands run their exact pactl argv; the legacy four keep
+    /// their default-sink-resolving path. Every state-changing command
+    /// notifies the streaming task so the window sees the effect quickly.
+    async fn execute(&self, command: AudioCommand) -> Result<ActionOutcome, DomainError> {
+        match &command {
+            AudioCommand::OpenSession => {
+                self.session.active.store(true, Ordering::Relaxed);
+                self.session.notify.notify_one();
+                return Ok(ActionOutcome { message: None });
+            }
+            AudioCommand::CloseSession => {
+                self.session.active.store(false, Ordering::Relaxed);
+                // Do NOT clear `session.last`: it is the cache `snapshot()`
+                // serves to `provider.query`; clearing it would leave a
+                // re-opened window querying an empty snapshot.
+                self.session.notify.notify_one();
+                return Ok(ActionOutcome { message: None });
+            }
+            _ => {}
+        }
+        if let Some(arguments) = pactl_arguments(&command) {
+            let argument_slices: Vec<&str> = arguments.iter().map(String::as_str).collect();
+            run_pactl(&argument_slices).await.map_err(map_pactl_error)?;
+        } else {
+            execute_audio_command(&command)
+                .await
+                .map_err(|error| DomainError::Unsupported(error.to_string()))?;
+        }
+        self.session.notify.notify_one();
+        Ok(ActionOutcome { message: None })
+    }
+
+    /// Event-driven stream backed by a long-lived `pactl subscribe`
+    /// subprocess, session-aware and wakeable by write commands.
+    ///
+    /// Behaviour:
+    /// - Emit the current state once on startup so late subscribers see real
+    ///   data, caching it in `session.last` for `snapshot()`.
+    /// - Select on subscribe lines AND `session.notify`. A line refreshes
+    ///   when `should_refresh_for_pactl_line(line, session_active)` says so;
+    ///   a notify always refreshes (an action or session flip just happened).
+    /// - Change-gate emissions against `session.last`.
+    /// - If the child exits (PulseAudio restart), sleep 1s and respawn.
+    fn event_driven_stream(&self) -> BoxStream<'static, serde_json::Value> {
+        let session = self.session.clone();
+        Box::pin(async_stream::stream! {
+            if let Some(initial) = fetch_audio_state(session.active.load(Ordering::Relaxed)).await {
+                {
+                    let mut last = session.last.lock().await;
+                    *last = Some(initial.clone());
+                }
+                yield serde_json::to_value(&initial).unwrap_or(serde_json::Value::Null);
+            }
+
+            loop {
+                let mut child = match Command::new("pactl")
+                    .arg("subscribe")
+                    .stdout(Stdio::piped())
+                    .stderr(Stdio::null())
+                    .stdin(Stdio::null())
+                    .spawn()
+                {
+                    Ok(child) => child,
+                    Err(error) => {
+                        tracing::warn!("pactl subscribe spawn failed: {error}; retry in 1s");
+                        tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+                        continue;
+                    }
+                };
+
+                let stdout = match child.stdout.take() {
+                    Some(stdout) => stdout,
+                    None => {
+                        tracing::warn!("pactl subscribe has no stdout pipe; retry in 1s");
+                        let _ = child.kill().await;
+                        tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+                        continue;
+                    }
+                };
+
+                let mut lines = BufReader::new(stdout).lines();
+                loop {
+                    let should_fetch = tokio::select! {
+                        line = lines.next_line() => match line {
+                            Ok(Some(line)) => should_refresh_for_pactl_line(
+                                &line,
+                                session.active.load(Ordering::Relaxed),
+                            ),
+                            Ok(None) => break,
+                            Err(error) => {
+                                tracing::warn!("pactl subscribe read error: {error}; respawning");
+                                break;
+                            }
+                        },
+                        _ = session.notify.notified() => true,
+                    };
+                    if !should_fetch {
+                        continue;
+                    }
+                    let session_active = session.active.load(Ordering::Relaxed);
+                    if let Some(new_state) = fetch_audio_state(session_active).await {
+                        let mut last = session.last.lock().await;
+                        if last.as_ref() != Some(&new_state) {
+                            *last = Some(new_state.clone());
+                            drop(last);
+                            yield serde_json::to_value(&new_state)
+                                .unwrap_or(serde_json::Value::Null);
+                        }
+                    }
+                }
+
+                let _ = child.wait().await;
+                tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+            }
         })
     }
 }
@@ -122,12 +273,8 @@ impl ProviderSource for PulseAudioProvider {
                         kind
                     )));
                 }
-
                 let command = parse_audio_action(payload)?;
-                execute_audio_command(&command)
-                    .await
-                    .map_err(|e| DomainError::Unsupported(e.to_string()))?;
-                Ok(ActionOutcome { message: None })
+                self.execute(command).await
             }
             _ => Err(DomainError::Unsupported(
                 "audio provider only supports custom actions".to_string(),
@@ -146,7 +293,17 @@ impl ProviderSource for PulseAudioProvider {
             return Some(quantum_dbus::common::unavailable_stream::<AudioState>());
         }
 
-        Some(event_driven_stream())
+        Some(self.event_driven_stream())
+    }
+
+    /// Serve the last state the streaming task cached so `provider.query`
+    /// resolves instantly (the stream is pre-subscribed at daemon startup,
+    /// so the cache is warm by the time the window opens). None before the
+    /// first emission; the caller falls back to the stream.
+    async fn snapshot(&self) -> Option<serde_json::Value> {
+        let last = self.session.last.lock().await;
+        last.as_ref()
+            .map(|state| serde_json::to_value(state).unwrap_or(serde_json::Value::Null))
     }
 }
 
@@ -164,9 +321,12 @@ fn required_string(payload: &serde_json::Value, key: &str) -> Result<String, Dom
 
 /// Read a required boolean field.
 fn required_bool(payload: &serde_json::Value, key: &str) -> Result<bool, DomainError> {
-    payload.get(key).and_then(|value| value.as_bool()).ok_or_else(|| {
-        DomainError::Unsupported(format!("missing or non-bool '{key}' in audio action"))
-    })
+    payload
+        .get(key)
+        .and_then(|value| value.as_bool())
+        .ok_or_else(|| {
+            DomainError::Unsupported(format!("missing or non-bool '{key}' in audio action"))
+        })
 }
 
 /// Read a required unsigned integer field that must fit in u32 (pactl
@@ -300,7 +460,11 @@ pub(crate) fn pactl_arguments(command: &AudioCommand) -> Option<Vec<String>> {
         AudioCommand::SetDefaultSource { name } => {
             Some(vec!["set-default-source".to_string(), name.clone()])
         }
-        AudioCommand::SetDeviceVolume { kind, name, percent } => Some(vec![
+        AudioCommand::SetDeviceVolume {
+            kind,
+            name,
+            percent,
+        } => Some(vec![
             match kind {
                 AudioDeviceKind::Sink => "set-sink-volume",
                 AudioDeviceKind::Source => "set-source-volume",
@@ -318,7 +482,11 @@ pub(crate) fn pactl_arguments(command: &AudioCommand) -> Option<Vec<String>> {
             name.clone(),
             mute_flag(*muted).to_string(),
         ]),
-        AudioCommand::SetStreamVolume { kind, index, percent } => Some(vec![
+        AudioCommand::SetStreamVolume {
+            kind,
+            index,
+            percent,
+        } => Some(vec![
             match kind {
                 AudioStreamKind::Playback => "set-sink-input-volume",
                 AudioStreamKind::Record => "set-source-output-volume",
@@ -336,7 +504,11 @@ pub(crate) fn pactl_arguments(command: &AudioCommand) -> Option<Vec<String>> {
             index.to_string(),
             mute_flag(*muted).to_string(),
         ]),
-        AudioCommand::MoveStream { kind, index, device_name } => Some(vec![
+        AudioCommand::MoveStream {
+            kind,
+            index,
+            device_name,
+        } => Some(vec![
             match kind {
                 AudioStreamKind::Playback => "move-sink-input",
                 AudioStreamKind::Record => "move-source-output",
@@ -345,7 +517,10 @@ pub(crate) fn pactl_arguments(command: &AudioCommand) -> Option<Vec<String>> {
             index.to_string(),
             device_name.clone(),
         ]),
-        AudioCommand::SetCardProfile { card_index, profile } => Some(vec![
+        AudioCommand::SetCardProfile {
+            card_index,
+            profile,
+        } => Some(vec![
             "set-card-profile".to_string(),
             card_index.to_string(),
             profile.clone(),
@@ -357,91 +532,6 @@ pub(crate) fn pactl_arguments(command: &AudioCommand) -> Option<Vec<String>> {
         | AudioCommand::OpenSession
         | AudioCommand::CloseSession => None,
     }
-}
-
-/// Convert average channel volume (normalized [0, 1.5+]) to percent [0, 150].
-#[allow(dead_code)]
-pub(crate) fn channel_volumes_to_percent(channel_avg_normalized: f32) -> u8 {
-    ((channel_avg_normalized * 100.0).clamp(0.0, 150.0)) as u8
-}
-
-/// Parse pactl volume output to extract percent value.
-/// Example: "Volume: front-left: 38863 / 65% / -7.34 dB"
-/// Returns 65 from that output.
-pub(crate) fn parse_pactl_volume_percent(stdout: &str) -> Option<u8> {
-    for line in stdout.lines() {
-        if line.contains("Volume:") {
-            // Look for pattern "NN%" in the line
-            for word in line.split_whitespace() {
-                if let Some(num_str) = word.strip_suffix('%') {
-                    if let Ok(n) = num_str.parse::<u8>() {
-                        return Some(n);
-                    }
-                }
-            }
-        }
-    }
-    None
-}
-
-/// Parse pactl mute output. Expected values: "yes" or "no".
-///
-/// Matches the trimmed value after the colon rather than substring-searching
-/// the whole line so that a sink description containing the word "yes" (which
-/// can appear in earlier `Description:` lines when scanning a long-form block)
-/// does not flip the mute flag.
-pub(crate) fn parse_pactl_mute(stdout: &str) -> Option<bool> {
-    for line in stdout.lines() {
-        let trimmed = line.trim_start();
-        if let Some(rest) = trimmed.strip_prefix("Mute:") {
-            return match rest.trim() {
-                "yes" => Some(true),
-                "no" => Some(false),
-                _ => None,
-            };
-        }
-    }
-    None
-}
-
-/// Parse a single sink's description, volume percent, and mute state out of
-/// the long-form `pactl list sinks` output, identifying the sink by its
-/// `Name:` field.
-///
-/// The long-form output is a sequence of blocks separated by blank lines, each
-/// beginning with `Sink #<id>` and containing tab-indented `Name:`,
-/// `Description:`, `Mute:`, `Volume:` fields among others. Returning all three
-/// pieces from a single buffer is what lets `get_sink_info` collapse four
-/// `pactl` subprocess spawns per event into one.
-pub(crate) fn parse_pactl_sink_block(stdout: &str, sink_name: &str) -> Option<(String, u8, bool)> {
-    for block in stdout.split("\n\n") {
-        let mut name: Option<&str> = None;
-        for line in block.lines() {
-            let trimmed = line.trim_start();
-            if let Some(rest) = trimmed.strip_prefix("Name:") {
-                name = Some(rest.trim());
-                break;
-            }
-        }
-        if name != Some(sink_name) {
-            continue;
-        }
-
-        let mut description = String::new();
-        for line in block.lines() {
-            let trimmed = line.trim_start();
-            if let Some(rest) = trimmed.strip_prefix("Description:") {
-                description = rest.trim().to_string();
-                break;
-            }
-        }
-
-        let volume_percent = parse_pactl_volume_percent(block)?;
-        let muted = parse_pactl_mute(block).unwrap_or(false);
-
-        return Some((description, volume_percent, muted));
-    }
-    None
 }
 
 /// One channel's volume in pactl's JSON output. `value_percent` is a string
@@ -524,18 +614,18 @@ pub(crate) fn parse_pactl_json_list<T: serde::de::DeserializeOwned>(
 /// parser's first-percent-token behavior. serde_json's default map preserves
 /// alphabetical key order, so for stereo layouts the first entry is
 /// front-left — the same channel the long-form text output lists first.
-pub(crate) fn percent_from_volume_map(
-    volume: &BTreeMap<String, PactlChannelVolume>,
-) -> Option<u8> {
+pub(crate) fn percent_from_volume_map(volume: &BTreeMap<String, PactlChannelVolume>) -> Option<u8> {
     let channel = volume.values().next()?;
-    channel.value_percent.strip_suffix('%')?.trim().parse::<u8>().ok()
+    channel
+        .value_percent
+        .strip_suffix('%')?
+        .trim()
+        .parse::<u8>()
+        .ok()
 }
 
 /// Read a string-valued property, when present.
-fn property_string(
-    properties: &BTreeMap<String, serde_json::Value>,
-    key: &str,
-) -> Option<String> {
+fn property_string(properties: &BTreeMap<String, serde_json::Value>, key: &str) -> Option<String> {
     properties
         .get(key)
         .and_then(|value| value.as_str())
@@ -692,38 +782,6 @@ async fn get_default_sink() -> Option<String> {
     }
 }
 
-/// Fetch current sink info and build an AudioSink DTO.
-///
-/// Uses `pactl list sinks` (long form) which exposes `Name:`, `Description:`,
-/// `Volume:`, and `Mute:` for every sink in a single buffer. The previous
-/// implementation issued separate `get-sink-volume` and `get-sink-mute`
-/// subprocesses after a `list sinks short` lookup, costing four `clone+execve`
-/// pairs per sink-change event (combined with the caller's `get-default-sink`).
-/// Collapsing the per-sink lookups into one long-form list call cuts that to
-/// two subprocesses per event, which matters when a single volume notch on the
-/// keyboard fires several events back-to-back.
-async fn get_sink_info(sink_name: &str) -> Option<AudioSink> {
-    let output = Command::new("pactl")
-        .args(["list", "sinks"])
-        .output()
-        .await
-        .ok()?;
-
-    if !output.status.success() {
-        return None;
-    }
-
-    let stdout = String::from_utf8(output.stdout).ok()?;
-    let (description, volume_percent, muted) = parse_pactl_sink_block(&stdout, sink_name)?;
-
-    Some(AudioSink {
-        name: sink_name.to_string(),
-        description,
-        volume_percent,
-        muted,
-    })
-}
-
 /// Get the default PulseAudio source (microphone) name.
 async fn get_default_source() -> Option<String> {
     let output = Command::new("pactl")
@@ -740,37 +798,6 @@ async fn get_default_source() -> Option<String> {
     } else {
         None
     }
-}
-
-/// Fetch current source (microphone) info and build an `AudioSink` DTO. Sources
-/// share the sink block layout in `pactl list sources` (`Name:`, `Description:`,
-/// `Volume:`, `Mute:`), so the sink block parser is reused.
-async fn get_source_info(source_name: &str) -> Option<AudioSink> {
-    let output = Command::new("pactl")
-        .args(["list", "sources"])
-        .output()
-        .await
-        .ok()?;
-
-    if !output.status.success() {
-        return None;
-    }
-
-    let stdout = String::from_utf8(output.stdout).ok()?;
-    let (description, volume_percent, muted) = parse_pactl_sink_block(&stdout, source_name)?;
-
-    Some(AudioSink {
-        name: source_name.to_string(),
-        description,
-        volume_percent,
-        muted,
-    })
-}
-
-/// Fetch the default source (microphone) state, if a default source exists.
-async fn current_source() -> Option<AudioSink> {
-    let source_name = get_default_source().await?;
-    get_source_info(&source_name).await
 }
 
 /// Decide whether a single line from `pactl subscribe` should trigger a
@@ -794,103 +821,184 @@ pub(crate) fn should_refresh_for_pactl_line(line: &str, session_active: bool) ->
     }
 }
 
-/// Fetch the current `AudioState` from `pactl` and return it as a JSON value.
-/// Returns `AudioState::default()` (which serializes to a "no sink" payload)
-/// when there is no default sink or the lookup fails.
-async fn current_audio_state_value() -> serde_json::Value {
-    let state = match get_default_sink().await {
-        Some(default_sink) => match get_sink_info(&default_sink).await {
-            Some(sink) => AudioState {
-                available: true,
-                default_sink: Some(sink),
-                default_source: current_source().await,
-                ..AudioState::default()
-            },
-            None => AudioState::default(),
-        },
-        None => AudioState::default(),
-    };
-    serde_json::to_value(&state).unwrap_or(serde_json::Value::Null)
-}
-
-/// Event-driven stream backed by a long-lived `pactl subscribe` subprocess.
-///
-/// Behaviour:
-/// - Emit the current state once on startup so late subscribers see real data.
-/// - Spawn `pactl subscribe`. For every stdout line, decide via
-///   `should_refresh_for_pactl_line` whether to re-fetch. If so, fetch and
-///   emit when the state actually changed.
-/// - If the child exits (PulseAudio restart, pactl crash), sleep 1s and respawn.
-///   This keeps the stream alive across server restarts without burning CPU.
-fn event_driven_stream() -> BoxStream<'static, serde_json::Value> {
-    Box::pin(async_stream::stream! {
-        // Emit the current state once so subscribers see the initial
-        // volume/mute without waiting for the first server event.
-        let initial = current_audio_state_value().await;
-        let mut last_state: Option<serde_json::Value> = Some(initial.clone());
-        yield initial;
-
-        loop {
-            // Spawn a fresh `pactl subscribe`. stdout is piped; stderr is
-            // dropped because pactl prints nothing useful on the steady path.
-            let mut child = match Command::new("pactl")
-                .arg("subscribe")
-                .stdout(Stdio::piped())
-                .stderr(Stdio::null())
-                .stdin(Stdio::null())
-                .spawn()
-            {
-                Ok(c) => c,
-                Err(err) => {
-                    tracing::warn!("pactl subscribe spawn failed: {err}; retry in 1s");
-                    tokio::time::sleep(std::time::Duration::from_secs(1)).await;
-                    continue;
-                }
-            };
-
-            let stdout = match child.stdout.take() {
-                Some(s) => s,
-                None => {
-                    tracing::warn!("pactl subscribe has no stdout pipe; retry in 1s");
-                    // Best-effort kill — if the child already exited this is a no-op.
-                    let _ = child.kill().await;
-                    tokio::time::sleep(std::time::Duration::from_secs(1)).await;
-                    continue;
-                }
-            };
-
-            let mut lines = BufReader::new(stdout).lines();
-            loop {
-                match lines.next_line().await {
-                    Ok(Some(line)) => {
-                        if !should_refresh_for_pactl_line(&line, false) {
-                            continue;
-                        }
-                        let value = current_audio_state_value().await;
-                        if last_state.as_ref() != Some(&value) {
-                            last_state = Some(value.clone());
-                            yield value;
-                        }
-                    }
-                    Ok(None) => {
-                        // EOF — child closed stdout, typically because pactl
-                        // exited (PulseAudio restart). Break to respawn.
-                        break;
-                    }
-                    Err(err) => {
-                        tracing::warn!("pactl subscribe read error: {err}; respawning");
-                        break;
-                    }
+/// Probe whether `pactl --format=json` works on this host. pactl versions
+/// before 16 lack `--format`; per the design that means the provider reports
+/// unavailable with a logged warning rather than limping on text parsing.
+async fn probe_pactl_json_support() -> bool {
+    let output = Command::new("pactl")
+        .args(["--format=json", "list", "sinks"])
+        .stdin(Stdio::null())
+        .output()
+        .await;
+    match output {
+        Ok(output) if output.status.success() => {
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            match parse_pactl_json_list::<PactlDevice>(&stdout) {
+                Ok(_) => true,
+                Err(error) => {
+                    tracing::warn!(
+                        "pactl --format=json output unparseable: {error}; audio provider unavailable"
+                    );
+                    false
                 }
             }
-
-            // Reap the child so we don't accumulate zombies, then back off
-            // 1s before respawning so a permanently failing pactl doesn't
-            // pin a CPU.
-            let _ = child.wait().await;
-            tokio::time::sleep(std::time::Duration::from_secs(1)).await;
         }
-    })
+        Ok(output) => {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            tracing::warn!(
+                "pactl --format=json unsupported: {}; audio provider unavailable",
+                stderr.trim()
+            );
+            false
+        }
+        Err(error) => {
+            tracing::warn!("pactl probe failed to spawn: {error}; audio provider unavailable");
+            false
+        }
+    }
+}
+
+/// Run a pactl mutation, checking the exit status. Non-zero exit carries the
+/// captured stderr; a spawn failure is its own variant so `map_pactl_error`
+/// can distinguish "pactl broken" from "command rejected".
+async fn run_pactl(arguments: &[&str]) -> Result<(), ProvidersError> {
+    let output = Command::new("pactl")
+        .args(arguments)
+        .stdin(Stdio::null())
+        .output()
+        .await
+        .map_err(|error| ProvidersError::Spawn(error.to_string()))?;
+    if output.status.success() {
+        Ok(())
+    } else {
+        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        Err(ProvidersError::ServiceUnavailable(stderr))
+    }
+}
+
+/// Map a pactl failure to a typed domain error: spawn failures mean the
+/// binary is unusable (Unsupported); a rejected command is ActionFailed with
+/// pactl's own stderr as the reason.
+fn map_pactl_error(error: ProvidersError) -> DomainError {
+    match error {
+        ProvidersError::Spawn(message) => DomainError::Unsupported(message),
+        other => DomainError::ActionFailed {
+            reason: other.to_string(),
+        },
+    }
+}
+
+/// Run one `pactl --format=json list <kind>` and parse it. Returns None on
+/// any failure so the caller keeps the last-known state (design: pactl
+/// subprocess failures log and keep last-known state).
+async fn run_pactl_json_list<T: serde::de::DeserializeOwned>(kind: &str) -> Option<Vec<T>> {
+    let output = Command::new("pactl")
+        .args(["--format=json", "list", kind])
+        .stdin(Stdio::null())
+        .output()
+        .await;
+    let output = match output {
+        Ok(output) if output.status.success() => output,
+        Ok(output) => {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            tracing::warn!(
+                "pactl --format=json list {kind} failed: {}; keeping last known state",
+                stderr.trim()
+            );
+            return None;
+        }
+        Err(error) => {
+            tracing::warn!(
+                "pactl --format=json list {kind} failed to spawn: {error}; keeping last known state"
+            );
+            return None;
+        }
+    };
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    match parse_pactl_json_list::<T>(&stdout) {
+        Ok(items) => Some(items),
+        Err(error) => {
+            tracing::warn!("failed to parse pactl {kind} JSON: {error}; keeping last known state");
+            None
+        }
+    }
+}
+
+/// Assemble the full AudioState from already-parsed pactl DTOs. Pure (no
+/// I/O) so the default-marking, monitor filtering, and default_sink /
+/// default_source derivation are unit-testable against fixtures.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn assemble_audio_state(
+    sink_devices: Vec<PactlDevice>,
+    source_devices: Vec<PactlDevice>,
+    playback: Vec<PactlStream>,
+    recording: Vec<PactlStream>,
+    cards: Vec<PactlCard>,
+    default_sink_name: &str,
+    default_source_name: &str,
+) -> AudioState {
+    let sinks: Vec<AudioDevice> = sink_devices
+        .iter()
+        .map(|device| map_device(device, default_sink_name))
+        .collect();
+    let sources: Vec<AudioDevice> = source_devices
+        .iter()
+        .filter(|device| !is_monitor_source(device))
+        .map(|device| map_device(device, default_source_name))
+        .collect();
+    let sink_summary = |device: &AudioDevice| AudioSink {
+        name: device.name.clone(),
+        description: device.description.clone(),
+        volume_percent: device.volume_percent,
+        muted: device.muted,
+    };
+    let default_sink = sinks
+        .iter()
+        .find(|device| device.is_default)
+        .map(sink_summary);
+    let default_source = sources
+        .iter()
+        .find(|device| device.is_default)
+        .map(sink_summary);
+    AudioState {
+        available: true,
+        default_sink,
+        default_source,
+        sinks,
+        sources,
+        playback_streams: playback.iter().map(map_stream).collect(),
+        recording_streams: recording.iter().map(map_stream).collect(),
+        cards: cards.iter().map(map_card).collect(),
+    }
+}
+
+/// Fetch the full AudioState from pactl JSON. Streams are fetched ONLY while
+/// a session is open; outside a session the provider spawns exactly the
+/// device/card/default lookups. Returns None when any fetch fails, so the
+/// stream keeps the last emitted state instead of publishing a hole.
+async fn fetch_audio_state(session_active: bool) -> Option<AudioState> {
+    let sinks: Vec<PactlDevice> = run_pactl_json_list("sinks").await?;
+    let sources: Vec<PactlDevice> = run_pactl_json_list("sources").await?;
+    let cards: Vec<PactlCard> = run_pactl_json_list("cards").await?;
+    let (playback, recording): (Vec<PactlStream>, Vec<PactlStream>) = if session_active {
+        (
+            run_pactl_json_list("sink-inputs").await?,
+            run_pactl_json_list("source-outputs").await?,
+        )
+    } else {
+        (Vec::new(), Vec::new())
+    };
+    let default_sink_name = get_default_sink().await.unwrap_or_default();
+    let default_source_name = get_default_source().await.unwrap_or_default();
+    Some(assemble_audio_state(
+        sinks,
+        sources,
+        playback,
+        recording,
+        cards,
+        &default_sink_name,
+        &default_source_name,
+    ))
 }
 
 #[cfg(test)]
@@ -953,61 +1061,25 @@ mod tests {
     }
 
     #[test]
-    fn channel_volumes_to_percent_normal() {
-        let percent = channel_volumes_to_percent(0.5);
-        assert_eq!(percent, 50);
-    }
-
-    #[test]
-    fn channel_volumes_to_percent_clamps_above_max() {
-        let percent = channel_volumes_to_percent(2.0);
-        assert_eq!(percent, 150);
-    }
-
-    #[test]
-    fn channel_volumes_to_percent_clamps_negative() {
-        let percent = channel_volumes_to_percent(-0.1);
-        assert_eq!(percent, 0);
-    }
-
-    #[test]
-    fn parse_pactl_volume_extracts_percent() {
-        let output = "Volume: front-left: 38863 / 65% / -7.34 dB\n\
-                      Volume: front-right: 38863 / 65% / -7.34 dB";
-        let percent = parse_pactl_volume_percent(output);
-        assert_eq!(percent, Some(65));
-    }
-
-    #[test]
-    fn parse_pactl_volume_multi_channel() {
-        let output = "Volume: front-left: 30000 / 51% / -11.00 dB\n\
-                      Volume: front-right: 35000 / 59% / -9.00 dB";
-        let percent = parse_pactl_volume_percent(output);
-        assert_eq!(percent, Some(51)); // Takes the first percentage found
-    }
-
-    #[test]
-    fn parse_pactl_mute_yes() {
-        let output = "Mute: yes";
-        let muted = parse_pactl_mute(output);
-        assert_eq!(muted, Some(true));
-    }
-
-    #[test]
-    fn parse_pactl_mute_no() {
-        let output = "Mute: no";
-        let muted = parse_pactl_mute(output);
-        assert_eq!(muted, Some(false));
-    }
-
-    #[test]
     fn pactl_subscribe_sink_change_triggers_refresh() {
         // PulseAudio / PipeWire-Pulse emits one of these whenever the sink
         // state changes (volume, mute, default-sink swap), so we refresh.
-        assert!(should_refresh_for_pactl_line("Event 'change' on sink #0", false));
-        assert!(should_refresh_for_pactl_line("Event 'change' on sink #42", false));
-        assert!(should_refresh_for_pactl_line("Event 'new' on sink #1", false));
-        assert!(should_refresh_for_pactl_line("Event 'remove' on sink #1", false));
+        assert!(should_refresh_for_pactl_line(
+            "Event 'change' on sink #0",
+            false
+        ));
+        assert!(should_refresh_for_pactl_line(
+            "Event 'change' on sink #42",
+            false
+        ));
+        assert!(should_refresh_for_pactl_line(
+            "Event 'new' on sink #1",
+            false
+        ));
+        assert!(should_refresh_for_pactl_line(
+            "Event 'remove' on sink #1",
+            false
+        ));
     }
 
     #[test]
@@ -1016,7 +1088,10 @@ mod tests {
         // user picks a new default in `pactl set-default-sink` and the
         // server emits a `server` event. We must refresh on that too,
         // otherwise the bar keeps showing the old sink's volume.
-        assert!(should_refresh_for_pactl_line("Event 'change' on server #0", false));
+        assert!(should_refresh_for_pactl_line(
+            "Event 'change' on server #0",
+            false
+        ));
     }
 
     #[test]
@@ -1032,8 +1107,14 @@ mod tests {
     fn pactl_subscribe_source_change_triggers_refresh() {
         // A microphone mute/volume change emits a `source` event; we refresh so
         // the bar reflects the new mic mute state live.
-        assert!(should_refresh_for_pactl_line("Event 'change' on source #4", false));
-        assert!(should_refresh_for_pactl_line("Event 'new' on source #1", false));
+        assert!(should_refresh_for_pactl_line(
+            "Event 'change' on source #4",
+            false
+        ));
+        assert!(should_refresh_for_pactl_line(
+            "Event 'new' on source #1",
+            false
+        ));
     }
 
     #[test]
@@ -1065,8 +1146,14 @@ mod tests {
     fn pactl_subscribe_card_events_always_trigger_refresh() {
         // Card profile switches must be reflected even when the sound window
         // is closed, so `card` refreshes with and without a session.
-        assert!(should_refresh_for_pactl_line("Event 'change' on card #48", false));
-        assert!(should_refresh_for_pactl_line("Event 'change' on card #48", true));
+        assert!(should_refresh_for_pactl_line(
+            "Event 'change' on card #48",
+            false
+        ));
+        assert!(should_refresh_for_pactl_line(
+            "Event 'change' on card #48",
+            true
+        ));
     }
 
     #[test]
@@ -1084,7 +1171,10 @@ mod tests {
             true
         ));
         // Session or not, client and garbage lines never refresh.
-        assert!(!should_refresh_for_pactl_line("Event 'change' on client #99", true));
+        assert!(!should_refresh_for_pactl_line(
+            "Event 'change' on client #99",
+            true
+        ));
         assert!(!should_refresh_for_pactl_line("garbage", true));
         assert!(!should_refresh_for_pactl_line("", true));
     }
@@ -1452,7 +1542,9 @@ mod tests {
             }) => assert_eq!(profile, "HiFi"),
             other => panic!("expected SetCardProfile, got {:?}", other),
         }
-        assert!(parse_audio_action(&json!({"command": "set_card_profile", "profile": "x"})).is_err());
+        assert!(
+            parse_audio_action(&json!({"command": "set_card_profile", "profile": "x"})).is_err()
+        );
     }
 
     #[test]
@@ -1566,5 +1658,135 @@ mod tests {
         assert!(pactl_arguments(&AudioCommand::SetVolume(50)).is_none());
         assert!(pactl_arguments(&AudioCommand::AdjustVolume(-5)).is_none());
         assert!(pactl_arguments(&AudioCommand::ToggleMicMute).is_none());
+    }
+
+    fn provider_with_session(
+        available: bool,
+        session: std::sync::Arc<AudioSession>,
+    ) -> PulseAudioProvider {
+        PulseAudioProvider {
+            id: ProviderId::from("audio"),
+            available,
+            session,
+        }
+    }
+
+    #[test]
+    fn assemble_audio_state_builds_the_full_snapshot() {
+        let sinks: Vec<PactlDevice> = parse_pactl_json_list(SINKS_JSON_FIXTURE).expect("sinks");
+        let sources: Vec<PactlDevice> =
+            parse_pactl_json_list(SOURCES_JSON_FIXTURE).expect("sources");
+        let playback: Vec<PactlStream> =
+            parse_pactl_json_list(SINK_INPUTS_JSON_FIXTURE).expect("sink-inputs");
+        let recording: Vec<PactlStream> =
+            parse_pactl_json_list(SOURCE_OUTPUTS_JSON_FIXTURE).expect("source-outputs");
+        let cards: Vec<PactlCard> = parse_pactl_json_list(CARDS_JSON_FIXTURE).expect("cards");
+
+        let state = assemble_audio_state(
+            sinks,
+            sources,
+            playback,
+            recording,
+            cards,
+            "alsa_output.pci-0000_00_1f.3-platform-skl_hda_dsp_generic.HiFi__Speaker__sink",
+            "alsa_input.pci-0000_00_1f.3-platform-skl_hda_dsp_generic.HiFi__Mic1__source",
+        );
+
+        assert!(state.available);
+        // default_sink keeps the legacy AudioSink shape with identical percent
+        // semantics: Speaker at 55%, not muted.
+        let default_sink = state.default_sink.expect("default sink present");
+        assert_eq!(default_sink.description, "Arrow Lake cAVS Speaker");
+        assert_eq!(default_sink.volume_percent, 55);
+        assert!(!default_sink.muted);
+        let default_source = state.default_source.expect("default source present");
+        assert_eq!(
+            default_source.description,
+            "Arrow Lake cAVS Digital Microphone"
+        );
+        // Monitor source filtered: only the microphone remains.
+        assert_eq!(state.sources.len(), 1);
+        assert!(state.sources[0].is_default);
+        assert_eq!(state.sinks.len(), 2);
+        assert!(state.sinks.iter().any(|device| device.is_default));
+        assert_eq!(state.playback_streams.len(), 1);
+        assert_eq!(state.playback_streams[0].device_index, 59);
+        assert_eq!(state.recording_streams.len(), 1);
+        assert_eq!(state.cards.len(), 1);
+    }
+
+    #[test]
+    fn assemble_audio_state_without_default_names_marks_nothing_default() {
+        let sinks: Vec<PactlDevice> = parse_pactl_json_list(SINKS_JSON_FIXTURE).expect("sinks");
+        let state = assemble_audio_state(sinks, vec![], vec![], vec![], vec![], "", "");
+        assert!(state.default_sink.is_none());
+        assert!(state.default_source.is_none());
+        assert!(state.sinks.iter().all(|device| !device.is_default));
+    }
+
+    #[tokio::test]
+    async fn open_and_close_session_flip_the_flag_and_keep_the_cache() {
+        let session = std::sync::Arc::new(AudioSession::default());
+        {
+            let mut last = session.last.lock().await;
+            *last = Some(AudioState::default());
+        }
+        let provider = provider_with_session(true, session.clone());
+
+        provider
+            .execute(AudioCommand::OpenSession)
+            .await
+            .expect("open_session succeeds");
+        assert!(session.active.load(Ordering::Relaxed));
+
+        provider
+            .execute(AudioCommand::CloseSession)
+            .await
+            .expect("close_session succeeds");
+        assert!(!session.active.load(Ordering::Relaxed));
+        // close_session must NOT clear the snapshot cache (wifi lesson): a
+        // re-open queries snapshot() first and an empty cache would show a
+        // dead window until the stream re-populates.
+        assert!(session.last.lock().await.is_some());
+    }
+
+    #[tokio::test]
+    async fn snapshot_serves_the_cached_state() {
+        let session = std::sync::Arc::new(AudioSession::default());
+        {
+            let mut last = session.last.lock().await;
+            let mut state = AudioState::default();
+            state.available = true;
+            *last = Some(state);
+        }
+        let provider = provider_with_session(true, session);
+        let snapshot = provider.snapshot().await.expect("cached snapshot");
+        assert_eq!(snapshot["available"], serde_json::json!(true));
+    }
+
+    #[tokio::test]
+    async fn snapshot_is_none_before_first_emission() {
+        let provider = provider_with_session(true, std::sync::Arc::new(AudioSession::default()));
+        assert!(provider.snapshot().await.is_none());
+    }
+
+    #[tokio::test]
+    async fn invoke_rejects_foreign_custom_kind() {
+        let provider = provider_with_session(true, std::sync::Arc::new(AudioSession::default()));
+        let action = Action::Custom {
+            kind: "wifi".to_string(),
+            payload: json!({"command": "open_session"}),
+        };
+        assert!(provider.invoke(&action).await.is_err());
+    }
+
+    #[tokio::test]
+    async fn invoke_on_unavailable_provider_is_unsupported() {
+        let provider = provider_with_session(false, std::sync::Arc::new(AudioSession::default()));
+        let action = Action::Custom {
+            kind: "audio".to_string(),
+            payload: json!({"command": "open_session"}),
+        };
+        assert!(provider.invoke(&action).await.is_err());
     }
 }
