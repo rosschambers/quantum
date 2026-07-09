@@ -27,12 +27,61 @@ pub struct PulseAudioProvider {
     available: bool,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum AudioDeviceKind {
+    Sink,
+    Source,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum AudioStreamKind {
+    Playback,
+    Record,
+}
+
 #[derive(Debug, Clone)]
 pub(crate) enum AudioCommand {
     SetVolume(u8),
     ToggleMute,
     AdjustVolume(i32),
     ToggleMicMute,
+    OpenSession,
+    CloseSession,
+    SetDefaultSink {
+        name: String,
+    },
+    SetDefaultSource {
+        name: String,
+    },
+    SetDeviceVolume {
+        kind: AudioDeviceKind,
+        name: String,
+        percent: u8,
+    },
+    SetDeviceMute {
+        kind: AudioDeviceKind,
+        name: String,
+        muted: bool,
+    },
+    SetStreamVolume {
+        kind: AudioStreamKind,
+        index: u32,
+        percent: u8,
+    },
+    SetStreamMute {
+        kind: AudioStreamKind,
+        index: u32,
+        muted: bool,
+    },
+    MoveStream {
+        kind: AudioStreamKind,
+        index: u32,
+        device_name: String,
+    },
+    SetCardProfile {
+        card_index: u32,
+        profile: String,
+    },
 }
 
 impl PulseAudioProvider {
@@ -101,6 +150,71 @@ impl ProviderSource for PulseAudioProvider {
     }
 }
 
+/// Read a required string field, erroring with Unsupported when absent or
+/// not a string.
+fn required_string(payload: &serde_json::Value, key: &str) -> Result<String, DomainError> {
+    payload
+        .get(key)
+        .and_then(|value| value.as_str())
+        .map(|value| value.to_string())
+        .ok_or_else(|| {
+            DomainError::Unsupported(format!("missing or non-string '{key}' in audio action"))
+        })
+}
+
+/// Read a required boolean field.
+fn required_bool(payload: &serde_json::Value, key: &str) -> Result<bool, DomainError> {
+    payload.get(key).and_then(|value| value.as_bool()).ok_or_else(|| {
+        DomainError::Unsupported(format!("missing or non-bool '{key}' in audio action"))
+    })
+}
+
+/// Read a required unsigned integer field that must fit in u32 (pactl
+/// object indexes).
+fn required_u32(payload: &serde_json::Value, key: &str) -> Result<u32, DomainError> {
+    payload
+        .get(key)
+        .and_then(|value| value.as_u64())
+        .and_then(|value| u32::try_from(value).ok())
+        .ok_or_else(|| {
+            DomainError::Unsupported(format!("missing or non-u32 '{key}' in audio action"))
+        })
+}
+
+/// Read the required percent field, clamped to pactl's practical 0..=150
+/// range BEFORE the u8 cast so oversized values clamp instead of truncating.
+fn required_percent(payload: &serde_json::Value) -> Result<u8, DomainError> {
+    let percent = payload
+        .get("percent")
+        .and_then(|value| value.as_u64())
+        .ok_or_else(|| {
+            DomainError::Unsupported("missing or non-u64 'percent' in audio action".to_string())
+        })?;
+    Ok(percent.min(150) as u8)
+}
+
+/// Parse the device kind discriminator: "sink" or "source".
+fn parse_device_kind(payload: &serde_json::Value) -> Result<AudioDeviceKind, DomainError> {
+    match required_string(payload, "kind")?.as_str() {
+        "sink" => Ok(AudioDeviceKind::Sink),
+        "source" => Ok(AudioDeviceKind::Source),
+        other => Err(DomainError::Unsupported(format!(
+            "unknown device kind: {other}"
+        ))),
+    }
+}
+
+/// Parse the stream kind discriminator: "playback" or "record".
+fn parse_stream_kind(payload: &serde_json::Value) -> Result<AudioStreamKind, DomainError> {
+    match required_string(payload, "kind")?.as_str() {
+        "playback" => Ok(AudioStreamKind::Playback),
+        "record" => Ok(AudioStreamKind::Record),
+        other => Err(DomainError::Unsupported(format!(
+            "unknown stream kind: {other}"
+        ))),
+    }
+}
+
 /// Parse an audio action from a payload.
 pub(crate) fn parse_audio_action(payload: &serde_json::Value) -> Result<AudioCommand, DomainError> {
     let command = payload
@@ -129,10 +243,119 @@ pub(crate) fn parse_audio_action(payload: &serde_json::Value) -> Result<AudioCom
                 })?;
             Ok(AudioCommand::AdjustVolume(delta as i32))
         }
+        "open_session" => Ok(AudioCommand::OpenSession),
+        "close_session" => Ok(AudioCommand::CloseSession),
+        "set_default_sink" => Ok(AudioCommand::SetDefaultSink {
+            name: required_string(payload, "name")?,
+        }),
+        "set_default_source" => Ok(AudioCommand::SetDefaultSource {
+            name: required_string(payload, "name")?,
+        }),
+        "set_device_volume" => Ok(AudioCommand::SetDeviceVolume {
+            kind: parse_device_kind(payload)?,
+            name: required_string(payload, "name")?,
+            percent: required_percent(payload)?,
+        }),
+        "set_device_mute" => Ok(AudioCommand::SetDeviceMute {
+            kind: parse_device_kind(payload)?,
+            name: required_string(payload, "name")?,
+            muted: required_bool(payload, "muted")?,
+        }),
+        "set_stream_volume" => Ok(AudioCommand::SetStreamVolume {
+            kind: parse_stream_kind(payload)?,
+            index: required_u32(payload, "index")?,
+            percent: required_percent(payload)?,
+        }),
+        "set_stream_mute" => Ok(AudioCommand::SetStreamMute {
+            kind: parse_stream_kind(payload)?,
+            index: required_u32(payload, "index")?,
+            muted: required_bool(payload, "muted")?,
+        }),
+        "move_stream" => Ok(AudioCommand::MoveStream {
+            kind: parse_stream_kind(payload)?,
+            index: required_u32(payload, "index")?,
+            device_name: required_string(payload, "device_name")?,
+        }),
+        "set_card_profile" => Ok(AudioCommand::SetCardProfile {
+            card_index: required_u32(payload, "card_index")?,
+            profile: required_string(payload, "profile")?,
+        }),
         _ => Err(DomainError::Unsupported(format!(
             "unknown audio command: {}",
             command
         ))),
+    }
+}
+
+/// Map a parsed command to its exact pactl argv (the design's action table).
+/// Returns None for session commands (state flips handled by the provider)
+/// and for the four legacy commands, which keep their default-sink-resolving
+/// execution path in `execute_audio_command`.
+pub(crate) fn pactl_arguments(command: &AudioCommand) -> Option<Vec<String>> {
+    let mute_flag = |muted: bool| if muted { "1" } else { "0" };
+    match command {
+        AudioCommand::SetDefaultSink { name } => {
+            Some(vec!["set-default-sink".to_string(), name.clone()])
+        }
+        AudioCommand::SetDefaultSource { name } => {
+            Some(vec!["set-default-source".to_string(), name.clone()])
+        }
+        AudioCommand::SetDeviceVolume { kind, name, percent } => Some(vec![
+            match kind {
+                AudioDeviceKind::Sink => "set-sink-volume",
+                AudioDeviceKind::Source => "set-source-volume",
+            }
+            .to_string(),
+            name.clone(),
+            format!("{}%", percent),
+        ]),
+        AudioCommand::SetDeviceMute { kind, name, muted } => Some(vec![
+            match kind {
+                AudioDeviceKind::Sink => "set-sink-mute",
+                AudioDeviceKind::Source => "set-source-mute",
+            }
+            .to_string(),
+            name.clone(),
+            mute_flag(*muted).to_string(),
+        ]),
+        AudioCommand::SetStreamVolume { kind, index, percent } => Some(vec![
+            match kind {
+                AudioStreamKind::Playback => "set-sink-input-volume",
+                AudioStreamKind::Record => "set-source-output-volume",
+            }
+            .to_string(),
+            index.to_string(),
+            format!("{}%", percent),
+        ]),
+        AudioCommand::SetStreamMute { kind, index, muted } => Some(vec![
+            match kind {
+                AudioStreamKind::Playback => "set-sink-input-mute",
+                AudioStreamKind::Record => "set-source-output-mute",
+            }
+            .to_string(),
+            index.to_string(),
+            mute_flag(*muted).to_string(),
+        ]),
+        AudioCommand::MoveStream { kind, index, device_name } => Some(vec![
+            match kind {
+                AudioStreamKind::Playback => "move-sink-input",
+                AudioStreamKind::Record => "move-source-output",
+            }
+            .to_string(),
+            index.to_string(),
+            device_name.clone(),
+        ]),
+        AudioCommand::SetCardProfile { card_index, profile } => Some(vec![
+            "set-card-profile".to_string(),
+            card_index.to_string(),
+            profile.clone(),
+        ]),
+        AudioCommand::SetVolume(_)
+        | AudioCommand::ToggleMute
+        | AudioCommand::AdjustVolume(_)
+        | AudioCommand::ToggleMicMute
+        | AudioCommand::OpenSession
+        | AudioCommand::CloseSession => None,
     }
 }
 
@@ -445,6 +668,9 @@ async fn execute_audio_command(command: &AudioCommand) -> Result<(), ProvidersEr
         }
         // Handled by the early return above; never reached here.
         AudioCommand::ToggleMicMute => Ok(()),
+        // Table-mapped and session commands are routed through
+        // `pactl_arguments` / session flags by `execute`; never reached here.
+        _ => Ok(()),
     }
 }
 
@@ -1081,5 +1307,235 @@ mod tests {
     fn malformed_json_is_a_parse_error_not_a_panic() {
         let result: Result<Vec<PactlDevice>, _> = parse_pactl_json_list("not json at all");
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn parses_session_commands() {
+        assert!(matches!(
+            parse_audio_action(&json!({"command": "open_session"})),
+            Ok(AudioCommand::OpenSession)
+        ));
+        assert!(matches!(
+            parse_audio_action(&json!({"command": "close_session"})),
+            Ok(AudioCommand::CloseSession)
+        ));
+    }
+
+    #[test]
+    fn parses_set_default_sink_and_source() {
+        match parse_audio_action(&json!({"command": "set_default_sink", "name": "spk"})) {
+            Ok(AudioCommand::SetDefaultSink { name }) => assert_eq!(name, "spk"),
+            other => panic!("expected SetDefaultSink, got {:?}", other),
+        }
+        match parse_audio_action(&json!({"command": "set_default_source", "name": "mic"})) {
+            Ok(AudioCommand::SetDefaultSource { name }) => assert_eq!(name, "mic"),
+            other => panic!("expected SetDefaultSource, got {:?}", other),
+        }
+        assert!(parse_audio_action(&json!({"command": "set_default_sink"})).is_err());
+    }
+
+    #[test]
+    fn parses_set_device_volume_and_mute() {
+        match parse_audio_action(
+            &json!({"command": "set_device_volume", "kind": "sink", "name": "spk", "percent": 70}),
+        ) {
+            Ok(AudioCommand::SetDeviceVolume {
+                kind: AudioDeviceKind::Sink,
+                name,
+                percent: 70,
+            }) => assert_eq!(name, "spk"),
+            other => panic!("expected SetDeviceVolume, got {:?}", other),
+        }
+        match parse_audio_action(
+            &json!({"command": "set_device_mute", "kind": "source", "name": "mic", "muted": true}),
+        ) {
+            Ok(AudioCommand::SetDeviceMute {
+                kind: AudioDeviceKind::Source,
+                name,
+                muted: true,
+            }) => assert_eq!(name, "mic"),
+            other => panic!("expected SetDeviceMute, got {:?}", other),
+        }
+        // Unknown kind rejected.
+        assert!(parse_audio_action(
+            &json!({"command": "set_device_volume", "kind": "banana", "name": "x", "percent": 10})
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn set_device_volume_clamps_percent_to_150() {
+        match parse_audio_action(
+            &json!({"command": "set_device_volume", "kind": "sink", "name": "spk", "percent": 400}),
+        ) {
+            Ok(AudioCommand::SetDeviceVolume { percent, .. }) => assert_eq!(percent, 150),
+            other => panic!("expected clamped SetDeviceVolume, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn parses_stream_volume_mute_and_move() {
+        match parse_audio_action(
+            &json!({"command": "set_stream_volume", "kind": "playback", "index": 900, "percent": 80}),
+        ) {
+            Ok(AudioCommand::SetStreamVolume {
+                kind: AudioStreamKind::Playback,
+                index: 900,
+                percent: 80,
+            }) => {}
+            other => panic!("expected SetStreamVolume, got {:?}", other),
+        }
+        match parse_audio_action(
+            &json!({"command": "set_stream_mute", "kind": "record", "index": 932, "muted": false}),
+        ) {
+            Ok(AudioCommand::SetStreamMute {
+                kind: AudioStreamKind::Record,
+                index: 932,
+                muted: false,
+            }) => {}
+            other => panic!("expected SetStreamMute, got {:?}", other),
+        }
+        match parse_audio_action(
+            &json!({"command": "move_stream", "kind": "playback", "index": 900, "device_name": "hdmi"}),
+        ) {
+            Ok(AudioCommand::MoveStream {
+                kind: AudioStreamKind::Playback,
+                index: 900,
+                device_name,
+            }) => assert_eq!(device_name, "hdmi"),
+            other => panic!("expected MoveStream, got {:?}", other),
+        }
+        // Missing index rejected.
+        assert!(parse_audio_action(
+            &json!({"command": "set_stream_volume", "kind": "playback", "percent": 80})
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn parses_set_card_profile() {
+        match parse_audio_action(
+            &json!({"command": "set_card_profile", "card_index": 48, "profile": "HiFi"}),
+        ) {
+            Ok(AudioCommand::SetCardProfile {
+                card_index: 48,
+                profile,
+            }) => assert_eq!(profile, "HiFi"),
+            other => panic!("expected SetCardProfile, got {:?}", other),
+        }
+        assert!(parse_audio_action(&json!({"command": "set_card_profile", "profile": "x"})).is_err());
+    }
+
+    #[test]
+    fn pactl_arguments_match_the_design_table() {
+        let cases: Vec<(AudioCommand, Vec<&str>)> = vec![
+            (
+                AudioCommand::SetDefaultSink { name: "spk".into() },
+                vec!["set-default-sink", "spk"],
+            ),
+            (
+                AudioCommand::SetDefaultSource { name: "mic".into() },
+                vec!["set-default-source", "mic"],
+            ),
+            (
+                AudioCommand::SetDeviceVolume {
+                    kind: AudioDeviceKind::Sink,
+                    name: "spk".into(),
+                    percent: 70,
+                },
+                vec!["set-sink-volume", "spk", "70%"],
+            ),
+            (
+                AudioCommand::SetDeviceVolume {
+                    kind: AudioDeviceKind::Source,
+                    name: "mic".into(),
+                    percent: 55,
+                },
+                vec!["set-source-volume", "mic", "55%"],
+            ),
+            (
+                AudioCommand::SetDeviceMute {
+                    kind: AudioDeviceKind::Sink,
+                    name: "spk".into(),
+                    muted: true,
+                },
+                vec!["set-sink-mute", "spk", "1"],
+            ),
+            (
+                AudioCommand::SetDeviceMute {
+                    kind: AudioDeviceKind::Source,
+                    name: "mic".into(),
+                    muted: false,
+                },
+                vec!["set-source-mute", "mic", "0"],
+            ),
+            (
+                AudioCommand::SetStreamVolume {
+                    kind: AudioStreamKind::Playback,
+                    index: 900,
+                    percent: 80,
+                },
+                vec!["set-sink-input-volume", "900", "80%"],
+            ),
+            (
+                AudioCommand::SetStreamVolume {
+                    kind: AudioStreamKind::Record,
+                    index: 932,
+                    percent: 40,
+                },
+                vec!["set-source-output-volume", "932", "40%"],
+            ),
+            (
+                AudioCommand::SetStreamMute {
+                    kind: AudioStreamKind::Playback,
+                    index: 900,
+                    muted: true,
+                },
+                vec!["set-sink-input-mute", "900", "1"],
+            ),
+            (
+                AudioCommand::SetStreamMute {
+                    kind: AudioStreamKind::Record,
+                    index: 932,
+                    muted: false,
+                },
+                vec!["set-source-output-mute", "932", "0"],
+            ),
+            (
+                AudioCommand::MoveStream {
+                    kind: AudioStreamKind::Playback,
+                    index: 900,
+                    device_name: "hdmi".into(),
+                },
+                vec!["move-sink-input", "900", "hdmi"],
+            ),
+            (
+                AudioCommand::MoveStream {
+                    kind: AudioStreamKind::Record,
+                    index: 932,
+                    device_name: "mic".into(),
+                },
+                vec!["move-source-output", "932", "mic"],
+            ),
+            (
+                AudioCommand::SetCardProfile {
+                    card_index: 48,
+                    profile: "HiFi (HDMI1)".into(),
+                },
+                vec!["set-card-profile", "48", "HiFi (HDMI1)"],
+            ),
+        ];
+        for (command, expected) in cases {
+            let arguments = pactl_arguments(&command)
+                .unwrap_or_else(|| panic!("expected arguments for {:?}", command));
+            assert_eq!(arguments, expected, "argv mismatch for {:?}", command);
+        }
+        // Session commands and the legacy four are executed elsewhere.
+        assert!(pactl_arguments(&AudioCommand::OpenSession).is_none());
+        assert!(pactl_arguments(&AudioCommand::CloseSession).is_none());
+        assert!(pactl_arguments(&AudioCommand::ToggleMute).is_none());
+        assert!(pactl_arguments(&AudioCommand::SetVolume(50)).is_none());
+        assert!(pactl_arguments(&AudioCommand::AdjustVolume(-5)).is_none());
+        assert!(pactl_arguments(&AudioCommand::ToggleMicMute).is_none());
     }
 }
