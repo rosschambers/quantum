@@ -312,48 +312,60 @@ pub(crate) fn address_to_object_path(adapter_path: &str, addr: &str) -> String {
     format!("{}/dev_{}", adapter_path, normalized)
 }
 
+/// Find the properties map for a named interface without constructing an
+/// `OwnedInterfaceName` (whose `try_from` would need an `unwrap`).
+fn interface_properties<'a>(
+    interfaces: &'a HashMap<zbus::names::OwnedInterfaceName, HashMap<String, OwnedValue>>,
+    name: &str,
+) -> Option<&'a HashMap<String, OwnedValue>> {
+    interfaces
+        .iter()
+        .find(|(key, _)| key.as_str() == name)
+        .map(|(_, value)| value)
+}
+
+/// The lexicographically smallest adapter object path, if any adapter exists.
+/// Smallest-path selection keeps multi-adapter hosts stable across rebuilds
+/// (HashMap iteration order is unspecified).
+pub(crate) fn first_adapter_path(
+    objects: &HashMap<
+        OwnedObjectPath,
+        HashMap<zbus::names::OwnedInterfaceName, HashMap<String, OwnedValue>>,
+    >,
+) -> Option<String> {
+    objects
+        .iter()
+        .filter(|(_, interfaces)| interface_properties(interfaces, "org.bluez.Adapter1").is_some())
+        .map(|(path, _)| path.as_str().to_string())
+        .min()
+}
+
+fn bool_property(properties: &HashMap<String, OwnedValue>, name: &str) -> bool {
+    properties
+        .get(name)
+        .and_then(|value| bool::try_from(value).ok())
+        .unwrap_or(false)
+}
+
+fn string_property(properties: &HashMap<String, OwnedValue>, name: &str) -> Option<String> {
+    properties
+        .get(name)
+        .and_then(|value| <&str>::try_from(value).ok())
+        .map(str::to_string)
+}
+
 /// Map BlueZ managed objects to BluetoothState.
 ///
-/// This is a pure function for testability. Iterates the object dict,
-/// finds the first adapter, reads its Powered/Discovering state,
-/// and collects all connected devices.
+/// Pure for testability. Selects the smallest-path adapter, reads its
+/// Powered/Discovering state, and collects EVERY Device1 object under it:
+/// connected, paired-but-disconnected, and discovered-unpaired.
 pub(crate) fn map_managed_objects(
     objects: &HashMap<
         OwnedObjectPath,
         HashMap<zbus::names::OwnedInterfaceName, HashMap<String, OwnedValue>>,
     >,
 ) -> BluetoothState {
-    let mut adapter_path: Option<String> = None;
-    let mut powered = false;
-    let mut discovering = false;
-
-    let adapter_key = zbus::names::OwnedInterfaceName::try_from("org.bluez.Adapter1").unwrap();
-    let device_key = zbus::names::OwnedInterfaceName::try_from("org.bluez.Device1").unwrap();
-    let battery_key = zbus::names::OwnedInterfaceName::try_from("org.bluez.Battery1").unwrap();
-
-    // Pick the adapter with the lexicographically smallest object path so
-    // that hosts with multiple adapters (for example hci0 and hci1) produce
-    // a stable BluetoothState across rebuilds. HashMap iteration order is
-    // unspecified, so iterating with break would otherwise flap.
-    if let Some((path, interfaces)) = objects
-        .iter()
-        .filter(|(_, ifaces)| ifaces.contains_key(&adapter_key))
-        .min_by_key(|(path, _)| path.as_str().to_string())
-    {
-        if let Some(props) = interfaces.get(&adapter_key) {
-            adapter_path = Some(path.to_string());
-            powered = props
-                .get("Powered")
-                .and_then(|v| bool::try_from(v).ok())
-                .unwrap_or(false);
-            discovering = props
-                .get("Discovering")
-                .and_then(|v| bool::try_from(v).ok())
-                .unwrap_or(false);
-        }
-    }
-
-    let Some(adapter_path_str) = adapter_path else {
+    let Some(adapter_path) = first_adapter_path(objects) else {
         return BluetoothState {
             available: false,
             powered: false,
@@ -362,68 +374,60 @@ pub(crate) fn map_managed_objects(
             adapter_path: String::new(),
         };
     };
-    let mut devices = Vec::new();
 
-    // Find connected devices.
+    let (powered, discovering) = objects
+        .iter()
+        .find(|(path, _)| path.as_str() == adapter_path)
+        .and_then(|(_, interfaces)| interface_properties(interfaces, "org.bluez.Adapter1"))
+        .map(|properties| {
+            (
+                bool_property(properties, "Powered"),
+                bool_property(properties, "Discovering"),
+            )
+        })
+        .unwrap_or((false, false));
+
+    let mut devices = Vec::new();
     for (path, interfaces) in objects.iter() {
-        let path_str = path.to_string();
-        if !path_str.starts_with(&adapter_path_str) {
+        if !path.as_str().starts_with(&adapter_path) {
             continue;
         }
+        let Some(device_properties) = interface_properties(interfaces, "org.bluez.Device1") else {
+            continue;
+        };
 
-        if let Some(device_props) = interfaces.get(&device_key) {
-            let connected = device_props
-                .get("Connected")
-                .and_then(|v| bool::try_from(v).ok())
-                .unwrap_or(false);
-
-            if !connected {
-                continue;
-            }
-
-            let address = device_props
-                .get("Address")
-                .and_then(|v| <&str>::try_from(v).ok())
-                .unwrap_or_default()
-                .to_string();
-
-            let name = device_props
-                .get("Alias")
-                .and_then(|v| <&str>::try_from(v).ok())
-                .or_else(|| {
-                    device_props
-                        .get("Name")
-                        .and_then(|v| <&str>::try_from(v).ok())
-                })
-                .unwrap_or_default()
-                .to_string();
-
-            // Try to read battery percentage from Battery1 interface if present.
-            let battery_percent = interfaces.get(&battery_key).and_then(|battery_props| {
-                battery_props
+        let address = string_property(device_properties, "Address").unwrap_or_default();
+        let name = string_property(device_properties, "Alias")
+            .or_else(|| string_property(device_properties, "Name"))
+            .unwrap_or_default();
+        let battery_percent =
+            interface_properties(interfaces, "org.bluez.Battery1").and_then(|battery_properties| {
+                battery_properties
                     .get("Percentage")
-                    .and_then(|v| u8::try_from(v).ok())
+                    .and_then(|value| u8::try_from(value).ok())
             });
 
-            devices.push(BluetoothDevice {
-                address,
-                name,
-                battery_percent,
-                paired: false,
-                trusted: false,
-                connected: true,
-                icon: None,
-                rssi: None,
-            });
-        }
+        devices.push(BluetoothDevice {
+            address,
+            name,
+            battery_percent,
+            paired: bool_property(device_properties, "Paired"),
+            trusted: bool_property(device_properties, "Trusted"),
+            connected: bool_property(device_properties, "Connected"),
+            icon: string_property(device_properties, "Icon"),
+            rssi: device_properties
+                .get("RSSI")
+                .and_then(|value| i16::try_from(value).ok()),
+        });
     }
+    devices.sort_by(|a, b| a.address.cmp(&b.address));
 
     BluetoothState {
         available: true,
         powered,
         discovering,
         devices,
-        adapter_path: adapter_path_str,
+        adapter_path,
     }
 }
 
@@ -432,6 +436,159 @@ mod tests {
     use super::*;
     use futures::StreamExt;
     use std::time::Duration;
+
+    fn string_value(text: &str) -> OwnedValue {
+        let value: zbus::zvariant::Value = text.into();
+        OwnedValue::try_from(value).unwrap()
+    }
+
+    fn adapter_object(
+        powered: bool,
+    ) -> HashMap<zbus::names::OwnedInterfaceName, HashMap<String, OwnedValue>> {
+        let mut interfaces = HashMap::new();
+        let mut properties = HashMap::new();
+        properties.insert("Powered".to_string(), OwnedValue::from(powered));
+        properties.insert("Discovering".to_string(), OwnedValue::from(false));
+        let key = zbus::names::OwnedInterfaceName::try_from("org.bluez.Adapter1").unwrap();
+        interfaces.insert(key, properties);
+        interfaces
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn device_object(
+        address: &str,
+        alias: &str,
+        paired: bool,
+        trusted: bool,
+        connected: bool,
+        rssi: Option<i16>,
+        icon: Option<&str>,
+    ) -> HashMap<zbus::names::OwnedInterfaceName, HashMap<String, OwnedValue>> {
+        let mut interfaces = HashMap::new();
+        let mut properties = HashMap::new();
+        properties.insert("Address".to_string(), string_value(address));
+        properties.insert("Alias".to_string(), string_value(alias));
+        properties.insert("Paired".to_string(), OwnedValue::from(paired));
+        properties.insert("Trusted".to_string(), OwnedValue::from(trusted));
+        properties.insert("Connected".to_string(), OwnedValue::from(connected));
+        if let Some(rssi) = rssi {
+            properties.insert("RSSI".to_string(), OwnedValue::from(rssi));
+        }
+        if let Some(icon) = icon {
+            properties.insert("Icon".to_string(), string_value(icon));
+        }
+        let key = zbus::names::OwnedInterfaceName::try_from("org.bluez.Device1").unwrap();
+        interfaces.insert(key, properties);
+        interfaces
+    }
+
+    #[test]
+    fn map_includes_paired_but_disconnected_devices() {
+        let mut objects = HashMap::new();
+        objects.insert(
+            OwnedObjectPath::try_from("/org/bluez/hci0").unwrap(),
+            adapter_object(true),
+        );
+        objects.insert(
+            OwnedObjectPath::try_from("/org/bluez/hci0/dev_AA_BB_CC_DD_EE_FF").unwrap(),
+            device_object(
+                "AA:BB:CC:DD:EE:FF",
+                "Keyboard",
+                true,
+                true,
+                false,
+                None,
+                None,
+            ),
+        );
+
+        let state = map_managed_objects(&objects);
+        assert_eq!(state.devices.len(), 1);
+        assert!(state.devices[0].paired);
+        assert!(state.devices[0].trusted);
+        assert!(!state.devices[0].connected);
+    }
+
+    #[test]
+    fn map_includes_discovered_unpaired_devices_with_rssi_and_icon() {
+        let mut objects = HashMap::new();
+        objects.insert(
+            OwnedObjectPath::try_from("/org/bluez/hci0").unwrap(),
+            adapter_object(true),
+        );
+        objects.insert(
+            OwnedObjectPath::try_from("/org/bluez/hci0/dev_11_22_33_44_55_66").unwrap(),
+            device_object(
+                "11:22:33:44:55:66",
+                "Earbuds",
+                false,
+                false,
+                false,
+                Some(-40),
+                Some("audio-headset"),
+            ),
+        );
+
+        let state = map_managed_objects(&objects);
+        assert_eq!(state.devices.len(), 1);
+        assert!(!state.devices[0].paired);
+        assert_eq!(state.devices[0].rssi, Some(-40));
+        assert_eq!(state.devices[0].icon.as_deref(), Some("audio-headset"));
+    }
+
+    #[test]
+    fn map_reports_adapter_path() {
+        let mut objects = HashMap::new();
+        objects.insert(
+            OwnedObjectPath::try_from("/org/bluez/hci0").unwrap(),
+            adapter_object(true),
+        );
+        let state = map_managed_objects(&objects);
+        assert_eq!(state.adapter_path, "/org/bluez/hci0");
+    }
+
+    #[test]
+    fn map_sorts_devices_by_address() {
+        let mut objects = HashMap::new();
+        objects.insert(
+            OwnedObjectPath::try_from("/org/bluez/hci0").unwrap(),
+            adapter_object(true),
+        );
+        objects.insert(
+            OwnedObjectPath::try_from("/org/bluez/hci0/dev_BB_00_00_00_00_00").unwrap(),
+            device_object(
+                "BB:00:00:00:00:00",
+                "Second",
+                false,
+                false,
+                false,
+                None,
+                None,
+            ),
+        );
+        objects.insert(
+            OwnedObjectPath::try_from("/org/bluez/hci0/dev_AA_00_00_00_00_00").unwrap(),
+            device_object(
+                "AA:00:00:00:00:00",
+                "First",
+                false,
+                false,
+                false,
+                None,
+                None,
+            ),
+        );
+
+        let state = map_managed_objects(&objects);
+        let addresses: Vec<&str> = state.devices.iter().map(|d| d.address.as_str()).collect();
+        assert_eq!(addresses, vec!["AA:00:00:00:00:00", "BB:00:00:00:00:00"]);
+    }
+
+    #[test]
+    fn first_adapter_path_returns_none_without_adapters() {
+        let objects = HashMap::new();
+        assert_eq!(first_adapter_path(&objects), None);
+    }
 
     #[test]
     fn map_managed_objects_no_adapter() {
@@ -513,7 +670,7 @@ mod tests {
     }
 
     #[test]
-    fn map_managed_objects_skips_disconnected_devices() {
+    fn map_marks_disconnected_devices_as_not_connected() {
         let mut objects = HashMap::new();
 
         // Add adapter.
@@ -546,7 +703,8 @@ mod tests {
 
         let state = map_managed_objects(&objects);
         assert!(state.available);
-        assert!(state.devices.is_empty());
+        assert_eq!(state.devices.len(), 1);
+        assert!(!state.devices[0].connected);
     }
 
     #[test]
