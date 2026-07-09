@@ -251,6 +251,23 @@ impl ProviderSource for BluezProvider {
     }
 }
 
+/// Match rule for `PropertiesChanged` signals emitted by the BlueZ name owner.
+///
+/// The rule matches on the resolved UNIQUE name, not the well-known
+/// "org.bluez": signal headers carry the unique sender, and matching on the
+/// unique name works for both the bus daemon and zbus's client-side filter.
+pub(crate) fn bluez_properties_changed_rule(
+    sender_unique_name: &str,
+) -> Result<zbus::OwnedMatchRule, zbus::Error> {
+    let rule = zbus::MatchRule::builder()
+        .msg_type(zbus::message::Type::Signal)
+        .sender(sender_unique_name)?
+        .interface("org.freedesktop.DBus.Properties")?
+        .member("PropertiesChanged")?
+        .build();
+    Ok(rule.into())
+}
+
 /// Build the inner ObjectManager-driven stream for BlueZ.
 ///
 /// This is the original property-subscription-shaped loop that watches
@@ -326,6 +343,58 @@ fn bluez_managed_objects_stream(conn: Connection) -> BoxStream<'static, serde_js
                 }
             };
 
+            // Resolve the unique owner of org.bluez and subscribe to its
+            // PropertiesChanged signals so connect/disconnect/pairing property
+            // flips refresh state live (an interface add/remove never fires
+            // for a plain property change). If org.bluez restarts, these
+            // streams end and the outer loop resubscribes to the new owner.
+            let owner = match zbus::fdo::DBusProxy::new(&conn).await {
+                Ok(dbus_proxy) => {
+                    match zbus::names::BusName::try_from("org.bluez") {
+                        Ok(bus_name) => match dbus_proxy.get_name_owner(bus_name).await {
+                            Ok(owner) => owner,
+                            Err(e) => {
+                                tracing::warn!(error = %e, "bluez get_name_owner failed");
+                                tokio::time::sleep(backoff).await;
+                                backoff = (backoff * 2).min(max_backoff);
+                                continue;
+                            }
+                        },
+                        Err(e) => {
+                            tracing::warn!(error = %e, "bluez bus name invalid");
+                            tokio::time::sleep(backoff).await;
+                            backoff = (backoff * 2).min(max_backoff);
+                            continue;
+                        }
+                    }
+                }
+                Err(e) => {
+                    tracing::warn!(error = %e, "DBusProxy build failed");
+                    tokio::time::sleep(backoff).await;
+                    backoff = (backoff * 2).min(max_backoff);
+                    continue;
+                }
+            };
+            let properties_rule = match bluez_properties_changed_rule(owner.as_str()) {
+                Ok(rule) => rule,
+                Err(e) => {
+                    tracing::warn!(error = %e, "bluez properties match rule build failed");
+                    tokio::time::sleep(backoff).await;
+                    backoff = (backoff * 2).min(max_backoff);
+                    continue;
+                }
+            };
+            let mut properties_changed =
+                match zbus::MessageStream::for_match_rule(properties_rule, &conn, None).await {
+                    Ok(stream) => stream,
+                    Err(e) => {
+                        tracing::warn!(error = %e, "bluez PropertiesChanged subscribe failed");
+                        tokio::time::sleep(backoff).await;
+                        backoff = (backoff * 2).min(max_backoff);
+                        continue;
+                    }
+                };
+
             backoff = std::time::Duration::from_secs(1);
 
             // Yield deduped rebuilds on each event.
@@ -336,6 +405,11 @@ fn bluez_managed_objects_stream(conn: Connection) -> BoxStream<'static, serde_js
                         if next.is_none() { break; }
                     }
                     next = interfaces_removed.next() => {
+                        if next.is_none() { break; }
+                    }
+                    next = properties_changed.next() => {
+                        // A malformed message (Some(Err)) still triggers a
+                        // rebuild; dedupe suppresses no-op emissions.
                         if next.is_none() { break; }
                     }
                 }
@@ -1164,6 +1238,18 @@ mod tests {
         assert!(!discovery_error_is_ignorable(
             "org.bluez.Error.NotAuthorized: Operation not permitted"
         ));
+    }
+
+    #[test]
+    fn properties_changed_rule_targets_the_properties_interface() {
+        let rule = bluez_properties_changed_rule(":1.42").expect("rule must build");
+        let text = rule.to_string();
+        assert!(text.contains("member='PropertiesChanged'"), "{text}");
+        assert!(
+            text.contains("interface='org.freedesktop.DBus.Properties'"),
+            "{text}"
+        );
+        assert!(text.contains("sender=':1.42'"), "{text}");
     }
 
     #[tokio::test]
