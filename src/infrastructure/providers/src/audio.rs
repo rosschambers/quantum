@@ -774,26 +774,24 @@ async fn current_source() -> Option<AudioSink> {
 }
 
 /// Decide whether a single line from `pactl subscribe` should trigger a
-/// re-fetch of the default sink's state.
+/// re-fetch of the audio state.
 ///
-/// `pactl subscribe` emits lines in the shape `Event '<kind>' on <facility> #<id>`
-/// where `<facility>` is one of `sink`, `source`, `sink-input`, `source-output`,
-/// `client`, `card`, `server`, etc. We only care about `sink` (the speakers /
-/// headphones state moved) and `server` (the default sink changed). Sink-input
-/// and source events fire constantly during playback or recording; honoring
-/// them would put us right back into polling-territory CPU usage.
-pub(crate) fn should_refresh_for_pactl_line(line: &str) -> bool {
-    // Look for `on <facility>` and extract the facility token.
+/// `pactl subscribe` emits lines in the shape `Event '<kind>' on <facility> #<id>`.
+/// Device (`sink`, `source`), `server` (default device changed), and `card`
+/// (profile switched) events always refresh. Stream events (`sink-input`,
+/// `source-output`) fire constantly during playback or recording; honoring
+/// them all the time would put us back into polling-territory CPU usage, so
+/// they refresh ONLY while a sound-window session is open.
+pub(crate) fn should_refresh_for_pactl_line(line: &str, session_active: bool) -> bool {
     let Some(rest) = line.split(" on ").nth(1) else {
         return false;
     };
     let facility = rest.split_whitespace().next().unwrap_or("");
-    // `source` is included so a microphone mute toggle is reflected live. Plain
-    // `source` events (mute/volume/port) are infrequent; the constant-firing
-    // recording traffic is on the separate `source-output` facility, which is
-    // not matched here. Change-gating in the stream still suppresses no-op
-    // emissions.
-    matches!(facility, "sink" | "source" | "server")
+    match facility {
+        "sink" | "source" | "server" | "card" => true,
+        "sink-input" | "source-output" => session_active,
+        _ => false,
+    }
 }
 
 /// Fetch the current `AudioState` from `pactl` and return it as a JSON value.
@@ -865,7 +863,7 @@ fn event_driven_stream() -> BoxStream<'static, serde_json::Value> {
             loop {
                 match lines.next_line().await {
                     Ok(Some(line)) => {
-                        if !should_refresh_for_pactl_line(&line) {
+                        if !should_refresh_for_pactl_line(&line, false) {
                             continue;
                         }
                         let value = current_audio_state_value().await;
@@ -1006,10 +1004,10 @@ mod tests {
     fn pactl_subscribe_sink_change_triggers_refresh() {
         // PulseAudio / PipeWire-Pulse emits one of these whenever the sink
         // state changes (volume, mute, default-sink swap), so we refresh.
-        assert!(should_refresh_for_pactl_line("Event 'change' on sink #0"));
-        assert!(should_refresh_for_pactl_line("Event 'change' on sink #42"));
-        assert!(should_refresh_for_pactl_line("Event 'new' on sink #1"));
-        assert!(should_refresh_for_pactl_line("Event 'remove' on sink #1"));
+        assert!(should_refresh_for_pactl_line("Event 'change' on sink #0", false));
+        assert!(should_refresh_for_pactl_line("Event 'change' on sink #42", false));
+        assert!(should_refresh_for_pactl_line("Event 'new' on sink #1", false));
+        assert!(should_refresh_for_pactl_line("Event 'remove' on sink #1", false));
     }
 
     #[test]
@@ -1018,7 +1016,7 @@ mod tests {
         // user picks a new default in `pactl set-default-sink` and the
         // server emits a `server` event. We must refresh on that too,
         // otherwise the bar keeps showing the old sink's volume.
-        assert!(should_refresh_for_pactl_line("Event 'change' on server #0"));
+        assert!(should_refresh_for_pactl_line("Event 'change' on server #0", false));
     }
 
     #[test]
@@ -1034,8 +1032,8 @@ mod tests {
     fn pactl_subscribe_source_change_triggers_refresh() {
         // A microphone mute/volume change emits a `source` event; we refresh so
         // the bar reflects the new mic mute state live.
-        assert!(should_refresh_for_pactl_line("Event 'change' on source #4"));
-        assert!(should_refresh_for_pactl_line("Event 'new' on source #1"));
+        assert!(should_refresh_for_pactl_line("Event 'change' on source #4", false));
+        assert!(should_refresh_for_pactl_line("Event 'new' on source #1", false));
     }
 
     #[test]
@@ -1047,17 +1045,48 @@ mod tests {
         // recording stream) is distinct from `source` (the device) and must
         // NOT refresh.
         assert!(!should_refresh_for_pactl_line(
-            "Event 'change' on sink-input #123"
+            "Event 'change' on sink-input #123",
+            false
         ));
         assert!(!should_refresh_for_pactl_line(
-            "Event 'change' on source-output #7"
+            "Event 'change' on source-output #7",
+            false
         ));
         assert!(!should_refresh_for_pactl_line(
-            "Event 'change' on client #99"
+            "Event 'change' on client #99",
+            false
         ));
         // Stray blank / garbage lines must not refresh either.
-        assert!(!should_refresh_for_pactl_line(""));
-        assert!(!should_refresh_for_pactl_line("garbage"));
+        assert!(!should_refresh_for_pactl_line("", false));
+        assert!(!should_refresh_for_pactl_line("garbage", false));
+    }
+
+    #[test]
+    fn pactl_subscribe_card_events_always_trigger_refresh() {
+        // Card profile switches must be reflected even when the sound window
+        // is closed, so `card` refreshes with and without a session.
+        assert!(should_refresh_for_pactl_line("Event 'change' on card #48", false));
+        assert!(should_refresh_for_pactl_line("Event 'change' on card #48", true));
+    }
+
+    #[test]
+    fn pactl_subscribe_stream_events_refresh_only_during_a_session() {
+        // With the sound window open we need live stream rows; sink-input and
+        // source-output events are honored then, and ONLY then. This is the
+        // session-gating guarantee: no open session, no sink-input subprocess
+        // churn.
+        assert!(should_refresh_for_pactl_line(
+            "Event 'change' on sink-input #123",
+            true
+        ));
+        assert!(should_refresh_for_pactl_line(
+            "Event 'new' on source-output #7",
+            true
+        ));
+        // Session or not, client and garbage lines never refresh.
+        assert!(!should_refresh_for_pactl_line("Event 'change' on client #99", true));
+        assert!(!should_refresh_for_pactl_line("garbage", true));
+        assert!(!should_refresh_for_pactl_line("", true));
     }
 
     #[tokio::test]
