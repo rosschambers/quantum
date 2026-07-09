@@ -678,7 +678,24 @@ async fn setup_daemon(
     );
     register_or_warn(&registry, "UpowerBatteryProvider", battery).await;
     register_or_warn(&registry, "NetworkManagerProvider", network).await;
-    register_or_warn(&registry, "BluezProvider", bluez).await;
+    // BluezProvider is registered notifications-style (Arc kept) so the
+    // pairing agent can be started on the same instance after registration.
+    match bluez {
+        Ok(provider) => {
+            let provider = Arc::new(provider);
+            registry
+                .register(
+                    provider.id().clone(),
+                    provider.clone() as Arc<dyn quantum_domain::ProviderSource>,
+                )
+                .await;
+            info!("Registered BluezProvider");
+            if let Err(error) = provider.start_pairing_agent(event_bus.clone()).await {
+                tracing::warn!(error = ?error, "bluetooth pairing agent unavailable");
+            }
+        }
+        Err(error) => tracing::warn!(error = ?error, "BluezProvider unavailable"),
+    }
     register_or_warn(&registry, "PowerProfilesDaemonProvider", ppd).await;
     register_or_warn(&registry, "LogindBrightnessProvider", brightness).await;
     register_or_warn(&registry, "PulseAudioProvider", audio).await;
