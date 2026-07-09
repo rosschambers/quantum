@@ -175,18 +175,105 @@ describe('SoundMenu App shell', () => {
     });
 
     it('re-renders when a new AudioState arrives on the stream', async () => {
-        // Task 6 shell only renders availability; Task 7 restores the
-        // device-content assertion once the device list renders. Here we prove
-        // the subscribe callback swaps `state` and the DOM re-renders by
-        // flipping availability through the stream. Scoped to `container`
-        // because there is no testing-library auto-cleanup configured and
-        // body-scoped queries would see prior tests' leftover DOM.
         const { container } = render(App);
         await settle();
         expect(capturedSubscribeCallback).not.toBeNull();
-        expect(container.querySelector('.unavailable')).toBeNull();
-        capturedSubscribeCallback!(unavailableState());
+        const updated = fixtureState();
+        updated.sinks = [
+            { index: 77, name: 'fresh-sink', description: 'Freshly Plugged', volume_percent: 30, muted: false, is_default: true, port: null },
+        ];
+        capturedSubscribeCallback!(updated);
         await settle();
-        expect(container.querySelector('.unavailable')).not.toBeNull();
+        expect(container.textContent).toContain('Freshly Plugged');
+    });
+});
+
+describe('SoundMenu device sections', () => {
+    it('renders every sink with description and active port subtitle', async () => {
+        const { container } = render(App);
+        await settle();
+        const outputs = container.querySelector('[data-section="outputs"]')!;
+        expect(outputs.textContent).toContain('Speaker');
+        expect(outputs.textContent).toContain('HDMI / DisplayPort 3 Output');
+        const speakerRow = outputs.querySelector('[data-device-name="speaker-sink"]')!;
+        expect(speakerRow.querySelector('.device-port')!.textContent).toContain('Speaker');
+    });
+
+    it('clicking a non-default sink radio sends the exact set_default_sink envelope', async () => {
+        const { container } = render(App);
+        await settle();
+        const radio = container.querySelector(
+            '[data-device-name="hdmi-sink"] [data-action="set-default"]',
+        ) as HTMLInputElement;
+        await fireEvent.click(radio);
+        await tick();
+        const action = lastCommand('set_default_sink');
+        expect(action).toEqual({
+            kind: 'custom',
+            data: { kind: 'audio', payload: { command: 'set_default_sink', name: 'hdmi-sink' } },
+        });
+    });
+
+    it('clicking the already-default radio sends nothing', async () => {
+        const { container } = render(App);
+        await settle();
+        mockCallSpy.mockClear();
+        const radio = container.querySelector(
+            '[data-device-name="speaker-sink"] [data-action="set-default"]',
+        ) as HTMLInputElement;
+        await fireEvent.click(radio);
+        await tick();
+        expect(lastCommand('set_default_sink')).toBeUndefined();
+    });
+
+    it('sink mute button sends set_device_mute with the inverted flag', async () => {
+        const { container } = render(App);
+        await settle();
+        // hdmi-sink is muted in the fixture, so the toggle unmutes.
+        const muteButton = container.querySelector(
+            '[data-device-name="hdmi-sink"] [data-action="mute"]',
+        ) as HTMLButtonElement;
+        await fireEvent.click(muteButton);
+        await tick();
+        expect(lastCommand('set_device_mute')!.data!.payload).toEqual({
+            command: 'set_device_mute',
+            kind: 'sink',
+            name: 'hdmi-sink',
+            muted: false,
+        });
+    });
+
+    it('source rows send set_default_source and set_device_mute with kind source', async () => {
+        const { container } = render(App);
+        await settle();
+        const inputs = container.querySelector('[data-section="inputs"]')!;
+        const muteButton = inputs.querySelector(
+            '[data-device-name="microphone-source"] [data-action="mute"]',
+        ) as HTMLButtonElement;
+        await fireEvent.click(muteButton);
+        await tick();
+        expect(lastCommand('set_device_mute')!.data!.payload).toEqual({
+            command: 'set_device_mute',
+            kind: 'source',
+            name: 'microphone-source',
+            muted: true,
+        });
+    });
+
+    it('releasing a sink slider sends set_device_volume with the slider value', async () => {
+        const { container } = render(App);
+        await settle();
+        const slider = container.querySelector(
+            '[data-device-name="speaker-sink"] input[type="range"]',
+        ) as HTMLInputElement;
+        await fireEvent.input(slider, { target: { value: '70' } });
+        await fireEvent.change(slider, { target: { value: '70' } });
+        await tick();
+        expect(lastCommand('set_device_volume')!.data!.payload).toEqual({
+            command: 'set_device_volume',
+            kind: 'sink',
+            name: 'speaker-sink',
+            percent: 70,
+        });
     });
 });

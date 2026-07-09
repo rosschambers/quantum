@@ -2,6 +2,7 @@
     import { createClient, openContextMenu, type MenuItem } from '@quantum/client';
     import { AUDIO_PROVIDER, AUDIO_CHANNEL } from './lib/channels';
     import type { AudioState, AudioStream } from './lib/types';
+    import DeviceRow from './lib/DeviceRow.svelte';
 
     const client = createClient();
 
@@ -76,7 +77,19 @@
         client.call('view.hide', { name: 'plugin/sound-menu/sound-menu' }).catch(() => {});
     }
 
-    // Task 7: device handlers go here.
+    function setDefaultDevice(kind: 'sink' | 'source', name: string): void {
+        const command = kind === 'sink' ? 'set_default_sink' : 'set_default_source';
+        sendFireAndForget({ command, name });
+    }
+
+    function setDeviceVolume(kind: 'sink' | 'source', name: string, percent: number): void {
+        sendFireAndForget({ command: 'set_device_volume', kind, name, percent });
+    }
+
+    function toggleDeviceMute(kind: 'sink' | 'source', name: string, muted: boolean): void {
+        sendFireAndForget({ command: 'set_device_mute', kind, name, muted });
+    }
+
     // Task 8: stream handlers go here.
     // Task 9: profile handlers go here.
 </script>
@@ -94,7 +107,30 @@
             <div class="empty unavailable">Audio service unavailable.</div>
         {:else}
             <div class="scroll">
-                <!-- Task 7: Output devices and Input devices sections. -->
+                <div class="section" data-section="outputs">
+                    <div class="section-title">Output devices</div>
+                    {#each state.sinks as sink (sink.index)}
+                        <DeviceRow
+                            device={sink}
+                            onSetDefault={() => setDefaultDevice('sink', sink.name)}
+                            onSetVolume={(percent) => setDeviceVolume('sink', sink.name, percent)}
+                            onToggleMute={() => toggleDeviceMute('sink', sink.name, !sink.muted)}
+                        />
+                    {/each}
+                </div>
+                <div class="section" data-section="inputs">
+                    <div class="section-title">Input devices</div>
+                    {#each state.sources as source (source.index)}
+                        <DeviceRow
+                            device={source}
+                            onSetDefault={() => setDefaultDevice('source', source.name)}
+                            onSetVolume={(percent) =>
+                                setDeviceVolume('source', source.name, percent)}
+                            onToggleMute={() =>
+                                toggleDeviceMute('source', source.name, !source.muted)}
+                        />
+                    {/each}
+                </div>
                 <!-- Task 8: Playback and Recording sections. -->
                 <!-- Task 9: Profiles section. -->
             </div>
@@ -160,5 +196,16 @@
     }
     .unavailable {
         padding: 60px 20px;
+    }
+    .section {
+        padding: 4px 4px 10px;
+    }
+    .section-title {
+        font-size: 11px;
+        font-weight: 600;
+        color: var(--color-fg-alt, #a6adc8);
+        text-transform: uppercase;
+        letter-spacing: 0.06em;
+        padding: 8px 10px 4px;
     }
 </style>
