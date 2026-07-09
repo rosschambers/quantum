@@ -9,6 +9,7 @@ pub mod app_usage;
 pub mod audio;
 pub mod battery;
 pub mod bluetooth;
+pub mod bluetooth_agent;
 pub mod brightness;
 pub mod declarative_shell;
 pub mod desktop_apps;

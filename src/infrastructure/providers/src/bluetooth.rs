@@ -16,11 +16,15 @@ use quantum_domain::{
     ProviderSource, Query,
 };
 
+use std::sync::Arc;
+
+use crate::bluetooth_agent::{PairingReply, PendingPairingMap};
 use crate::error::ProvidersError;
 
 pub struct BluezProvider {
     id: ProviderId,
     conn: Option<Connection>,
+    pairing: Arc<PendingPairingMap>,
 }
 
 impl BluezProvider {
@@ -37,6 +41,7 @@ impl BluezProvider {
                 return Ok(Self {
                     id: ProviderId::from("bluetooth"),
                     conn: None,
+                    pairing: Arc::new(PendingPairingMap::new()),
                 });
             }
         };
@@ -44,6 +49,7 @@ impl BluezProvider {
         Ok(Self {
             id: ProviderId::from("bluetooth"),
             conn: Some(conn),
+            pairing: Arc::new(PendingPairingMap::new()),
         })
     }
 }
@@ -219,11 +225,28 @@ impl ProviderSource for BluezProvider {
                             })?;
                         Ok(ActionOutcome { message: None })
                     }
-                    BluetoothAction::PairingResponse { .. } => {
-                        // Replaced in Task 7 once the pending pairing map exists.
-                        Err(DomainError::ActionFailed {
-                            reason: "no pairing in progress".to_string(),
-                        })
+                    BluetoothAction::PairingResponse {
+                        address,
+                        accept,
+                        passkey,
+                        pin,
+                    } => {
+                        let reply = if !accept {
+                            PairingReply::Reject
+                        } else if let Some(pin) = pin {
+                            PairingReply::PinCode(pin)
+                        } else if let Some(passkey) = passkey {
+                            PairingReply::Passkey(passkey)
+                        } else {
+                            PairingReply::Confirm
+                        };
+                        if self.pairing.resolve_by_address(&address, reply).await {
+                            Ok(ActionOutcome { message: None })
+                        } else {
+                            Err(DomainError::ActionFailed {
+                                reason: format!("no pending pairing request for {address}"),
+                            })
+                        }
                     }
                 }
             }
@@ -1250,6 +1273,93 @@ mod tests {
             "{text}"
         );
         assert!(text.contains("sender=':1.42'"), "{text}");
+    }
+
+    #[tokio::test]
+    async fn pairing_response_resolves_a_parked_request() {
+        use crate::bluetooth_agent::{PairingReply, PendingPairingMap};
+        let provider = BluezProvider {
+            id: quantum_domain::ProviderId::from("bluetooth"),
+            conn: None,
+            pairing: std::sync::Arc::new(PendingPairingMap::new()),
+        };
+        let receiver = provider
+            .pairing
+            .park("/org/bluez/hci0/dev_AA_BB_CC_DD_EE_FF")
+            .await;
+        let action = quantum_domain::Action::Custom {
+            kind: "bluetooth".to_string(),
+            payload: serde_json::json!({
+                "command": "pairing_response",
+                "address": "AA:BB:CC:DD:EE:FF",
+                "accept": true
+            }),
+        };
+        provider.invoke(&action).await.expect("must resolve");
+        assert!(matches!(receiver.await, Ok(PairingReply::Confirm)));
+    }
+
+    #[tokio::test]
+    async fn pairing_response_without_a_parked_request_fails() {
+        use crate::bluetooth_agent::PendingPairingMap;
+        let provider = BluezProvider {
+            id: quantum_domain::ProviderId::from("bluetooth"),
+            conn: None,
+            pairing: std::sync::Arc::new(PendingPairingMap::new()),
+        };
+        let action = quantum_domain::Action::Custom {
+            kind: "bluetooth".to_string(),
+            payload: serde_json::json!({
+                "command": "pairing_response",
+                "address": "AA:BB:CC:DD:EE:FF",
+                "accept": true
+            }),
+        };
+        assert!(provider.invoke(&action).await.is_err());
+    }
+
+    #[tokio::test]
+    async fn pairing_response_reject_and_pin_map_to_the_right_replies() {
+        use crate::bluetooth_agent::{PairingReply, PendingPairingMap};
+        let provider = BluezProvider {
+            id: quantum_domain::ProviderId::from("bluetooth"),
+            conn: None,
+            pairing: std::sync::Arc::new(PendingPairingMap::new()),
+        };
+
+        let receiver = provider
+            .pairing
+            .park("/org/bluez/hci0/dev_AA_BB_CC_DD_EE_FF")
+            .await;
+        let reject = quantum_domain::Action::Custom {
+            kind: "bluetooth".to_string(),
+            payload: serde_json::json!({
+                "command": "pairing_response",
+                "address": "AA:BB:CC:DD:EE:FF",
+                "accept": false
+            }),
+        };
+        provider.invoke(&reject).await.expect("must resolve");
+        assert!(matches!(receiver.await, Ok(PairingReply::Reject)));
+
+        let receiver = provider
+            .pairing
+            .park("/org/bluez/hci0/dev_AA_BB_CC_DD_EE_FF")
+            .await;
+        let pin = quantum_domain::Action::Custom {
+            kind: "bluetooth".to_string(),
+            payload: serde_json::json!({
+                "command": "pairing_response",
+                "address": "AA:BB:CC:DD:EE:FF",
+                "accept": true,
+                "pin": "0000"
+            }),
+        };
+        provider.invoke(&pin).await.expect("must resolve");
+        match receiver.await {
+            Ok(PairingReply::PinCode(pin)) => assert_eq!(pin, "0000"),
+            other => panic!("expected PinCode, got {other:?}"),
+        }
     }
 
     #[tokio::test]
