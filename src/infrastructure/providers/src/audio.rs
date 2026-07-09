@@ -410,6 +410,7 @@ async fn current_audio_state_value() -> serde_json::Value {
                 available: true,
                 default_sink: Some(sink),
                 default_source: current_source().await,
+                ..AudioState::default()
             },
             None => AudioState::default(),
         },
