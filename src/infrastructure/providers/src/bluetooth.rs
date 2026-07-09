@@ -119,6 +119,9 @@ impl ProviderSource for BluezProvider {
                             message: Some(format!("disconnected {}", addr)),
                         })
                     }
+                    other => Err(DomainError::Unsupported(format!(
+                        "bluetooth command not yet executable: {other:?}"
+                    ))),
                 }
             }
             _ => Err(DomainError::Unsupported(
@@ -258,47 +261,120 @@ fn bluez_managed_objects_stream(conn: Connection) -> BoxStream<'static, serde_js
     })
 }
 
-/// Enum for parsed Bluetooth actions.
+/// A typed Bluetooth command parsed from the JSON payload the frontend sends
+/// through `action.invoke`. Each variant maps to a snake_case `command` string.
 #[derive(Debug)]
 pub(crate) enum BluetoothAction {
     SetPowered(bool),
     Disconnect(String),
+    StartDiscovery,
+    StopDiscovery,
+    OpenSession,
+    CloseSession,
+    Connect {
+        address: String,
+    },
+    Pair {
+        address: String,
+    },
+    SetTrusted {
+        address: String,
+        value: bool,
+    },
+    Remove {
+        address: String,
+    },
+    PairingResponse {
+        address: String,
+        accept: bool,
+        passkey: Option<u32>,
+        pin: Option<String>,
+    },
 }
 
-/// Parse Bluetooth action payload.
-///
-/// Expects `command` and `value` (or `address` for disconnect).
+fn required_string_field(payload: &serde_json::Value, key: &str) -> Result<String, DomainError> {
+    payload
+        .get(key)
+        .and_then(|value| value.as_str())
+        .map(|value| value.to_string())
+        .ok_or_else(|| {
+            DomainError::Unsupported(format!("missing or non-string '{key}' in bluetooth action"))
+        })
+}
+
+fn required_bool_field(payload: &serde_json::Value, key: &str) -> Result<bool, DomainError> {
+    payload
+        .get(key)
+        .and_then(|value| value.as_bool())
+        .ok_or_else(|| {
+            DomainError::Unsupported(format!("missing or non-bool '{key}' in bluetooth action"))
+        })
+}
+
+fn optional_string_field(payload: &serde_json::Value, key: &str) -> Option<String> {
+    payload
+        .get(key)
+        .and_then(|value| value.as_str())
+        .map(|value| value.to_string())
+}
+
+/// BlueZ passkeys are six decimal digits. Absent or null means "no passkey".
+fn optional_passkey_field(payload: &serde_json::Value) -> Result<Option<u32>, DomainError> {
+    match payload.get("passkey") {
+        None | Some(serde_json::Value::Null) => Ok(None),
+        Some(value) => value
+            .as_u64()
+            .filter(|number| *number <= 999_999)
+            .map(|number| Some(number as u32))
+            .ok_or_else(|| {
+                DomainError::Unsupported(
+                    "passkey must be an integer in 0..=999999 in bluetooth action".to_string(),
+                )
+            }),
+    }
+}
+
+/// Parse a Bluetooth action from a JSON payload.
 pub(crate) fn parse_bluetooth_action(
     payload: &serde_json::Value,
 ) -> Result<BluetoothAction, DomainError> {
     let command = payload
         .get("command")
-        .and_then(|v| v.as_str())
+        .and_then(|value| value.as_str())
         .ok_or_else(|| DomainError::Unsupported("missing command".to_string()))?;
 
     match command {
-        "set_powered" => {
-            let value = payload
-                .get("value")
-                .and_then(|v| v.as_bool())
-                .ok_or_else(|| {
-                    DomainError::Unsupported("missing value for set_powered".to_string())
-                })?;
-            Ok(BluetoothAction::SetPowered(value))
-        }
-        "disconnect" => {
-            let address = payload
-                .get("address")
-                .and_then(|v| v.as_str())
-                .ok_or_else(|| {
-                    DomainError::Unsupported("missing address for disconnect".to_string())
-                })?
-                .to_string();
-            Ok(BluetoothAction::Disconnect(address))
-        }
-        _ => Err(DomainError::Unsupported(format!(
-            "unknown bluetooth command: {}",
-            command
+        "set_powered" => Ok(BluetoothAction::SetPowered(required_bool_field(
+            payload, "value",
+        )?)),
+        "disconnect" => Ok(BluetoothAction::Disconnect(required_string_field(
+            payload, "address",
+        )?)),
+        "start_discovery" => Ok(BluetoothAction::StartDiscovery),
+        "stop_discovery" => Ok(BluetoothAction::StopDiscovery),
+        "open_session" => Ok(BluetoothAction::OpenSession),
+        "close_session" => Ok(BluetoothAction::CloseSession),
+        "connect" => Ok(BluetoothAction::Connect {
+            address: required_string_field(payload, "address")?,
+        }),
+        "pair" => Ok(BluetoothAction::Pair {
+            address: required_string_field(payload, "address")?,
+        }),
+        "set_trusted" => Ok(BluetoothAction::SetTrusted {
+            address: required_string_field(payload, "address")?,
+            value: required_bool_field(payload, "value")?,
+        }),
+        "remove" => Ok(BluetoothAction::Remove {
+            address: required_string_field(payload, "address")?,
+        }),
+        "pairing_response" => Ok(BluetoothAction::PairingResponse {
+            address: required_string_field(payload, "address")?,
+            accept: required_bool_field(payload, "accept")?,
+            passkey: optional_passkey_field(payload)?,
+            pin: optional_string_field(payload, "pin"),
+        }),
+        other => Err(DomainError::Unsupported(format!(
+            "unknown bluetooth command: {other}"
         ))),
     }
 }
@@ -852,6 +928,126 @@ mod tests {
         let payload = serde_json::json!({"command": "disconnect"});
         let action = parse_bluetooth_action(&payload);
         assert!(action.is_err());
+    }
+
+    #[test]
+    fn parses_discovery_and_session_commands() {
+        assert!(matches!(
+            parse_bluetooth_action(&serde_json::json!({"command": "start_discovery"})),
+            Ok(BluetoothAction::StartDiscovery)
+        ));
+        assert!(matches!(
+            parse_bluetooth_action(&serde_json::json!({"command": "stop_discovery"})),
+            Ok(BluetoothAction::StopDiscovery)
+        ));
+        assert!(matches!(
+            parse_bluetooth_action(&serde_json::json!({"command": "open_session"})),
+            Ok(BluetoothAction::OpenSession)
+        ));
+        assert!(matches!(
+            parse_bluetooth_action(&serde_json::json!({"command": "close_session"})),
+            Ok(BluetoothAction::CloseSession)
+        ));
+    }
+
+    #[test]
+    fn parses_connect_pair_and_remove() {
+        assert!(matches!(
+            parse_bluetooth_action(
+                &serde_json::json!({"command": "connect", "address": "AA:BB:CC:DD:EE:FF"})
+            ),
+            Ok(BluetoothAction::Connect { ref address }) if address == "AA:BB:CC:DD:EE:FF"
+        ));
+        assert!(matches!(
+            parse_bluetooth_action(
+                &serde_json::json!({"command": "pair", "address": "AA:BB:CC:DD:EE:FF"})
+            ),
+            Ok(BluetoothAction::Pair { ref address }) if address == "AA:BB:CC:DD:EE:FF"
+        ));
+        assert!(matches!(
+            parse_bluetooth_action(
+                &serde_json::json!({"command": "remove", "address": "AA:BB:CC:DD:EE:FF"})
+            ),
+            Ok(BluetoothAction::Remove { ref address }) if address == "AA:BB:CC:DD:EE:FF"
+        ));
+    }
+
+    #[test]
+    fn parses_set_trusted() {
+        match parse_bluetooth_action(&serde_json::json!({
+            "command": "set_trusted", "address": "AA:BB:CC:DD:EE:FF", "value": true
+        })) {
+            Ok(BluetoothAction::SetTrusted { address, value }) => {
+                assert_eq!(address, "AA:BB:CC:DD:EE:FF");
+                assert!(value);
+            }
+            other => panic!("expected SetTrusted, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parses_pairing_response_variants() {
+        match parse_bluetooth_action(&serde_json::json!({
+            "command": "pairing_response", "address": "AA:BB:CC:DD:EE:FF", "accept": true
+        })) {
+            Ok(BluetoothAction::PairingResponse {
+                accept: true,
+                passkey: None,
+                pin: None,
+                ..
+            }) => {}
+            other => panic!("expected bare accept, got {other:?}"),
+        }
+        match parse_bluetooth_action(&serde_json::json!({
+            "command": "pairing_response",
+            "address": "AA:BB:CC:DD:EE:FF",
+            "accept": true,
+            "passkey": 123456
+        })) {
+            Ok(BluetoothAction::PairingResponse {
+                passkey: Some(123456),
+                ..
+            }) => {}
+            other => panic!("expected passkey response, got {other:?}"),
+        }
+        match parse_bluetooth_action(&serde_json::json!({
+            "command": "pairing_response",
+            "address": "AA:BB:CC:DD:EE:FF",
+            "accept": true,
+            "pin": "0000"
+        })) {
+            Ok(BluetoothAction::PairingResponse { pin: Some(pin), .. }) => {
+                assert_eq!(pin, "0000")
+            }
+            other => panic!("expected pin response, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn rejects_out_of_range_passkey() {
+        assert!(parse_bluetooth_action(&serde_json::json!({
+            "command": "pairing_response",
+            "address": "AA:BB:CC:DD:EE:FF",
+            "accept": true,
+            "passkey": 1_000_000
+        }))
+        .is_err());
+    }
+
+    #[test]
+    fn rejects_new_commands_missing_address() {
+        for command in [
+            "connect",
+            "pair",
+            "remove",
+            "set_trusted",
+            "pairing_response",
+        ] {
+            assert!(
+                parse_bluetooth_action(&serde_json::json!({"command": command})).is_err(),
+                "{command} without address must be rejected"
+            );
+        }
     }
 
     #[tokio::test]
