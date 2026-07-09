@@ -48,6 +48,97 @@ impl BluezProvider {
     }
 }
 
+/// Discovery start/stop failures that mean "already in the desired state".
+/// Treated as success so open_session/close_session are idempotent.
+pub(crate) fn discovery_error_is_ignorable(message: &str) -> bool {
+    message.contains("org.bluez.Error.InProgress") || message.contains("No discovery started")
+}
+
+impl BluezProvider {
+    fn connection(&self) -> Result<&Connection, DomainError> {
+        self.conn
+            .as_ref()
+            .ok_or_else(|| DomainError::Unsupported("bluetooth unavailable".to_string()))
+    }
+
+    /// Resolve the adapter object path from live managed objects, replacing
+    /// the old hard-coded `/org/bluez/hci0`.
+    async fn resolve_adapter_path(&self) -> Result<String, DomainError> {
+        let connection = self.connection()?;
+        let object_manager = zbus::fdo::ObjectManagerProxy::builder(connection)
+            .destination("org.bluez")
+            .and_then(|builder| builder.path("/"))
+            .map_err(|error| DomainError::ActionFailed {
+                reason: format!("build object manager proxy: {error}"),
+            })?
+            .build()
+            .await
+            .map_err(|error| DomainError::ActionFailed {
+                reason: format!("connect object manager proxy: {error}"),
+            })?;
+        let objects = object_manager
+            .get_managed_objects()
+            .await
+            .map_err(|error| DomainError::ActionFailed {
+                reason: format!("get managed objects: {error}"),
+            })?;
+        first_adapter_path(&objects)
+            .ok_or_else(|| DomainError::Unsupported("no bluetooth adapter present".to_string()))
+    }
+
+    async fn adapter_proxy(&self) -> Result<zbus::Proxy<'_>, DomainError> {
+        let connection = self.connection()?;
+        let adapter_path = self.resolve_adapter_path().await?;
+        zbus::Proxy::new(connection, "org.bluez", adapter_path, "org.bluez.Adapter1")
+            .await
+            .map_err(|error| DomainError::ActionFailed {
+                reason: format!("build adapter proxy: {error}"),
+            })
+    }
+
+    async fn device_proxy(&self, address: &str) -> Result<zbus::Proxy<'_>, DomainError> {
+        let connection = self.connection()?;
+        let adapter_path = self.resolve_adapter_path().await?;
+        let device_path = address_to_object_path(&adapter_path, address);
+        zbus::Proxy::new(connection, "org.bluez", device_path, "org.bluez.Device1")
+            .await
+            .map_err(|error| DomainError::ActionFailed {
+                reason: format!("build device proxy: {error}"),
+            })
+    }
+
+    async fn call_device_method(
+        &self,
+        address: &str,
+        method: &'static str,
+    ) -> Result<(), DomainError> {
+        let proxy = self.device_proxy(address).await?;
+        proxy
+            .call_method(method, &())
+            .await
+            .map_err(|error| DomainError::ActionFailed {
+                reason: format!("{method} on {address}: {error}"),
+            })?;
+        Ok(())
+    }
+
+    async fn set_discovery(&self, running: bool) -> Result<(), DomainError> {
+        let proxy = self.adapter_proxy().await?;
+        let method = if running {
+            "StartDiscovery"
+        } else {
+            "StopDiscovery"
+        };
+        match proxy.call_method(method, &()).await {
+            Ok(_) => Ok(()),
+            Err(error) if discovery_error_is_ignorable(&error.to_string()) => Ok(()),
+            Err(error) => Err(DomainError::ActionFailed {
+                reason: format!("{method}: {error}"),
+            }),
+        }
+    }
+}
+
 #[async_trait]
 impl ProviderSource for BluezProvider {
     fn id(&self) -> &ProviderId {
@@ -64,27 +155,13 @@ impl ProviderSource for BluezProvider {
                 let bt_action = parse_bluetooth_action(payload)?;
                 match bt_action {
                     BluetoothAction::SetPowered(enabled) => {
-                        let conn = self.conn.as_ref().ok_or_else(|| {
-                            DomainError::Unsupported("bluetooth unavailable".to_string())
-                        })?;
-
-                        let proxy = zbus::Proxy::new(
-                            conn,
-                            "org.bluez",
-                            "/org/bluez/hci0",
-                            "org.bluez.Adapter1",
-                        )
-                        .await
-                        .map_err(|e| DomainError::ActionFailed {
-                            reason: format!("build adapter proxy: {e}"),
-                        })?;
-
-                        proxy.set_property("Powered", enabled).await.map_err(|e| {
-                            DomainError::ActionFailed {
-                                reason: format!("set powered: {e}"),
-                            }
-                        })?;
-
+                        let proxy = self.adapter_proxy().await?;
+                        proxy
+                            .set_property("Powered", enabled)
+                            .await
+                            .map_err(|error| DomainError::ActionFailed {
+                                reason: format!("set powered: {error}"),
+                            })?;
                         Ok(ActionOutcome {
                             message: Some(format!(
                                 "bluetooth {}",
@@ -92,36 +169,62 @@ impl ProviderSource for BluezProvider {
                             )),
                         })
                     }
-                    BluetoothAction::Disconnect(addr) => {
-                        let conn = self.conn.as_ref().ok_or_else(|| {
-                            DomainError::Unsupported("bluetooth unavailable".to_string())
-                        })?;
-
-                        let device_path = address_to_object_path("/org/bluez/hci0", &addr);
-                        let path = zbus::zvariant::ObjectPath::try_from(device_path.as_str())
-                            .map_err(|e| DomainError::ActionFailed {
-                                reason: format!("invalid path: {e}"),
-                            })?;
-
-                        let proxy = zbus::Proxy::new(conn, "org.bluez", path, "org.bluez.Device1")
-                            .await
-                            .map_err(|e| DomainError::ActionFailed {
-                                reason: format!("build device proxy: {e}"),
-                            })?;
-
-                        proxy.call_method("Disconnect", &()).await.map_err(|e| {
-                            DomainError::ActionFailed {
-                                reason: format!("disconnect: {e}"),
-                            }
-                        })?;
-
+                    BluetoothAction::Disconnect(address) => {
+                        self.call_device_method(&address, "Disconnect").await?;
                         Ok(ActionOutcome {
-                            message: Some(format!("disconnected {}", addr)),
+                            message: Some(format!("disconnected {address}")),
                         })
                     }
-                    other => Err(DomainError::Unsupported(format!(
-                        "bluetooth command not yet executable: {other:?}"
-                    ))),
+                    BluetoothAction::StartDiscovery | BluetoothAction::OpenSession => {
+                        self.set_discovery(true).await?;
+                        Ok(ActionOutcome { message: None })
+                    }
+                    BluetoothAction::StopDiscovery | BluetoothAction::CloseSession => {
+                        self.set_discovery(false).await?;
+                        Ok(ActionOutcome { message: None })
+                    }
+                    BluetoothAction::Connect { address } => {
+                        self.call_device_method(&address, "Connect").await?;
+                        Ok(ActionOutcome { message: None })
+                    }
+                    BluetoothAction::Pair { address } => {
+                        self.call_device_method(&address, "Pair").await?;
+                        Ok(ActionOutcome { message: None })
+                    }
+                    BluetoothAction::SetTrusted { address, value } => {
+                        let proxy = self.device_proxy(&address).await?;
+                        proxy
+                            .set_property("Trusted", value)
+                            .await
+                            .map_err(|error| DomainError::ActionFailed {
+                                reason: format!("set trusted: {error}"),
+                            })?;
+                        Ok(ActionOutcome { message: None })
+                    }
+                    BluetoothAction::Remove { address } => {
+                        let adapter_path = self.resolve_adapter_path().await?;
+                        let device_path = address_to_object_path(&adapter_path, &address);
+                        let object_path = zbus::zvariant::ObjectPath::try_from(
+                            device_path.as_str(),
+                        )
+                        .map_err(|error| DomainError::ActionFailed {
+                            reason: format!("invalid device path: {error}"),
+                        })?;
+                        let proxy = self.adapter_proxy().await?;
+                        proxy
+                            .call_method("RemoveDevice", &(object_path,))
+                            .await
+                            .map_err(|error| DomainError::ActionFailed {
+                                reason: format!("remove device: {error}"),
+                            })?;
+                        Ok(ActionOutcome { message: None })
+                    }
+                    BluetoothAction::PairingResponse { .. } => {
+                        // Replaced in Task 7 once the pending pairing map exists.
+                        Err(DomainError::ActionFailed {
+                            reason: "no pairing in progress".to_string(),
+                        })
+                    }
                 }
             }
             _ => Err(DomainError::Unsupported(
@@ -1048,6 +1151,19 @@ mod tests {
                 "{command} without address must be rejected"
             );
         }
+    }
+
+    #[test]
+    fn discovery_errors_that_mean_already_in_desired_state_are_ignorable() {
+        assert!(discovery_error_is_ignorable(
+            "org.bluez.Error.InProgress: Operation already in progress"
+        ));
+        assert!(discovery_error_is_ignorable(
+            "org.bluez.Error.Failed: No discovery started"
+        ));
+        assert!(!discovery_error_is_ignorable(
+            "org.bluez.Error.NotAuthorized: Operation not permitted"
+        ));
     }
 
     #[tokio::test]
