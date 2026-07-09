@@ -1,11 +1,12 @@
 <script lang="ts">
-    import { createClient } from '@quantum/client';
+    import { createClient, openContextMenu, type MenuItem } from '@quantum/client';
     import {
         BLUETOOTH_PROVIDER,
         BLUETOOTH_CHANNEL,
         BLUETOOTH_MENU_VIEW,
     } from './lib/channels';
-    import type { BluetoothState, PairingRequest } from './lib/types';
+    import type { BluetoothState, BluetoothDevice, PairingRequest } from './lib/types';
+    import DeviceRow from './lib/DeviceRow.svelte';
 
     const client = createClient();
 
@@ -92,6 +93,79 @@
     function togglePowered(): void {
         sendFireAndForget({ command: 'set_powered', value: !state.powered });
     }
+
+    const connectedDevices = $derived(state.devices.filter((device) => device.connected));
+    const pairedDevices = $derived(
+        state.devices.filter((device) => device.paired && !device.connected),
+    );
+    const availableDevices = $derived(
+        state.devices
+            .filter((device) => !device.paired && !device.connected)
+            .slice()
+            .sort((a, b) => (b.rssi ?? -32768) - (a.rssi ?? -32768)),
+    );
+
+    function setRowStatus(address: string, status: RowStatus | null): void {
+        if (status === null) {
+            const next = { ...rowStatus };
+            delete next[address];
+            rowStatus = next;
+        } else {
+            rowStatus = { ...rowStatus, [address]: status };
+        }
+    }
+
+    /** Available-row click: pair, then connect, then trust. */
+    async function pairConnectTrust(device: BluetoothDevice): Promise<void> {
+        setRowStatus(device.address, 'pairing');
+        try {
+            await send({ command: 'pair', address: device.address });
+            setRowStatus(device.address, 'connecting');
+            await send({ command: 'connect', address: device.address });
+            await send({ command: 'set_trusted', address: device.address, value: true });
+            setRowStatus(device.address, null);
+        } catch (error) {
+            console.error('bluetooth pairing flow failed:', error);
+            setRowStatus(device.address, 'error');
+        }
+    }
+
+    async function connectDevice(device: BluetoothDevice): Promise<void> {
+        setRowStatus(device.address, 'connecting');
+        try {
+            await send({ command: 'connect', address: device.address });
+            setRowStatus(device.address, null);
+        } catch (error) {
+            console.error('bluetooth connect failed:', error);
+            setRowStatus(device.address, 'error');
+        }
+    }
+
+    function disconnectDevice(device: BluetoothDevice): void {
+        sendFireAndForget({ command: 'disconnect', address: device.address });
+    }
+
+    function deviceMenu(event: MouseEvent, device: BluetoothDevice): void {
+        const items: MenuItem[] = [
+            {
+                label: device.trusted ? 'Revoke trust' : 'Trust device',
+                onSelect: () =>
+                    sendFireAndForget({
+                        command: 'set_trusted',
+                        address: device.address,
+                        value: !device.trusted,
+                    }),
+            },
+            { separator: true, label: '' },
+            {
+                label: 'Remove device',
+                danger: true,
+                onSelect: () =>
+                    sendFireAndForget({ command: 'remove', address: device.address }),
+            },
+        ];
+        openContextMenu(event, items);
+    }
 </script>
 
 <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
@@ -130,7 +204,58 @@
             </div>
         {:else}
             <div class="scroll">
-                <!-- Device sections land in Task 10; pairing dialog in Task 11. -->
+                {#if connectedDevices.length > 0}
+                    <div class="section" data-section="connected">
+                        <div class="section-title">Connected</div>
+                        {#each connectedDevices as device (device.address)}
+                            <!-- svelte-ignore a11y_no_static_element_interactions -->
+                            <div oncontextmenu={(event) => { event.preventDefault(); deviceMenu(event, device); }}>
+                                <DeviceRow
+                                    {device}
+                                    status={rowStatus[device.address] ?? null}
+                                    actionLabel="Disconnect"
+                                    onAction={() => disconnectDevice(device)}
+                                    onSelect={null}
+                                />
+                            </div>
+                        {/each}
+                    </div>
+                {/if}
+                {#if pairedDevices.length > 0}
+                    <div class="section" data-section="paired">
+                        <div class="section-title">Paired</div>
+                        {#each pairedDevices as device (device.address)}
+                            <!-- svelte-ignore a11y_no_static_element_interactions -->
+                            <div oncontextmenu={(event) => { event.preventDefault(); deviceMenu(event, device); }}>
+                                <DeviceRow
+                                    {device}
+                                    status={rowStatus[device.address] ?? null}
+                                    actionLabel="Connect"
+                                    onAction={() => void connectDevice(device)}
+                                    onSelect={null}
+                                />
+                            </div>
+                        {/each}
+                    </div>
+                {/if}
+                <div class="section" data-section="available">
+                    <div class="section-title">
+                        Available
+                        {#if state.discovering}<span class="spinner"></span>{/if}
+                    </div>
+                    {#if availableDevices.length === 0}
+                        <div class="section-empty">Searching for devices...</div>
+                    {/if}
+                    {#each availableDevices as device (device.address)}
+                        <DeviceRow
+                            {device}
+                            status={rowStatus[device.address] ?? null}
+                            actionLabel={null}
+                            onAction={null}
+                            onSelect={() => void pairConnectTrust(device)}
+                        />
+                    {/each}
+                </div>
             </div>
         {/if}
     </div>
@@ -222,6 +347,22 @@
         overflow-y: auto;
         padding: 6px;
         flex: 1;
+    }
+    .section-title {
+        font-size: 11px;
+        font-weight: 600;
+        color: var(--color-fg-alt, #a6adc8);
+        text-transform: uppercase;
+        letter-spacing: 0.06em;
+        padding: 10px 10px 4px;
+        display: flex;
+        align-items: center;
+        gap: 8px;
+    }
+    .section-empty {
+        font-size: 12px;
+        color: var(--color-fg-alt, #a6adc8);
+        padding: 8px 10px 14px;
     }
     .spinner {
         width: 12px;

@@ -6,6 +6,7 @@ import type { BluetoothState } from './lib/types';
 let mockState: BluetoothState;
 let mockCallSpy = vi.fn();
 let capturedSubscribeCallback: ((payload: unknown) => void) | null = null;
+let connectRejection: unknown | null = null;
 export const openContextMenuSpy = vi.fn();
 
 function baseState(): BluetoothState {
@@ -67,6 +68,14 @@ vi.mock('@quantum/client', () => ({
             if (method === 'provider.query' && (params as { id?: string })?.id === 'bluetooth') {
                 return Promise.resolve(mockState);
             }
+            if (method === 'action.invoke' && connectRejection !== null) {
+                const command = (
+                    params as { action?: { data?: { payload?: { command?: string } } } }
+                ).action?.data?.payload?.command;
+                if (command === 'pair' || command === 'connect') {
+                    return Promise.reject(connectRejection);
+                }
+            }
             return Promise.resolve(undefined);
         },
         subscribe: (...args: unknown[]) => {
@@ -87,6 +96,7 @@ beforeEach(() => {
     mockCallSpy = vi.fn();
     openContextMenuSpy.mockClear();
     capturedSubscribeCallback = null;
+    connectRejection = null;
     mockState = baseState();
 });
 
@@ -194,5 +204,119 @@ describe('BluetoothMenu App shell', () => {
         expect((container.querySelector('.toggle-pill') as HTMLElement).textContent).toMatch(
             /off/i,
         );
+    });
+});
+
+describe('BluetoothMenu devices', () => {
+    it('renders devices into the right sections', async () => {
+        const { container } = render(App);
+        await settle();
+        const inSection = (section: string, address: string) =>
+            container.querySelector(`[data-section="${section}"] [data-address="${address}"]`);
+        expect(inSection('connected', 'AA:00:00:00:00:01')).not.toBeNull();
+        expect(inSection('paired', 'AA:00:00:00:00:02')).not.toBeNull();
+        expect(inSection('available', 'AA:00:00:00:00:03')).not.toBeNull();
+        expect(inSection('available', 'AA:00:00:00:00:04')).not.toBeNull();
+    });
+
+    it('sorts available devices by descending RSSI', async () => {
+        const { container } = render(App);
+        await settle();
+        const addresses = Array.from(
+            container.querySelectorAll('[data-section="available"] [data-address]'),
+        ).map((row) => row.getAttribute('data-address'));
+        // Earbuds (-40) is stronger than Television (-70).
+        expect(addresses).toEqual(['AA:00:00:00:00:04', 'AA:00:00:00:00:03']);
+    });
+
+    it('clicking an available row pairs, then connects, then trusts', async () => {
+        const { container } = render(App);
+        await settle();
+        mockCallSpy.mockClear();
+        const row = container.querySelector(
+            '[data-section="available"] [data-address="AA:00:00:00:00:04"]',
+        ) as HTMLElement;
+        await fireEvent.click(row);
+        await settle();
+        const commands = invokePayloads();
+        expect(commands).toEqual([
+            { command: 'pair', address: 'AA:00:00:00:00:04' },
+            { command: 'connect', address: 'AA:00:00:00:00:04' },
+            { command: 'set_trusted', address: 'AA:00:00:00:00:04', value: true },
+        ]);
+    });
+
+    it('a rejected pair shows an inline error on the row', async () => {
+        connectRejection = { code: -32000, message: 'pairing failed' };
+        const { container } = render(App);
+        await settle();
+        const row = container.querySelector(
+            '[data-section="available"] [data-address="AA:00:00:00:00:04"]',
+        ) as HTMLElement;
+        await fireEvent.click(row);
+        await settle();
+        const status = container.querySelector(
+            '[data-address="AA:00:00:00:00:04"] .row-status',
+        ) as HTMLElement;
+        expect(status?.textContent?.toLowerCase()).toContain('failed');
+    });
+
+    it('disconnect on a connected row sends disconnect', async () => {
+        const { container } = render(App);
+        await settle();
+        const button = container.querySelector(
+            '[data-address="AA:00:00:00:00:01"] [data-action="disconnect"]',
+        ) as HTMLButtonElement;
+        await fireEvent.click(button);
+        await tick();
+        expect(invokePayloads()).toContainEqual({
+            command: 'disconnect',
+            address: 'AA:00:00:00:00:01',
+        });
+    });
+
+    it('connect on a paired row sends connect', async () => {
+        const { container } = render(App);
+        await settle();
+        const button = container.querySelector(
+            '[data-address="AA:00:00:00:00:02"] [data-action="connect"]',
+        ) as HTMLButtonElement;
+        await fireEvent.click(button);
+        await settle();
+        expect(invokePayloads()).toContainEqual({
+            command: 'connect',
+            address: 'AA:00:00:00:00:02',
+        });
+    });
+
+    it('right-click offers trust toggle and remove through the context menu', async () => {
+        const { container } = render(App);
+        await settle();
+        const row = container.querySelector(
+            '[data-address="AA:00:00:00:00:02"]',
+        ) as HTMLElement;
+        await fireEvent.contextMenu(row);
+        await tick();
+        expect(openContextMenuSpy).toHaveBeenCalled();
+        const items = openContextMenuSpy.mock.calls[0][1] as Array<{
+            label?: string;
+            onSelect?: () => void;
+        }>;
+        const trust = items.find((item) => item.label === 'Trust device');
+        const remove = items.find((item) => item.label === 'Remove device');
+        expect(trust).toBeDefined();
+        expect(remove).toBeDefined();
+        trust!.onSelect!();
+        remove!.onSelect!();
+        await tick();
+        expect(invokePayloads()).toContainEqual({
+            command: 'set_trusted',
+            address: 'AA:00:00:00:00:02',
+            value: true,
+        });
+        expect(invokePayloads()).toContainEqual({
+            command: 'remove',
+            address: 'AA:00:00:00:00:02',
+        });
     });
 });
