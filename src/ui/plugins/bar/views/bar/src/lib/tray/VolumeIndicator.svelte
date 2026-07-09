@@ -5,7 +5,7 @@
     import { gradientColor } from '../gradient';
     import { volumeIcon } from '../icons';
     import { onClick, onScroll } from './interaction';
-    import { wireBarMenu } from './barMenu';
+    import { monitorView, wireBarMenu } from './barMenu';
     import BarButton from '../BarButton.svelte';
     import Ring from '../Ring.svelte';
 
@@ -89,17 +89,12 @@
     }
 
     async function handleClick(): Promise<void> {
-        if (!state.available || !state.default_sink) return;
+        if (!state.available) return;
+        const name = monitorView('plugin/sound-menu/sound-menu');
         try {
-            await client.call('action.invoke', {
-                provider: 'audio',
-                action: {
-                    kind: 'custom',
-                    data: { kind: 'audio', payload: { command: 'toggle_mute' } },
-                },
-            });
-        } catch (err) {
-            console.error('audio toggle_mute failed:', err);
+            await client.call('view.show', { name });
+        } catch (error) {
+            console.error(`view.show ${name} failed:`, error);
         }
     }
 

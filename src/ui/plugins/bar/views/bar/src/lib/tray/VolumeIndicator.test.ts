@@ -85,7 +85,7 @@ describe('VolumeIndicator', () => {
 		expect(off).toBeCloseTo(circ, 1);
 	});
 
-	it('left click invokes toggle_mute', async () => {
+	it('left click opens the sound window instead of toggling mute', async () => {
 		const { client, emit } = mockClient();
 		const { container } = render(VolumeIndicator, { props: { client } });
 		await emit({
@@ -101,16 +101,16 @@ describe('VolumeIndicator', () => {
 		expect(el).not.toBeNull();
 		fireEvent.click(el!);
 		await tick();
-		expect(client.call).toHaveBeenCalledWith('action.invoke', {
-			provider: 'audio',
-			action: {
-				kind: 'custom',
-				data: {
-					kind: 'audio',
-					payload: { command: 'toggle_mute' },
-				},
-			},
+		// jsdom has no __quantum_monitor global, so monitorView returns the
+		// bare canonical name.
+		expect(client.call).toHaveBeenCalledWith('view.show', {
+			name: 'plugin/sound-menu/sound-menu',
 		});
+		// The old behavior is gone: no action.invoke fired on left click.
+		const invokeCalls = (client.call as ReturnType<typeof vi.fn>).mock.calls.filter(
+			([method]: [string]) => method === 'action.invoke',
+		);
+		expect(invokeCalls).toHaveLength(0);
 	});
 
 	it('scroll up invokes adjust_volume with delta 5', async () => {
