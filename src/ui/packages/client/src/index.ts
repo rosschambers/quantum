@@ -144,3 +144,9 @@ export {
   type TimerEnvelope,
   type TimerStore,
 } from './timer';
+export {
+  type IconRef,
+  type SystemTrayMenuNode,
+  type SystemTrayItem,
+  type SystemTrayState,
+} from './systemTray';
