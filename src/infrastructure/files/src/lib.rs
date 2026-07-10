@@ -15,4 +15,5 @@ pub mod sizer;
 pub mod watcher;
 
 pub use filesystem::LocalFileSystem;
+pub use sizer::BackgroundSizer;
 pub use watcher::NotifyDirectoryWatcher;
