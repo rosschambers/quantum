@@ -472,8 +472,7 @@ impl<C: WindowConstructor> WindowRegistry<C> {
     }
 
     /// Tear a stored window down for good: drop its `window_monitor` record,
-    /// remove it from the map, and (if it was present) hide then destroy it.
-    /// Hiding first releases the layer-shell surface cleanly; destroying
+    /// remove it from the map, and (if it was present) destroy it. `destroy()`
     /// removes the window from the `GtkApplication` and disposes its `WebView`
     /// so the web process terminates. Shared by the `Close` handler and the
     /// flagged destroy-on-dismiss path.
@@ -483,7 +482,13 @@ impl<C: WindowConstructor> WindowRegistry<C> {
     {
         self.window_monitor.remove(key);
         if let Some(mut window) = self.windows.remove(key) {
-            window.hide();
+            // Destroy WITHOUT hiding first. hide() releases the
+            // gtk4-layer-shell Wayland surface; a following destroy() then
+            // drives gtk_application_window_removed against the freed surface
+            // and aborts with `gdk_surface_get_display: assertion
+            // 'GDK_IS_SURFACE (surface)' failed` (observed in a live quantumd
+            // coredump when the bluetooth overlay was toggled rapidly during
+            // pairing). destroy() alone tears the window fully down.
             window.destroy();
         }
     }
@@ -533,7 +538,9 @@ impl<C: WindowConstructor> WindowRegistry<C> {
                     .is_some_and(|built| *built != requested)
                 {
                     if let Some(mut old) = self.windows.remove(&key) {
-                        old.hide();
+                        // Same hazard as remove_and_destroy: destroy without
+                        // hiding first so the layer-shell surface is not freed
+                        // out from under gtk_window_destroy.
                         old.destroy();
                     }
                 }
@@ -735,6 +742,11 @@ mod tests {
         /// Counts how many times `destroy` was called, so tests can assert
         /// teardown happened on the removal paths.
         destroyed: Rc<Cell<usize>>,
+        /// Counts hide() calls. The teardown path must destroy WITHOUT hiding
+        /// first: hiding a layer-shell overlay releases its Wayland surface,
+        /// and a subsequent destroy() aborts with the gdk_surface_get_display
+        /// assertion (observed in a live quantumd coredump).
+        hidden: Rc<Cell<usize>>,
     }
 
     impl WindowOps for FakeWindow {
@@ -742,6 +754,7 @@ mod tests {
             self.shown.set(true);
         }
         fn hide(&mut self) {
+            self.hidden.set(self.hidden.get() + 1);
             self.shown.set(false);
         }
         fn toggle(&mut self) {
@@ -749,6 +762,11 @@ mod tests {
         }
         fn destroy(&mut self) {
             self.destroyed.set(self.destroyed.get() + 1);
+            // A destroyed window is no longer shown. The teardown path
+            // destroys WITHOUT hiding first (see
+            // dismiss_destroys_once_without_hiding_first), so this is where a
+            // dismissed flagged overlay becomes not-shown in the mock.
+            self.shown.set(false);
         }
         fn set_input_region(&mut self, region: Option<quantum_domain::WindowInputRegion>) {
             self.input_region.set(Some(region));
@@ -765,6 +783,7 @@ mod tests {
         shown: Rc<Cell<bool>>,
         input_region: Rc<Cell<Option<Option<quantum_domain::WindowInputRegion>>>>,
         destroyed: Rc<Cell<usize>>,
+        hidden: Rc<Cell<usize>>,
     }
 
     impl WindowConstructor for FakeCtor {
@@ -790,6 +809,7 @@ mod tests {
                     shown: self.shown.clone(),
                     input_region: self.input_region.clone(),
                     destroyed: self.destroyed.clone(),
+                    hidden: self.hidden.clone(),
                 })
             } else {
                 None
@@ -846,6 +866,7 @@ mod tests {
             shown: shown.clone(),
             input_region: Rc::new(Cell::new(None)),
             destroyed: Rc::new(Cell::new(0)),
+            hidden: Rc::new(Cell::new(0)),
         }
     }
 
@@ -860,6 +881,7 @@ mod tests {
             shown: shown.clone(),
             input_region: input_region.clone(),
             destroyed: Rc::new(Cell::new(0)),
+            hidden: Rc::new(Cell::new(0)),
         }
     }
 
@@ -876,6 +898,25 @@ mod tests {
             shown: shown.clone(),
             input_region: Rc::new(Cell::new(None)),
             destroyed: destroyed.clone(),
+            hidden: Rc::new(Cell::new(0)),
+        }
+    }
+
+    /// A `FakeCtor` that threads both an explicit `destroyed` and `hidden`
+    /// counter into every window it builds, so tests can assert that a
+    /// teardown path destroyed the window WITHOUT hiding it first.
+    fn fake_ctor_with_teardown(
+        count: &Rc<Cell<usize>>,
+        shown: &Rc<Cell<bool>>,
+        destroyed: &Rc<Cell<usize>>,
+        hidden: &Rc<Cell<usize>>,
+    ) -> FakeCtor {
+        FakeCtor {
+            construct_count: count.clone(),
+            shown: shown.clone(),
+            input_region: Rc::new(Cell::new(None)),
+            destroyed: destroyed.clone(),
+            hidden: hidden.clone(),
         }
     }
 
@@ -1134,6 +1175,44 @@ mod tests {
             mode: WindowMode::Hide,
         });
         assert_eq!(destroyed.get(), 1, "flagged Hide must destroy");
+    }
+
+    #[test]
+    fn dismiss_destroys_once_without_hiding_first() {
+        // Regression for a real quantumd coredump: dismissing a
+        // destroy_on_dismiss overlay used to hide() (releasing the
+        // gtk4-layer-shell Wayland surface) and then destroy(), which drove
+        // gtk_application_window_removed against the freed surface and aborted
+        // with `gdk_surface_get_display: assertion 'GDK_IS_SURFACE (surface)'
+        // failed`. The teardown path must destroy WITHOUT hiding first, and
+        // must destroy at most once.
+        let count = Rc::new(Cell::new(0));
+        let shown = Rc::new(Cell::new(false));
+        let destroyed = Rc::new(Cell::new(0));
+        let hidden = Rc::new(Cell::new(0));
+        let mut reg = WindowRegistry::new(
+            fake_ctor_with_teardown(&count, &shown, &destroyed, &hidden),
+            first_party_catalog(),
+        );
+        reg.handle(WindowRequest::Open {
+            view: "plugin/power-menu/power-menu@DP-1".into(),
+            mode: WindowMode::Show,
+        });
+        // First dismiss: destroys exactly once, never hiding first.
+        reg.handle(WindowRequest::Open {
+            view: "plugin/power-menu/power-menu@DP-1".into(),
+            mode: WindowMode::Hide,
+        });
+        assert_eq!(destroyed.get(), 1, "dismiss must destroy exactly once");
+        assert_eq!(hidden.get(), 0, "dismiss must not hide before destroy");
+        // Second dismiss on the already-gone window is a no-op (nothing in the
+        // map), so the destroy count stays at one.
+        reg.handle(WindowRequest::Open {
+            view: "plugin/power-menu/power-menu@DP-1".into(),
+            mode: WindowMode::Hide,
+        });
+        assert_eq!(destroyed.get(), 1, "double dismiss still destroys once");
+        assert_eq!(hidden.get(), 0);
     }
 
     #[test]

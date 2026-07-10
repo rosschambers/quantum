@@ -25,6 +25,10 @@ pub struct PanelWindow {
     /// construction and must stay Exclusive so Escape and click-outside
     /// reach the page.
     fullscreen_overlay: bool,
+    /// Set once destroy() (or Drop) has torn the GTK window down, so the
+    /// second teardown is skipped. Calling gtk_window_destroy after the
+    /// surface is gone aborts with the gdk_surface_get_display assertion.
+    is_destroyed: bool,
 }
 
 /// Whether the `QUANTUM_LAYER_SHELL` env flag is set. This only affects
@@ -315,6 +319,7 @@ impl PanelWindow {
             visible: false,
             layer_shell,
             fullscreen_overlay: is_fullscreen_overlay,
+            is_destroyed: false,
         }
     }
 }
@@ -361,18 +366,23 @@ impl crate::registry::WindowOps for PanelWindow {
     /// the widget tree so the embedded `WebView` is finalized and its
     /// `WebKitWebProcess` terminates.
     fn destroy(&mut self) {
+        if self.is_destroyed {
+            return;
+        }
+        self.is_destroyed = true;
         gtk4::prelude::GtkWindowExt::destroy(&self.window);
     }
 }
 
 impl Drop for PanelWindow {
-    /// Safety net: if a `PanelWindow` handle is dropped without an explicit
-    /// `destroy` call, tear the surface out of the `GtkApplication` here so
-    /// the embedded `WebView` still finalizes and its `WebKitWebProcess`
-    /// terminates. `gtk_window_destroy` is idempotent, so this plus an
-    /// explicit earlier `destroy` is harmless.
+    /// Safety net: if the handle is dropped without an explicit destroy, tear
+    /// the surface out here. Guarded so this never double-calls
+    /// gtk_window_destroy after an explicit destroy(), which would abort on an
+    /// already-freed layer-shell surface.
     fn drop(&mut self) {
-        gtk4::prelude::GtkWindowExt::destroy(&self.window);
+        if !self.is_destroyed {
+            gtk4::prelude::GtkWindowExt::destroy(&self.window);
+        }
     }
 }
 

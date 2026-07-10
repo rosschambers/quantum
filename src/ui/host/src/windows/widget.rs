@@ -55,6 +55,10 @@ pub struct WidgetWindow {
     /// handlers so a surface-width change re-applies strip ∪ menu rather than
     /// dropping the menu's clickable region. `None` means strip-only.
     input_region: Rc<Cell<Option<WindowInputRegion>>>,
+    /// Set once destroy() (or Drop) has torn the GTK window down, so the
+    /// second teardown is skipped. Calling gtk_window_destroy after the
+    /// surface is gone aborts with the gdk_surface_get_display assertion.
+    is_destroyed: bool,
 }
 
 impl WidgetWindow {
@@ -282,6 +286,7 @@ impl WidgetWindow {
             // and ignore `set_input_region`.
             bar_height: if top_anchored { bar_height } else { 0 },
             input_region,
+            is_destroyed: false,
         }
     }
 
@@ -391,6 +396,7 @@ impl WidgetWindow {
             // Toasts do not manage an input region.
             bar_height: 0,
             input_region: Rc::new(Cell::new(None)),
+            is_destroyed: false,
         }
     }
 }
@@ -576,6 +582,10 @@ impl crate::registry::WindowOps for WidgetWindow {
     }
 
     fn destroy(&mut self) {
+        if self.is_destroyed {
+            return;
+        }
+        self.is_destroyed = true;
         gtk4::prelude::GtkWindowExt::destroy(&self.window);
     }
 
@@ -616,13 +626,14 @@ impl crate::registry::WindowOps for WidgetWindow {
 }
 
 impl Drop for WidgetWindow {
-    /// Safety net: if a `WidgetWindow` handle is dropped without an explicit
-    /// `destroy` call, tear the surface out of the `GtkApplication` here so
-    /// the embedded `WebView` still finalizes and its `WebKitWebProcess`
-    /// terminates. `gtk_window_destroy` is idempotent, so this plus an
-    /// explicit earlier `destroy` is harmless.
+    /// Safety net: if the handle is dropped without an explicit destroy, tear
+    /// the surface out here. Guarded so this never double-calls
+    /// gtk_window_destroy after an explicit destroy(), which would abort on an
+    /// already-freed layer-shell surface.
     fn drop(&mut self) {
-        gtk4::prelude::GtkWindowExt::destroy(&self.window);
+        if !self.is_destroyed {
+            gtk4::prelude::GtkWindowExt::destroy(&self.window);
+        }
     }
 }
 
