@@ -10,6 +10,7 @@ members = [
     "src/infrastructure/ipc",
     "src/infrastructure/providers",
     "src/infrastructure/plugins",
+    "src/infrastructure/files",
     "src/ui/host",
     "src/binaries/quantumd",
     "src/binaries/quantumctl",
