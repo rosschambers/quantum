@@ -96,7 +96,7 @@
     }
 
     const connectedDevices = $derived(state.devices.filter((device) => device.connected));
-    const pairedDevices = $derived(
+    const knownDevices = $derived(
         state.devices.filter((device) => device.paired && !device.connected),
     );
     const availableDevices = $derived(
@@ -239,10 +239,10 @@
                         {/each}
                     </div>
                 {/if}
-                {#if pairedDevices.length > 0}
-                    <div class="section" data-section="paired">
-                        <div class="section-title">Paired</div>
-                        {#each pairedDevices as device (device.address)}
+                {#if knownDevices.length > 0}
+                    <div class="section" data-section="known">
+                        <div class="section-title">Known devices</div>
+                        {#each knownDevices as device (device.address)}
                             <!-- svelte-ignore a11y_no_static_element_interactions -->
                             <div oncontextmenu={(event) => { event.preventDefault(); deviceMenu(event, device); }}>
                                 <DeviceRow

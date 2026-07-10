@@ -221,7 +221,7 @@ describe('BluetoothMenu devices', () => {
         const inSection = (section: string, address: string) =>
             container.querySelector(`[data-section="${section}"] [data-address="${address}"]`);
         expect(inSection('connected', 'AA:00:00:00:00:01')).not.toBeNull();
-        expect(inSection('paired', 'AA:00:00:00:00:02')).not.toBeNull();
+        expect(inSection('known', 'AA:00:00:00:00:02')).not.toBeNull();
         expect(inSection('available', 'AA:00:00:00:00:03')).not.toBeNull();
         expect(inSection('available', 'AA:00:00:00:00:04')).not.toBeNull();
     });
