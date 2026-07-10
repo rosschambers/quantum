@@ -11,9 +11,12 @@ use quantum_domain::{
     classify_permissions, content_kind_for_name, DriveInfo, FileEntry, FileEntryKind,
     FileOperation, FileSystemPort, FilesError,
 };
-use std::io::{ErrorKind, Read};
+use std::io::Read;
 use std::os::unix::fs::MetadataExt;
 use std::path::{Path, PathBuf};
+
+use crate::operations;
+use crate::operations::map_io_error;
 
 /// A [`FileSystemPort`] backed by the local host filesystem.
 #[derive(Debug, Default, Clone, Copy)]
@@ -23,17 +26,6 @@ impl LocalFileSystem {
     /// Construct a new local filesystem adapter.
     pub fn new() -> Self {
         Self
-    }
-}
-
-/// Translate a `std::io::Error` for `path` into the typed [`FilesError`] the
-/// port contract requires, so no host error type leaks across the boundary.
-fn map_io_error(path: &str, error: &std::io::Error) -> FilesError {
-    match error.kind() {
-        ErrorKind::NotFound => FilesError::NotFound(path.to_string()),
-        ErrorKind::PermissionDenied => FilesError::PermissionDenied(path.to_string()),
-        ErrorKind::AlreadyExists => FilesError::AlreadyExists(path.to_string()),
-        _ => FilesError::Io(format!("{path}: {error}")),
     }
 }
 
@@ -383,10 +375,36 @@ impl FileSystemPort for LocalFileSystem {
     }
 
     async fn perform(&self, operation: FileOperation) -> Result<(), FilesError> {
-        let _ = operation;
-        Err(FilesError::Unsupported(
-            "perform not yet implemented".to_string(),
-        ))
+        match operation {
+            FileOperation::Copy {
+                sources,
+                destination,
+            } => run_blocking(move || operations::copy_into(&sources, &destination)).await,
+            FileOperation::Move {
+                sources,
+                destination,
+            } => run_blocking(move || operations::move_into(&sources, &destination)).await,
+            FileOperation::Rename { path, new_name } => {
+                run_blocking(move || operations::rename(&path, &new_name)).await
+            }
+            FileOperation::Duplicate { path } => {
+                run_blocking(move || operations::duplicate(&path)).await
+            }
+            FileOperation::NewFolder { parent, name } => {
+                run_blocking(move || operations::new_folder(&parent, &name)).await
+            }
+            FileOperation::NewFile { parent, name } => {
+                run_blocking(move || operations::new_file(&parent, &name)).await
+            }
+            FileOperation::Delete { paths } => {
+                run_blocking(move || operations::delete(&paths)).await
+            }
+            FileOperation::Trash { paths } => operations::run_trash(&paths).await,
+            FileOperation::Compress { paths, destination } => {
+                operations::run_compress(&paths, &destination).await
+            }
+            FileOperation::Extract { path } => operations::run_extract(&path).await,
+        }
     }
 
     async fn search(
