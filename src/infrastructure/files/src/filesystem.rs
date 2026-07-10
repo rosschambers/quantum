@@ -225,6 +225,116 @@ fn search_blocking(
     Ok(results)
 }
 
+/// Filesystem types treated as real disks worth listing in the sidebar even
+/// when their backing source is not under `/dev/`.
+const DISK_FILESYSTEM_ALLOWLIST: [&str; 11] = [
+    "ext2", "ext3", "ext4", "btrfs", "xfs", "vfat", "exfat", "ntfs", "ntfs3", "f2fs", "zfs",
+];
+
+/// Decode the octal escapes that `/proc/self/mounts` uses for characters that
+/// would otherwise break its space-separated fields (a space becomes `\040`, a
+/// tab `\011`, a newline `\012`, a backslash `\134`). Escapes are always three
+/// octal digits; any other backslash sequence is left untouched.
+fn unescape_mount_field(field: &str) -> String {
+    let bytes = field.as_bytes();
+    let mut output = Vec::with_capacity(bytes.len());
+    let mut index = 0;
+    while index < bytes.len() {
+        // An escape is a backslash followed by exactly three octal digits.
+        if bytes[index] == b'\\' && index + 4 <= bytes.len() {
+            let octal = &field[index + 1..index + 4];
+            if octal
+                .bytes()
+                .all(|byte| byte.is_ascii_digit() && byte <= b'7')
+            {
+                if let Ok(value) = u8::from_str_radix(octal, 8) {
+                    output.push(value);
+                    index += 4;
+                    continue;
+                }
+            }
+        }
+        output.push(bytes[index]);
+        index += 1;
+    }
+    // Decode after substitution so multibyte paths survive untouched bytes.
+    String::from_utf8_lossy(&output).to_string()
+}
+
+/// Derive a drive label from a mount point: the last path segment, with the
+/// root mount `/` shown as `System`.
+fn mount_label(mount_point: &str) -> String {
+    if mount_point == "/" {
+        return "System".to_string();
+    }
+    Path::new(mount_point)
+        .file_name()
+        .map(|name| name.to_string_lossy().to_string())
+        .unwrap_or_else(|| mount_point.to_string())
+}
+
+/// Parse `/proc/self/mounts` content into the list of mount points worth
+/// showing. A line is kept when its filesystem type is in the disk allowlist or
+/// its source begins with `/dev/`; pseudo filesystems such as `proc`, `sysfs`,
+/// `tmpfs`, and `cgroup2` are dropped. Mount points are deduplicated in
+/// first-seen order and their octal escapes decoded.
+fn parse_mounts(content: &str) -> Vec<String> {
+    let mut mount_points: Vec<String> = Vec::new();
+    for line in content.lines() {
+        let mut fields = line.split_whitespace();
+        let source = match fields.next() {
+            Some(source) => source,
+            None => continue,
+        };
+        let mount_point = match fields.next() {
+            Some(mount_point) => mount_point,
+            None => continue,
+        };
+        let filesystem_type = match fields.next() {
+            Some(filesystem_type) => filesystem_type,
+            None => continue,
+        };
+        let keep =
+            DISK_FILESYSTEM_ALLOWLIST.contains(&filesystem_type) || source.starts_with("/dev/");
+        if !keep {
+            continue;
+        }
+        let mount_point = unescape_mount_field(mount_point);
+        if !mount_points.contains(&mount_point) {
+            mount_points.push(mount_point);
+        }
+    }
+    mount_points
+}
+
+/// Read `/proc/self/mounts` and resolve each kept mount point's usage through
+/// `statvfs`. A mount point whose `statvfs` fails is logged and skipped rather
+/// than failing the whole enumeration. Free space uses `f_bavail`
+/// (available to unprivileged callers), not `f_bfree`.
+fn mounts_blocking() -> Result<Vec<DriveInfo>, FilesError> {
+    let content = std::fs::read_to_string("/proc/self/mounts")
+        .map_err(|error| FilesError::Io(format!("/proc/self/mounts: {error}")))?;
+    let mut drives = Vec::new();
+    for mount_point in parse_mounts(&content) {
+        let stats = match rustix::fs::statvfs(mount_point.as_str()) {
+            Ok(stats) => stats,
+            Err(error) => {
+                tracing::warn!(mount_point = %mount_point, %error, "statvfs failed for mount point");
+                continue;
+            }
+        };
+        let total_bytes = stats.f_blocks.saturating_mul(stats.f_frsize);
+        let free_bytes = stats.f_bavail.saturating_mul(stats.f_frsize);
+        drives.push(DriveInfo {
+            label: mount_label(&mount_point),
+            mount_point,
+            total_bytes,
+            free_bytes,
+        });
+    }
+    Ok(drives)
+}
+
 /// Run blocking filesystem work on Tokio's blocking pool, mapping a join
 /// failure to [`FilesError::Io`].
 async fn run_blocking<T, F>(work: F) -> Result<T, FilesError>
@@ -253,9 +363,7 @@ impl FileSystemPort for LocalFileSystem {
     }
 
     async fn mounts(&self) -> Result<Vec<DriveInfo>, FilesError> {
-        Err(FilesError::Unsupported(
-            "mounts not yet implemented".to_string(),
-        ))
+        run_blocking(mounts_blocking).await
     }
 
     async fn read_text_preview(&self, path: &str, max_bytes: usize) -> Result<String, FilesError> {
@@ -488,5 +596,51 @@ mod tests {
         let (dir, target) = build_fixture();
         assert!(Path::new(&target).is_absolute());
         drop(dir);
+    }
+
+    #[test]
+    fn parse_mounts_keeps_only_real_disks_and_deduplicates() {
+        let content = concat!(
+            "proc /proc proc rw,nosuid,nodev,noexec,relatime 0 0\n",
+            "tmpfs /run tmpfs rw,nosuid,nodev 0 0\n",
+            "sysfs /sys sysfs rw,nosuid,nodev,noexec,relatime 0 0\n",
+            "cgroup2 /sys/fs/cgroup cgroup2 rw,nosuid,nodev,noexec,relatime 0 0\n",
+            "/dev/nvme0n1p2 / ext4 rw,relatime 0 0\n",
+            "/dev/nvme0n1p1 /boot vfat rw,relatime 0 0\n",
+            "/dev/nvme0n1p2 / ext4 rw,relatime 0 0\n",
+        );
+        let mount_points = parse_mounts(content);
+        assert_eq!(mount_points, vec!["/".to_string(), "/boot".to_string()]);
+    }
+
+    #[test]
+    fn unescape_mount_field_decodes_octal_space() {
+        assert_eq!(unescape_mount_field("/mnt/my\\040drive"), "/mnt/my drive");
+    }
+
+    #[test]
+    fn unescape_mount_field_decodes_tab_newline_and_backslash() {
+        assert_eq!(unescape_mount_field("a\\011b"), "a\tb");
+        assert_eq!(unescape_mount_field("a\\012b"), "a\nb");
+        assert_eq!(unescape_mount_field("a\\134b"), "a\\b");
+    }
+
+    #[test]
+    fn mount_label_uses_last_segment_with_root_as_system() {
+        assert_eq!(mount_label("/"), "System");
+        assert_eq!(mount_label("/boot"), "boot");
+        assert_eq!(mount_label("/mnt/usb-backup"), "usb-backup");
+    }
+
+    #[tokio::test]
+    async fn mounts_reports_the_root_filesystem() {
+        let filesystem = LocalFileSystem::new();
+        let drives = filesystem.mounts().await.expect("enumerate mounts");
+        let root = drives
+            .iter()
+            .find(|drive| drive.mount_point == "/")
+            .expect("root filesystem present");
+        assert_eq!(root.label, "System");
+        assert!(root.total_bytes > 0, "root total_bytes should be positive");
     }
 }
