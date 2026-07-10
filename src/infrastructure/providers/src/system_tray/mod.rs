@@ -13,3 +13,7 @@
 //! wired up here.
 
 pub mod menu;
+
+/// Selecting the best StatusNotifierItem icon pixmap and encoding it as a
+/// PNG data URI for the frontend.
+pub mod pixmap;
