@@ -99,10 +99,16 @@
     const knownDevices = $derived(
         state.devices.filter((device) => device.paired && !device.connected),
     );
-    /** A discovered device with no usable name is "unknown": empty name or a
-     * name that is just its MAC address. These are grouped behind an expander. */
+    /** A discovered device with no usable name is "unknown": an empty name, or
+     * a name that is just its address. BlueZ commonly sets the name to the
+     * address with hyphens ("7A-13-31-11-78-5F") while `address` uses colons
+     * ("7A:13:31:11:78:5F"), so compare with separators normalized. These are
+     * grouped behind an expander so they do not clutter the real devices. */
     function isNamed(device: BluetoothDevice): boolean {
-        return device.name !== '' && device.name !== device.address;
+        if (device.name === '') return false;
+        const normalize = (value: string): string =>
+            value.replace(/[-:]/g, '').toUpperCase();
+        return normalize(device.name) !== normalize(device.address);
     }
 
     const availableDevices = $derived(

@@ -66,6 +66,18 @@ function baseState(): BluetoothState {
                 icon: null,
                 rssi: -55,
             },
+            {
+                // BlueZ often names a nameless device after its own address with
+                // hyphens; this must still count as "unknown", not a real name.
+                address: 'AA:00:00:00:00:06',
+                name: 'AA-00-00-00-00-06',
+                battery_percent: null,
+                paired: false,
+                trusted: false,
+                connected: false,
+                icon: null,
+                rssi: -60,
+            },
         ],
     };
 }
@@ -371,12 +383,14 @@ describe('BluetoothMenu unknown devices expander', () => {
         const { container } = render(App);
         await settle();
         const available = container.querySelector('[data-section="available"]') as HTMLElement;
-        // Named devices are visible; the unnamed MAC-only one is not.
+        // Named devices are visible; the unnamed ones are not — including a
+        // device whose name is just its hyphenated address (BlueZ default).
         expect(available.querySelector('[data-address="AA:00:00:00:00:04"]')).not.toBeNull();
         expect(available.querySelector('[data-address="AA:00:00:00:00:05"]')).toBeNull();
+        expect(available.querySelector('[data-address="AA:00:00:00:00:06"]')).toBeNull();
         const toggle = available.querySelector('[data-action="toggle-unknown"]') as HTMLButtonElement;
         expect(toggle).not.toBeNull();
-        expect(toggle.textContent).toContain('1');
+        expect(toggle.textContent).toContain('2');
     });
 
     it('reveals unnamed devices when the expander is opened', async () => {
