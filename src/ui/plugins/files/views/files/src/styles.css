@@ -1,0 +1,23 @@
+/*
+ * Base reset and top-level layout for the files panel. Ported from the
+ * design playground's <style> block (reset plus body tokens); component
+ * specific styles land in later tasks alongside their components.
+ */
+* {
+    box-sizing: border-box;
+    margin: 0;
+    padding: 0;
+}
+html,
+body {
+    height: 100%;
+}
+body {
+    font-family: var(--font-sans, system-ui, -apple-system, sans-serif);
+    background: var(--color-bg, #292520);
+    color: var(--color-fg, #e8e4d8);
+    overflow: hidden;
+}
+#app {
+    height: 100%;
+}
