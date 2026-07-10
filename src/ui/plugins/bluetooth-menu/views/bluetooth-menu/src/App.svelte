@@ -6,7 +6,7 @@
         BLUETOOTH_MENU_VIEW,
     } from './lib/channels';
     import type { BluetoothState, BluetoothDevice, PairingRequest } from './lib/types';
-    import DeviceRow from './lib/DeviceRow.svelte';
+    import DeviceRow, { type DeviceAction } from './lib/DeviceRow.svelte';
     import PairingDialog from './lib/PairingDialog.svelte';
 
     const client = createClient();
@@ -156,6 +156,70 @@
         sendFireAndForget({ command: 'disconnect', address: device.address });
     }
 
+    /** The trust-toggle button keeps a stable data-action="trust" hook; only its
+     * glyph, tooltip, and sent value flip with the current trusted state. */
+    function trustAction(device: BluetoothDevice): DeviceAction {
+        return device.trusted
+            ? {
+                  key: 'trust',
+                  glyph: '\u2717',
+                  title: 'Revoke trust',
+                  onSelect: () =>
+                      sendFireAndForget({
+                          command: 'set_trusted',
+                          address: device.address,
+                          value: false,
+                      }),
+              }
+            : {
+                  key: 'trust',
+                  glyph: '\u2713',
+                  title: 'Trust device',
+                  onSelect: () =>
+                      sendFireAndForget({
+                          command: 'set_trusted',
+                          address: device.address,
+                          value: true,
+                      }),
+              };
+    }
+
+    function removeAction(device: BluetoothDevice): DeviceAction {
+        return {
+            key: 'remove',
+            glyph: '\u2715',
+            title: 'Remove device',
+            danger: true,
+            onSelect: () => sendFireAndForget({ command: 'remove', address: device.address }),
+        };
+    }
+
+    function connectedActions(device: BluetoothDevice): DeviceAction[] {
+        return [
+            {
+                key: 'disconnect',
+                glyph: '\u2212',
+                title: 'Disconnect',
+                onSelect: () => disconnectDevice(device),
+            },
+            trustAction(device),
+            removeAction(device),
+        ];
+    }
+
+    function knownActions(device: BluetoothDevice): DeviceAction[] {
+        return [
+            {
+                key: 'connect',
+                glyph: '\u002b',
+                title: 'Connect',
+                onSelect: () => void connectDevice(device),
+            },
+            trustAction(device),
+            removeAction(device),
+        ];
+    }
+
     function deviceMenu(event: MouseEvent, device: BluetoothDevice): void {
         const items: MenuItem[] = [
             {
@@ -241,8 +305,7 @@
                                 <DeviceRow
                                     {device}
                                     status={rowStatus[device.address] ?? null}
-                                    actionLabel="Disconnect"
-                                    onAction={() => disconnectDevice(device)}
+                                    actions={connectedActions(device)}
                                     onSelect={null}
                                 />
                             </div>
@@ -258,8 +321,7 @@
                                 <DeviceRow
                                     {device}
                                     status={rowStatus[device.address] ?? null}
-                                    actionLabel="Connect"
-                                    onAction={() => void connectDevice(device)}
+                                    actions={knownActions(device)}
                                     onSelect={null}
                                 />
                             </div>
@@ -278,8 +340,7 @@
                         <DeviceRow
                             {device}
                             status={rowStatus[device.address] ?? null}
-                            actionLabel={null}
-                            onAction={null}
+                            actions={[]}
                             onSelect={() => void pairConnectTrust(device)}
                         />
                     {/each}
@@ -299,8 +360,7 @@
                                 <DeviceRow
                                     {device}
                                     status={rowStatus[device.address] ?? null}
-                                    actionLabel={null}
-                                    onAction={null}
+                                    actions={[]}
                                     onSelect={() => void pairConnectTrust(device)}
                                 />
                             {/each}

@@ -306,6 +306,34 @@ describe('BluetoothMenu devices', () => {
         });
     });
 
+    it('connected rows expose inline disconnect, trust, and remove buttons with tooltips', async () => {
+        const { container } = render(App);
+        await settle();
+        const row = container.querySelector('[data-address="AA:00:00:00:00:01"]') as HTMLElement;
+        const disconnect = row.querySelector('[data-action="disconnect"]') as HTMLButtonElement;
+        const trust = row.querySelector('[data-action="trust"]') as HTMLButtonElement;
+        const remove = row.querySelector('[data-action="remove"]') as HTMLButtonElement;
+        expect(disconnect).not.toBeNull();
+        expect(trust).not.toBeNull();
+        expect(remove).not.toBeNull();
+        expect(disconnect.getAttribute('title')).toBeTruthy();
+        expect(remove.getAttribute('title')).toBeTruthy();
+    });
+
+    it('inline remove on a known row sends remove', async () => {
+        const { container } = render(App);
+        await settle();
+        const remove = container.querySelector(
+            '[data-address="AA:00:00:00:00:02"] [data-action="remove"]',
+        ) as HTMLButtonElement;
+        await fireEvent.click(remove);
+        await tick();
+        expect(invokePayloads()).toContainEqual({
+            command: 'remove',
+            address: 'AA:00:00:00:00:02',
+        });
+    });
+
     it('right-click offers trust toggle and remove through the context menu', async () => {
         const { container } = render(App);
         await settle();

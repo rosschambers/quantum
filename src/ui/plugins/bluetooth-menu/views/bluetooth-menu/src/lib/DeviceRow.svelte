@@ -1,22 +1,32 @@
 <script lang="ts">
     import type { BluetoothDevice } from './types';
 
+    export interface DeviceAction {
+        key: string;
+        glyph: string;
+        title: string;
+        danger?: boolean;
+        onSelect: () => void;
+    }
+
     interface Props {
         device: BluetoothDevice;
         status: 'pairing' | 'connecting' | 'error' | null;
-        actionLabel: string | null;
-        onAction: (() => void) | null;
+        actions: DeviceAction[];
         onSelect: (() => void) | null;
     }
 
-    const { device, status, actionLabel, onAction, onSelect }: Props = $props();
+    const { device, status, actions, onSelect }: Props = $props();
 
-    /** Map the BlueZ icon class to a glyph; text keeps the view font-only. */
+    /** Map the BlueZ icon class to a Unicode entity glyph (never emoji). */
     function glyphFor(icon: string | null): string {
-        if (icon === null) return '\u2b24'; // generic dot
-        if (icon.startsWith('audio')) return '\u266b';
+        if (icon === null) return '\u2b24'; // generic filled circle
+        if (icon.startsWith('audio')) return '\u266b'; // beamed eighth notes
+        if (icon === 'input-keyboard') return '\u2328'; // keyboard
+        if (icon === 'input-mouse') return '\u2b24'; // generic circle; no reliable text-presentation mouse glyph
+        if (icon === 'input-gamepad' || icon === 'input-gaming') return '\u2b23'; // hexagon
         if (icon.startsWith('input')) return '\u2328';
-        if (icon.startsWith('phone')) return '\u260e';
+        if (icon.startsWith('phone')) return '\u260e'; // telephone
         return '\u2b24';
     }
 
@@ -24,16 +34,20 @@
         onSelect?.();
     }
 
-    function onActionClick(event: MouseEvent): void {
-        event.stopPropagation();
-        onAction?.();
-    }
-
     function onRowKeyDown(event: KeyboardEvent): void {
         if (event.key === 'Enter' || event.key === ' ') {
             event.preventDefault();
             onSelect?.();
         }
+    }
+
+    function onActionClick(event: MouseEvent, action: DeviceAction): void {
+        event.stopPropagation();
+        action.onSelect();
+    }
+
+    function rssiLabel(rssi: number | null): string {
+        return rssi === null ? '' : `${rssi} dBm`;
     }
 </script>
 
@@ -48,6 +62,9 @@
 >
     <span class="glyph">{glyphFor(device.icon)}</span>
     <span class="name">{device.name === '' ? device.address : device.name}</span>
+    {#if device.rssi !== null}
+        <span class="rssi" title="Signal strength">{rssiLabel(device.rssi)}</span>
+    {/if}
     {#if device.battery_percent !== null}
         <span class="battery">{device.battery_percent}%</span>
     {/if}
@@ -58,16 +75,19 @@
     {:else if status === 'error'}
         <span class="row-status error">Failed</span>
     {/if}
-    {#if actionLabel !== null}
+    {#each actions as action (action.key)}
         <button
             type="button"
             class="row-action"
-            data-action={actionLabel.toLowerCase()}
-            onclick={onActionClick}
+            class:danger={action.danger}
+            data-action={action.key}
+            title={action.title}
+            aria-label={action.title}
+            onclick={(event) => onActionClick(event, action)}
         >
-            {actionLabel}
+            {action.glyph}
         </button>
-    {/if}
+    {/each}
 </div>
 
 <style>
@@ -97,25 +117,35 @@
         white-space: nowrap;
     }
     .battery,
+    .rssi,
     .row-status {
         font-size: 11px;
         color: var(--color-fg-alt, #a6adc8);
     }
     .row-status.error {
-        color: var(--color-danger, #f38ba8);
+        color: var(--color-error, #f38ba8);
     }
     .row-action {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        width: 26px;
+        height: 26px;
+        border-radius: 50%;
         background: var(--color-bg, #1e1e2e);
         color: var(--color-fg-alt, #a6adc8);
         border: 1px solid var(--color-border, #45475a);
-        border-radius: 6px;
-        padding: 3px 8px;
-        font-size: 11px;
+        font-size: 13px;
+        line-height: 1;
         cursor: pointer;
         font-family: inherit;
     }
     .row-action:hover {
         border-color: var(--color-accent, #89b4fa);
         color: var(--color-accent, #89b4fa);
+    }
+    .row-action.danger:hover {
+        border-color: var(--color-error, #f38ba8);
+        color: var(--color-error, #f38ba8);
     }
 </style>
