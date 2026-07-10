@@ -149,6 +149,11 @@
                             onToggleMute={() => toggleDeviceMute('sink', sink.name, !sink.muted)}
                         />
                     {/each}
+                    <p class="device-hint">
+                        Don't see your device? A device the system cannot enumerate cannot be
+                        routed to — check that the dongle or dock is seated and powered, then
+                        look under Device profiles below.
+                    </p>
                 </div>
                 <div class="section" data-section="inputs">
                     <div class="section-title">Input devices</div>
@@ -248,7 +253,7 @@
         background: var(--color-bg-alt, #313244);
         color: var(--color-fg, #cdd6f4);
         border-radius: 12px;
-        width: min(520px, 92vw);
+        width: min(460px, 92vw);
         max-height: 80vh;
         box-sizing: border-box;
         display: flex;
@@ -293,6 +298,13 @@
         text-transform: uppercase;
         letter-spacing: 0.06em;
         padding: 8px 10px 4px;
+    }
+    .device-hint {
+        margin: 0;
+        padding: 6px 10px 2px;
+        font-size: 11px;
+        line-height: 1.4;
+        color: var(--color-fg-alt, #a6adc8);
     }
     .profiles-note {
         margin: 0;

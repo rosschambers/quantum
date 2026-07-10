@@ -294,6 +294,14 @@ describe('SoundMenu device sections', () => {
         expect(muteButton.querySelector('svg')).not.toBeNull();
         expect(muteButton.textContent?.trim()).toBe('');
     });
+
+    it('shows a missing-device hint under output devices', async () => {
+        const { container } = render(App);
+        await settle();
+        const outputs = container.querySelector('[data-section="outputs"]') as HTMLElement;
+        expect(outputs.querySelector('.device-hint')).not.toBeNull();
+        expect(outputs.textContent?.toLowerCase()).toContain("don't see your device");
+    });
 });
 
 describe('SoundMenu stream sections', () => {
