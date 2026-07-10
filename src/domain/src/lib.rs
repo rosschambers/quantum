@@ -4,6 +4,7 @@ pub mod action;
 pub mod bar_state;
 pub mod error;
 pub mod event_bus;
+pub mod files;
 pub mod ids;
 pub mod match_result;
 pub mod notifications;
@@ -26,6 +27,10 @@ pub use bar_state::{
 };
 pub use error::DomainError;
 pub use event_bus::EventEnvelope;
+pub use files::{
+    classify_permissions, content_kind_for_name, ContentKind, DriveInfo, FileEntry, FileEntryKind,
+    PermissionClass,
+};
 pub use ids::ProviderId;
 pub use match_result::{IconRef, Match};
 pub use notifications::{Notification, NotificationEvent, NotificationUrgency};
