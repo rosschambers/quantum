@@ -10,3 +10,4 @@
 .env
 .pnpm-store/
 .pkgconfig-shim/
+/.worktrees
