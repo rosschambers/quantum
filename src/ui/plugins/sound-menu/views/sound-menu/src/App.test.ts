@@ -33,8 +33,8 @@ export function fixtureState(): AudioState {
                 description: 'Arrow Lake cAVS',
                 active_profile: 'HiFi',
                 profiles: [
-                    { name: 'HiFi', description: 'Play HiFi quality Music', available: true },
-                    { name: 'off', description: 'Off', available: true },
+                    { name: 'HiFi', description: 'Play HiFi quality Music', available: true, sink_count: 1, source_count: 0 },
+                    { name: 'off', description: 'Off', available: true, sink_count: 0, source_count: 0 },
                 ],
             },
         ],
@@ -430,15 +430,26 @@ describe('SoundMenu stream sections', () => {
 });
 
 describe('SoundMenu profiles section', () => {
-    it('renders a collapsed profiles section with the card description', async () => {
+    it('renders an expanded profiles section with the card description', async () => {
         const { container } = render(App);
         await settle();
         const profiles = container.querySelector(
-            'details[data-section="profiles"]',
-        ) as HTMLDetailsElement;
+            'div[data-section="profiles"]',
+        ) as HTMLElement;
         expect(profiles).not.toBeNull();
-        expect(profiles.open).toBe(false);
+        expect(container.querySelector('details[data-section="profiles"]')).toBeNull();
         expect(profiles.textContent).toContain('Arrow Lake cAVS');
+    });
+
+    it('labels profiles with friendly names and counts', async () => {
+        const { container } = render(App);
+        await settle();
+        const select = container.querySelector(
+            '[data-card-index="48"] select[data-action="profile"]',
+        ) as HTMLSelectElement;
+        const optionText = Array.from(select.options).map((option) => option.textContent?.trim());
+        expect(optionText.some((text) => text?.includes('Disabled'))).toBe(true);
+        expect(optionText.some((text) => text?.includes('0 out = no sound'))).toBe(true);
     });
 
     it('selects the active profile and lists all options', async () => {

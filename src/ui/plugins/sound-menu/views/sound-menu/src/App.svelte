@@ -4,6 +4,7 @@
     import type { AudioState, AudioStream } from './lib/types';
     import DeviceRow from './lib/DeviceRow.svelte';
     import StreamRow from './lib/StreamRow.svelte';
+    import { friendlyProfileName, profileCountLabel } from './lib/profiles';
 
     const client = createClient();
 
@@ -195,8 +196,15 @@
                         {/each}
                     </div>
                 {/if}
-                <details class="section profiles" data-section="profiles">
-                    <summary class="section-title">Profiles</summary>
+                <div class="section" data-section="profiles">
+                    <div class="section-title">Device profiles</div>
+                    <p class="profiles-note">
+                        A card's profile decides what it can do. High quality (A2DP) gives
+                        stereo sound but no microphone; Headset turns the microphone on at
+                        lower quality. Switching a card's profile is how a device with no
+                        usable output (an onboard speaker, or a wireless headset) becomes an
+                        output.
+                    </p>
                     {#each state.cards as card (card.index)}
                         <div class="profile-row" data-card-index={card.index}>
                             <span class="profile-card-name">{card.description}</span>
@@ -211,13 +219,16 @@
                             >
                                 {#each card.profiles as profile (profile.name)}
                                     <option value={profile.name} disabled={!profile.available}>
-                                        {profile.description}
+                                        {friendlyProfileName(profile.name, profile.description)} — {profileCountLabel(
+                                            profile.sink_count,
+                                            profile.source_count,
+                                        )}
                                     </option>
                                 {/each}
                             </select>
                         </div>
                     {/each}
-                </details>
+                </div>
             </div>
         {/if}
     </div>
@@ -283,9 +294,12 @@
         letter-spacing: 0.06em;
         padding: 8px 10px 4px;
     }
-    .profiles summary {
-        cursor: pointer;
-        list-style: revert;
+    .profiles-note {
+        margin: 0;
+        padding: 0 10px 6px;
+        font-size: 11px;
+        line-height: 1.4;
+        color: var(--color-fg-alt, #a6adc8);
     }
     .profile-row {
         display: flex;
