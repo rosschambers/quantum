@@ -2136,6 +2136,7 @@ dependencies = [
  "quantum-application",
  "quantum-config",
  "quantum-domain",
+ "quantum-files",
  "quantum-hyprland",
  "quantum-ipc",
  "quantum-plugins",

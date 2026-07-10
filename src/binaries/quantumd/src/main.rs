@@ -13,12 +13,18 @@ use tracing::info;
 use tracing_subscriber::EnvFilter;
 
 use quantum_application::{
-    ApplicationError, Dispatcher as AppDispatcher, LaunchActionUseCase, ListProvidersUseCase,
-    OpenViewUseCase, QueryProviderUseCase, ReloadPluginsUseCase, ReloadThemeUseCase,
-    ScheduleActionUseCase, SearchUseCase, SetThemeUseCase, SubscribeProviderUseCase, TimerService,
+    ApplicationError, Dispatcher as AppDispatcher, FilesService, LaunchActionUseCase,
+    ListProvidersUseCase, OpenViewUseCase, QueryProviderUseCase, ReloadPluginsUseCase,
+    ReloadThemeUseCase, ScheduleActionUseCase, SearchUseCase, SetThemeUseCase,
+    SubscribeProviderUseCase, TimerService,
 };
 use quantum_config::{Config, ConfigStore};
 use quantum_domain::{DomainError, EventBus, ProviderId, ProviderSource};
+use quantum_files::pins::default_store_path as pins_default_store_path;
+use quantum_files::{
+    BackgroundSizer, DesktopApplicationCatalog, LocalFileSystem, NotifyDirectoryWatcher, PinStore,
+    ProcessFileOpener,
+};
 use quantum_hyprland::HyprlandSocketClient;
 use quantum_ipc::{
     DispatchError, DispatchResult, Dispatcher as IpcDispatcher, EventEnvelope, UnixSocketServer,
@@ -887,6 +893,34 @@ async fn setup_daemon(
             dev_plugins_dir: dev_plugins_dir.clone(),
         });
     let reload_plugins_use_case = Arc::new(ReloadPluginsUseCase::new(plugin_catalog));
+
+    // File explorer service. Each infrastructure adapter is wrapped as its
+    // domain port trait object. There is no configuration key for a preferred
+    // terminal today, so the opener receives `None` and falls back to
+    // `$TERMINAL` then `xdg-terminal-exec`. The pin store persists to
+    // `$XDG_STATE_HOME/quantum/files.json`. Unlike the streaming providers, the
+    // file explorer needs no pre-subscription: watches and recursive sizes are
+    // started on demand by `files.watch` / `files.sizes`.
+    let files_filesystem: Arc<dyn quantum_domain::FileSystemPort> =
+        Arc::new(LocalFileSystem::new());
+    let files_watcher: Arc<dyn quantum_domain::DirectoryWatcher> =
+        Arc::new(NotifyDirectoryWatcher::new());
+    let files_opener: Arc<dyn quantum_domain::FileOpener> = Arc::new(ProcessFileOpener::new(None));
+    let files_sizer: Arc<dyn quantum_domain::RecursiveSizer> = Arc::new(BackgroundSizer::new());
+    let files_pins: Arc<dyn quantum_domain::PinsPort> =
+        Arc::new(PinStore::new(pins_default_store_path()));
+    let files_applications: Arc<dyn quantum_domain::ApplicationCatalog> =
+        Arc::new(DesktopApplicationCatalog::new());
+    let files_service = Arc::new(FilesService::new(
+        files_filesystem,
+        files_watcher,
+        files_opener,
+        files_sizer,
+        files_pins,
+        files_applications,
+        event_bus.clone(),
+    ));
+
     let dispatcher = Arc::new(AppDispatcher::new(
         search_use_case,
         launch_action_use_case,
@@ -899,6 +933,7 @@ async fn setup_daemon(
         schedule_action_use_case,
         reload_plugins_use_case,
         timer_service.clone(),
+        files_service,
     ));
     let _ipc_dispatcher = Arc::new(AppDispatcherAdapter::new(dispatcher));
 

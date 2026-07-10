@@ -7,6 +7,7 @@
 //! by later tasks; this scaffold exists only to compile and wire the crate into
 //! the workspace.
 
+pub mod applications;
 pub mod filesystem;
 pub mod opener;
 pub mod operations;
@@ -14,6 +15,7 @@ pub mod pins;
 pub mod sizer;
 pub mod watcher;
 
+pub use applications::DesktopApplicationCatalog;
 pub use filesystem::LocalFileSystem;
 pub use opener::ProcessFileOpener;
 pub use pins::{Pin, PinStore};

@@ -71,7 +71,7 @@ fn terminal_command(
 /// (`$XDG_DATA_HOME/applications`, defaulting to `~/.local/share/applications`),
 /// followed by each colon-separated `$XDG_DATA_DIRS` entry suffixed with
 /// `/applications` (defaulting to `/usr/local/share` and `/usr/share`).
-fn desktop_file_search_dirs(
+pub(crate) fn desktop_file_search_dirs(
     xdg_data_home: Option<&str>,
     xdg_data_dirs: Option<&str>,
     home: &str,

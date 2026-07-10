@@ -8,17 +8,9 @@
 
 use std::path::{Path, PathBuf};
 
-use quantum_domain::FilesError;
-use serde::{Deserialize, Serialize};
-
-/// A single pinned folder shown in the file explorer sidebar.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct Pin {
-    /// Display name shown in the sidebar (for example "Documents").
-    pub label: String,
-    /// Absolute path the pin points at.
-    pub path: String,
-}
+use async_trait::async_trait;
+pub use quantum_domain::Pin;
+use quantum_domain::{FilesError, PinsPort};
 
 /// A writable JSON store of pinned folders backed by a single file on disk.
 pub struct PinStore {
@@ -102,6 +94,27 @@ impl PinStore {
         pins.retain(|pin| pin.path != path);
         self.save(&pins)?;
         Ok(pins)
+    }
+}
+
+/// Adapt the synchronous [`PinStore`] to the asynchronous domain [`PinsPort`].
+///
+/// Each mutating method returns the full pin list after the change so the
+/// application layer can broadcast the new state without a second read. The
+/// underlying store performs quick, local file input/output, so the async
+/// methods call it directly rather than offloading to a blocking thread.
+#[async_trait]
+impl PinsPort for PinStore {
+    async fn load(&self) -> Vec<Pin> {
+        PinStore::load(self)
+    }
+
+    async fn add(&self, pin: Pin) -> Result<Vec<Pin>, FilesError> {
+        PinStore::add(self, pin)
+    }
+
+    async fn remove(&self, path: &str) -> Result<Vec<Pin>, FilesError> {
+        PinStore::remove(self, path)
     }
 }
 
@@ -234,6 +247,27 @@ mod tests {
         assert_eq!(after_second, vec![entry.clone()]);
 
         let after_remove = store.remove("/home/user/Projects").unwrap();
+        assert!(after_remove.is_empty());
+    }
+
+    #[tokio::test]
+    async fn pins_port_add_load_remove_roundtrip_returns_domain_pin() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = PinStore::new(dir.path().join("files.json"));
+        store.save(&[]).unwrap();
+
+        let entry = pin("Projects", "/home/user/Projects");
+        let after_add = PinsPort::add(&store, entry.clone()).await.unwrap();
+        // The value returned by the async trait is the domain Pin type.
+        let returned: quantum_domain::Pin = after_add[0].clone();
+        assert_eq!(returned, entry);
+
+        let loaded = PinsPort::load(&store).await;
+        assert_eq!(loaded, vec![entry.clone()]);
+
+        let after_remove = PinsPort::remove(&store, "/home/user/Projects")
+            .await
+            .unwrap();
         assert!(after_remove.is_empty());
     }
 
