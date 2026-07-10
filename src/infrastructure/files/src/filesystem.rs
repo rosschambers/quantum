@@ -173,6 +173,43 @@ fn read_text_preview_blocking(path: PathBuf, max_bytes: usize) -> Result<String,
     Ok(String::from_utf8_lossy(&buffer).to_string())
 }
 
+/// Decode the image at `path`, downscale it so its longest edge is at most
+/// `max_dimension` (never upscaling), re-encode it as PNG in memory, and return
+/// a base64 `data:` URI. A missing path yields [`FilesError::NotFound`]; a file
+/// that cannot be decoded as an image yields [`FilesError::Unsupported`]. This
+/// is CPU-bound and synchronous, so callers run it on the blocking pool.
+fn read_image_preview_blocking(path: PathBuf, max_dimension: u32) -> Result<String, FilesError> {
+    use base64::Engine as _;
+    use image::GenericImageView as _;
+
+    let path_string = path.to_string_lossy().to_string();
+    if !path.exists() {
+        return Err(FilesError::NotFound(path_string));
+    }
+    let image = image::open(&path)
+        .map_err(|error| FilesError::Unsupported(format!("{path_string}: {error}")))?;
+
+    let (width, height) = image.dimensions();
+    // `resize` preserves aspect ratio and fits the image inside the box, so a
+    // square box clamps the longest edge. Only downscale, never enlarge.
+    let scaled = if width.max(height) > max_dimension {
+        image.resize(
+            max_dimension,
+            max_dimension,
+            image::imageops::FilterType::Triangle,
+        )
+    } else {
+        image
+    };
+
+    let mut buffer = std::io::Cursor::new(Vec::new());
+    scaled
+        .write_to(&mut buffer, image::ImageFormat::Png)
+        .map_err(|error| FilesError::Unsupported(format!("{path_string}: {error}")))?;
+    let encoded = base64::engine::general_purpose::STANDARD.encode(buffer.get_ref());
+    Ok(format!("data:image/png;base64,{encoded}"))
+}
+
 /// Walk `root` recursively without following symlinks, collecting up to `limit`
 /// entries whose file name contains `query` case-insensitively.
 fn search_blocking(
@@ -368,10 +405,8 @@ impl FileSystemPort for LocalFileSystem {
         path: &str,
         max_dimension: u32,
     ) -> Result<String, FilesError> {
-        let _ = (path, max_dimension);
-        Err(FilesError::Unsupported(
-            "read_image_preview not yet implemented".to_string(),
-        ))
+        let owned = PathBuf::from(path);
+        run_blocking(move || read_image_preview_blocking(owned, max_dimension)).await
     }
 
     async fn perform(&self, operation: FileOperation) -> Result<(), FilesError> {
@@ -648,6 +683,64 @@ mod tests {
         assert_eq!(mount_label("/"), "System");
         assert_eq!(mount_label("/boot"), "boot");
         assert_eq!(mount_label("/mnt/usb-backup"), "usb-backup");
+    }
+
+    #[tokio::test]
+    async fn read_image_preview_downscales_preserving_aspect_and_encodes_png() {
+        use base64::Engine;
+        use image::GenericImageView;
+
+        let dir = tempfile::tempdir().expect("create tempdir");
+        let path = dir.path().join("wide.png");
+        let source = image::RgbImage::new(1024, 512);
+        source.save(&path).expect("save source image");
+
+        let filesystem = LocalFileSystem::new();
+        let preview = filesystem
+            .read_image_preview(&path.to_string_lossy(), 512)
+            .await
+            .expect("read image preview");
+
+        assert!(
+            preview.starts_with("data:image/png;base64,"),
+            "got {preview:.40}"
+        );
+        let payload = preview
+            .strip_prefix("data:image/png;base64,")
+            .expect("data uri prefix");
+        let bytes = base64::engine::general_purpose::STANDARD
+            .decode(payload)
+            .expect("decode base64 payload");
+        let decoded = image::load_from_memory(&bytes).expect("decode png payload");
+        let (width, height) = decoded.dimensions();
+        assert!(width <= 512, "width {width} should be clamped to 512");
+        assert!(height <= 256, "height {height} should be clamped to 256");
+    }
+
+    #[tokio::test]
+    async fn read_image_preview_on_text_is_unsupported() {
+        let dir = tempfile::tempdir().expect("create tempdir");
+        let path = dir.path().join("notes.txt");
+        fs::write(&path, b"this is plainly not an image").expect("write text file");
+        let filesystem = LocalFileSystem::new();
+        let error = filesystem
+            .read_image_preview(&path.to_string_lossy(), 512)
+            .await
+            .expect_err("a text file is not an image");
+        assert!(matches!(error, FilesError::Unsupported(_)), "got {error:?}");
+    }
+
+    #[tokio::test]
+    async fn read_image_preview_missing_path_errors() {
+        let filesystem = LocalFileSystem::new();
+        let error = filesystem
+            .read_image_preview("/nonexistent/quantum/picture.png", 512)
+            .await
+            .expect_err("missing path should error");
+        assert!(
+            matches!(error, FilesError::NotFound(_) | FilesError::Unsupported(_)),
+            "got {error:?}"
+        );
     }
 
     #[tokio::test]
