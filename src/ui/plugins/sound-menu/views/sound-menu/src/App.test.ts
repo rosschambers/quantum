@@ -186,6 +186,13 @@ describe('SoundMenu App shell', () => {
         await settle();
         expect(container.textContent).toContain('Freshly Plugged');
     });
+
+    it('renders no window-level close button (Escape and backdrop only)', async () => {
+        const { container } = render(App);
+        await settle();
+        expect(container.querySelector('[data-action="close"]')).toBeNull();
+        expect(container.querySelector('.close-button')).toBeNull();
+    });
 });
 
 describe('SoundMenu device sections', () => {

@@ -133,9 +133,6 @@
     <div class="card" role="dialog" aria-label="Sound">
         <div class="card-head">
             <span class="title">Sound</span>
-            <button type="button" class="close-button" data-action="close" onclick={close}>
-                Close
-            </button>
         </div>
         {#if !state.available}
             <div class="empty unavailable">Audio service unavailable.</div>
@@ -260,16 +257,6 @@
         font-size: 14px;
         font-weight: 600;
         flex: 1;
-    }
-    .close-button {
-        background: var(--color-bg, #1e1e2e);
-        color: var(--color-fg-alt, #a6adc8);
-        border: 1px solid var(--color-border, #45475a);
-        border-radius: 6px;
-        padding: 3px 8px;
-        font-size: 11px;
-        cursor: pointer;
-        font-family: inherit;
     }
     .scroll {
         overflow-y: auto;
