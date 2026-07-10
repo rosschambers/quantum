@@ -29,3 +29,32 @@ export function breadcrumbSegments(path: string): BreadcrumbSegment[] {
     }
     return segments;
 }
+
+/**
+ * The absolute path and every ancestor above it, root first, leaf last. The
+ * directory tree uses this to auto-expand the chain leading to the active
+ * node so it is scrolled into view. Examples:
+ *   "/"              -> ["/"]
+ *   "/home"          -> ["/", "/home"]
+ *   "/home/user/x"   -> ["/", "/home", "/home/user", "/home/user/x"]
+ * A trailing slash is ignored ("/home/user/" is the same as "/home/user").
+ */
+export function ancestorPaths(path: string): string[] {
+    const result = ['/'];
+    const parts = path.split('/').filter((part) => part.length > 0);
+    let accumulated = '';
+    for (const part of parts) {
+        accumulated += `/${part}`;
+        result.push(accumulated);
+    }
+    return result;
+}
+
+/**
+ * The display name for a directory node: "/" for the filesystem root, otherwise
+ * the final path segment. A trailing slash is ignored.
+ */
+export function pathBaseName(path: string): string {
+    const parts = path.split('/').filter((part) => part.length > 0);
+    return parts.length === 0 ? '/' : parts[parts.length - 1];
+}
