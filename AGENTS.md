@@ -221,8 +221,29 @@ broken CI before; do not reintroduce them:
   `timer.create` / `timer.list` / `timer.edit` / `timer.cancel` /
   `timer.dismiss` / `timer.dismiss_all`. Timer state persists to a writable JSON
   store at `$XDG_STATE_HOME/quantum/timers.json` (atomic temp-file plus rename)
-  — the first and only writable store in the project; `ConfigStore` remains
-  read-only TOML. Re-armed on startup via `TimerService::load_and_arm`.
+  — the first writable store in the project (the file explorer's pins store is
+  the second); `ConfigStore` remains read-only TOML. Re-armed on startup via
+  `TimerService::load_and_arm`.
+- **Files subsystem (file explorer).** The `files` plugin view is the first
+  `kind = "panel"` view: a normal decorated, resizable xdg-toplevel (no
+  layer-shell), titled from its canonical name via `panel_title` in
+  `src/ui/host/src/windows/panel.rs`. Its filesystem input/output lives in the
+  `quantum-files` infrastructure crate (a seventh-plus sibling) behind domain
+  ports `FileSystemPort` / `DirectoryWatcher` / `FileOpener` / `RecursiveSizer`
+  (plus `PinsPort` and `ApplicationCatalog`), wired through `FilesService` in
+  `application` and exposed as `files.*` dispatcher methods: `files.list`,
+  `files.places`, `files.pin`, `files.unpin`, `files.operation`, `files.open`,
+  `files.open_with`, `files.applications`, `files.open_terminal`,
+  `files.preview`, `files.search`, `files.watch`, `files.unwatch`, `files.sizes`,
+  `files.cancel_sizes`. Asynchronous updates publish on the `files.event`
+  channel as a union discriminated by `event`: `{event:"changed", path}`,
+  `{event:"size", path, bytes, complete}`, `{event:"operation_complete",
+  operation}`, `{event:"operation_failed", message}`. Watches and recursive
+  sizes are started on demand by `files.watch` / `files.sizes` — the subsystem
+  needs no pre-subscription (unlike streaming providers). Pinned folders persist
+  to a writable JSON store at `$XDG_STATE_HOME/quantum/files.json` (atomic
+  temp-file plus rename, the timer-store pattern). The UI performs no filesystem
+  input/output — it only speaks `files.*` IPC through `@quantum/client`.
 - **Notifications: toast vs center.** A toast is the *transient* popup (it
   always auto-dismisses); the notification itself lives in the *center* until
   dismissed. `timeout_ms == 0` means "never expire" — it persists in the center

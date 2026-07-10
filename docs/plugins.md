@@ -298,6 +298,27 @@ be added later as additional convention-based file kinds. The current
 folder layout was chosen so a future release can introduce them
 without breaking existing plugins.
 
+## Panel views (normal windows)
+
+Most first-party views are widgets or overlays anchored via layer-shell. The
+file explorer (`src/ui/plugins/files/views/files/`) is the first `kind =
+"panel"` view: with no overlay flag and `QUANTUM_LAYER_SHELL` unset it opens as
+a normal decorated, resizable xdg-toplevel the user can move, resize, and close
+like any other window. Its `view.toml` is:
+
+```toml
+kind = "panel"
+width = 1100
+height = 700
+destroy_on_dismiss = true
+```
+
+The window title is derived from the canonical view name (`plugin/files/files`
+becomes "Files") by `panel_title` in `src/ui/host/src/windows/panel.rs`. Open it
+on demand with `quantumctl call view.show '{"name":"plugin/files/files"}'`.
+Reach for a panel when you want a real application window rather than a
+screen-anchored widget or a modal overlay.
+
 ## Sharing a plugin
 
 A plugin folder is self-contained. You can:
