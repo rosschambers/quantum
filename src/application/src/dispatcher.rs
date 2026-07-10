@@ -1,7 +1,8 @@
 use crate::{
-    ApplicationError, CreateTimerSpec, EditChanges, LaunchActionUseCase, ListProvidersUseCase,
-    OpenViewUseCase, QueryProviderUseCase, ReloadPluginsUseCase, ReloadThemeUseCase, Result,
-    ScheduleActionUseCase, SearchUseCase, SetThemeUseCase, SubscribeProviderUseCase, TimerService,
+    ApplicationError, CreateTimerSpec, EditChanges, FilesService, LaunchActionUseCase,
+    ListProvidersUseCase, OpenViewUseCase, QueryProviderUseCase, ReloadPluginsUseCase,
+    ReloadThemeUseCase, Result, ScheduleActionUseCase, SearchUseCase, SetThemeUseCase,
+    SubscribeProviderUseCase, TimerService,
 };
 use quantum_domain::{DomainError, WindowMode};
 use serde::de::DeserializeOwned;
@@ -21,6 +22,7 @@ pub struct Dispatcher {
     schedule_action: Arc<ScheduleActionUseCase>,
     reload_plugins: Arc<ReloadPluginsUseCase>,
     timer_service: Arc<TimerService>,
+    files_service: Arc<FilesService>,
 }
 
 /// Params for the three `view.*` handlers (`view.toggle`, `view.show`,
@@ -29,6 +31,21 @@ pub struct Dispatcher {
 #[derive(serde::Deserialize)]
 struct ViewParams {
     name: String,
+}
+
+/// Params for the many `files.*` handlers that take a single filesystem path
+/// (`files.list`, `files.unpin`, `files.open`, `files.preview`, `files.watch`,
+/// `files.unwatch`, `files.sizes`, `files.cancel_sizes`).
+#[derive(serde::Deserialize)]
+struct PathParam {
+    path: String,
+}
+
+/// Serialize a handler response into a JSON value, mapping a serialization
+/// failure onto the application error type rather than panicking.
+fn to_json<T: serde::Serialize>(value: T) -> Result<Value> {
+    serde_json::to_value(value)
+        .map_err(|e| ApplicationError::Unknown(format!("serialization error: {e}")))
 }
 
 /// Deserialize a required JSON-RPC `params` slice directly into the
@@ -55,6 +72,7 @@ impl Dispatcher {
         schedule_action: Arc<ScheduleActionUseCase>,
         reload_plugins: Arc<ReloadPluginsUseCase>,
         timer_service: Arc<TimerService>,
+        files_service: Arc<FilesService>,
     ) -> Self {
         Self {
             search,
@@ -68,6 +86,7 @@ impl Dispatcher {
             schedule_action,
             reload_plugins,
             timer_service,
+            files_service,
         }
     }
 
@@ -95,6 +114,21 @@ impl Dispatcher {
             "timer.cancel" => self.handle_timer_cancel(params).await,
             "timer.dismiss" => self.handle_timer_dismiss(params).await,
             "timer.dismiss_all" => self.handle_timer_dismiss_all(params).await,
+            "files.list" => self.handle_files_list(params).await,
+            "files.places" => self.handle_files_places(params).await,
+            "files.pin" => self.handle_files_pin(params).await,
+            "files.unpin" => self.handle_files_unpin(params).await,
+            "files.operation" => self.handle_files_operation(params).await,
+            "files.open" => self.handle_files_open(params).await,
+            "files.open_with" => self.handle_files_open_with(params).await,
+            "files.applications" => self.handle_files_applications(params).await,
+            "files.open_terminal" => self.handle_files_open_terminal(params).await,
+            "files.preview" => self.handle_files_preview(params).await,
+            "files.search" => self.handle_files_search(params).await,
+            "files.watch" => self.handle_files_watch(params).await,
+            "files.unwatch" => self.handle_files_unwatch(params).await,
+            "files.sizes" => self.handle_files_sizes(params).await,
+            "files.cancel_sizes" => self.handle_files_cancel_sizes(params).await,
             "system.status" => self.handle_system_status(params).await,
             _ => Err(ApplicationError::Domain(DomainError::Unsupported(
                 method.to_string(),
@@ -295,6 +329,112 @@ impl Dispatcher {
         let count = self.timer_service.dismiss_all().await?;
         Ok(json!({ "dismissed": count }))
     }
+
+    async fn handle_files_list(&self, params: Option<&RawValue>) -> Result<Value> {
+        let p: PathParam = parse_params(params, "files.list")?;
+        let entries = self.files_service.list(&p.path).await?;
+        to_json(entries)
+    }
+
+    async fn handle_files_places(&self, _params: Option<&RawValue>) -> Result<Value> {
+        let places = self.files_service.places().await?;
+        to_json(places)
+    }
+
+    async fn handle_files_pin(&self, params: Option<&RawValue>) -> Result<Value> {
+        let pin: quantum_domain::Pin = parse_params(params, "files.pin")?;
+        let pins = self.files_service.pin(pin).await?;
+        to_json(pins)
+    }
+
+    async fn handle_files_unpin(&self, params: Option<&RawValue>) -> Result<Value> {
+        let p: PathParam = parse_params(params, "files.unpin")?;
+        let pins = self.files_service.unpin(&p.path).await?;
+        to_json(pins)
+    }
+
+    async fn handle_files_operation(&self, params: Option<&RawValue>) -> Result<Value> {
+        let operation: quantum_domain::FileOperation = parse_params(params, "files.operation")?;
+        self.files_service.operation(operation).await?;
+        Ok(json!({}))
+    }
+
+    async fn handle_files_open(&self, params: Option<&RawValue>) -> Result<Value> {
+        let p: PathParam = parse_params(params, "files.open")?;
+        self.files_service.open(&p.path).await?;
+        Ok(json!({}))
+    }
+
+    async fn handle_files_open_with(&self, params: Option<&RawValue>) -> Result<Value> {
+        #[derive(serde::Deserialize)]
+        struct OpenWithParams {
+            path: String,
+            desktop_id: String,
+        }
+        let p: OpenWithParams = parse_params(params, "files.open_with")?;
+        self.files_service.open_with(&p.path, &p.desktop_id).await?;
+        Ok(json!({}))
+    }
+
+    async fn handle_files_applications(&self, _params: Option<&RawValue>) -> Result<Value> {
+        let applications = self.files_service.applications().await;
+        to_json(applications)
+    }
+
+    async fn handle_files_open_terminal(&self, params: Option<&RawValue>) -> Result<Value> {
+        #[derive(serde::Deserialize)]
+        struct OpenTerminalParams {
+            directory: String,
+        }
+        let p: OpenTerminalParams = parse_params(params, "files.open_terminal")?;
+        self.files_service.open_terminal(&p.directory).await?;
+        Ok(json!({}))
+    }
+
+    async fn handle_files_preview(&self, params: Option<&RawValue>) -> Result<Value> {
+        let p: PathParam = parse_params(params, "files.preview")?;
+        let preview = self.files_service.preview(&p.path).await?;
+        to_json(preview)
+    }
+
+    async fn handle_files_search(&self, params: Option<&RawValue>) -> Result<Value> {
+        #[derive(serde::Deserialize)]
+        struct SearchParams {
+            root: String,
+            query: String,
+            limit: usize,
+        }
+        let p: SearchParams = parse_params(params, "files.search")?;
+        let entries = self
+            .files_service
+            .search(&p.root, &p.query, p.limit)
+            .await?;
+        to_json(entries)
+    }
+
+    async fn handle_files_watch(&self, params: Option<&RawValue>) -> Result<Value> {
+        let p: PathParam = parse_params(params, "files.watch")?;
+        self.files_service.watch(&p.path)?;
+        Ok(json!({}))
+    }
+
+    async fn handle_files_unwatch(&self, params: Option<&RawValue>) -> Result<Value> {
+        let p: PathParam = parse_params(params, "files.unwatch")?;
+        self.files_service.unwatch(&p.path);
+        Ok(json!({}))
+    }
+
+    async fn handle_files_sizes(&self, params: Option<&RawValue>) -> Result<Value> {
+        let p: PathParam = parse_params(params, "files.sizes")?;
+        self.files_service.sizes(&p.path);
+        Ok(json!({}))
+    }
+
+    async fn handle_files_cancel_sizes(&self, params: Option<&RawValue>) -> Result<Value> {
+        let p: PathParam = parse_params(params, "files.cancel_sizes")?;
+        self.files_service.cancel_sizes(&p.path);
+        Ok(json!({}))
+    }
 }
 
 #[cfg(test)]
@@ -302,10 +442,14 @@ mod tests {
     use super::*;
     use crate::SearchResponse;
     use async_trait::async_trait;
+    use futures::stream::{self, BoxStream, StreamExt};
     use quantum_domain::{
-        Action, ActionOutcome, CivilNow, Clock, DomainError, EventBus, Match, MatchScore,
-        ProviderId, ProviderRegistry, ProviderSource, Query, ThemeStore, Timer, TimerBroadcast,
-        TimerError, TimerNotifier, TimerStore, TimerStoreData, Weekday, WindowHost,
+        Action, ActionOutcome, ApplicationCatalog, ApplicationInfo, CivilNow, Clock, ContentKind,
+        DirectoryWatcher, DomainError, DriveInfo, EventBus, FileEntry, FileEntryKind, FileOpener,
+        FileOperation, FileSystemPort, FilesError, Match, MatchScore, PermissionClass, Pin,
+        PinsPort, ProviderId, ProviderRegistry, ProviderSource, Query, RecursiveSizer, SizeUpdate,
+        ThemeStore, Timer, TimerBroadcast, TimerError, TimerNotifier, TimerStore, TimerStoreData,
+        Weekday, WindowHost,
     };
     use std::collections::HashMap;
 
@@ -484,6 +628,147 @@ mod tests {
         fn publish(&self, _data: &TimerStoreData) {}
     }
 
+    /// The single directory entry the files fakes report, so the `files.list`
+    /// routing test has a known value to assert against.
+    fn files_sample_entry() -> FileEntry {
+        FileEntry {
+            name: "notes.txt".to_string(),
+            path: "/home/user/notes.txt".to_string(),
+            kind: FileEntryKind::File,
+            size: 12,
+            recursive_size: None,
+            modified_epoch_seconds: 0,
+            owner: "user".to_string(),
+            permissions: "rw-r--r--".to_string(),
+            permission_class: PermissionClass::Normal,
+            symlink_target: None,
+            content_kind: ContentKind::Document,
+        }
+    }
+
+    /// Filesystem fake for the dispatcher tests: `list_directory` and `search`
+    /// return the single sample entry; the rest are inert.
+    struct FilesFakeFileSystem;
+
+    #[async_trait]
+    impl FileSystemPort for FilesFakeFileSystem {
+        async fn list_directory(
+            &self,
+            _path: &str,
+        ) -> std::result::Result<Vec<FileEntry>, FilesError> {
+            Ok(vec![files_sample_entry()])
+        }
+        async fn stat(&self, _path: &str) -> std::result::Result<FileEntry, FilesError> {
+            Ok(files_sample_entry())
+        }
+        async fn mounts(&self) -> std::result::Result<Vec<DriveInfo>, FilesError> {
+            Ok(Vec::new())
+        }
+        async fn read_text_preview(
+            &self,
+            _path: &str,
+            _max_bytes: usize,
+        ) -> std::result::Result<String, FilesError> {
+            Ok(String::new())
+        }
+        async fn read_image_preview(
+            &self,
+            _path: &str,
+            _max_dimension: u32,
+        ) -> std::result::Result<String, FilesError> {
+            Ok(String::new())
+        }
+        async fn perform(&self, _operation: FileOperation) -> std::result::Result<(), FilesError> {
+            Ok(())
+        }
+        async fn search(
+            &self,
+            _root: &str,
+            _query: &str,
+            _limit: usize,
+        ) -> std::result::Result<Vec<FileEntry>, FilesError> {
+            Ok(vec![files_sample_entry()])
+        }
+    }
+
+    struct FilesFakeWatcher;
+
+    impl DirectoryWatcher for FilesFakeWatcher {
+        fn watch(
+            &self,
+            _path: &str,
+        ) -> std::result::Result<BoxStream<'static, String>, FilesError> {
+            Ok(stream::empty().boxed())
+        }
+        fn unwatch(&self, _path: &str) {}
+    }
+
+    struct FilesFakeOpener;
+
+    #[async_trait]
+    impl FileOpener for FilesFakeOpener {
+        async fn open(&self, _path: &str) -> std::result::Result<(), FilesError> {
+            Ok(())
+        }
+        async fn open_with(
+            &self,
+            _path: &str,
+            _desktop_id: &str,
+        ) -> std::result::Result<(), FilesError> {
+            Ok(())
+        }
+        async fn open_terminal(&self, _directory: &str) -> std::result::Result<(), FilesError> {
+            Ok(())
+        }
+    }
+
+    struct FilesFakeSizer;
+
+    impl RecursiveSizer for FilesFakeSizer {
+        fn compute(&self, _path: &str) -> BoxStream<'static, SizeUpdate> {
+            stream::empty().boxed()
+        }
+        fn cancel(&self, _path: &str) {}
+    }
+
+    struct FilesFakePins;
+
+    #[async_trait]
+    impl PinsPort for FilesFakePins {
+        async fn load(&self) -> Vec<Pin> {
+            Vec::new()
+        }
+        async fn add(&self, pin: Pin) -> std::result::Result<Vec<Pin>, FilesError> {
+            Ok(vec![pin])
+        }
+        async fn remove(&self, _path: &str) -> std::result::Result<Vec<Pin>, FilesError> {
+            Ok(Vec::new())
+        }
+    }
+
+    struct FilesFakeApplications;
+
+    #[async_trait]
+    impl ApplicationCatalog for FilesFakeApplications {
+        async fn list_applications(&self) -> Vec<ApplicationInfo> {
+            Vec::new()
+        }
+    }
+
+    /// Assemble a `FilesService` over the files fakes for dispatcher routing
+    /// tests. The `FakeEventBus` above is reused for the event bus.
+    fn build_files_service() -> Arc<FilesService> {
+        Arc::new(FilesService::new(
+            Arc::new(FilesFakeFileSystem),
+            Arc::new(FilesFakeWatcher),
+            Arc::new(FilesFakeOpener),
+            Arc::new(FilesFakeSizer),
+            Arc::new(FilesFakePins),
+            Arc::new(FilesFakeApplications),
+            Arc::new(FakeEventBus),
+        ))
+    }
+
     fn build_dispatcher() -> Arc<Dispatcher> {
         let mut providers = HashMap::new();
         providers.insert(
@@ -532,6 +817,7 @@ mod tests {
             schedule_action,
             reload_plugins,
             timer_service,
+            build_files_service(),
         ))
     }
 
@@ -774,5 +1060,26 @@ mod tests {
         let listed = dispatcher.dispatch("timer.list", None).await.expect("list");
         let timers = listed["timers"].as_array().expect("timers array");
         assert_eq!(timers.len(), 0);
+    }
+
+    #[tokio::test]
+    async fn dispatches_files_list() {
+        let dispatcher = build_dispatcher();
+        let params = raw(json!({ "path": "/home/user" }));
+        let resp = dispatcher
+            .dispatch("files.list", Some(&params))
+            .await
+            .expect("files.list");
+
+        let entries: Vec<FileEntry> = serde_json::from_value(resp).expect("entries");
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].name, "notes.txt");
+    }
+
+    #[tokio::test]
+    async fn files_list_missing_params_errors() {
+        let dispatcher = build_dispatcher();
+        let resp = dispatcher.dispatch("files.list", None).await;
+        assert!(resp.is_err());
     }
 }
