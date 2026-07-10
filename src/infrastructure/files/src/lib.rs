@@ -13,3 +13,5 @@ pub mod operations;
 pub mod pins;
 pub mod sizer;
 pub mod watcher;
+
+pub use filesystem::LocalFileSystem;
