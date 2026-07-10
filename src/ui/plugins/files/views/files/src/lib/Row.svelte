@@ -6,11 +6,15 @@
      * usage bar, and a modified-time column. The parent (FileList / App) owns
      * all selection and navigation logic; this component only renders and
      * reports pointer events, passing the raw MouseEvent up so the parent can
-     * read modifier keys. Drag-and-drop is deliberately absent (Task 23).
+     * read modifier keys. Rows are draggable and directory rows are drop
+     * targets; the drag payload travels through the shared `dragState` module
+     * rather than `dataTransfer` (Task 23).
      */
     import type { FileEntry, ContentKind, PermissionClass } from '@quantum/client';
     import Icon, { type IconName } from './Icon.svelte';
     import { formatSize, formatModified } from './format';
+    import { beginDrag, endDrag, getDragSources } from './dragState.svelte';
+    import { isValidDrop } from './dnd';
 
     interface Props {
         entry: FileEntry;
@@ -20,9 +24,25 @@
         onSelect: (event: MouseEvent) => void;
         onOpen: () => void;
         onContextMenu: (event: MouseEvent) => void;
+        /**
+         * The selection-aware source paths to drag when this row is already
+         * part of the selection. Defaults to just this row's own path.
+         */
+        dragSources?: () => string[];
+        /** Move dropped sources into this row's directory (directory rows only). */
+        onMove?: (sources: string[], destination: string) => void;
     }
 
-    const { entry, selected, maxSize, onSelect, onOpen, onContextMenu }: Props = $props();
+    const {
+        entry,
+        selected,
+        maxSize,
+        onSelect,
+        onOpen,
+        onContextMenu,
+        dragSources,
+        onMove,
+    }: Props = $props();
 
     // Content-kind to icon glyph. Directories and symlinks take precedence over
     // the content classification.
@@ -75,9 +95,69 @@
 
     const modified = $derived(formatModified(entry.modified_epoch_seconds));
 
+    const isDirectory = $derived(entry.kind === 'directory');
+
+    // True while a valid drag hovers this directory row, driving the outline.
+    let isDropTarget = $state(false);
+
     function handleContextMenu(event: MouseEvent): void {
         event.preventDefault();
         onContextMenu(event);
+    }
+
+    // Begin a drag. An unselected row first becomes the sole selection (a plain
+    // drag event carries no modifier keys, so the parent selects only it), and
+    // the payload is just this row. An already-selected row drags the whole
+    // selection-aware set. The paths also go on `dataTransfer` for completeness.
+    function handleDragStart(event: DragEvent): void {
+        let sources: string[];
+        if (selected) {
+            sources = dragSources ? dragSources() : [entry.path];
+        } else {
+            onSelect(event);
+            sources = [entry.path];
+        }
+        beginDrag(sources);
+        event.dataTransfer?.setData('text/plain', JSON.stringify(sources));
+    }
+
+    function handleDragEnd(): void {
+        endDrag();
+    }
+
+    // A directory row accepts a drop only for a valid move (destination not a
+    // source and not inside a source). `stopPropagation` keeps the pane's list
+    // background from also handling the same drop.
+    function handleDragOver(event: DragEvent): void {
+        if (!isDirectory) {
+            return;
+        }
+        const sources = getDragSources();
+        if (sources === null || !isValidDrop(sources, entry.path)) {
+            return;
+        }
+        event.preventDefault();
+        event.stopPropagation();
+        isDropTarget = true;
+    }
+
+    function handleDragLeave(): void {
+        isDropTarget = false;
+    }
+
+    function handleDrop(event: DragEvent): void {
+        if (!isDirectory) {
+            return;
+        }
+        const sources = getDragSources();
+        if (sources === null || !isValidDrop(sources, entry.path)) {
+            return;
+        }
+        event.preventDefault();
+        event.stopPropagation();
+        isDropTarget = false;
+        onMove?.(sources, entry.path);
+        endDrag();
     }
 </script>
 
@@ -90,10 +170,17 @@
 <div
     class="frow"
     class:sel={selected}
+    class:droptarget={isDropTarget}
     data-path={entry.path}
+    draggable={true}
     onclick={onSelect}
     ondblclick={onOpen}
     oncontextmenu={handleContextMenu}
+    ondragstart={handleDragStart}
+    ondragend={handleDragEnd}
+    ondragover={handleDragOver}
+    ondragleave={handleDragLeave}
+    ondrop={handleDrop}
     role="row"
     tabindex="-1"
 >
@@ -132,6 +219,10 @@
     .frow.sel {
         background: rgba(166, 227, 161, 0.16);
         color: var(--color-fg);
+    }
+    .frow.droptarget {
+        outline: 1px dashed var(--color-accent);
+        outline-offset: -1px;
     }
     .fico {
         flex: none;

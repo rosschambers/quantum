@@ -12,6 +12,8 @@
     import type { FileEntry } from '@quantum/client';
     import Icon from './Icon.svelte';
     import { ancestorPaths, pathBaseName } from './path';
+    import { getDragSources, endDrag } from './dragState.svelte';
+    import { isValidDrop } from './dnd';
 
     interface TreeIpc {
         list(path: string): Promise<FileEntry[]>;
@@ -21,11 +23,42 @@
         ipc: TreeIpc;
         activePath: string;
         onNavigate: (path: string) => void;
+        /** Move dropped sources into a tree node's directory. */
+        onMove?: (sources: string[], destination: string) => void;
     }
 
-    const { ipc, activePath, onNavigate }: Props = $props();
+    const { ipc, activePath, onNavigate, onMove }: Props = $props();
 
     const ROOT = '/';
+
+    // The node path currently under a valid drag, driving its droptarget outline.
+    let dropTargetPath = $state<string | null>(null);
+
+    function nodeDragOver(event: DragEvent, path: string): void {
+        const sources = getDragSources();
+        if (sources === null || !isValidDrop(sources, path)) {
+            return;
+        }
+        event.preventDefault();
+        dropTargetPath = path;
+    }
+
+    function nodeDragLeave(path: string): void {
+        if (dropTargetPath === path) {
+            dropTargetPath = null;
+        }
+    }
+
+    function nodeDrop(event: DragEvent, path: string): void {
+        const sources = getDragSources();
+        if (sources === null || !isValidDrop(sources, path)) {
+            return;
+        }
+        event.preventDefault();
+        dropTargetPath = null;
+        onMove?.(sources, path);
+        endDrag();
+    }
 
     // Loaded directory children keyed by path. Presence in the map means "this
     // path has been listed"; the array is the directory-only children. Reassigned
@@ -103,6 +136,7 @@
     <div
         class="tree-row"
         class:active={activePath === path}
+        class:droptarget={dropTargetPath === path}
         data-path={path}
         style="padding-left: {4 + depth * 14}px"
         role="treeitem"
@@ -110,6 +144,9 @@
         aria-expanded={isOpen}
         tabindex="-1"
         onclick={() => onNavigate(path)}
+        ondragover={(event) => nodeDragOver(event, path)}
+        ondragleave={() => nodeDragLeave(path)}
+        ondrop={(event) => nodeDrop(event, path)}
     >
         <!-- svelte-ignore a11y_click_events_have_key_events -->
         <span
@@ -160,6 +197,9 @@
     .tree-row.active {
         background: rgba(166, 227, 161, 0.14);
         color: var(--color-accent);
+    }
+    .tree-row.droptarget {
+        outline: 1px dashed var(--color-accent);
     }
     .chev {
         width: 14px;

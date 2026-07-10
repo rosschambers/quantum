@@ -12,6 +12,8 @@
     import DirectoryTree from './DirectoryTree.svelte';
     import { formatSize } from './format';
     import { driveUsedFraction, driveBarClass } from './drive';
+    import { getDragSources, endDrag } from './dragState.svelte';
+    import { isValidDrop } from './dnd';
 
     interface TreeIpc {
         list(path: string): Promise<FileEntry[]>;
@@ -25,9 +27,15 @@
         onNavigate: (path: string) => void;
         onUnpin: (path: string) => void;
         onNavigateOther: (path: string) => void;
+        /** Move dropped sources into a pin or tree-node path. */
+        onMove?: (sources: string[], destination: string) => void;
     }
 
-    const { pins, drives, activePath, ipc, onNavigate, onUnpin, onNavigateOther }: Props = $props();
+    const { pins, drives, activePath, ipc, onNavigate, onUnpin, onNavigateOther, onMove }: Props =
+        $props();
+
+    // The pin path currently under a valid drag, driving its droptarget outline.
+    let dropTargetPin = $state<string | null>(null);
 
     /** Right-click a pin: open, open in the other pane, or unpin. */
     function pinMenu(event: MouseEvent, pin: Pin): void {
@@ -37,6 +45,32 @@
             { separator: true },
             { label: 'Unpin', danger: true, onSelect: () => onUnpin(pin.path) },
         ]);
+    }
+
+    function pinDragOver(event: DragEvent, pin: Pin): void {
+        const sources = getDragSources();
+        if (sources === null || !isValidDrop(sources, pin.path)) {
+            return;
+        }
+        event.preventDefault();
+        dropTargetPin = pin.path;
+    }
+
+    function pinDragLeave(pin: Pin): void {
+        if (dropTargetPin === pin.path) {
+            dropTargetPin = null;
+        }
+    }
+
+    function pinDrop(event: DragEvent, pin: Pin): void {
+        const sources = getDragSources();
+        if (sources === null || !isValidDrop(sources, pin.path)) {
+            return;
+        }
+        event.preventDefault();
+        dropTargetPin = null;
+        onMove?.(sources, pin.path);
+        endDrag();
     }
 </script>
 
@@ -48,8 +82,12 @@
             <div
                 class="side-item"
                 class:active={activePath === pin.path}
+                class:droptarget={dropTargetPin === pin.path}
                 onclick={() => onNavigate(pin.path)}
                 oncontextmenu={(event) => pinMenu(event, pin)}
+                ondragover={(event) => pinDragOver(event, pin)}
+                ondragleave={() => pinDragLeave(pin)}
+                ondrop={(event) => pinDrop(event, pin)}
                 role="button"
                 tabindex="-1"
             >
@@ -84,7 +122,7 @@
 
     <div class="section">
         <div class="side-h">Tree</div>
-        <DirectoryTree {ipc} {activePath} {onNavigate} />
+        <DirectoryTree {ipc} {activePath} {onNavigate} {onMove} />
     </div>
 </div>
 
@@ -124,6 +162,9 @@
     .side-item.active {
         background: rgba(166, 227, 161, 0.14);
         color: var(--color-accent);
+    }
+    .side-item.droptarget {
+        outline: 1px dashed var(--color-accent);
     }
     .side-item .nm {
         overflow: hidden;

@@ -7,11 +7,14 @@
      *
      * Virtualization is pure arithmetic on `scrollTop` and the viewport height;
      * there is no third-party dependency. The list is keyboard-agnostic — the
-     * App owns keys (Task 24) — and drag-and-drop is deferred (Task 23). This
-     * component only renders rows and reports pointer events upward.
+     * App owns keys (Task 24). Its empty background is a drop target that moves
+     * a drag (typically from the other pane) into this pane's directory; the
+     * rows themselves handle their own directory drops (Task 23).
      */
     import type { FileEntry } from '@quantum/client';
     import Row from './Row.svelte';
+    import { getDragSources, endDrag } from './dragState.svelte';
+    import { isValidDrop } from './dnd';
 
     interface Props {
         /** The already visible + sorted entries from `PaneState.visibleEntries()`. */
@@ -20,6 +23,13 @@
         selection: Set<string>;
         /** The largest sibling size, forwarded to each row's mini usage bar. */
         maxSize: number;
+        /**
+         * This pane's current directory. The list background is a drop target
+         * that moves a drag (typically from the other pane) into this path.
+         */
+        path?: string;
+        /** Move dropped sources into this pane's directory. */
+        onMove?: (sources: string[], destination: string) => void;
         /**
          * An explicit viewport height in pixels. When omitted the height is
          * measured from the scroll container via a bound `clientHeight`. Tests
@@ -36,6 +46,8 @@
         entries,
         selection,
         maxSize,
+        path,
+        onMove,
         viewportHeight,
         onSelect,
         onOpen,
@@ -89,16 +101,74 @@
     function handleScroll(event: Event): void {
         scrollTop = (event.currentTarget as HTMLElement).scrollTop;
     }
+
+    // The payload dragged from a selected row is the whole current selection;
+    // Row only calls this when the dragged row is already part of the selection.
+    function currentSelectionPaths(): string[] {
+        return [...selection];
+    }
+
+    // True while a valid drag hovers the empty list background, driving the
+    // outline. Only the background (not a row) reaches these handlers, guarded
+    // by `event.target === event.currentTarget`, so a drop is handled once.
+    let isListDropTarget = $state(false);
+
+    function backgroundDrop(event: DragEvent): boolean {
+        if (event.target !== event.currentTarget || path === undefined || onMove === undefined) {
+            return false;
+        }
+        const sources = getDragSources();
+        return sources !== null && isValidDrop(sources, path);
+    }
+
+    function handleListDragOver(event: DragEvent): void {
+        if (!backgroundDrop(event)) {
+            return;
+        }
+        event.preventDefault();
+        isListDropTarget = true;
+    }
+
+    function handleListDragLeave(event: DragEvent): void {
+        if (event.target !== event.currentTarget) {
+            return;
+        }
+        isListDropTarget = false;
+    }
+
+    function handleListDrop(event: DragEvent): void {
+        if (!backgroundDrop(event)) {
+            return;
+        }
+        event.preventDefault();
+        isListDropTarget = false;
+        const sources = getDragSources();
+        if (sources !== null && path !== undefined) {
+            onMove?.(sources, path);
+        }
+        endDrag();
+    }
 </script>
 
-<div class="list" bind:this={container} onscroll={handleScroll}>
+<!-- svelte-ignore a11y_no_static_element_interactions -->
+<div
+    class="list"
+    class:droptarget={isListDropTarget}
+    bind:this={container}
+    onscroll={handleScroll}
+    ondragover={handleListDragOver}
+    ondragleave={handleListDragLeave}
+    ondrop={handleListDrop}
+>
     <div class="sizer" style="height: {totalHeight}px">
         <div class="rows" style="transform: translateY({offsetY}px)">
             {#each visible as entry (entry.path)}
                 <Row
                     {entry}
                     {maxSize}
+                    {onMove}
                     selected={selection.has(entry.path)}
+                    dragSources={currentSelectionPaths}
                     onSelect={(event) => onSelect(entry.path, event)}
                     onOpen={() => onOpen(entry)}
                     onContextMenu={(event) => onContextMenu(entry, event)}
@@ -114,6 +184,10 @@
         overflow-y: auto;
         padding: 4px 6px;
         position: relative;
+    }
+    .list.droptarget {
+        outline: 1px dashed var(--color-accent);
+        outline-offset: -1px;
     }
     .sizer {
         position: relative;

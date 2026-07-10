@@ -1,8 +1,20 @@
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi, afterEach } from 'vitest';
 import { render, fireEvent } from '@testing-library/svelte/svelte5';
 import type { FileEntry } from '@quantum/client';
 import Row from './Row.svelte';
 import { formatSize, formatModified } from './format';
+import { beginDrag, endDrag, getDragSources } from './dragState.svelte';
+
+/** A minimal in-memory DataTransfer stand-in; jsdom does not implement one. */
+function fakeDataTransfer() {
+    const store: Record<string, string> = {};
+    return {
+        setData: vi.fn((type: string, value: string) => {
+            store[type] = value;
+        }),
+        getData: vi.fn((type: string) => store[type] ?? ''),
+    };
+}
 
 /** Build a `FileEntry` with sensible defaults, overriding only what a test cares about. */
 function entry(overrides: Partial<FileEntry> & { name: string }): FileEntry {
@@ -144,5 +156,128 @@ describe('Row rendering', () => {
         expect(onOpen).toHaveBeenCalledTimes(1);
         await fireEvent.contextMenu(row);
         expect(onContextMenu).toHaveBeenCalledTimes(1);
+    });
+});
+
+describe('Row drag source', () => {
+    afterEach(() => endDrag());
+
+    it('marks every row draggable', () => {
+        const { container } = renderRow(entry({ name: 'thing' }));
+        const row = container.querySelector('.frow') as HTMLElement;
+        expect(row.getAttribute('draggable')).toBe('true');
+    });
+
+    it('selects only the row first when dragging an unselected row', async () => {
+        const onSelect = vi.fn();
+        const { container } = renderRow(entry({ name: 'thing', path: '/dir/thing' }), {
+            selected: false,
+            onSelect,
+            // A selection-aware getter that must be ignored while unselected.
+            dragSources: () => ['/dir/other', '/dir/thing'],
+        });
+        const row = container.querySelector('.frow') as HTMLElement;
+        const dataTransfer = fakeDataTransfer();
+        await fireEvent.dragStart(row, { dataTransfer });
+
+        expect(onSelect).toHaveBeenCalledTimes(1);
+        expect(getDragSources()).toEqual(['/dir/thing']);
+        expect(dataTransfer.setData).toHaveBeenCalledWith(
+            'text/plain',
+            JSON.stringify(['/dir/thing']),
+        );
+    });
+
+    it('drags the whole selection when the row is already selected', async () => {
+        const onSelect = vi.fn();
+        const { container } = renderRow(entry({ name: 'thing', path: '/dir/thing' }), {
+            selected: true,
+            onSelect,
+            dragSources: () => ['/dir/thing', '/dir/other'],
+        });
+        const row = container.querySelector('.frow') as HTMLElement;
+        const dataTransfer = fakeDataTransfer();
+        await fireEvent.dragStart(row, { dataTransfer });
+
+        // Already selected: no re-select, and the full selection is the payload.
+        expect(onSelect).not.toHaveBeenCalled();
+        expect(getDragSources()).toEqual(['/dir/thing', '/dir/other']);
+    });
+
+    it('clears the drag payload on dragend', async () => {
+        const { container } = renderRow(entry({ name: 'thing', path: '/dir/thing' }));
+        const row = container.querySelector('.frow') as HTMLElement;
+        await fireEvent.dragStart(row, { dataTransfer: fakeDataTransfer() });
+        expect(getDragSources()).not.toBeNull();
+        await fireEvent.dragEnd(row);
+        expect(getDragSources()).toBeNull();
+    });
+});
+
+describe('Row directory drop target', () => {
+    afterEach(() => endDrag());
+
+    it('calls onMove once with the drag sources and the directory path on a valid drop', async () => {
+        const onMove = vi.fn();
+        const { container } = renderRow(
+            entry({ name: 'dest', path: '/dir/dest', kind: 'directory' }),
+            { onMove },
+        );
+        const row = container.querySelector('.frow') as HTMLElement;
+        beginDrag(['/other/a', '/other/b']);
+        const dataTransfer = fakeDataTransfer();
+
+        await fireEvent.dragOver(row, { dataTransfer });
+        expect(row.classList.contains('droptarget')).toBe(true);
+
+        await fireEvent.drop(row, { dataTransfer });
+        expect(onMove).toHaveBeenCalledTimes(1);
+        expect(onMove).toHaveBeenCalledWith(['/other/a', '/other/b'], '/dir/dest');
+        expect(row.classList.contains('droptarget')).toBe(false);
+        expect(getDragSources()).toBeNull();
+    });
+
+    it('does nothing when the destination is one of the sources', async () => {
+        const onMove = vi.fn();
+        const { container } = renderRow(
+            entry({ name: 'a', path: '/dir/a', kind: 'directory' }),
+            { onMove },
+        );
+        const row = container.querySelector('.frow') as HTMLElement;
+        beginDrag(['/dir/a', '/dir/b']);
+        const dataTransfer = fakeDataTransfer();
+
+        await fireEvent.dragOver(row, { dataTransfer });
+        expect(row.classList.contains('droptarget')).toBe(false);
+
+        await fireEvent.drop(row, { dataTransfer });
+        expect(onMove).not.toHaveBeenCalled();
+    });
+
+    it('removes the droptarget outline on dragleave', async () => {
+        const { container } = renderRow(
+            entry({ name: 'dest', path: '/dir/dest', kind: 'directory' }),
+            { onMove: vi.fn() },
+        );
+        const row = container.querySelector('.frow') as HTMLElement;
+        beginDrag(['/other/a']);
+        const dataTransfer = fakeDataTransfer();
+
+        await fireEvent.dragOver(row, { dataTransfer });
+        expect(row.classList.contains('droptarget')).toBe(true);
+        await fireEvent.dragLeave(row);
+        expect(row.classList.contains('droptarget')).toBe(false);
+    });
+
+    it('is not a drop target when the row is a file', async () => {
+        const onMove = vi.fn();
+        const { container } = renderRow(entry({ name: 'file', path: '/dir/file' }), { onMove });
+        const row = container.querySelector('.frow') as HTMLElement;
+        beginDrag(['/other/a']);
+
+        await fireEvent.dragOver(row, { dataTransfer: fakeDataTransfer() });
+        expect(row.classList.contains('droptarget')).toBe(false);
+        await fireEvent.drop(row, { dataTransfer: fakeDataTransfer() });
+        expect(onMove).not.toHaveBeenCalled();
     });
 });
