@@ -30,6 +30,8 @@ humantime-serde = "1"
 zbus = { version = "4", default-features = false, features = ["tokio"] }
 tempfile = "3"
 chrono = "0.4"
+png = "0.17"
+base64 = "0.22"
 
 [dev-dependencies]
 tempfile = "3"

@@ -4,6 +4,7 @@
     import KillWindowButton from './lib/KillWindowButton.svelte';
     import SystemMeters from './lib/SystemMeters.svelte';
     import MediaControls from './lib/MediaControls.svelte';
+    import SystemTrayItems from './lib/SystemTrayItems.svelte';
     import BatteryIndicator from './lib/tray/BatteryIndicator.svelte';
     import BluetoothIndicator from './lib/tray/BluetoothIndicator.svelte';
     import BrightnessIndicator from './lib/tray/BrightnessIndicator.svelte';
@@ -28,6 +29,7 @@
         <ActiveWindow {client} />
     </div>
     <div class="region region-center">
+        <SystemTrayItems {client} />
         <MediaControls {client} />
         <VolumeIndicator {client} />
     </div>
