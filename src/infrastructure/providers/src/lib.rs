@@ -23,6 +23,7 @@ pub mod power_profile;
 pub mod proc_stats;
 pub mod shell_command;
 pub mod system_power;
+pub mod system_tray;
 pub mod timer;
 pub mod timer_clock;
 pub mod timer_notifier;
