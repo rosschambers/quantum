@@ -14,6 +14,10 @@
 
 pub mod menu;
 
+/// Resolving a StatusNotifierItem's icon name, private theme path, or inline
+/// pixmaps into a [`quantum_domain::IconRef`] for the frontend.
+pub mod icon;
+
 /// Selecting the best StatusNotifierItem icon pixmap and encoding it as a
 /// PNG data URI for the frontend.
 pub mod pixmap;
