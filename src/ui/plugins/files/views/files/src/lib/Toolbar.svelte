@@ -23,6 +23,11 @@
         deepSearch: boolean;
         /** Whether the second pane is shown. */
         dualPane: boolean;
+        /**
+         * Whether the embedded breadcrumb is in its editable state. Bindable so
+         * the App can flip it on Ctrl+L; forwarded straight to the Breadcrumb.
+         */
+        editing?: boolean;
         onNavigate: (path: string) => void;
         onBack: () => void;
         onForward: () => void;
@@ -39,6 +44,7 @@
         filter,
         deepSearch,
         dualPane,
+        editing = $bindable(false),
         onNavigate,
         onBack,
         onForward,
@@ -85,7 +91,7 @@
         <Icon name="up" size={16} />
     </button>
 
-    <Breadcrumb {path} {onNavigate} />
+    <Breadcrumb {path} {onNavigate} bind:editing />
 
     <div class="filter-wrap">
         <span class="filter-ic"><Icon name="search" size={13} /></span>
