@@ -22,7 +22,26 @@ use quantum_domain::{
     Action, ActionOutcome, DomainError, Match, ProviderId, ProviderSource, Query, SystemTrayState,
 };
 
-use super::host::{run_system_tray_host, ItemHandles};
+use super::host::{run_system_tray_host, HostExit, ItemHandles};
+
+/// Whether the provider's reconnect loop should stop for good or reconnect
+/// after a backoff.
+enum LoopAction {
+    /// Stop the loop and never retry.
+    Stop,
+    /// Reconnect after a backoff.
+    Retry,
+}
+
+/// Map a host run's outcome to a loop decision: only a dormant exit stops the
+/// loop; a disconnect or a transport error is retried.
+fn next_loop_action(result: &Result<HostExit, quantum_dbus::DbusError>) -> LoopAction {
+    match result {
+        Ok(HostExit::Dormant) => LoopAction::Stop,
+        Ok(HostExit::Disconnected) => LoopAction::Retry,
+        Err(_) => LoopAction::Retry,
+    }
+}
 
 /// The two interfaces a StatusNotifierItem may export `Activate` under. The
 /// KDE name is tried first; freedesktop-only applications need the fallback.
@@ -65,20 +84,25 @@ impl SystemTrayProvider {
         runtime.spawn(async move {
             let mut backoff_secs = 1u64;
             loop {
-                match run_system_tray_host(
+                let result = run_system_tray_host(
                     shared_for_task.clone(),
                     tx_for_task.clone(),
                     handles_for_task.clone(),
                 )
-                .await
-                {
-                    Ok(()) => {
+                .await;
+                match next_loop_action(&result) {
+                    LoopAction::Stop => {
                         // Dormant: another watcher owns the name. Do not
                         // busy-loop reclaiming it.
                         break;
                     }
-                    Err(error) => {
-                        tracing::warn!("system_tray host error: {error}");
+                    LoopAction::Retry => {
+                        match &result {
+                            Ok(_) => tracing::warn!(
+                                "system_tray host disconnected; reconnecting after backoff"
+                            ),
+                            Err(error) => tracing::warn!("system_tray host error: {error}"),
+                        }
                         tokio::time::sleep(Duration::from_secs(backoff_secs)).await;
                         backoff_secs = (backoff_secs * 2).min(30);
                     }
@@ -315,6 +339,24 @@ mod tests {
 
     fn provider() -> SystemTrayProvider {
         SystemTrayProvider::new(tokio::runtime::Handle::current())
+    }
+
+    #[test]
+    fn dormant_exit_stops_the_loop() {
+        let result = Ok(HostExit::Dormant);
+        assert!(matches!(next_loop_action(&result), LoopAction::Stop));
+    }
+
+    #[test]
+    fn disconnected_exit_retries() {
+        let result = Ok(HostExit::Disconnected);
+        assert!(matches!(next_loop_action(&result), LoopAction::Retry));
+    }
+
+    #[test]
+    fn transport_error_retries() {
+        let result = Err(quantum_dbus::DbusError::Transport("boom".to_string()));
+        assert!(matches!(next_loop_action(&result), LoopAction::Retry));
     }
 
     #[tokio::test]

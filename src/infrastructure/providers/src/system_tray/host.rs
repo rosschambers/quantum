@@ -167,17 +167,33 @@ impl WatcherInterface {
     async fn status_notifier_host_unregistered(ctxt: &SignalContext<'_>) -> zbus::Result<()>;
 }
 
+/// Why the system tray host stopped running.
+///
+/// The provider's reconnect loop uses this to decide whether to stop for good
+/// or reconnect after a backoff. Only [`HostExit::Dormant`] means "stop"; a
+/// dropped connection or ended signal stream is transient and should be
+/// retried.
+pub enum HostExit {
+    /// Another StatusNotifierWatcher owns the bus name; do not retry.
+    Dormant,
+    /// The bus connection or a signal stream ended; the caller should
+    /// reconnect after a backoff.
+    Disconnected,
+}
+
 /// Run the watcher host to completion.
 ///
-/// Returns `Ok(())` on the dormant path (another watcher already owns the
-/// name) WITHOUT retrying, so a caller wrapping this in a backoff loop must
-/// break on `Ok`. Returns `Err` only for real transport failures, which the
-/// caller may back off and retry.
+/// Returns `Ok(HostExit::Dormant)` on the dormant path (another watcher
+/// already owns the name) so a caller wrapping this in a backoff loop must
+/// stop without retrying. Returns `Ok(HostExit::Disconnected)` when the bus
+/// connection or a signal stream ends, which the caller should reconnect after
+/// a backoff. Returns `Err` only for real transport failures, which the caller
+/// may also back off and retry.
 pub async fn run_system_tray_host(
     shared: Arc<Mutex<SystemTrayState>>,
     tx: broadcast::Sender<serde_json::Value>,
     handles: Arc<Mutex<ItemHandles>>,
-) -> Result<(), quantum_dbus::DbusError> {
+) -> Result<HostExit, quantum_dbus::DbusError> {
     let registry = Arc::new(Mutex::new(ItemRegistry::new()));
     let host_registered = Arc::new(AtomicBool::new(false));
     let last_broadcast = Arc::new(Mutex::new(None));
@@ -242,18 +258,18 @@ pub async fn run_system_tray_host(
 }
 
 /// The dormant path: another watcher owns the name. Warn once, broadcast the
-/// default empty state so the frontend clears, and return `Ok` without
-/// retrying.
+/// default empty state so the frontend clears, and return
+/// `Ok(HostExit::Dormant)` so the caller stops without retrying.
 async fn dormant(
     shared: &Arc<Mutex<SystemTrayState>>,
     tx: &broadcast::Sender<serde_json::Value>,
-) -> Result<(), quantum_dbus::DbusError> {
+) -> Result<HostExit, quantum_dbus::DbusError> {
     tracing::warn!(
         "system_tray: another StatusNotifierWatcher owns {WATCHER_BUS_NAME}; staying dormant"
     );
     let value = serde_json::to_value(&*shared.lock().await).unwrap_or(serde_json::Value::Null);
     let _ = tx.send(value);
-    Ok(())
+    Ok(HostExit::Dormant)
 }
 
 /// Everything the host task owns for its lifetime.
@@ -269,7 +285,7 @@ struct HostContext {
 
 /// The single owner loop: spawns mirror tasks on request and handles item
 /// departures observed through `NameOwnerChanged`.
-async fn host_loop(mut context: HostContext) -> Result<(), quantum_dbus::DbusError> {
+async fn host_loop(mut context: HostContext) -> Result<HostExit, quantum_dbus::DbusError> {
     let dbus_proxy = DBusProxy::new(&context.conn).await?;
     let mut name_owner_changed = dbus_proxy.receive_name_owner_changed().await?;
 
@@ -277,14 +293,17 @@ async fn host_loop(mut context: HostContext) -> Result<(), quantum_dbus::DbusErr
         tokio::select! {
             maybe_request = context.spawn_rx.recv() => {
                 let Some(request) = maybe_request else {
-                    // All senders dropped; the interface is gone, so stop.
-                    return Ok(());
+                    // All senders dropped; the interface is gone. This happens
+                    // when the connection is torn down, so signal a reconnect.
+                    return Ok(HostExit::Disconnected);
                 };
                 spawn_mirror(&context, request).await;
             }
             maybe_signal = name_owner_changed.next() => {
                 let Some(signal) = maybe_signal else {
-                    return Ok(());
+                    // The NameOwnerChanged stream ended: the connection
+                    // dropped. Signal a reconnect rather than a permanent stop.
+                    return Ok(HostExit::Disconnected);
                 };
                 let args = match signal.args() {
                     Ok(args) => args,
