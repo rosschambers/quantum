@@ -4,6 +4,71 @@
 //! input/output.
 
 use serde::{Deserialize, Serialize};
+use thiserror::Error;
+
+/// Errors produced by filesystem ports. These cross the IPC boundary, so every
+/// variant carries a plain human-readable string rather than a host-specific
+/// error type. `DomainError` is not serde-tagged the same way, but `FilesError`
+/// is its own contract for the file explorer subsystem.
+#[derive(Debug, Error, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(tag = "kind", content = "data", rename_all = "snake_case")]
+pub enum FilesError {
+    #[error("not found: {0}")]
+    NotFound(String),
+    #[error("permission denied: {0}")]
+    PermissionDenied(String),
+    #[error("already exists: {0}")]
+    AlreadyExists(String),
+    #[error("input/output error: {0}")]
+    Io(String),
+    #[error("unsupported: {0}")]
+    Unsupported(String),
+}
+
+/// A mutating filesystem operation requested by the explorer frontend and
+/// carried out by a [`crate::ports::FileSystemPort`]. Serializes with an
+/// internal `kind` tag so the whole set travels as one tagged-union payload
+/// across IPC.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum FileOperation {
+    Copy {
+        sources: Vec<String>,
+        destination: String,
+    },
+    Move {
+        sources: Vec<String>,
+        destination: String,
+    },
+    Rename {
+        path: String,
+        new_name: String,
+    },
+    Duplicate {
+        path: String,
+    },
+    NewFolder {
+        parent: String,
+        name: String,
+    },
+    NewFile {
+        parent: String,
+        name: String,
+    },
+    Trash {
+        paths: Vec<String>,
+    },
+    Delete {
+        paths: Vec<String>,
+    },
+    Compress {
+        paths: Vec<String>,
+        destination: String,
+    },
+    Extract {
+        path: String,
+    },
+}
 
 /// The kind of thing a directory entry points at.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -239,5 +304,93 @@ mod tests {
     fn content_kind_unknown_extension_is_other() {
         assert_eq!(content_kind_for_name("mystery.xyz"), ContentKind::Other);
         assert_eq!(content_kind_for_name("no_extension"), ContentKind::Other);
+    }
+
+    #[test]
+    fn file_operation_move_serializes_with_kind_tag() {
+        let operation = FileOperation::Move {
+            sources: vec!["/a/one.txt".to_string(), "/a/two.txt".to_string()],
+            destination: "/b".to_string(),
+        };
+        let json = serde_json::to_value(&operation).expect("serialize");
+        assert_eq!(json["kind"], "move");
+        assert_eq!(json["sources"][0], "/a/one.txt");
+        assert_eq!(json["sources"][1], "/a/two.txt");
+        assert_eq!(json["destination"], "/b");
+    }
+
+    #[test]
+    fn file_operation_new_folder_serializes_snake_case_tag() {
+        let operation = FileOperation::NewFolder {
+            parent: "/home/user".to_string(),
+            name: "projects".to_string(),
+        };
+        let json = serde_json::to_value(&operation).expect("serialize");
+        assert_eq!(json["kind"], "new_folder");
+        assert_eq!(json["parent"], "/home/user");
+        assert_eq!(json["name"], "projects");
+    }
+
+    #[test]
+    fn file_operation_round_trips_through_serde() {
+        let operations = vec![
+            FileOperation::Copy {
+                sources: vec!["/a".to_string()],
+                destination: "/b".to_string(),
+            },
+            FileOperation::Move {
+                sources: vec!["/a".to_string()],
+                destination: "/b".to_string(),
+            },
+            FileOperation::Rename {
+                path: "/a/old.txt".to_string(),
+                new_name: "new.txt".to_string(),
+            },
+            FileOperation::Duplicate {
+                path: "/a/file.txt".to_string(),
+            },
+            FileOperation::NewFolder {
+                parent: "/a".to_string(),
+                name: "folder".to_string(),
+            },
+            FileOperation::NewFile {
+                parent: "/a".to_string(),
+                name: "file.txt".to_string(),
+            },
+            FileOperation::Trash {
+                paths: vec!["/a/file.txt".to_string()],
+            },
+            FileOperation::Delete {
+                paths: vec!["/a/file.txt".to_string()],
+            },
+            FileOperation::Compress {
+                paths: vec!["/a/file.txt".to_string()],
+                destination: "/a/archive.zip".to_string(),
+            },
+            FileOperation::Extract {
+                path: "/a/archive.zip".to_string(),
+            },
+        ];
+        for operation in operations {
+            let json = serde_json::to_string(&operation).expect("serialize");
+            let back: FileOperation = serde_json::from_str(&json).expect("round trip");
+            assert_eq!(back, operation);
+        }
+    }
+
+    #[test]
+    fn files_error_serializes_and_round_trips() {
+        let error = FilesError::NotFound("/missing".to_string());
+        let json = serde_json::to_string(&error).expect("serialize");
+        let back: FilesError = serde_json::from_str(&json).expect("round trip");
+        assert_eq!(back, error);
+    }
+
+    #[test]
+    fn files_error_messages_are_plain() {
+        assert_eq!(
+            FilesError::PermissionDenied("/etc/shadow".to_string()).to_string(),
+            "permission denied: /etc/shadow"
+        );
     }
 }

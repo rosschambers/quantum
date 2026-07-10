@@ -1,6 +1,9 @@
+use crate::files::{FileOperation, FilesError};
 use crate::timer::{CivilNow, Timer, TimerError, TimerStoreData};
-use crate::{Action, DomainError, Match, ProviderId, Query};
+use crate::{Action, DomainError, DriveInfo, FileEntry, Match, ProviderId, Query};
 use async_trait::async_trait;
+use futures::stream::BoxStream;
+use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
 /// Outcome of invoking an action.
@@ -175,6 +178,62 @@ pub trait TimerBroadcast: Send + Sync {
     fn publish(&self, data: &TimerStoreData);
 }
 
+/// A progress report from a [`RecursiveSizer`] computing the total size of a
+/// directory tree. Emitted repeatedly as the walk accumulates bytes; the final
+/// emission for a given `path` sets `complete` to `true`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct SizeUpdate {
+    pub path: String,
+    pub bytes: u64,
+    pub complete: bool,
+}
+
+/// Reads and mutates the filesystem on behalf of the explorer. All methods take
+/// borrowed paths and return typed [`FilesError`]s so no host error type leaks
+/// across the IPC boundary.
+#[async_trait]
+pub trait FileSystemPort: Send + Sync {
+    async fn list_directory(&self, path: &str) -> Result<Vec<FileEntry>, FilesError>;
+    async fn stat(&self, path: &str) -> Result<FileEntry, FilesError>;
+    async fn mounts(&self) -> Result<Vec<DriveInfo>, FilesError>;
+    async fn read_text_preview(&self, path: &str, max_bytes: usize) -> Result<String, FilesError>;
+    async fn read_image_preview(
+        &self,
+        path: &str,
+        max_dimension: u32,
+    ) -> Result<String, FilesError>;
+    async fn perform(&self, operation: FileOperation) -> Result<(), FilesError>;
+    async fn search(
+        &self,
+        root: &str,
+        query: &str,
+        limit: usize,
+    ) -> Result<Vec<FileEntry>, FilesError>;
+}
+
+/// Watches a directory for changes and streams a marker string per change so
+/// the explorer can refresh the affected listing. Synchronous: registering a
+/// watch does not yield.
+pub trait DirectoryWatcher: Send + Sync {
+    fn watch(&self, path: &str) -> Result<BoxStream<'static, String>, FilesError>;
+    fn unwatch(&self, path: &str);
+}
+
+/// Opens files and directories through the desktop's launch mechanisms.
+#[async_trait]
+pub trait FileOpener: Send + Sync {
+    async fn open(&self, path: &str) -> Result<(), FilesError>;
+    async fn open_with(&self, path: &str, desktop_id: &str) -> Result<(), FilesError>;
+    async fn open_terminal(&self, directory: &str) -> Result<(), FilesError>;
+}
+
+/// Computes the recursive size of a directory tree, streaming progress as it
+/// walks. Synchronous: starting a computation returns a stream immediately.
+pub trait RecursiveSizer: Send + Sync {
+    fn compute(&self, path: &str) -> BoxStream<'static, SizeUpdate>;
+    fn cancel(&self, path: &str);
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -291,5 +350,45 @@ mod timer_port_tests {
         let _: Option<Arc<dyn TimerStore>> = None;
         let _: Option<Arc<dyn TimerNotifier>> = None;
         let _: Option<Arc<dyn TimerBroadcast>> = None;
+    }
+}
+
+#[cfg(test)]
+mod filesystem_port_tests {
+    use super::*;
+
+    #[test]
+    fn size_update_round_trips_through_serde() {
+        let update = SizeUpdate {
+            path: "/home/user/projects".to_string(),
+            bytes: 4_096,
+            complete: false,
+        };
+        let json = serde_json::to_value(&update).expect("serialize");
+        assert_eq!(json["path"], "/home/user/projects");
+        assert_eq!(json["bytes"], 4_096);
+        assert_eq!(json["complete"], false);
+        let back: SizeUpdate = serde_json::from_value(json).expect("round trip");
+        assert_eq!(back, update);
+    }
+
+    // Compile-time proof that all four filesystem ports are object-safe and can
+    // be used behind `Arc<dyn Trait>`. If any trait stopped being object-safe,
+    // this would fail to compile.
+    #[allow(dead_code)]
+    fn assert_object_safe(
+        _filesystem: Arc<dyn FileSystemPort>,
+        _watcher: Arc<dyn DirectoryWatcher>,
+        _opener: Arc<dyn FileOpener>,
+        _sizer: Arc<dyn RecursiveSizer>,
+    ) {
+    }
+
+    #[test]
+    fn filesystem_ports_are_object_safe() {
+        let _: Option<Arc<dyn FileSystemPort>> = None;
+        let _: Option<Arc<dyn DirectoryWatcher>> = None;
+        let _: Option<Arc<dyn FileOpener>> = None;
+        let _: Option<Arc<dyn RecursiveSizer>> = None;
     }
 }
