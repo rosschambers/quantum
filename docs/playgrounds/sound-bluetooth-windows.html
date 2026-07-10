@@ -1,0 +1,658 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Quantum — Bluetooth & Sound window playground</title>
+<style>
+  :root {
+    --bg: #14161b;
+    --panel: #1b1e26;
+    --card: #20242e;
+    --card2: #262b37;
+    --line: #333a48;
+    --text: #e6e9ef;
+    --muted: #96a0b5;
+    --accent: #89b4fa;
+    --good: #a6e3a1;
+    --warn: #f9e2af;
+    --danger: #f38ba8;
+    --radius: 14px;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; }
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+    display: grid;
+    grid-template-columns: 340px 1fr;
+    grid-template-rows: 1fr auto;
+    height: 100vh;
+    overflow: hidden;
+  }
+  /* Controls */
+  #controls {
+    grid-row: 1 / 3;
+    background: var(--panel);
+    border-right: 1px solid var(--line);
+    padding: 16px 16px 40px;
+    overflow-y: auto;
+  }
+  #controls h1 { font-size: 15px; margin: 0 0 2px; }
+  #controls .sub { color: var(--muted); font-size: 12px; margin-bottom: 14px; }
+  .group { border-top: 1px solid var(--line); padding: 12px 0 4px; }
+  .group h2 { font-size: 11px; text-transform: uppercase; letter-spacing: .08em; color: var(--muted); margin: 0 0 10px; }
+  .row { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 10px; }
+  .row label { font-size: 13px; }
+  .row .val { color: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums; }
+  input[type="range"] { width: 130px; accent-color: var(--accent); }
+  input[type="checkbox"] { width: 16px; height: 16px; accent-color: var(--accent); }
+  select {
+    background: var(--card); color: var(--text); border: 1px solid var(--line);
+    border-radius: 8px; padding: 5px 8px; font-size: 12px; max-width: 170px;
+  }
+  .seg { display: inline-flex; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
+  .seg button {
+    background: var(--card); color: var(--muted); border: 0; padding: 5px 9px;
+    font-size: 12px; cursor: pointer;
+  }
+  .seg button.on { background: var(--accent); color: #11131a; font-weight: 600; }
+  .presets { display: flex; flex-wrap: wrap; gap: 6px; }
+  .presets button {
+    background: var(--card); color: var(--text); border: 1px solid var(--line);
+    border-radius: 999px; padding: 6px 11px; font-size: 12px; cursor: pointer;
+  }
+  .presets button:hover { border-color: var(--accent); }
+  /* Preview */
+  #stage {
+    grid-column: 2; grid-row: 1;
+    overflow: auto; padding: 26px;
+    display: flex; gap: 26px; flex-wrap: wrap; align-items: flex-start;
+    background:
+      radial-gradient(1200px 500px at 30% -10%, #1d2430 0%, transparent 60%),
+      var(--bg);
+  }
+  /* Window card */
+  .win {
+    width: 380px; background: var(--card); border: 1px solid var(--line);
+    border-radius: var(--radius); box-shadow: 0 18px 50px rgba(0,0,0,.5);
+    display: flex; flex-direction: column; max-height: 78vh; overflow: hidden;
+  }
+  .win.sound { width: 440px; }
+  .win-head {
+    display: flex; align-items: center; gap: 10px; padding: 14px 14px 12px;
+    border-bottom: 1px solid var(--line);
+  }
+  .win-head .title { font-size: 15px; font-weight: 600; flex: 1; }
+  .iconbtn {
+    display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+    background: var(--card2); color: var(--text); border: 1px solid var(--line);
+    border-radius: 8px; cursor: pointer; font-size: 12px; padding: 6px 8px; line-height: 1;
+  }
+  .iconbtn.round { border-radius: 999px; width: 30px; height: 30px; padding: 0; }
+  .iconbtn:hover { border-color: var(--accent); }
+  .iconbtn.ghost { background: transparent; border-color: transparent; color: var(--muted); }
+  .iconbtn.ghost:hover { color: var(--text); background: var(--card2); }
+  .iconbtn.danger:hover { border-color: var(--danger); color: var(--danger); }
+  .iconbtn.good { color: var(--good); }
+  .toggle-pill {
+    display: inline-flex; align-items: center; gap: 7px; background: var(--card2);
+    border: 1px solid var(--line); border-radius: 999px; padding: 4px 9px; font-size: 12px; cursor: pointer;
+  }
+  .toggle-pill .dot { width: 26px; height: 15px; border-radius: 999px; background: #3a4152; position: relative; transition: .15s; }
+  .toggle-pill.on .dot { background: var(--accent); }
+  .toggle-pill .dot::after { content: ""; position: absolute; top: 2px; left: 2px; width: 11px; height: 11px; border-radius: 50%; background: #e9edf6; transition: .15s; }
+  .toggle-pill.on .dot::after { left: 13px; }
+  .win-body { overflow-y: auto; padding: 6px 0 10px; }
+  .section-label { font-size: 10.5px; text-transform: uppercase; letter-spacing: .09em; color: var(--muted); padding: 12px 14px 6px; display: flex; align-items: center; gap: 8px; }
+  .section-label .count { background: var(--card2); border-radius: 999px; padding: 1px 7px; font-size: 10px; }
+  .section-label .spin { width: 11px; height: 11px; border: 2px solid var(--line); border-top-color: var(--accent); border-radius: 50%; animation: sp 0.8s linear infinite; }
+  @keyframes sp { to { transform: rotate(360deg); } }
+  .dev { display: flex; align-items: center; gap: 11px; padding: 8px 14px; }
+  .dev:hover { background: var(--card2); }
+  .dev .glyph { width: 30px; height: 30px; border-radius: 8px; background: var(--card2); display: grid; place-items: center; font-size: 15px; flex: none; }
+  .dev.compact { padding: 6px 14px; }
+  .dev .meta { flex: 1; min-width: 0; }
+  .dev .name { font-size: 13.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .dev .name.mono { font-family: ui-monospace, monospace; color: var(--muted); font-size: 12px; }
+  .dev .subtitle { font-size: 11.5px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .dev .actions { display: flex; align-items: center; gap: 6px; flex: none; }
+  .battery { font-size: 11px; color: var(--muted); display: inline-flex; gap: 3px; align-items: center; }
+  .rssi { font-size: 10px; color: var(--muted); }
+  .divider { height: 1px; background: var(--line); margin: 8px 14px; opacity: .6; }
+  .collapse-head { display: flex; align-items: center; gap: 8px; cursor: pointer; user-select: none; }
+  .collapse-head .chev { transition: .15s; color: var(--muted); }
+  .collapse-head.closed .chev { transform: rotate(-90deg); }
+  /* sound */
+  .slider-row { display: flex; align-items: center; gap: 10px; padding: 9px 14px; }
+  .slider-row .glyph { width: 26px; height: 26px; border-radius: 7px; background: var(--card2); display: grid; place-items: center; font-size: 13px; flex: none; }
+  .slider-row .meta { width: 128px; flex: none; }
+  .slider-row .name { font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .slider-row .subtitle { font-size: 11px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .slider-row input[type=range] { flex: 1; accent-color: var(--accent); }
+  .slider-row .pct { width: 36px; text-align: right; font-size: 11px; color: var(--muted); font-variant-numeric: tabular-nums; }
+  .radio { width: 15px; height: 15px; border-radius: 50%; border: 2px solid var(--line); flex: none; display: grid; place-items: center; }
+  .radio.on { border-color: var(--accent); }
+  .radio.on::after { content: ""; width: 7px; height: 7px; border-radius: 50%; background: var(--accent); }
+  .profile-card { margin: 6px 14px; border: 1px solid var(--line); border-radius: 10px; overflow: hidden; }
+  .profile-opt { display: flex; align-items: center; gap: 10px; padding: 9px 11px; cursor: pointer; }
+  .profile-opt:hover { background: var(--card2); }
+  .profile-opt + .profile-opt { border-top: 1px solid var(--line); }
+  .profile-opt .ptitle { font-size: 13px; }
+  .profile-opt .phint { font-size: 11px; color: var(--muted); }
+  .badge { font-size: 10px; padding: 1px 6px; border-radius: 999px; background: var(--card2); color: var(--muted); }
+  .badge.good { color: var(--good); }
+  .badge.none { color: var(--danger); }
+  .empty { color: var(--muted); font-size: 12.5px; padding: 10px 14px; font-style: italic; }
+  .missing {
+    margin: 10px 14px; padding: 10px 12px; border: 1px dashed var(--line); border-radius: 10px;
+    font-size: 12px; color: var(--muted); display: flex; gap: 9px; align-items: flex-start;
+  }
+  .tip { text-decoration: underline dotted; text-underline-offset: 3px; cursor: help; }
+  /* Prompt */
+  #prompt {
+    grid-column: 2; grid-row: 2; border-top: 1px solid var(--line);
+    background: var(--panel); padding: 12px 16px; display: flex; gap: 12px; align-items: flex-start;
+  }
+  #promptText {
+    flex: 1; background: var(--bg); border: 1px solid var(--line); border-radius: 10px;
+    color: var(--text); font-family: ui-monospace, monospace; font-size: 12px; line-height: 1.5;
+    padding: 10px 12px; height: 128px; resize: vertical; white-space: pre-wrap;
+  }
+  #copyBtn {
+    background: var(--accent); color: #11131a; border: 0; border-radius: 10px; font-weight: 600;
+    padding: 10px 16px; cursor: pointer; font-size: 13px; white-space: nowrap;
+  }
+</style>
+</head>
+<body>
+  <div id="controls">
+    <h1>Bluetooth &amp; Sound windows</h1>
+    <div class="sub">Iterate on the look here, then copy the spec at the bottom.</div>
+
+    <div class="group">
+      <h2>Presets</h2>
+      <div class="presets" id="presets"></div>
+    </div>
+
+    <div class="group">
+      <h2>Shared style</h2>
+      <div class="row">
+        <label>Close control</label>
+        <div class="seg" data-seg="closeStyle">
+          <button data-v="x">X icon</button>
+          <button data-v="text">"Close"</button>
+        </div>
+      </div>
+      <div class="row">
+        <label>Action buttons</label>
+        <div class="seg" data-seg="btnStyle">
+          <button data-v="icon">Icons</button>
+          <button data-v="both">Icon+label</button>
+          <button data-v="text">Text</button>
+        </div>
+      </div>
+      <div class="row">
+        <label>Density</label>
+        <div class="seg" data-seg="density">
+          <button data-v="comfortable">Comfortable</button>
+          <button data-v="compact">Compact</button>
+        </div>
+      </div>
+      <div class="row">
+        <label>List max height</label>
+        <input type="range" id="listH" min="180" max="620" step="10">
+        <span class="val" id="listHV"></span>
+      </div>
+      <div class="row">
+        <label>Tooltips (trust/pair/profiles)</label>
+        <input type="checkbox" id="tooltips">
+      </div>
+      <div class="row">
+        <label>Accent hue</label>
+        <input type="range" id="hue" min="0" max="360" step="1">
+        <span class="val" id="hueV"></span>
+      </div>
+    </div>
+
+    <div class="group">
+      <h2>Bluetooth window</h2>
+      <div class="row">
+        <label>"Paired" section name</label>
+        <select id="pairedLabel">
+          <option value="Paired">Paired</option>
+          <option value="Remembered">Remembered</option>
+          <option value="Known devices">Known devices</option>
+        </select>
+      </div>
+      <div class="row">
+        <label>Unnamed discovered devices</label>
+        <select id="unnamed">
+          <option value="hide">Hide entirely</option>
+          <option value="group">Group under "Unknown"</option>
+          <option value="show">Show all inline</option>
+        </select>
+      </div>
+      <div class="row">
+        <label>Per-device actions</label>
+        <div class="seg" data-seg="btActions">
+          <button data-v="inline">Inline buttons</button>
+          <button data-v="menu">⋮ menu</button>
+        </div>
+      </div>
+      <div class="row">
+        <label>Type icons (headset/mouse)</label>
+        <input type="checkbox" id="typeIcons">
+      </div>
+      <div class="row">
+        <label>Signal strength on available</label>
+        <input type="checkbox" id="showRssi">
+      </div>
+    </div>
+
+    <div class="group">
+      <h2>Sound window</h2>
+      <div class="row">
+        <label>Profiles section</label>
+        <div class="seg" data-seg="profiles">
+          <button data-v="expanded">Expanded</button>
+          <button data-v="collapsed">Collapsed</button>
+          <button data-v="hidden">Hidden</button>
+        </div>
+      </div>
+      <div class="row">
+        <label>Profile labels</label>
+        <div class="seg" data-seg="profileLabels">
+          <button data-v="human">Human</button>
+          <button data-v="raw">Raw</button>
+        </div>
+      </div>
+      <div class="row">
+        <label>Show sink/source counts</label>
+        <input type="checkbox" id="profileCounts">
+      </div>
+      <div class="row">
+        <label>"Don't see your device?" hint</label>
+        <input type="checkbox" id="missingHint">
+      </div>
+      <div class="row">
+        <label>Input devices section</label>
+        <input type="checkbox" id="showInputs">
+      </div>
+    </div>
+
+    <div class="group">
+      <h2>Preview</h2>
+      <div class="row">
+        <label>Show</label>
+        <div class="seg" data-seg="showWin">
+          <button data-v="both">Both</button>
+          <button data-v="bt">Bluetooth</button>
+          <button data-v="sound">Sound</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div id="stage"></div>
+
+  <div id="prompt">
+    <textarea id="promptText" readonly></textarea>
+    <button id="copyBtn">Copy spec</button>
+  </div>
+
+<script>
+const DEFAULTS = {
+  closeStyle: "x",
+  btnStyle: "icon",
+  density: "comfortable",
+  listH: 300,
+  tooltips: true,
+  hue: 217,
+  pairedLabel: "Remembered",
+  unnamed: "group",
+  btActions: "menu",
+  typeIcons: true,
+  showRssi: true,
+  profiles: "collapsed",
+  profileLabels: "human",
+  profileCounts: true,
+  missingHint: true,
+  showInputs: true,
+  showWin: "both",
+};
+let state = { ...DEFAULTS };
+
+const PRESETS = {
+  "Minimal icons": { closeStyle:"x", btnStyle:"icon", density:"comfortable", btActions:"menu", profiles:"collapsed", unnamed:"hide", typeIcons:true, showRssi:false, profileCounts:false },
+  "Labeled & explained": { closeStyle:"x", btnStyle:"both", density:"comfortable", tooltips:true, btActions:"inline", profiles:"expanded", profileLabels:"human", profileCounts:true, unnamed:"group", missingHint:true },
+  "Compact power-user": { closeStyle:"x", btnStyle:"icon", density:"compact", listH:240, btActions:"menu", profiles:"collapsed", unnamed:"show", showRssi:true, typeIcons:true, profileLabels:"raw" },
+  "Current build (before changes)": { closeStyle:"text", btnStyle:"text", density:"comfortable", listH:620, tooltips:false, btActions:"inline", profiles:"collapsed", profileLabels:"raw", profileCounts:false, unnamed:"show", missingHint:false, typeIcons:false, showRssi:false },
+};
+
+// ---- Mock data (real names from the live system) ----
+const BT = {
+  powered: true,
+  connected: [
+    { name: "MX Master 3S", type: "mouse", battery: 50, trusted: true, paired: true },
+  ],
+  paired: [
+    { name: "Logitech Pebble", type: "mouse", trusted: true, paired: true },
+    { name: "WH-1000XM4", type: "headset", trusted: false, paired: true },
+  ],
+  available: [
+    { name: "Pro Controller", type: "gamepad", rssi: -58 },
+    { name: "L301G07", type: "unknown", rssi: -71 },
+    { addr: "7A:99:4D:03:E5:42", type: "unknown", rssi: -80 },
+    { addr: "81:0E:FD:2A:34:1E", type: "unknown", rssi: -84 },
+    { addr: "41:DD:5E:77:22:44", type: "unknown", rssi: -88 },
+    { addr: "40:CB:C0:EE:8A:5E", type: "unknown", rssi: -90 },
+    { addr: "65:E5:6B:70:85:CD", type: "unknown", rssi: -92 },
+  ],
+};
+const SOUND = {
+  outputs: [
+    { name: "HDMI / DisplayPort 1", sub: "Arrow Lake cAVS", vol: 55, def: true, muted: false },
+    { name: "HDMI / DisplayPort 2", sub: "Arrow Lake cAVS", vol: 100, def: false, muted: false },
+    { name: "HDMI / DisplayPort 3", sub: "Arrow Lake cAVS", vol: 100, def: false, muted: false },
+    { name: "Headphones", sub: "Arrow Lake cAVS", vol: 100, def: false, muted: false },
+  ],
+  inputs: [
+    { name: "Digital Microphone", sub: "Arrow Lake cAVS", vol: 100, def: true, muted: false },
+    { name: "Stereo Microphone", sub: "Arrow Lake cAVS", vol: 100, def: false, muted: true },
+  ],
+  card: {
+    name: "Arrow Lake cAVS",
+    profiles: [
+      { raw: "HiFi (…Headphones, Mic1, Mic2)", human: "Headphones + mics", hint: "Headphone output, both mics", sinks: 4, sources: 2, active: true, available: true },
+      { raw: "HiFi (…Speaker, Mic1, Mic2)", human: "Speakers + mics", hint: "Built-in speaker, both mics", sinks: 4, sources: 2, active: false, available: true },
+      { raw: "pro-audio", human: "Pro Audio", hint: "All ports raw, no routing", sinks: 5, sources: 2, active: false, available: true },
+      { raw: "off", human: "Disabled", hint: "No inputs or outputs", sinks: 0, sources: 0, active: false, available: true },
+    ],
+  },
+};
+
+const ICON = {
+  x: "✕", close: "✕", mute: "🔇", unmute: "🔊", vol: "🔊", mic: "🎙",
+  mouse: "🖱", headset: "🎧", gamepad: "🎮", speaker: "🔊", hdmi: "🖥", unknown: "❔",
+  connect: "🔗", disconnect: "⏏", trust: "★", untrust: "☆", remove: "🗑", menu: "⋮", scan: "🔍",
+  pair: "＋", power: "⏻",
+};
+
+const TIP = {
+  pair: "Pair: exchange keys with the device so it is remembered. First-time setup.",
+  trust: "Trust: auto-accept future connections from this device without asking.",
+  connect: "Connect: open an active link to an already-paired device.",
+  remove: "Remove: forget this device entirely (unpair).",
+  profileA2DP: "High quality stereo output, but the microphone is OFF.",
+  profileHeadset: "Microphone ON, but playback drops to low-quality mono.",
+  profileOff: "Card enabled but exposes no inputs or outputs.",
+};
+
+// ---- helpers ----
+function el(tag, cls, html) { const e = document.createElement(tag); if (cls) e.className = cls; if (html != null) e.innerHTML = html; return e; }
+function tip(text, key) { return state.tooltips ? `<span class="tip" title="${TIP[key]||''}">${text}</span>` : text; }
+
+function actionBtn(icon, label, extra) {
+  extra = extra || "";
+  if (state.btnStyle === "icon") return `<button class="iconbtn round ${extra}" title="${label}">${icon}</button>`;
+  if (state.btnStyle === "both") return `<button class="iconbtn ${extra}">${icon} ${label}</button>`;
+  return `<button class="iconbtn ${extra}">${label}</button>`;
+}
+function closeBtn() {
+  if (state.closeStyle === "x") return `<button class="iconbtn round ghost" title="Close">${ICON.x}</button>`;
+  return `<button class="iconbtn ghost">Close</button>`;
+}
+
+// ---- Bluetooth window ----
+function renderBt() {
+  const win = el("div", "win bt");
+  const head = el("div", "win-head");
+  head.innerHTML = `<div class="title">Bluetooth</div>
+    <div class="toggle-pill ${BT.powered?'on':''}" title="Power">${state.btnStyle!=='text'?ICON.power:''} <span class="dot"></span></div>
+    ${closeBtn()}`;
+  win.appendChild(head);
+
+  const body = el("div", "win-body");
+  body.style.maxHeight = state.listH + "px";
+  const dcls = state.density === "compact" ? "dev compact" : "dev";
+
+  const glyph = (d) => state.typeIcons ? (ICON[d.type] || ICON.unknown) : ICON.headset;
+
+  const deviceRow = (d, kind) => {
+    const row = el("div", dcls);
+    const displayName = d.name || d.addr;
+    const nameCls = d.name ? "name" : "name mono";
+    let sub = "";
+    if (kind === "connected" && d.battery != null) sub = `<span class="battery">🔋 ${d.battery}%</span>`;
+    else if (kind === "available" && state.showRssi && d.rssi != null) sub = `<span class="rssi">signal ${d.rssi} dBm</span>`;
+    else if (kind === "paired") sub = d.trusted ? "trusted" : "not trusted";
+
+    let actions = "";
+    if (state.btActions === "menu") {
+      actions = actionBtn(ICON.menu, "Options", "");
+    } else {
+      if (kind === "connected") actions = actionBtn(ICON.disconnect, tip("Disconnect","connect"), "danger");
+      else if (kind === "paired") actions = actionBtn(ICON.connect, tip("Connect","connect"), "good") + " " + actionBtn(ICON.remove, tip("Remove","remove"), "danger");
+      else actions = actionBtn(ICON.pair, tip("Pair","pair"), "good");
+    }
+    row.innerHTML = `<div class="glyph">${glyph(d)}</div>
+      <div class="meta"><div class="${nameCls}">${displayName}</div>${sub?`<div class="subtitle">${sub}</div>`:""}</div>
+      <div class="actions">${actions}</div>`;
+    return row;
+  };
+
+  const sectionLabel = (text, count, spinning) => {
+    const s = el("div", "section-label");
+    s.innerHTML = `${text} ${count!=null?`<span class="count">${count}</span>`:""} ${spinning?'<span class="spin"></span>':''}`;
+    return s;
+  };
+
+  body.appendChild(sectionLabel("Connected", BT.connected.length));
+  if (!BT.connected.length) body.appendChild(el("div","empty","Nothing connected"));
+  BT.connected.forEach(d => body.appendChild(deviceRow(d, "connected")));
+
+  body.appendChild(el("div","divider"));
+  body.appendChild(sectionLabel(state.pairedLabel.toUpperCase(), BT.paired.length));
+  BT.paired.forEach(d => body.appendChild(deviceRow(d, "paired")));
+
+  body.appendChild(el("div","divider"));
+  const named = BT.available.filter(d => d.name);
+  const nameless = BT.available.filter(d => !d.name);
+  body.appendChild(sectionLabel("Available", named.length + (state.unnamed==='show'?nameless.length:0), true));
+  named.forEach(d => body.appendChild(deviceRow(d, "available")));
+  if (state.unnamed === "show") nameless.forEach(d => body.appendChild(deviceRow(d, "available")));
+  else if (state.unnamed === "group" && nameless.length) {
+    const head2 = el("div", "section-label collapse-head closed");
+    head2.style.paddingLeft = "14px";
+    head2.innerHTML = `<span class="chev">▾</span> Unknown devices <span class="count">${nameless.length}</span>`;
+    body.appendChild(head2);
+    const wrap = el("div"); wrap.style.display = "none";
+    nameless.forEach(d => wrap.appendChild(deviceRow(d, "available")));
+    head2.onclick = () => { const open = wrap.style.display === "none"; wrap.style.display = open?"block":"none"; head2.classList.toggle("closed", !open); };
+    body.appendChild(wrap);
+  }
+
+  win.appendChild(body);
+  return win;
+}
+
+// ---- Sound window ----
+function renderSound() {
+  const win = el("div", "win sound");
+  const head = el("div", "win-head");
+  head.innerHTML = `<div class="title">Sound</div>${closeBtn()}`;
+  win.appendChild(head);
+  const body = el("div", "win-body");
+  body.style.maxHeight = state.listH + "px";
+
+  const sectionLabel = (t) => { const s = el("div","section-label"); s.innerHTML = t; return s; };
+
+  const devRow = (d, kind) => {
+    const row = el("div", "slider-row");
+    const muteIcon = d.muted ? ICON.mute : (kind==="input"?ICON.mic:ICON.vol);
+    const muteBtn = state.btnStyle === "text"
+      ? `<button class="iconbtn">${d.muted?'Unmute':'Mute'}</button>`
+      : `<button class="iconbtn round ${d.muted?'':'ghost'}" title="${d.muted?'Unmute':'Mute'}">${muteIcon}</button>`;
+    row.innerHTML = `<div class="radio ${d.def?'on':''}" title="Set default"></div>
+      <div class="meta"><div class="name">${d.name}</div><div class="subtitle">${d.sub}</div></div>
+      <input type="range" min="0" max="100" value="${d.muted?0:d.vol}">
+      <span class="pct">${d.vol}%</span>${muteBtn}`;
+    return row;
+  };
+
+  body.appendChild(sectionLabel("Output devices"));
+  SOUND.outputs.forEach(d => body.appendChild(devRow(d, "output")));
+
+  if (state.missingHint) {
+    const m = el("div","missing");
+    m.innerHTML = `<span>${ICON.unknown}</span><div>Don't see your headset? Check the dongle is seated in the dock, or that it's powered on and linked. Devices the system can't see can't be shown here.</div>`;
+    body.appendChild(m);
+  }
+
+  if (state.showInputs) {
+    body.appendChild(el("div","divider"));
+    body.appendChild(sectionLabel("Input devices"));
+    SOUND.inputs.forEach(d => body.appendChild(devRow(d, "input")));
+  }
+
+  body.appendChild(el("div","divider"));
+  body.appendChild(sectionLabel("Playback"));
+  body.appendChild(el("div","empty","Nothing playing"));
+
+  if (state.profiles !== "hidden") {
+    body.appendChild(el("div","divider"));
+    const collapsed = state.profiles === "collapsed";
+    const lab = el("div", "section-label collapse-head" + (collapsed?" closed":""));
+    lab.innerHTML = `<span class="chev">▾</span> Device profiles <span class="count">${SOUND.card.name}</span>`;
+    body.appendChild(lab);
+    const wrap = el("div", "profile-card");
+    wrap.style.display = collapsed ? "none" : "block";
+    lab.onclick = () => { const open = wrap.style.display === "none"; wrap.style.display = open?"block":"none"; lab.classList.toggle("closed", !open); };
+    SOUND.card.profiles.forEach(p => {
+      const opt = el("div", "profile-opt");
+      const title = state.profileLabels === "human" ? p.human : p.raw;
+      const hint = state.tooltips ? p.hint : "";
+      const counts = state.profileCounts ? `<span class="badge ${p.sinks?'':'none'}">${p.sinks} out</span> <span class="badge">${p.sources} in</span>` : "";
+      const activeBadge = p.active ? `<span class="badge good">active</span>` : "";
+      opt.innerHTML = `<div class="radio ${p.active?'on':''}"></div>
+        <div style="flex:1"><div class="ptitle">${title} ${activeBadge}</div>${hint?`<div class="phint">${hint}</div>`:""}</div>
+        ${counts}`;
+      wrap.appendChild(opt);
+    });
+    body.appendChild(wrap);
+  }
+
+  win.appendChild(body);
+  return win;
+}
+
+// ---- render + prompt ----
+function renderPreview() {
+  const stage = document.getElementById("stage");
+  stage.innerHTML = "";
+  if (state.showWin !== "sound") stage.appendChild(renderBt());
+  if (state.showWin !== "bt") stage.appendChild(renderSound());
+}
+
+function updatePrompt() {
+  const L = [];
+  L.push("Update the Quantum Bluetooth and Sound overlay windows with these design decisions:");
+  L.push("");
+  L.push("Shared:");
+  L.push(`- Close control: ${state.closeStyle === "x" ? "a round X icon button (top-right), no text" : 'a text "Close" button'}.`);
+  L.push(`- Row action buttons: ${state.btnStyle === "icon" ? "icon-only round buttons with tooltips" : state.btnStyle === "both" ? "icon plus text label" : "text-only buttons"}.`);
+  L.push(`- Density: ${state.density}.`);
+  L.push(`- Scrollable body with a fixed max-height of ${state.listH}px and an internal scrollbar (never let the window grow unbounded).`);
+  L.push(`- ${state.tooltips ? "Show hover tooltips explaining pair / trust / connect / remove and each audio profile's tradeoff." : "No explanatory tooltips."}`);
+  L.push("");
+  L.push("Bluetooth window:");
+  L.push(`- Sections: Connected, "${state.pairedLabel}" (paired-but-disconnected), Available (live scan with spinner).`);
+  const un = { hide: "Hide unnamed/MAC-only discovered devices entirely.", group: 'Collapse unnamed/MAC-only discovered devices under a "Unknown devices" expander.', show: "Show every discovered device inline, including MAC-only ones." };
+  L.push(`- ${un[state.unnamed]}`);
+  L.push(`- Per-device actions as ${state.btActions === "menu" ? "a single ⋮ options menu (connect/disconnect/trust/remove inside)" : "inline buttons"}.`);
+  L.push(`- ${state.typeIcons ? "Show device-type glyphs (headset, mouse, gamepad) from the BlueZ icon field." : "Use a single generic Bluetooth glyph."}`);
+  L.push(`- ${state.showRssi ? "Show signal strength (RSSI) on available devices, sorted strongest first." : "No signal readout."}`);
+  L.push("");
+  L.push("Sound window:");
+  L.push(`- Output devices with per-device default selector, volume slider, and ${state.btnStyle==="text"?"text mute":"icon mute"} button.`);
+  L.push(`- ${state.showInputs ? "Include an Input devices section (mics) with the same controls." : "No input devices section."}`);
+  if (state.profiles === "hidden") L.push("- Do not surface card profiles.");
+  else {
+    L.push(`- Surface a "Device profiles" section, ${state.profiles}, with ${state.profileLabels === "human" ? "human-readable profile names" : "raw pactl profile names"}${state.profileCounts ? " and per-profile sink/source counts (0 out = no sound)" : ""}.`);
+    L.push("  Explain the A2DP-vs-headset tradeoff: high-quality stereo with no mic, versus mic-on lower-quality. Switching a card's profile is how a device with no usable sink (e.g. onboard Speaker, or a wireless headset) becomes an output.");
+  }
+  if (state.missingHint) L.push(`- Include a "don't see your device?" hint (dongle/dock/power check) since a device the OS can't enumerate cannot be routed to.`);
+  L.push("");
+  L.push("Also fix the crash: the destroy_on_dismiss teardown calls gtk_window_destroy from a spawn_local future on an already-invalid GDK surface when the window is opened/closed rapidly during pairing — guard against double-destroy / destroy-after-surface-gone.");
+  document.getElementById("promptText").value = L.join("\n");
+}
+
+function updateAll() { applyHue(); renderPreview(); updatePrompt(); }
+function applyHue() { document.documentElement.style.setProperty("--accent", `hsl(${state.hue} 85% 72%)`); }
+
+// ---- wire controls ----
+function syncControls() {
+  document.querySelectorAll(".seg").forEach(seg => {
+    const key = seg.dataset.seg;
+    seg.querySelectorAll("button").forEach(b => b.classList.toggle("on", b.dataset.v === state[key]));
+  });
+  document.getElementById("listH").value = state.listH;
+  document.getElementById("listHV").textContent = state.listH + "px";
+  document.getElementById("hue").value = state.hue;
+  document.getElementById("hueV").textContent = state.hue;
+  document.getElementById("tooltips").checked = state.tooltips;
+  document.getElementById("typeIcons").checked = state.typeIcons;
+  document.getElementById("showRssi").checked = state.showRssi;
+  document.getElementById("profileCounts").checked = state.profileCounts;
+  document.getElementById("missingHint").checked = state.missingHint;
+  document.getElementById("showInputs").checked = state.showInputs;
+  document.getElementById("pairedLabel").value = state.pairedLabel;
+  document.getElementById("unnamed").value = state.unnamed;
+}
+
+document.querySelectorAll(".seg").forEach(seg => {
+  seg.querySelectorAll("button").forEach(b => {
+    b.onclick = () => { state[seg.dataset.seg] = b.dataset.v; syncControls(); updateAll(); };
+  });
+});
+const bind = (id, key, isCheck, isNum) => {
+  document.getElementById(id).addEventListener("input", e => {
+    state[key] = isCheck ? e.target.checked : isNum ? +e.target.value : e.target.value;
+    if (id === "listH") document.getElementById("listHV").textContent = state.listH + "px";
+    if (id === "hue") document.getElementById("hueV").textContent = state.hue;
+    updateAll();
+  });
+};
+bind("listH","listH",false,true);
+bind("hue","hue",false,true);
+bind("tooltips","tooltips",true);
+bind("typeIcons","typeIcons",true);
+bind("showRssi","showRssi",true);
+bind("profileCounts","profileCounts",true);
+bind("missingHint","missingHint",true);
+bind("showInputs","showInputs",true);
+bind("pairedLabel","pairedLabel");
+bind("unnamed","unnamed");
+
+const presetsWrap = document.getElementById("presets");
+Object.keys(PRESETS).forEach(name => {
+  const b = el("button", null, name);
+  b.onclick = () => { state = { ...DEFAULTS, ...PRESETS[name] }; syncControls(); updateAll(); };
+  presetsWrap.appendChild(b);
+});
+
+document.getElementById("copyBtn").onclick = () => {
+  navigator.clipboard.writeText(document.getElementById("promptText").value).then(() => {
+    const btn = document.getElementById("copyBtn");
+    const t = btn.textContent; btn.textContent = "Copied!";
+    setTimeout(() => btn.textContent = t, 1200);
+  });
+};
+
+syncControls();
+updateAll();
+</script>
+</body>
+</html>

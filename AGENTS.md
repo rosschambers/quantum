@@ -328,6 +328,50 @@ broken CI before; do not reintroduce them:
   `just frontend-build`) BEFORE building `quantumd`; a brand-new plugin may need
   a SECOND `cargo build` to be embedded, because its `rerun-if-changed` paths
   are only registered once the build script has first seen the directory.
+- **Overlay windows share one house style — match wifi-menu, do not invent.**
+  Every first-party overlay (`kind = "overlay"`, `destroy_on_dismiss = true`)
+  follows the wifi-menu shell. When adding one, clone that pattern exactly:
+  - **No window-level close button.** No header `X`, no "Close" button.
+    Overlays dismiss via **Escape + backdrop click ONLY** — a window keydown
+    `$effect` handling `Escape`, and a `.backdrop` `onclick` guarded by
+    `event.target === event.currentTarget`. Adding a close control is the most
+    common inconsistency; do not.
+  - **Bounded, scrolling body.** `.card` is `overflow: hidden` with a fixed
+    `max-height: 80vh` and `width: min(420px, 92vw)` (420px is the norm — do not
+    widen without reason); an inner `.scroll { overflow-y: auto; flex: 1 }` grows
+    to fill. The card never grows unbounded.
+  - **Card shell tokens:** `.backdrop` uses `var(--color-overlay-backdrop,
+    rgba(0,0,0,0.5))` + `backdrop-filter: blur(4px)`; `.card` uses
+    `var(--color-bg-alt)`, `border-radius: 12px`, `border: 1px solid
+    var(--color-border)`, `box-shadow: 0 14px 40px var(--color-shadow)`.
+  - **Dismissal:** `close()` calls `view.hide` by the **canonical** name
+    `plugin/<plugin>/<view>` (never a legacy alias for a new plugin). Session-
+    owning providers (wifi, bluetooth, audio) send `close_session` BEFORE
+    `view.hide` — `destroy_on_dismiss` means the `$effect` cleanup is not a
+    reliable place to stop a provider session.
+  - **Theme tokens only — do not hardcode or invent tokens.** Backed by both
+    themes: `--color-bg`, `--color-bg-alt`, `--color-border`, `--color-fg`,
+    `--color-fg-alt`, `--color-accent`, `--color-muted`, `--color-surface`,
+    `--color-overlay-backdrop`, `--color-shadow`, `--color-divider`,
+    `--color-warning`, `--font-sans`. **Destructive/error color is
+    `--color-error`** (theme-backed) — NOT `--color-danger`, `--color-bad`, or
+    `--color-fg-muted`, which are undefined drift that always falls back to
+    hardcoded hex. Active theme is `sycamore`.
+  - **Icons:** no shared Icon package — `Icon.svelte` is copied per plugin
+    (hand-drawn 24×24 `currentColor` SVG). Overlays use that SVG set or a Unicode
+    entity glyph; **never emoji**. There are no headset/mouse/keyboard glyphs in
+    the set — add SVG paths or use Unicode entities.
+  - **Context menus / dropdowns:** build with `openContextMenu` from
+    `@quantum/client`. `MenuItem` is `{ label, icon?, disabled?, danger?,
+    separator?, onSelect }` — `icon` is a string glyph, `danger: true` renders
+    red, and `options.anchorRect` drops the menu below a button (device-picker
+    dropdown pattern). Separators are `{ separator: true }`.
+- **`destroy_on_dismiss` teardown is fragile under rapid open/close plus async
+  events.** Dismissing destroys the GTK window; a `spawn_local` future that
+  later calls `gtk_window_destroy` on that already-gone surface aborts with
+  `gdk_surface_get_display: assertion 'GDK_IS_SURFACE (surface)' failed`. Guard
+  the destroy path against double-destroy / destroy-after-surface-gone
+  (`src/ui/host/src/registry.rs`).
 
 ## Rules
 
