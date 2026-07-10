@@ -143,7 +143,7 @@ impl PanelWindow {
         if layer_shell {
             builder = builder.decorated(false);
         } else {
-            builder = builder.decorated(true).title(&panel_title(&view_name));
+            builder = builder.decorated(true).title(panel_title(&view_name));
         }
 
         let window = builder.build();
