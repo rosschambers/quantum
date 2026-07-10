@@ -39,3 +39,6 @@ export const BRIGHTNESS_CHANNEL = 'brightness.event';
 
 export const SYSTEM_POWER_PROVIDER = 'system_power';
 export const SYSTEM_POWER_CHANNEL = 'system_power.event';
+
+export const SYSTEM_TRAY_PROVIDER = 'system_tray';
+export const SYSTEM_TRAY_CHANNEL = 'system_tray.event';
