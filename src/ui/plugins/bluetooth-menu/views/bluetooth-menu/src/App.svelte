@@ -386,7 +386,7 @@
         background: var(--color-bg-alt, #313244);
         color: var(--color-fg, #cdd6f4);
         border-radius: 12px;
-        width: min(440px, 92vw);
+        width: min(420px, 92vw);
         max-height: 80vh;
         box-sizing: border-box;
         display: flex;
