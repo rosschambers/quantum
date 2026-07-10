@@ -236,6 +236,11 @@ pub struct AudioCardProfile {
     pub name: String,
     pub description: String,
     pub available: bool,
+    /// Number of output sinks this profile exposes. Zero means the profile
+    /// produces no sound (the sound window surfaces this as "0 out = no sound").
+    pub sink_count: u32,
+    /// Number of input sources this profile exposes.
+    pub source_count: u32,
 }
 
 /// One sound card with its profiles.
@@ -616,6 +621,8 @@ mod tests {
                     name: "HiFi".into(),
                     description: "Play HiFi quality Music".into(),
                     available: true,
+                    sink_count: 1,
+                    source_count: 0,
                 }],
             }],
         };

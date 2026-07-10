@@ -29,6 +29,8 @@ export interface AudioCardProfile {
     name: string;
     description: string;
     available: boolean;
+    sink_count: number;
+    source_count: number;
 }
 
 export interface AudioCard {

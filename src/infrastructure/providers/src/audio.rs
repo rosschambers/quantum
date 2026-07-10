@@ -588,6 +588,10 @@ pub(crate) struct PactlStream {
 pub(crate) struct PactlCardProfile {
     pub description: String,
     pub available: bool,
+    #[serde(default)]
+    pub sinks: u32,
+    #[serde(default)]
+    pub sources: u32,
 }
 
 /// One card from `pactl --format=json list cards`. Cards have no top-level
@@ -698,6 +702,8 @@ pub(crate) fn map_card(card: &PactlCard) -> AudioCard {
                 name: profile_name.clone(),
                 description: profile.description.clone(),
                 available: profile.available,
+                sink_count: profile.sinks,
+                source_count: profile.sources,
             })
             .collect(),
     }
@@ -1410,6 +1416,21 @@ mod tests {
             .expect("headphones profile present");
         assert!(!unavailable.available);
         assert!(unavailable.description.starts_with("Play HiFi"));
+        // Per-profile sink/source counts flow through from pactl JSON.
+        let off = card
+            .profiles
+            .iter()
+            .find(|profile| profile.name == "off")
+            .expect("off profile present");
+        assert_eq!(off.sink_count, 0);
+        assert_eq!(off.source_count, 0);
+        let active = card
+            .profiles
+            .iter()
+            .find(|profile| profile.name == card.active_profile)
+            .expect("active profile present");
+        assert_eq!(active.sink_count, 4);
+        assert_eq!(active.source_count, 2);
     }
 
     #[test]
