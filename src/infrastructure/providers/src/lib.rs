@@ -50,6 +50,7 @@ pub use power_profile::PowerProfilesDaemonProvider;
 pub use proc_stats::ProcStatsProvider;
 pub use shell_command::ShellCommandProvider;
 pub use system_power::SystemPowerProvider;
+pub use system_tray::SystemTrayProvider;
 pub use timer::TimerProvider;
 pub use timer_clock::SystemClock;
 pub use timer_notifier::{NotificationTimerNotifier, SoundPlayer};

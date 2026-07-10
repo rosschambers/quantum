@@ -30,3 +30,10 @@ pub mod registry;
 /// mirroring: the bus-facing core that discovers, mirrors, and removes tray
 /// items and broadcasts the resulting state.
 pub mod host;
+
+/// The [`ProviderSource`](quantum_domain::ProviderSource) implementation that
+/// runs the host under a reconnect backoff loop and forwards user activations
+/// back to applications over DBus.
+pub mod provider;
+
+pub use provider::SystemTrayProvider;
