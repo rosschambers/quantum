@@ -16,6 +16,7 @@ use serde_json::Value;
 use tokio::sync::{broadcast, Mutex};
 use tokio_stream::wrappers::BroadcastStream;
 use zbus::names::BusName;
+use zbus::zvariant::OwnedValue;
 use zbus::{Connection, Proxy};
 
 use quantum_domain::{
@@ -23,6 +24,7 @@ use quantum_domain::{
 };
 
 use super::host::{run_system_tray_host, HostExit, ItemHandles};
+use super::menu::parse_menu_layout;
 
 /// Whether the provider's reconnect loop should stop for good or reconnect
 /// after a backoff.
@@ -229,15 +231,52 @@ impl SystemTrayProvider {
             })?;
 
         // AboutToShow lets the application populate the menu before it is
-        // displayed. A failure here is non-fatal: the mirror task's
-        // LayoutUpdated subscription still refreshes the tree.
-        if let Err(error) = proxy.call_method("AboutToShow", &(0i32)).await {
-            tracing::warn!("system_tray: AboutToShow failed for {service}: {error}");
+        // displayed and returns whether the layout changed. A call failure is
+        // non-fatal: the mirror task's LayoutUpdated subscription still
+        // refreshes the tree eventually.
+        let need_update: bool = match proxy.call("AboutToShow", &0i32).await {
+            Ok(need_update) => need_update,
+            Err(error) => {
+                tracing::warn!("system_tray: AboutToShow failed for {service}: {error}");
+                return Ok(ActionOutcome {
+                    message: Some(format!("requested menu for system tray service {service}")),
+                });
+            }
+        };
+
+        // When the application reports a changed layout, refetch it now and
+        // rebroadcast so the frontend's follow-up query sees the fresh tree.
+        if need_update {
+            self.refetch_menu(&proxy, &service).await;
         }
 
         Ok(ActionOutcome {
             message: Some(format!("requested menu for system tray service {service}")),
         })
+    }
+
+    /// Refetch a menu's `GetLayout`, rebuild the matching item's tree in the
+    /// shared state, and broadcast the new full state. A call or parse failure
+    /// is non-fatal and simply leaves the existing tree in place.
+    async fn refetch_menu(&self, proxy: &Proxy<'_>, service: &str) {
+        let reply: (u32, OwnedValue) = match proxy
+            .call("GetLayout", &(0i32, -1i32, &[] as &[&str]))
+            .await
+        {
+            Ok(reply) => reply,
+            Err(error) => {
+                tracing::warn!("system_tray: GetLayout failed for {service}: {error}");
+                return;
+            }
+        };
+        let menu = parse_menu_layout(&reply.1);
+
+        let mut state = self.shared.lock().await;
+        if let Some(item) = state.items.iter_mut().find(|item| item.service == service) {
+            item.menu = menu;
+        }
+        let value = serde_json::to_value(&*state).unwrap_or(Value::Null);
+        let _ = self.tx.send(value);
     }
 }
 
