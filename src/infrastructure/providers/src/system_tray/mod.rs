@@ -21,3 +21,7 @@ pub mod icon;
 /// Selecting the best StatusNotifierItem icon pixmap and encoding it as a
 /// PNG data URI for the frontend.
 pub mod pixmap;
+
+/// Pure bookkeeping for tracking which StatusNotifierItems are registered so
+/// the host can add, remove, and enumerate them.
+pub mod registry;
