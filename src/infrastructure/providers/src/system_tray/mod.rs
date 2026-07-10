@@ -25,3 +25,8 @@ pub mod pixmap;
 /// Pure bookkeeping for tracking which StatusNotifierItems are registered so
 /// the host can add, remove, and enumerate them.
 pub mod registry;
+
+/// The StatusNotifierWatcher DBus server and per-item property and menu
+/// mirroring: the bus-facing core that discovers, mirrors, and removes tray
+/// items and broadcasts the resulting state.
+pub mod host;
