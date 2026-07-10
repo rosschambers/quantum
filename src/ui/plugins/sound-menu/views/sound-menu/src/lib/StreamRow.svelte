@@ -1,6 +1,7 @@
 <script lang="ts">
     import type { AudioStream } from './types';
     import VolumeSlider from './VolumeSlider.svelte';
+    import Icon from './Icon.svelte';
 
     interface Props {
         stream: AudioStream;
@@ -25,9 +26,11 @@
         class="mute-button"
         class:muted={stream.muted}
         data-action="mute"
+        title={stream.muted ? 'Unmute' : 'Mute'}
+        aria-label={stream.muted ? 'Unmute' : 'Mute'}
         onclick={onToggleMute}
     >
-        {stream.muted ? 'Unmute' : 'Mute'}
+        <Icon name={stream.muted ? 'speaker-muted' : 'speaker'} />
     </button>
     <button type="button" class="pick-button" data-action="pick-device" onclick={onPickDevice}>
         {pickLabel}
@@ -64,7 +67,19 @@
         overflow: hidden;
         text-overflow: ellipsis;
     }
-    .mute-button,
+    .mute-button {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        width: 28px;
+        height: 28px;
+        background: var(--color-bg, #1e1e2e);
+        color: var(--color-fg-alt, #a6adc8);
+        border: 1px solid var(--color-border, #45475a);
+        border-radius: 6px;
+        cursor: pointer;
+        font-family: inherit;
+    }
     .pick-button {
         background: var(--color-bg, #1e1e2e);
         color: var(--color-fg-alt, #a6adc8);

@@ -1,6 +1,7 @@
 <script lang="ts">
     import type { AudioDevice } from './types';
     import VolumeSlider from './VolumeSlider.svelte';
+    import Icon from './Icon.svelte';
 
     interface Props {
         device: AudioDevice;
@@ -36,9 +37,11 @@
         class="mute-button"
         class:muted={device.muted}
         data-action="mute"
+        title={device.muted ? 'Unmute' : 'Mute'}
+        aria-label={device.muted ? 'Unmute' : 'Mute'}
         onclick={onToggleMute}
     >
-        {device.muted ? 'Unmute' : 'Mute'}
+        <Icon name={device.muted ? 'speaker-muted' : 'speaker'} />
     </button>
 </div>
 
@@ -77,12 +80,15 @@
         color: var(--color-fg-alt, #a6adc8);
     }
     .mute-button {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        width: 28px;
+        height: 28px;
         background: var(--color-bg, #1e1e2e);
         color: var(--color-fg-alt, #a6adc8);
         border: 1px solid var(--color-border, #45475a);
         border-radius: 6px;
-        padding: 3px 8px;
-        font-size: 11px;
         cursor: pointer;
         font-family: inherit;
     }

@@ -283,6 +283,17 @@ describe('SoundMenu device sections', () => {
             percent: 70,
         });
     });
+
+    it('mute buttons are icon buttons with a tooltip, not text', async () => {
+        const { container } = render(App);
+        await settle();
+        const muteButton = container.querySelector(
+            '[data-device-name="hdmi-sink"] [data-action="mute"]',
+        ) as HTMLButtonElement;
+        expect(muteButton.getAttribute('title')).toBeTruthy();
+        expect(muteButton.querySelector('svg')).not.toBeNull();
+        expect(muteButton.textContent?.trim()).toBe('');
+    });
 });
 
 describe('SoundMenu stream sections', () => {
