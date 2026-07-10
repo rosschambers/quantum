@@ -56,6 +56,16 @@ function baseState(): BluetoothState {
                 icon: 'audio-headset',
                 rssi: -40,
             },
+            {
+                address: 'AA:00:00:00:00:05',
+                name: '',
+                battery_percent: null,
+                paired: false,
+                trusted: false,
+                connected: false,
+                icon: null,
+                rssi: -55,
+            },
         ],
     };
 }
@@ -325,6 +335,31 @@ describe('BluetoothMenu devices', () => {
             command: 'remove',
             address: 'AA:00:00:00:00:02',
         });
+    });
+});
+
+describe('BluetoothMenu unknown devices expander', () => {
+    it('hides unnamed devices behind a collapsed expander with a count', async () => {
+        const { container } = render(App);
+        await settle();
+        const available = container.querySelector('[data-section="available"]') as HTMLElement;
+        // Named devices are visible; the unnamed MAC-only one is not.
+        expect(available.querySelector('[data-address="AA:00:00:00:00:04"]')).not.toBeNull();
+        expect(available.querySelector('[data-address="AA:00:00:00:00:05"]')).toBeNull();
+        const toggle = available.querySelector('[data-action="toggle-unknown"]') as HTMLButtonElement;
+        expect(toggle).not.toBeNull();
+        expect(toggle.textContent).toContain('1');
+    });
+
+    it('reveals unnamed devices when the expander is opened', async () => {
+        const { container } = render(App);
+        await settle();
+        const toggle = container.querySelector('[data-action="toggle-unknown"]') as HTMLButtonElement;
+        await fireEvent.click(toggle);
+        await tick();
+        expect(
+            container.querySelector('[data-section="available"] [data-address="AA:00:00:00:00:05"]'),
+        ).not.toBeNull();
     });
 });
 

@@ -99,12 +99,22 @@
     const knownDevices = $derived(
         state.devices.filter((device) => device.paired && !device.connected),
     );
+    /** A discovered device with no usable name is "unknown": empty name or a
+     * name that is just its MAC address. These are grouped behind an expander. */
+    function isNamed(device: BluetoothDevice): boolean {
+        return device.name !== '' && device.name !== device.address;
+    }
+
     const availableDevices = $derived(
         state.devices
             .filter((device) => !device.paired && !device.connected)
             .slice()
             .sort((a, b) => (b.rssi ?? -32768) - (a.rssi ?? -32768)),
     );
+    const namedAvailable = $derived(availableDevices.filter(isNamed));
+    const unknownAvailable = $derived(availableDevices.filter((device) => !isNamed(device)));
+
+    let unknownOpen = $state(false);
 
     function setRowStatus(address: string, status: RowStatus | null): void {
         if (status === null) {
@@ -261,10 +271,10 @@
                         Available
                         {#if state.discovering}<span class="spinner"></span>{/if}
                     </div>
-                    {#if availableDevices.length === 0}
+                    {#if namedAvailable.length === 0 && unknownAvailable.length === 0}
                         <div class="section-empty">Searching for devices...</div>
                     {/if}
-                    {#each availableDevices as device (device.address)}
+                    {#each namedAvailable as device (device.address)}
                         <DeviceRow
                             {device}
                             status={rowStatus[device.address] ?? null}
@@ -273,6 +283,29 @@
                             onSelect={() => void pairConnectTrust(device)}
                         />
                     {/each}
+                    {#if unknownAvailable.length > 0}
+                        <button
+                            type="button"
+                            class="expander-toggle"
+                            data-action="toggle-unknown"
+                            aria-expanded={unknownOpen}
+                            onclick={() => (unknownOpen = !unknownOpen)}
+                        >
+                            <span class="expander-caret" class:open={unknownOpen}>{'\u203A'}</span>
+                            Unknown devices ({unknownAvailable.length})
+                        </button>
+                        {#if unknownOpen}
+                            {#each unknownAvailable as device (device.address)}
+                                <DeviceRow
+                                    {device}
+                                    status={rowStatus[device.address] ?? null}
+                                    actionLabel={null}
+                                    onAction={null}
+                                    onSelect={() => void pairConnectTrust(device)}
+                                />
+                            {/each}
+                        {/if}
+                    {/if}
                 </div>
             </div>
         {/if}
@@ -369,6 +402,33 @@
         font-size: 12px;
         color: var(--color-fg-alt, #a6adc8);
         padding: 8px 10px 14px;
+    }
+    .expander-toggle {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        width: 100%;
+        background: none;
+        border: none;
+        color: var(--color-fg-alt, #a6adc8);
+        font-size: 11px;
+        font-weight: 600;
+        text-transform: uppercase;
+        letter-spacing: 0.06em;
+        padding: 8px 10px;
+        cursor: pointer;
+        font-family: inherit;
+        text-align: left;
+    }
+    .expander-toggle:hover {
+        color: var(--color-fg, #cdd6f4);
+    }
+    .expander-caret {
+        display: inline-block;
+        transition: transform 0.15s;
+    }
+    .expander-caret.open {
+        transform: rotate(90deg);
     }
     .spinner {
         width: 12px;
