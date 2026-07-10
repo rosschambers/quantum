@@ -748,6 +748,58 @@ mod tests {
         assert_eq!(resolve_display_title("", "", "identifier"), "identifier");
     }
 
+    #[test]
+    fn parse_pixmaps_extracts_one_entry() {
+        let entry: (i32, i32, Vec<u8>) = (1, 1, vec![1u8, 2, 3, 4]);
+        let value = OwnedValue::try_from(Value::from(vec![entry])).expect("array value");
+        let pixmaps = parse_pixmaps(&value);
+        assert_eq!(pixmaps, vec![(1, 1, vec![1u8, 2, 3, 4])]);
+    }
+
+    #[test]
+    fn parse_pixmaps_of_wrong_shape_is_empty() {
+        let value = OwnedValue::try_from(Value::from(0u32)).expect("scalar value");
+        assert!(parse_pixmaps(&value).is_empty());
+    }
+
+    #[test]
+    fn tooltip_title_reads_the_third_field() {
+        let empty_icons: Vec<(i32, i32, Vec<u8>)> = Vec::new();
+        let value = Value::from(("icon-name", empty_icons, "The Title", "descr"));
+        assert_eq!(tooltip_title_from_value(&value), "The Title");
+    }
+
+    #[test]
+    fn tooltip_title_of_wrong_shape_is_empty() {
+        let value = Value::from(0u32);
+        assert_eq!(tooltip_title_from_value(&value), "");
+    }
+
+    #[test]
+    fn menu_path_reads_object_path() {
+        let path = ObjectPath::try_from("/com/example/Menu").expect("object path");
+        let mut properties: HashMap<String, OwnedValue> = HashMap::new();
+        properties.insert(
+            "Menu".to_string(),
+            OwnedValue::try_from(Value::from(path)).expect("owned object path"),
+        );
+        assert_eq!(
+            menu_path_property(&properties),
+            Some("/com/example/Menu".to_string())
+        );
+    }
+
+    #[test]
+    fn menu_path_root_sentinel_is_none() {
+        let path = ObjectPath::try_from("/").expect("root object path");
+        let mut properties: HashMap<String, OwnedValue> = HashMap::new();
+        properties.insert(
+            "Menu".to_string(),
+            OwnedValue::try_from(Value::from(path)).expect("owned object path"),
+        );
+        assert_eq!(menu_path_property(&properties), None);
+    }
+
     #[tokio::test]
     #[ignore = "requires session bus"]
     async fn host_claims_watcher_and_reports_host_registered() {
