@@ -15,3 +15,4 @@ pub mod sizer;
 pub mod watcher;
 
 pub use filesystem::LocalFileSystem;
+pub use watcher::NotifyDirectoryWatcher;
