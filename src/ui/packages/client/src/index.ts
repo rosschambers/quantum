@@ -144,3 +144,17 @@ export {
   type TimerEnvelope,
   type TimerStore,
 } from './timer';
+export {
+  type FileEntryKind,
+  type PermissionClass,
+  type ContentKind,
+  type FileEntry,
+  type DriveInfo,
+  type Pin,
+  type ApplicationInfo,
+  type FileOperation,
+  type Places,
+  type PreviewKind,
+  type PreviewPayload,
+  type FilesEvent,
+} from './files';
