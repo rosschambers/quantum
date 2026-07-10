@@ -1,4 +1,4 @@
-use crate::files::{FileOperation, FilesError};
+use crate::files::{ApplicationInfo, FileOperation, FilesError, Pin};
 use crate::timer::{CivilNow, Timer, TimerError, TimerStoreData};
 use crate::{Action, DomainError, DriveInfo, FileEntry, Match, ProviderId, Query};
 use async_trait::async_trait;
@@ -234,6 +234,23 @@ pub trait RecursiveSizer: Send + Sync {
     fn cancel(&self, path: &str);
 }
 
+/// Persistence for the explorer's user-pinned sidebar locations. Each mutating
+/// method returns the full pin list after the change so a caller can broadcast
+/// the new state without a second read.
+#[async_trait]
+pub trait PinsPort: Send + Sync {
+    async fn load(&self) -> Vec<Pin>;
+    async fn add(&self, pin: Pin) -> Result<Vec<Pin>, FilesError>;
+    async fn remove(&self, path: &str) -> Result<Vec<Pin>, FilesError>;
+}
+
+/// Source of the applications offered by the explorer's "Open with" menu.
+/// Infrastructure implements this over the desktop-entry scan.
+#[async_trait]
+pub trait ApplicationCatalog: Send + Sync {
+    async fn list_applications(&self) -> Vec<ApplicationInfo>;
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -390,5 +407,20 @@ mod filesystem_port_tests {
         let _: Option<Arc<dyn DirectoryWatcher>> = None;
         let _: Option<Arc<dyn FileOpener>> = None;
         let _: Option<Arc<dyn RecursiveSizer>> = None;
+    }
+
+    // Compile-time proof that the pins and application-catalog ports are
+    // object-safe and can be used behind `Arc<dyn Trait>`.
+    #[allow(dead_code)]
+    fn assert_explorer_ports_object_safe(
+        _pins: Arc<dyn PinsPort>,
+        _applications: Arc<dyn ApplicationCatalog>,
+    ) {
+    }
+
+    #[test]
+    fn explorer_ports_are_object_safe() {
+        let _: Option<Arc<dyn PinsPort>> = None;
+        let _: Option<Arc<dyn ApplicationCatalog>> = None;
     }
 }

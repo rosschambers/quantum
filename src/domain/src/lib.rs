@@ -28,17 +28,17 @@ pub use bar_state::{
 pub use error::DomainError;
 pub use event_bus::EventEnvelope;
 pub use files::{
-    classify_permissions, content_kind_for_name, ContentKind, DriveInfo, FileEntry, FileEntryKind,
-    FileOperation, FilesError, PermissionClass,
+    classify_permissions, content_kind_for_name, ApplicationInfo, ContentKind, DriveInfo,
+    FileEntry, FileEntryKind, FileOperation, FilesError, PermissionClass, Pin,
 };
 pub use ids::ProviderId;
 pub use match_result::{IconRef, Match};
 pub use notifications::{Notification, NotificationEvent, NotificationUrgency};
 pub use ports::{
-    ActionOutcome, Clock, DirectoryWatcher, EventBus, FileOpener, FileSystemPort, HyprlandClient,
-    PluginCatalog, ProviderRegistry, ProviderSource, RecursiveSizer, ShellExecutor, ShellOutput,
-    SizeUpdate, ThemeStore, TimerBroadcast, TimerNotifier, TimerStore, WindowHost,
-    WindowInputRegion,
+    ActionOutcome, ApplicationCatalog, Clock, DirectoryWatcher, EventBus, FileOpener,
+    FileSystemPort, HyprlandClient, PinsPort, PluginCatalog, ProviderRegistry, ProviderSource,
+    RecursiveSizer, ShellExecutor, ShellOutput, SizeUpdate, ThemeStore, TimerBroadcast,
+    TimerNotifier, TimerStore, WindowHost, WindowInputRegion,
 };
 pub use query::Query;
 pub use score::MatchScore;

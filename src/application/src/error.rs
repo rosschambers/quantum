@@ -1,4 +1,4 @@
-use quantum_domain::{DomainError, TimerError};
+use quantum_domain::{DomainError, FilesError, TimerError};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
@@ -9,6 +9,12 @@ pub enum ApplicationError {
     Domain(#[from] DomainError),
     #[error("dispatch failed for method `{method}`: {source}")]
     Dispatch { method: String, source: DomainError },
+    /// A file-explorer subsystem error. `FilesError` is its own IPC contract
+    /// (a serde-tagged union with plain-string payloads), so it is preserved
+    /// intact rather than flattened into a `DomainError`; the frontend then
+    /// sees the exact file failure (not found, permission denied, and so on).
+    #[error(transparent)]
+    Files(#[from] FilesError),
     #[error("{0}")]
     Unknown(String),
 }
@@ -26,7 +32,23 @@ impl ApplicationError {
         match self {
             Self::Domain(e) => e.rpc_code(),
             Self::Dispatch { source, .. } => source.rpc_code(),
+            Self::Files(e) => Self::files_rpc_code(e),
             Self::Unknown(_) => -32603,
+        }
+    }
+
+    /// Stable JSON-RPC codes for the file-explorer error contract, kept in the
+    /// domain range (`-32000..=-32099`). `NotFound` and `Unsupported` reuse the
+    /// matching `DomainError` codes because they carry the same semantics; the
+    /// remaining file-specific conditions allocate fresh codes. These are part
+    /// of the public IPC contract and MUST NOT be renumbered once shipped.
+    fn files_rpc_code(error: &FilesError) -> i32 {
+        match error {
+            FilesError::NotFound(_) => -32005,
+            FilesError::Unsupported(_) => -32004,
+            FilesError::PermissionDenied(_) => -32010,
+            FilesError::AlreadyExists(_) => -32011,
+            FilesError::Io(_) => -32012,
         }
     }
 }
@@ -129,6 +151,45 @@ mod tests {
     fn unknown_variant_is_generic_internal_error() {
         let err = ApplicationError::Unknown("something exploded".to_string());
         assert_eq!(err.rpc_code(), -32603);
+    }
+
+    #[test]
+    fn files_error_converts_to_application_error() {
+        let files_err = FilesError::PermissionDenied("/etc/shadow".to_string());
+        let app_err: ApplicationError = files_err.into();
+        match app_err {
+            ApplicationError::Files(FilesError::PermissionDenied(path)) => {
+                assert_eq!(path, "/etc/shadow");
+            }
+            other => panic!("expected ApplicationError::Files, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn files_error_serde_roundtrip() {
+        let err = ApplicationError::Files(FilesError::NotFound("/missing".to_string()));
+        let json = serde_json::to_string(&err).unwrap();
+        let back: ApplicationError = serde_json::from_str(&json).unwrap();
+        assert_eq!(format!("{}", err), format!("{}", back));
+    }
+
+    #[test]
+    fn files_error_codes_stay_in_domain_range() {
+        let errors = [
+            FilesError::NotFound("x".to_string()),
+            FilesError::PermissionDenied("x".to_string()),
+            FilesError::AlreadyExists("x".to_string()),
+            FilesError::Io("x".to_string()),
+            FilesError::Unsupported("x".to_string()),
+        ];
+        for error in errors {
+            let code = ApplicationError::Files(error).rpc_code();
+            assert!(
+                (-32099..=-32000).contains(&code),
+                "code {} outside domain range",
+                code
+            );
+        }
     }
 
     #[test]

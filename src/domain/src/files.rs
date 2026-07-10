@@ -132,6 +132,23 @@ pub struct DriveInfo {
     pub free_bytes: u64,
 }
 
+/// A user-pinned location shown in the explorer sidebar. A pin is a stable
+/// label plus the absolute path it points at.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct Pin {
+    pub label: String,
+    pub path: String,
+}
+
+/// A launchable application offered by the explorer's "Open with" menu. `id`
+/// is the desktop-entry identifier used to launch it; `name` is its
+/// human-readable display name.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct ApplicationInfo {
+    pub id: String,
+    pub name: String,
+}
+
 /// Classify an entry into a [`PermissionClass`] from ownership and mode bits.
 ///
 /// Root ownership always wins first. For regular files an execute bit means
@@ -236,6 +253,32 @@ mod tests {
         let json = serde_json::to_value(&drive).expect("serialize");
         let back: DriveInfo = serde_json::from_value(json).expect("round trip");
         assert_eq!(back, drive);
+    }
+
+    #[test]
+    fn pin_round_trips_through_serde() {
+        let pin = Pin {
+            label: "Projects".to_string(),
+            path: "/home/user/projects".to_string(),
+        };
+        let json = serde_json::to_value(&pin).expect("serialize");
+        assert_eq!(json["label"], "Projects");
+        assert_eq!(json["path"], "/home/user/projects");
+        let back: Pin = serde_json::from_value(json).expect("round trip");
+        assert_eq!(back, pin);
+    }
+
+    #[test]
+    fn application_info_round_trips_through_serde() {
+        let application = ApplicationInfo {
+            id: "org.gnome.gedit.desktop".to_string(),
+            name: "Text Editor".to_string(),
+        };
+        let json = serde_json::to_value(&application).expect("serialize");
+        assert_eq!(json["id"], "org.gnome.gedit.desktop");
+        assert_eq!(json["name"], "Text Editor");
+        let back: ApplicationInfo = serde_json::from_value(json).expect("round trip");
+        assert_eq!(back, application);
     }
 
     #[test]
