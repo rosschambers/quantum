@@ -51,6 +51,28 @@ fn should_use_layer_shell(env_flag: bool, is_overlay: bool) -> bool {
     env_flag || is_overlay
 }
 
+/// Derive a human-readable window title from a canonical view name. The last
+/// path segment is taken, hyphens become spaces, and each word is capitalized:
+/// `plugin/files/files` becomes `Files`, `plugin/power-menu/power-menu` becomes
+/// `Power Menu`. An empty name falls back to `Quantum`.
+fn panel_title(canonical_name: &str) -> String {
+    let segment = canonical_name.rsplit('/').next().unwrap_or("");
+    if segment.is_empty() {
+        return "Quantum".to_string();
+    }
+    segment
+        .split('-')
+        .map(|word| {
+            let mut chars = word.chars();
+            match chars.next() {
+                Some(first) => first.to_uppercase().collect::<String>() + chars.as_str(),
+                None => String::new(),
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
 impl PanelWindow {
     /// Create a new panel window.
     ///
@@ -121,7 +143,7 @@ impl PanelWindow {
         if layer_shell {
             builder = builder.decorated(false);
         } else {
-            builder = builder.decorated(true).title("Quantum");
+            builder = builder.decorated(true).title(&panel_title(&view_name));
         }
 
         let window = builder.build();
@@ -405,5 +427,14 @@ mod tests {
         // flag opts in, preserving the lockout-safety default.
         assert!(!should_use_layer_shell(false, false));
         assert!(should_use_layer_shell(true, false));
+    }
+
+    #[test]
+    fn panel_title_derives_from_last_segment() {
+        use super::panel_title;
+        assert_eq!(panel_title("plugin/files/files"), "Files");
+        assert_eq!(panel_title("plugin/power-menu/power-menu"), "Power Menu");
+        assert_eq!(panel_title("files"), "Files");
+        assert_eq!(panel_title(""), "Quantum");
     }
 }
