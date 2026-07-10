@@ -206,9 +206,6 @@
                     onclick={togglePowered}
                 ></button>
             </span>
-            <button type="button" class="close-btn" data-action="close" onclick={close}>
-                ✕
-            </button>
         </div>
 
         {#if !state.available}
@@ -351,18 +348,6 @@
     }
     .switch.on::after {
         transform: translateX(15px);
-    }
-    .close-btn {
-        background: none;
-        border: none;
-        color: var(--color-fg-alt, #a6adc8);
-        cursor: pointer;
-        font-size: 13px;
-        padding: 2px 6px;
-        font-family: inherit;
-    }
-    .close-btn:hover {
-        color: var(--color-fg, #cdd6f4);
     }
     .scroll {
         overflow-y: auto;

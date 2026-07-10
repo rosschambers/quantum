@@ -205,6 +205,13 @@ describe('BluetoothMenu App shell', () => {
             /off/i,
         );
     });
+
+    it('renders no window-level close button (Escape and backdrop only)', async () => {
+        const { container } = render(App);
+        await settle();
+        expect(container.querySelector('[data-action="close"]')).toBeNull();
+        expect(container.querySelector('.close-btn')).toBeNull();
+    });
 });
 
 describe('BluetoothMenu devices', () => {
