@@ -16,5 +16,6 @@ pub mod watcher;
 
 pub use filesystem::LocalFileSystem;
 pub use opener::ProcessFileOpener;
+pub use pins::{Pin, PinStore};
 pub use sizer::BackgroundSizer;
 pub use watcher::NotifyDirectoryWatcher;
