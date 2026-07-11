@@ -1776,8 +1776,10 @@ mod tests {
         let session = std::sync::Arc::new(AudioSession::default());
         {
             let mut last = session.last.lock().await;
-            let mut state = AudioState::default();
-            state.available = true;
+            let state = AudioState {
+                available: true,
+                ..AudioState::default()
+            };
             *last = Some(state);
         }
         let provider = provider_with_session(true, session);

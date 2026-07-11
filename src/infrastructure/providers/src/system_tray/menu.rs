@@ -172,16 +172,16 @@ mod tests {
             0,
             vec![("children-display", Value::from("submenu"))],
             vec![
-                Value::from(node(1, vec![("label", Value::from("_Library"))], vec![])),
-                Value::from(node(2, vec![("type", Value::from("separator"))], vec![])),
-                Value::from(node(
+                node(1, vec![("label", Value::from("_Library"))], vec![]),
+                node(2, vec![("type", Value::from("separator"))], vec![]),
+                node(
                     3,
                     vec![
                         ("label", Value::from("E_xit")),
                         ("enabled", Value::from(false)),
                     ],
                     vec![],
-                )),
+                ),
             ],
         );
         let parsed = parse_menu_layout(&layout);
@@ -207,14 +207,14 @@ mod tests {
         let layout = node(
             0,
             vec![],
-            vec![Value::from(node(
+            vec![node(
                 10,
                 vec![
                     ("label", Value::from("Settings")),
                     ("children-display", Value::from("submenu")),
                 ],
-                vec![Value::from(child)],
-            ))],
+                vec![child],
+            )],
         );
         let parsed = parse_menu_layout(&layout);
         assert_eq!(parsed[0].children.len(), 1);
@@ -232,7 +232,7 @@ mod tests {
             vec![],
             vec![
                 Value::from("garbage"),
-                Value::from(node(1, vec![("label", Value::from("Ok"))], vec![])),
+                node(1, vec![("label", Value::from("Ok"))], vec![]),
             ],
         );
         let parsed = parse_menu_layout(&layout);
