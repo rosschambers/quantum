@@ -16,7 +16,6 @@ use serde_json::Value;
 use tokio::sync::{broadcast, Mutex};
 use tokio_stream::wrappers::BroadcastStream;
 use zbus::names::BusName;
-use zbus::zvariant::OwnedValue;
 use zbus::{Connection, Proxy};
 
 use quantum_domain::{
@@ -24,7 +23,7 @@ use quantum_domain::{
 };
 
 use super::host::{run_system_tray_host, HostExit, ItemHandles};
-use super::menu::parse_menu_layout;
+use super::menu::{parse_menu_layout_reply, RawMenuLayout};
 
 /// Whether the provider's reconnect loop should stop for good or reconnect
 /// after a backoff.
@@ -263,7 +262,7 @@ impl SystemTrayProvider {
     /// shared state, and broadcast the new full state. A call or parse failure
     /// is non-fatal and simply leaves the existing tree in place.
     async fn refetch_menu(&self, proxy: &Proxy<'_>, service: &str) {
-        let reply: (u32, OwnedValue) = match proxy
+        let reply: (u32, RawMenuLayout) = match proxy
             .call("GetLayout", &(0i32, -1i32, &[] as &[&str]))
             .await
         {
@@ -273,7 +272,11 @@ impl SystemTrayProvider {
                 return;
             }
         };
-        let menu = parse_menu_layout(&reply.1);
+        let menu = parse_menu_layout_reply(&reply.1);
+        tracing::debug!(
+            "system_tray: refetched menu for {service}: {} nodes",
+            menu.len()
+        );
 
         let mut state = self.shared.lock().await;
         if let Some(item) = state.items.iter_mut().find(|item| item.service == service) {

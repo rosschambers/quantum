@@ -7,8 +7,33 @@
 //! downcast defensively: a failed downcast yields the property default or,
 //! for a whole node, skips that node while its siblings still parse.
 
+use std::collections::HashMap;
+
 use quantum_domain::SystemTrayMenuNode;
-use zbus::zvariant::{Dict, Value};
+use zbus::zvariant::{Dict, OwnedValue, Value};
+
+/// The concrete wire type of the `layout` out-argument of
+/// com.canonical.dbusmenu `GetLayout`: `(ia{sv}av)`.
+///
+/// Only the root node arrives as a concrete structure; its children (`av`)
+/// are variants, each wrapping another node structure. Deserializing the
+/// reply as `(u32, OwnedValue)` is wrong — that demands signature `uv`
+/// (revision plus a variant) while the bus carries `u(ia{sv}av)`, so every
+/// call fails with a signature mismatch before any parsing happens.
+pub type RawMenuLayout = (i32, HashMap<String, OwnedValue>, Vec<OwnedValue>);
+
+/// Parse the root layout structure of a `GetLayout` reply into menu nodes.
+///
+/// The root node (id `0`) is a container that is never rendered, so its
+/// children are returned. Malformed children are skipped, matching
+/// [`parse_menu_layout`].
+pub fn parse_menu_layout_reply(layout: &RawMenuLayout) -> Vec<SystemTrayMenuNode> {
+    let (_, _, children) = layout;
+    children
+        .iter()
+        .filter_map(|child| parse_node(child))
+        .collect()
+}
 
 /// Parse the layout structure returned as the second element of
 /// com.canonical.dbusmenu `GetLayout` into a list of menu nodes.
@@ -238,6 +263,42 @@ mod tests {
         let parsed = parse_menu_layout(&layout);
         assert_eq!(parsed.len(), 1);
         assert_eq!(parsed[0].label, "Ok");
+    }
+
+    #[test]
+    fn reply_type_signature_matches_dbusmenu_get_layout() {
+        // Regression: the GetLayout reply body is `u(ia{sv}av)` on the wire.
+        // Deserializing as `(u32, OwnedValue)` demanded `uv` and failed with
+        // "Signature mismatch: got `u(ia{sv}av)`, expected `(uv)`" for every
+        // application, leaving all tray menus permanently empty.
+        use zbus::zvariant::Type;
+        assert_eq!(
+            <(u32, RawMenuLayout)>::signature().as_str(),
+            "(u(ia{sv}av))"
+        );
+    }
+
+    #[test]
+    fn parses_reply_shaped_layout() {
+        // Children arrive as variants (`av`) wrapping node structures, the
+        // exact shape zbus produces when deserializing a GetLayout reply
+        // into RawMenuLayout.
+        let child_one = node(2, vec![("label", Value::from("Show Spotify"))], vec![]);
+        let child_two = node(3, vec![("type", Value::from("separator"))], vec![]);
+        let children = vec![
+            OwnedValue::try_from(child_one).expect("owned child"),
+            OwnedValue::try_from(child_two).expect("owned child"),
+        ];
+        let mut properties: HashMap<String, OwnedValue> = HashMap::new();
+        properties.insert(
+            "children-display".to_string(),
+            OwnedValue::try_from(Value::from("submenu")).expect("owned property"),
+        );
+        let layout: RawMenuLayout = (0, properties, children);
+        let parsed = parse_menu_layout_reply(&layout);
+        assert_eq!(parsed.len(), 2);
+        assert_eq!(parsed[0].label, "Show Spotify");
+        assert!(parsed[1].separator);
     }
 
     #[test]

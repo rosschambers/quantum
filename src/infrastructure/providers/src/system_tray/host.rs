@@ -598,14 +598,24 @@ async fn fetch_menu(conn: &Connection, bus_name: &str, menu_path: &str) -> Vec<S
         Ok(proxy) => proxy,
         Err(_) => return Vec::new(),
     };
-    let reply: (u32, OwnedValue) = match proxy
+    let reply: (u32, menu::RawMenuLayout) = match proxy
         .call("GetLayout", &(0i32, -1i32, &[] as &[&str]))
         .await
     {
         Ok(reply) => reply,
-        Err(_) => return Vec::new(),
+        Err(error) => {
+            tracing::warn!(
+                "system_tray: initial GetLayout failed for {bus_name}{menu_path}: {error}"
+            );
+            return Vec::new();
+        }
     };
-    menu::parse_menu_layout(&reply.1)
+    let nodes = menu::parse_menu_layout_reply(&reply.1);
+    tracing::debug!(
+        "system_tray: fetched menu for {bus_name}{menu_path}: {} nodes",
+        nodes.len()
+    );
+    nodes
 }
 
 /// Build a properties proxy targeting one StatusNotifierItem object.
@@ -798,6 +808,27 @@ mod tests {
             OwnedValue::try_from(Value::from(path)).expect("owned object path"),
         );
         assert_eq!(menu_path_property(&properties), None);
+    }
+
+    #[tokio::test]
+    #[ignore = "requires a live session bus with a registered StatusNotifierItem menu"]
+    async fn fetch_menu_deserializes_a_live_dbusmenu() {
+        // Point at a real running item's menu, for example Steam:
+        //   QUANTUM_TEST_MENU_BUS=":1.444" \
+        //   QUANTUM_TEST_MENU_PATH="/org/ayatana/NotificationItem/steam/Menu" \
+        //   cargo test -p quantum-providers fetch_menu_deserializes -- --ignored --nocapture
+        // Regression for the GetLayout signature mismatch: the reply is
+        // `u(ia{sv}av)`, not `uv`, so deserializing as (u32, OwnedValue)
+        // failed for every application and menus were always empty.
+        let bus_name = std::env::var("QUANTUM_TEST_MENU_BUS").expect("QUANTUM_TEST_MENU_BUS");
+        let menu_path = std::env::var("QUANTUM_TEST_MENU_PATH").expect("QUANTUM_TEST_MENU_PATH");
+        let connection = Connection::session().await.expect("session bus");
+        let nodes = fetch_menu(&connection, &bus_name, &menu_path).await;
+        println!("fetched {} nodes: {:#?}", nodes.len(), nodes);
+        assert!(
+            !nodes.is_empty(),
+            "expected a non-empty menu from {bus_name}{menu_path}"
+        );
     }
 
     #[tokio::test]
