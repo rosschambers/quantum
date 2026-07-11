@@ -35,7 +35,7 @@ use quantum_providers::{
     MprisProvider, NetworkManagerProvider, NotificationTimerNotifier, NotificationsProvider,
     PluginScriptProvider, PowerProfilesDaemonProvider, ProcStatsProvider, ProvidersError,
     PulseAudioProvider, ShellCommandProvider, SoundPlayer, SystemClock, SystemPowerProvider,
-    TimerProvider, TokioShellExecutor, UpowerBatteryProvider, WifiProvider,
+    SystemTrayProvider, TimerProvider, TokioShellExecutor, UpowerBatteryProvider, WifiProvider,
 };
 use quantum_theme::ThemeStore;
 use quantum_ui::{DummyWindowHost, IpcDispatcher as UiIpcDispatcher};
@@ -642,6 +642,16 @@ async fn setup_daemon(
         .await;
     info!("Registered MprisProvider");
 
+    // SystemTrayProvider — provider is registered even if DBus fails (the inner task degrades to publishing an empty tray state).
+    let system_tray = Arc::new(SystemTrayProvider::new(tokio::runtime::Handle::current()));
+    registry
+        .register(
+            system_tray.id().clone(),
+            system_tray.clone() as Arc<dyn quantum_domain::ProviderSource>,
+        )
+        .await;
+    info!("Registered SystemTrayProvider");
+
     // HyprlandActiveWindowProvider — gated on the same conditional that already gates HyprlandWindowsProvider.
     if let Some(hypr_client) = &hypr_client_opt {
         let active_window = Arc::new(HyprlandActiveWindowProvider::new(
@@ -869,6 +879,7 @@ async fn setup_daemon(
         "audio",
         "system_power",
         "wifi",
+        "system_tray",
     ] {
         let _ = subscribe_provider_use_case.execute(id.into()).await;
     }

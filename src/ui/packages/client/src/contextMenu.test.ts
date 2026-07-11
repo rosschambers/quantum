@@ -14,6 +14,19 @@ function menuRoot(): HTMLElement | null {
   return document.querySelector('[data-quantum-context-menu]');
 }
 
+function allMenuRoots(): HTMLElement[] {
+  return Array.from(document.querySelectorAll('[data-quantum-context-menu]'));
+}
+
+function buttonWithText(scope: ParentNode, text: string): HTMLButtonElement {
+  const buttons = Array.from(scope.querySelectorAll<HTMLButtonElement>('[role="menuitem"]'));
+  const match = buttons.find((button) => button.textContent?.includes(text));
+  if (!match) {
+    throw new Error(`no menu item with text ${text}`);
+  }
+  return match;
+}
+
 afterEach(() => {
   closeContextMenu();
   document.body.innerHTML = '';
@@ -215,5 +228,116 @@ describe('options', () => {
     const rect = onPlaced.mock.calls[0][0];
     expect(typeof rect.x).toBe('number');
     expect(typeof rect.width).toBe('number');
+  });
+});
+
+describe('checked and radio state', () => {
+  it('renders a check mark glyph for checked: true', () => {
+    openContextMenu(rightClickAt(10, 10), [{ label: 'A', checked: true, onSelect: vi.fn() }]);
+    const item = buttonWithText(menuRoot()!, 'A');
+    expect(item.textContent).toContain('\u2713');
+  });
+
+  it('renders a filled circle glyph for checked: radio', () => {
+    openContextMenu(rightClickAt(10, 10), [{ label: 'A', checked: 'radio', onSelect: vi.fn() }]);
+    const item = buttonWithText(menuRoot()!, 'A');
+    expect(item.textContent).toContain('\u25CF');
+  });
+
+  it('lets an explicit icon win over the checked glyph', () => {
+    openContextMenu(rightClickAt(10, 10), [{ label: 'A', icon: 'X', checked: true }]);
+    const item = buttonWithText(menuRoot()!, 'A');
+    expect(item.textContent).toContain('X');
+    expect(item.textContent).not.toContain('\u2713');
+  });
+});
+
+describe('nested submenus', () => {
+  it('opens a flyout submenu on mouseenter of a parent item', () => {
+    openContextMenu(rightClickAt(10, 10), [
+      { label: 'Parent', children: [{ label: 'Child', onSelect: vi.fn() }] },
+    ]);
+    expect(allMenuRoots().length).toBe(1);
+    const parent = buttonWithText(menuRoot()!, 'Parent');
+    parent.dispatchEvent(new MouseEvent('mouseenter'));
+    const roots = allMenuRoots();
+    expect(roots.length).toBe(2);
+    const submenu = roots[1];
+    expect(buttonWithText(submenu, 'Child')).not.toBeNull();
+  });
+
+  it('renders a trailing submenu indicator on a parent item', () => {
+    openContextMenu(rightClickAt(10, 10), [
+      { label: 'Parent', children: [{ label: 'Child' }] },
+    ]);
+    const parent = buttonWithText(menuRoot()!, 'Parent');
+    expect(parent.textContent).toContain('\u25B8');
+  });
+
+  it('does not dismiss when a pointerdown lands inside an open submenu', () => {
+    openContextMenu(rightClickAt(10, 10), [
+      { label: 'Parent', children: [{ label: 'Child', onSelect: vi.fn() }] },
+    ]);
+    buttonWithText(menuRoot()!, 'Parent').dispatchEvent(new MouseEvent('mouseenter'));
+    expect(allMenuRoots().length).toBe(2);
+    const child = buttonWithText(allMenuRoots()[1], 'Child');
+    child.dispatchEvent(new MouseEvent('pointerdown', { bubbles: true }));
+    expect(allMenuRoots().length).toBe(2);
+  });
+
+  it('closes the whole tree and fires onSelect when a submenu leaf is clicked', () => {
+    const onSelect = vi.fn();
+    openContextMenu(rightClickAt(10, 10), [
+      { label: 'Parent', children: [{ label: 'Child', onSelect }] },
+    ]);
+    buttonWithText(menuRoot()!, 'Parent').dispatchEvent(new MouseEvent('mouseenter'));
+    const child = buttonWithText(allMenuRoots()[1], 'Child');
+    child.click();
+    expect(onSelect).toHaveBeenCalledTimes(1);
+    expect(allMenuRoots().length).toBe(0);
+  });
+
+  it('reports a union placement rectangle covering the submenu when it opens', () => {
+    const rectSpy = vi
+      .spyOn(HTMLElement.prototype, 'getBoundingClientRect')
+      .mockImplementation(function (this: HTMLElement) {
+        const left = parseFloat(this.style.left) || 0;
+        const top = parseFloat(this.style.top) || 0;
+        const width = 160;
+        const height = 100;
+        return {
+          x: left,
+          y: top,
+          width,
+          height,
+          top,
+          left,
+          right: left + width,
+          bottom: top + height,
+          toJSON() {},
+        } as DOMRect;
+      });
+    try {
+      const onPlaced = vi.fn();
+      openContextMenu(rightClickAt(10, 10), [
+        { label: 'Parent', children: [{ label: 'Child', onSelect: vi.fn() }] },
+      ], { onPlaced });
+      buttonWithText(menuRoot()!, 'Parent').dispatchEvent(new MouseEvent('mouseenter'));
+      expect(onPlaced.mock.calls.length).toBeGreaterThanOrEqual(2);
+      const submenuLeft = allMenuRoots()[1].getBoundingClientRect().x;
+      const lastRect = onPlaced.mock.calls[onPlaced.mock.calls.length - 1][0];
+      expect(lastRect.x + lastRect.width).toBeGreaterThanOrEqual(submenuLeft);
+    } finally {
+      rectSpy.mockRestore();
+    }
+  });
+
+  it('keeps a simple leaf menu working (no regression)', () => {
+    const onSelect = vi.fn();
+    openContextMenu(rightClickAt(10, 10), [{ label: 'X', onSelect }]);
+    expect(menuRoot()).not.toBeNull();
+    buttonWithText(menuRoot()!, 'X').click();
+    expect(onSelect).toHaveBeenCalledTimes(1);
+    expect(allMenuRoots().length).toBe(0);
   });
 });

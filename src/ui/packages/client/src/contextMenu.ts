@@ -17,6 +17,19 @@ export interface MenuItem {
   danger?: boolean;
   /** When true this entry is a divider; all other fields are ignored. */
   separator?: boolean;
+  /**
+   * Nested items. When present and non-empty this item becomes a submenu
+   * parent: it renders a trailing indicator, opens a flyout on hover/click,
+   * and does not fire `onSelect` (opening the flyout is its action).
+   */
+  children?: MenuItem[];
+  /**
+   * Renders a leading state glyph in the icon slot when the item has no
+   * explicit `icon` (an explicit `icon` always wins). `true` shows a check
+   * mark; `'radio'` shows a filled circle. Purely visual; the caller owns the
+   * underlying state and rebuilds items to reflect changes.
+   */
+  checked?: boolean | 'radio';
   /** Invoked once when the item is selected, after the menu closes. */
   onSelect?: () => void;
 }
@@ -34,10 +47,12 @@ export interface MenuOptions {
    */
   onClose?: () => void;
   /**
-   * Called once after the menu has been positioned, with the menu root's
-   * bounding rectangle rounded to integers. Surfaces that gate pointer input
-   * by region (the bar) use this to expand their input region to cover the
-   * menu so it is clickable.
+   * Called after the menu has been positioned, with the bounding rectangle
+   * (rounded to integers) of the UNION of every currently-open menu root.
+   * Surfaces that gate pointer input by region (the bar) use this to expand
+   * their input region to cover the menu so it is clickable. May be called
+   * multiple times for one menu: once on open, then again every time a flyout
+   * submenu opens or closes and the union rectangle changes.
    */
   onPlaced?: (rect: { x: number; y: number; width: number; height: number }) => void;
   /**
@@ -51,11 +66,23 @@ export interface MenuOptions {
 }
 
 interface ActiveMenu {
-  root: HTMLElement;
+  /**
+   * Every open root: the top-level menu at index 0, plus one entry per open
+   * flyout submenu. Dismissal treats a pointerdown inside ANY of these as
+   * "inside"; cleanup removes them all.
+   */
+  roots: HTMLElement[];
+  /** Maps each open parent item button to the submenu root it opened. */
+  submenusByParent: Map<HTMLElement, HTMLElement>;
+  options?: MenuOptions;
   cleanup: () => void;
 }
 
 let active: ActiveMenu | null = null;
+
+const CHECK_GLYPH = '\u2713';
+const RADIO_GLYPH = '\u25CF';
+const SUBMENU_GLYPH = '\u25B8';
 
 const STYLE_ELEMENT_ID = 'quantum-context-menu-style';
 const MENU_STYLES = `
@@ -109,6 +136,16 @@ const MENU_STYLES = `
   border: none;
   background: var(--color-divider, rgba(255, 255, 255, 0.12));
 }
+[data-quantum-context-menu] button > span:first-child[data-icon-slot="true"] {
+  display: inline-flex;
+  justify-content: center;
+  min-width: var(--space-3, 0.75rem);
+}
+[data-quantum-context-menu] button > span[data-submenu-indicator="true"] {
+  margin-left: auto;
+  padding-left: var(--space-2, 0.5rem);
+  color: var(--color-fg-alt, #a6adc8);
+}
 `;
 
 /**
@@ -158,33 +195,59 @@ function ensureStyleSheet(doc: Document): void {
   (doc.head ?? doc.documentElement).appendChild(style);
 }
 
-function buildItem(doc: Document, item: MenuItem): HTMLElement {
+/**
+ * The glyph shown in the leading icon slot. An explicit `icon` always wins;
+ * otherwise a `checked` state supplies a check mark or a filled circle.
+ */
+function resolveIconGlyph(item: MenuItem): string | undefined {
+  if (item.icon) {
+    return item.icon;
+  }
+  if (item.checked === 'radio') {
+    return RADIO_GLYPH;
+  }
+  if (item.checked) {
+    return CHECK_GLYPH;
+  }
+  return undefined;
+}
+
+/**
+ * Render a single item's DOM (separator, or a menu button with optional icon
+ * slot, label, and submenu indicator). Pure: it wires no event listeners, so
+ * `buildMenuInto` owns selection and submenu behaviour.
+ */
+function renderItemElement(doc: Document, item: MenuItem): HTMLElement {
   if (item.separator) {
     return doc.createElement('hr');
   }
   const button = doc.createElement('button');
   button.type = 'button';
   button.setAttribute('role', 'menuitem');
-  if (item.icon) {
+  const iconGlyph = resolveIconGlyph(item);
+  if (iconGlyph) {
     const icon = doc.createElement('span');
     icon.setAttribute('aria-hidden', 'true');
-    icon.textContent = item.icon;
+    icon.dataset.iconSlot = 'true';
+    icon.textContent = iconGlyph;
     button.appendChild(icon);
   }
   const label = doc.createElement('span');
   label.textContent = item.label;
   button.appendChild(label);
+  if (item.children && item.children.length > 0) {
+    const indicator = doc.createElement('span');
+    indicator.setAttribute('aria-hidden', 'true');
+    indicator.dataset.submenuIndicator = 'true';
+    indicator.textContent = SUBMENU_GLYPH;
+    button.appendChild(indicator);
+  }
   if (item.danger) {
     button.dataset.danger = 'true';
   }
   if (item.disabled) {
     button.disabled = true;
     button.setAttribute('aria-disabled', 'true');
-  } else {
-    button.addEventListener('click', () => {
-      closeContextMenu();
-      item.onSelect?.();
-    });
   }
   return button;
 }
@@ -197,19 +260,6 @@ function position(doc: Document, root: HTMLElement, clientX: number, clientY: nu
   const { x, y } = clampToViewport(clientX, clientY, rect.width, rect.height, viewportWidth, viewportHeight);
   root.style.left = `${x}px`;
   root.style.top = `${y}px`;
-}
-
-function reportPlacement(root: HTMLElement, options?: MenuOptions): void {
-  if (!options?.onPlaced) {
-    return;
-  }
-  const rect = root.getBoundingClientRect();
-  options.onPlaced({
-    x: Math.round(rect.x),
-    y: Math.round(rect.y),
-    width: Math.round(rect.width),
-    height: Math.round(rect.height),
-  });
 }
 
 /**
@@ -227,12 +277,117 @@ export function openContextMenu(event: MouseEvent, items: MenuItem[], options?: 
 
   ensureStyleSheet(doc);
 
+  const roots: HTMLElement[] = [];
+  const submenusByParent = new Map<HTMLElement, HTMLElement>();
+
+  // Report the union of every open root's rectangle so a region-gated surface
+  // (the bar) covers all flyouts. Called on open and on every submenu change.
+  const reportUnionPlacement = (): void => {
+    if (!options?.onPlaced) {
+      return;
+    }
+    const visible = roots.filter((candidate) => candidate.style.visibility !== 'hidden');
+    if (visible.length === 0) {
+      return;
+    }
+    let minX = Infinity;
+    let minY = Infinity;
+    let maxX = -Infinity;
+    let maxY = -Infinity;
+    for (const candidate of visible) {
+      const rect = candidate.getBoundingClientRect();
+      minX = Math.min(minX, rect.x);
+      minY = Math.min(minY, rect.y);
+      maxX = Math.max(maxX, rect.x + rect.width);
+      maxY = Math.max(maxY, rect.y + rect.height);
+    }
+    options.onPlaced({
+      x: Math.round(minX),
+      y: Math.round(minY),
+      width: Math.round(maxX - minX),
+      height: Math.round(maxY - minY),
+    });
+  };
+
+  // Close a parent item's flyout and, recursively, any flyouts opened from
+  // within it, then drop them all from the tracked roots.
+  const closeSubmenuForItem = (parentButton: HTMLElement): void => {
+    const submenu = submenusByParent.get(parentButton);
+    if (!submenu) {
+      return;
+    }
+    for (const nestedParent of [...submenusByParent.keys()]) {
+      if (nestedParent.parentElement === submenu) {
+        closeSubmenuForItem(nestedParent);
+      }
+    }
+    submenusByParent.delete(parentButton);
+    const index = roots.indexOf(submenu);
+    if (index >= 0) {
+      roots.splice(index, 1);
+    }
+    submenu.remove();
+  };
+
+  // Open a flyout for a parent item at its top-right corner, clamped to the
+  // viewport. No-op if that item's flyout is already open.
+  const openSubmenuForItem = (parentButton: HTMLElement, children: MenuItem[]): void => {
+    if (submenusByParent.has(parentButton)) {
+      return;
+    }
+    const submenu = doc.createElement('div');
+    submenu.setAttribute('data-quantum-context-menu', '');
+    submenu.setAttribute('role', 'menu');
+    buildMenuInto(submenu, children);
+    doc.body.appendChild(submenu);
+    const anchor = parentButton.getBoundingClientRect();
+    position(doc, submenu, anchor.x + anchor.width, anchor.y);
+    submenusByParent.set(parentButton, submenu);
+    roots.push(submenu);
+  };
+
+  // Entering an item closes any sibling flyout in the same root (one open path
+  // per level) and opens this item's flyout when it has children.
+  const enterItem = (parentRoot: HTMLElement, button: HTMLElement, item: MenuItem): void => {
+    for (const openParent of [...submenusByParent.keys()]) {
+      if (openParent.parentElement === parentRoot && openParent !== button) {
+        closeSubmenuForItem(openParent);
+      }
+    }
+    if (item.children && item.children.length > 0) {
+      openSubmenuForItem(button, item.children);
+    }
+    reportUnionPlacement();
+  };
+
+  // Render items into a root and wire hover/selection. Shared by the top-level
+  // menu and every flyout, so submenus nest recursively.
+  function buildMenuInto(parentRoot: HTMLElement, menuItems: MenuItem[]): void {
+    for (const item of menuItems) {
+      const element = renderItemElement(doc, item);
+      parentRoot.appendChild(element);
+      if (item.separator || item.disabled) {
+        continue;
+      }
+      const button = element as HTMLButtonElement;
+      const hasChildren = !!(item.children && item.children.length > 0);
+      button.addEventListener('mouseenter', () => enterItem(parentRoot, button, item));
+      button.addEventListener('click', () => {
+        if (hasChildren) {
+          enterItem(parentRoot, button, item);
+          return;
+        }
+        closeContextMenu();
+        item.onSelect?.();
+      });
+    }
+  }
+
   const root = doc.createElement('div');
   root.setAttribute('data-quantum-context-menu', '');
   root.setAttribute('role', 'menu');
-  for (const item of items) {
-    root.appendChild(buildItem(doc, item));
-  }
+  roots.push(root);
+  buildMenuInto(root, items);
   doc.body.appendChild(root);
 
   // Placement origin: a bar/toolbar button passes its anchor rectangle so the
@@ -250,17 +405,17 @@ export function openContextMenu(event: MouseEvent, items: MenuItem[], options?: 
     root.style.visibility = 'hidden';
     const needed = Math.ceil(originY + root.getBoundingClientRect().height);
     const reveal = (): void => {
-      if (active?.root !== root) {
+      if (active?.roots[0] !== root) {
         return;
       }
       position(doc, root, originX, originY);
       root.style.visibility = '';
-      reportPlacement(root, options);
+      reportUnionPlacement();
     };
     options.ensureSpace(needed).then(reveal).catch(reveal);
   } else {
     position(doc, root, originX, originY);
-    reportPlacement(root, options);
+    reportUnionPlacement();
   }
 
   const onKeyDown = (keyEvent: KeyboardEvent): void => {
@@ -269,7 +424,8 @@ export function openContextMenu(event: MouseEvent, items: MenuItem[], options?: 
     }
   };
   const onPointerDown = (pointerEvent: Event): void => {
-    if (!root.contains(pointerEvent.target as Node)) {
+    const target = pointerEvent.target as Node;
+    if (!roots.some((candidate) => candidate.contains(target))) {
       closeContextMenu();
     }
   };
@@ -287,14 +443,20 @@ export function openContextMenu(event: MouseEvent, items: MenuItem[], options?: 
   doc.addEventListener('visibilitychange', onVisibility);
 
   active = {
-    root,
+    roots,
+    submenusByParent,
+    options,
     cleanup: () => {
       view.removeEventListener('keydown', onKeyDown, true);
       view.removeEventListener('blur', onDismiss);
       doc.removeEventListener('pointerdown', onPointerDown, true);
       doc.removeEventListener('scroll', onDismiss, true);
       doc.removeEventListener('visibilitychange', onVisibility);
-      root.remove();
+      for (const candidate of roots) {
+        candidate.remove();
+      }
+      roots.length = 0;
+      submenusByParent.clear();
       options?.onClose?.();
     },
   };

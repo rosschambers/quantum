@@ -158,3 +158,9 @@ export {
   type PreviewPayload,
   type FilesEvent,
 } from './files';
+export {
+  type IconRef,
+  type SystemTrayMenuNode,
+  type SystemTrayItem,
+  type SystemTrayState,
+} from './systemTray';

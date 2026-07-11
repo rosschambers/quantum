@@ -11,6 +11,7 @@ pub mod notifications;
 pub mod ports;
 pub mod query;
 pub mod score;
+pub mod system_tray;
 pub mod timer;
 pub mod tokens;
 pub mod view_descriptor;
@@ -42,6 +43,7 @@ pub use ports::{
 };
 pub use query::Query;
 pub use score::MatchScore;
+pub use system_tray::{SystemTrayItem, SystemTrayMenuNode, SystemTrayState};
 pub use timer::{
     seconds_until_next, CivilNow, NotifyConfig, Point, SoundName, TextColor, TextPosition,
     TextVisibility, TimeFormat, TimeOfDay, Timer, TimerError, TimerId, TimerKind, TimerSettings,
