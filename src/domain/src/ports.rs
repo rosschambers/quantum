@@ -178,6 +178,14 @@ pub trait TimerBroadcast: Send + Sync {
     fn publish(&self, data: &TimerStoreData);
 }
 
+/// Emits a simple user-facing notification with a short summary and a longer
+/// body. Used by the launcher to surface the outcome of a command it ran
+/// without routing through the full notifications provider.
+#[async_trait]
+pub trait NotificationEmitter: Send + Sync {
+    async fn emit(&self, summary: &str, body: &str);
+}
+
 /// A progress report from a [`RecursiveSizer`] computing the total size of a
 /// directory tree. Emitted repeatedly as the walk accumulates bytes; the final
 /// emission for a given `path` sets `complete` to `true`.
@@ -367,6 +375,22 @@ mod timer_port_tests {
         let _: Option<Arc<dyn TimerStore>> = None;
         let _: Option<Arc<dyn TimerNotifier>> = None;
         let _: Option<Arc<dyn TimerBroadcast>> = None;
+    }
+}
+
+#[cfg(test)]
+mod notification_emitter_tests {
+    use super::*;
+
+    // Compile-time proof that the notification-emitter port is object-safe and
+    // can be used behind `Arc<dyn Trait>`. If the trait stopped being
+    // object-safe, this would fail to compile.
+    #[allow(dead_code)]
+    fn assert_object_safe(_emitter: Arc<dyn NotificationEmitter>) {}
+
+    #[test]
+    fn notification_emitter_port_is_object_safe() {
+        let _: Option<Arc<dyn NotificationEmitter>> = None;
     }
 }
 

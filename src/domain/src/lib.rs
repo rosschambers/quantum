@@ -11,6 +11,7 @@ pub mod notifications;
 pub mod ports;
 pub mod query;
 pub mod score;
+pub mod shell_capture;
 pub mod system_tray;
 pub mod timer;
 pub mod tokens;
@@ -37,12 +38,13 @@ pub use match_result::{IconRef, Match};
 pub use notifications::{Notification, NotificationEvent, NotificationUrgency};
 pub use ports::{
     ActionOutcome, ApplicationCatalog, Clock, DirectoryWatcher, EventBus, FileOpener,
-    FileSystemPort, HyprlandClient, PinsPort, PluginCatalog, ProviderRegistry, ProviderSource,
-    RecursiveSizer, ShellExecutor, ShellOutput, SizeUpdate, ThemeStore, TimerBroadcast,
-    TimerNotifier, TimerStore, WindowHost, WindowInputRegion,
+    FileSystemPort, HyprlandClient, NotificationEmitter, PinsPort, PluginCatalog, ProviderRegistry,
+    ProviderSource, RecursiveSizer, ShellExecutor, ShellOutput, SizeUpdate, ThemeStore,
+    TimerBroadcast, TimerNotifier, TimerStore, WindowHost, WindowInputRegion,
 };
 pub use query::Query;
 pub use score::MatchScore;
+pub use shell_capture::ShellCaptureResult;
 pub use system_tray::{SystemTrayItem, SystemTrayMenuNode, SystemTrayState};
 pub use timer::{
     seconds_until_next, CivilNow, NotifyConfig, Point, SoundName, TextColor, TextPosition,

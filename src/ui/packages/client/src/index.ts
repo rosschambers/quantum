@@ -164,3 +164,4 @@ export {
   type SystemTrayItem,
   type SystemTrayState,
 } from './systemTray';
+export { type ShellCaptureResult } from './shellCapture';

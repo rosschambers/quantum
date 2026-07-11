@@ -379,6 +379,112 @@ describe('App.svelte', () => {
     await waitFor(() => expect(input.value).toBe(''));
   });
 
+  // The wiring tests set the query with fireEvent.input rather than
+  // userEvent.type: typing focuses the input, which fires the window focus
+  // handler that re-runs the empty search and would clobber the query mid-test.
+  const captureResult = {
+    command: 'echo hi',
+    stdout: 'hi\n',
+    stderr: '',
+    exit_code: 0,
+    timed_out: false,
+  };
+
+  function mockSearchAndCapture() {
+    mockCall.mockImplementation((method: string) => {
+      if (method === 'search') {
+        return Promise.resolve({ matches: [] });
+      }
+      if (method === 'shell.run_capture') {
+        return Promise.resolve(captureResult);
+      }
+      return Promise.resolve({});
+    });
+  }
+
+  it('runs a $ capture command on Enter and shows the output panel', async () => {
+    mockSearchAndCapture();
+
+    render(App);
+    const input = screen.getByPlaceholderText('Search...') as HTMLInputElement;
+
+    await fireEvent.input(input, { target: { value: '$echo hi' } });
+    await fireEvent.keyDown(input, { key: 'Enter' });
+
+    await waitFor(() => {
+      expect(mockCall).toHaveBeenCalledWith('shell.run_capture', { command: 'echo hi' });
+      expect(screen.getByText('hi')).toBeDefined();
+      expect(screen.getByText('exit 0')).toBeDefined();
+    });
+
+    // The normal action must not have run for a capture query.
+    expect(mockCall).not.toHaveBeenCalledWith('action.invoke', expect.anything());
+  });
+
+  it('returns to the results list when Escape is pressed while the panel is showing', async () => {
+    mockSearchAndCapture();
+
+    render(App);
+    const input = screen.getByPlaceholderText('Search...') as HTMLInputElement;
+
+    await fireEvent.input(input, { target: { value: '$echo hi' } });
+    await fireEvent.keyDown(input, { key: 'Enter' });
+
+    await waitFor(() => expect(screen.getByText('hi')).toBeDefined());
+
+    // Escape clears the panel and does NOT hide the launcher view.
+    mockCall.mockClear();
+    await fireEvent.keyDown(input, { key: 'Escape' });
+
+    await waitFor(() => expect(screen.queryByText('hi')).toBeNull());
+    expect(mockCall).not.toHaveBeenCalledWith('view.hide', { name: 'launcher' });
+  });
+
+  it('clears the output panel when the query text changes', async () => {
+    mockSearchAndCapture();
+
+    render(App);
+    const input = screen.getByPlaceholderText('Search...') as HTMLInputElement;
+
+    await fireEvent.input(input, { target: { value: '$echo hi' } });
+    await fireEvent.keyDown(input, { key: 'Enter' });
+
+    await waitFor(() => expect(screen.getByText('hi')).toBeDefined());
+
+    // Editing the query returns to the normal results flow.
+    await fireEvent.input(input, { target: { value: '$echo hix' } });
+    await waitFor(() => expect(screen.queryByText('hi')).toBeNull());
+  });
+
+  it('shows the prefix legend when the input is empty', async () => {
+    mockCall.mockResolvedValue({ matches: [] });
+
+    render(App);
+    await act();
+
+    await waitFor(() => {
+      expect(screen.getByText(/> launch/)).toBeDefined();
+      expect(screen.getByText(/! terminal/)).toBeDefined();
+      expect(screen.getByText(/\$ run & show/)).toBeDefined();
+    });
+  });
+
+  it('hides the prefix legend when the input is non-empty', async () => {
+    mockCall.mockResolvedValue({ matches: [] });
+
+    render(App);
+    await act();
+    const input = screen.getByPlaceholderText('Search...') as HTMLInputElement;
+
+    // The legend is visible while the query is empty.
+    await waitFor(() => expect(screen.getByText(/run & show/)).toBeDefined());
+
+    // Setting a non-empty query hides it.
+    await fireEvent.input(input, { target: { value: 'firefox' } });
+
+    await waitFor(() => expect(screen.queryByText(/run & show/)).toBeNull());
+  });
+
   it('window focus event refocuses input', async () => {
     mockCall.mockResolvedValue({ matches: [] });
 

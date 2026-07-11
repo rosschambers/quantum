@@ -15,7 +15,7 @@ use tracing_subscriber::EnvFilter;
 use quantum_application::{
     ApplicationError, Dispatcher as AppDispatcher, FilesService, LaunchActionUseCase,
     ListProvidersUseCase, OpenViewUseCase, QueryProviderUseCase, ReloadPluginsUseCase,
-    ReloadThemeUseCase, ScheduleActionUseCase, SearchUseCase, SetThemeUseCase,
+    ReloadThemeUseCase, ScheduleActionUseCase, SearchUseCase, SetThemeUseCase, ShellCaptureUseCase,
     SubscribeProviderUseCase, TimerService,
 };
 use quantum_config::{Config, ConfigStore};
@@ -33,9 +33,10 @@ use quantum_providers::{
     BluezProvider, DeclarativeShellProvider, DesktopAppsProvider, HyprlandActiveWindowProvider,
     HyprlandWindowsProvider, InMemoryProviderRegistry, JsonTimerStore, LogindBrightnessProvider,
     MprisProvider, NetworkManagerProvider, NotificationTimerNotifier, NotificationsProvider,
-    PluginScriptProvider, PowerProfilesDaemonProvider, ProcStatsProvider, ProvidersError,
-    PulseAudioProvider, ShellCommandProvider, SoundPlayer, SystemClock, SystemPowerProvider,
-    SystemTrayProvider, TimerProvider, TokioShellExecutor, UpowerBatteryProvider, WifiProvider,
+    PluginScriptProvider, PowerProfilesDaemonProvider, ProcStatsProvider,
+    ProviderNotificationEmitter, ProvidersError, PulseAudioProvider, ShellCommandProvider,
+    SoundPlayer, SystemClock, SystemPowerProvider, SystemTrayProvider, TimerProvider,
+    TokioShellExecutor, UpowerBatteryProvider, WifiProvider,
 };
 use quantum_theme::ThemeStore;
 use quantum_ui::{DummyWindowHost, IpcDispatcher as UiIpcDispatcher};
@@ -932,6 +933,16 @@ async fn setup_daemon(
         event_bus.clone(),
     ));
 
+    // Shell command-capture use case: runs a launcher `$` command through the
+    // shared shell executor and surfaces its output both inline (the returned
+    // result) and as a notification through the notifications provider.
+    let shell_capture_emitter = Arc::new(ProviderNotificationEmitter::new(notifications.clone()));
+    let shell_capture_use_case = Arc::new(ShellCaptureUseCase::new(
+        shell_executor.clone(),
+        shell_capture_emitter,
+        10_000,
+    ));
+
     let dispatcher = Arc::new(AppDispatcher::new(
         search_use_case,
         launch_action_use_case,
@@ -945,6 +956,7 @@ async fn setup_daemon(
         reload_plugins_use_case,
         timer_service.clone(),
         files_service,
+        shell_capture_use_case,
     ));
     let _ipc_dispatcher = Arc::new(AppDispatcherAdapter::new(dispatcher));
 
