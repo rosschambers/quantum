@@ -1080,7 +1080,11 @@ mod tests {
             view: "plugin/launcher/launcher".into(),
             mode: WindowMode::Show,
         });
-        assert_eq!(count.get(), 1, "reopen reuses the kept window, no reconstruct");
+        assert_eq!(
+            count.get(),
+            1,
+            "reopen reuses the kept window, no reconstruct"
+        );
         assert!(shown.get(), "reopened window is visible");
     }
 
@@ -1136,7 +1140,11 @@ mod tests {
             2,
             "eviction must reconstruct on the new monitor"
         );
-        assert_eq!(destroyed.get(), 0, "eviction must never destroy the old window");
+        assert_eq!(
+            destroyed.get(),
+            0,
+            "eviction must never destroy the old window"
+        );
         assert!(hidden.get() >= 1, "eviction hides the old window");
     }
 
