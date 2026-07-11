@@ -231,24 +231,28 @@ impl SystemTrayProvider {
             })?;
 
         // AboutToShow lets the application populate the menu before it is
-        // displayed and returns whether the layout changed. A call failure is
-        // non-fatal: the mirror task's LayoutUpdated subscription still
-        // refreshes the tree eventually.
-        let need_update: bool = match proxy.call("AboutToShow", &0i32).await {
-            Ok(need_update) => need_update,
+        // displayed. Its boolean return is only the application's own view of
+        // whether ITS layout changed; it is not a statement about our cache.
+        // A call failure is non-fatal. We deliberately ignore the return value:
+        // Steam, for example, answers `false` (its menu is already built) even
+        // though our cached tree was fetched empty at registration before Steam
+        // populated it and never refreshed. Always refetch after AboutToShow so
+        // the frontend's follow-up query sees the current tree regardless.
+        let about_to_show: Result<bool, _> = proxy.call("AboutToShow", &0i32).await;
+        match about_to_show {
+            Ok(need_update) => {
+                tracing::debug!(
+                    "system_tray: AboutToShow for {service} reported need_update={need_update}"
+                );
+            }
             Err(error) => {
                 tracing::warn!("system_tray: AboutToShow failed for {service}: {error}");
-                return Ok(ActionOutcome {
-                    message: Some(format!("requested menu for system tray service {service}")),
-                });
             }
-        };
-
-        // When the application reports a changed layout, refetch it now and
-        // rebroadcast so the frontend's follow-up query sees the fresh tree.
-        if need_update {
-            self.refetch_menu(&proxy, &service).await;
         }
+
+        // Always refetch and rebroadcast: our cached layout may be stale or
+        // empty independent of the application's need_update answer.
+        self.refetch_menu(&proxy, &service).await;
 
         Ok(ActionOutcome {
             message: Some(format!("requested menu for system tray service {service}")),
