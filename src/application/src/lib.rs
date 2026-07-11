@@ -2,10 +2,12 @@
 
 pub mod dispatcher;
 pub mod error;
+pub mod shell_capture;
 pub mod use_cases;
 
 pub use dispatcher::Dispatcher;
 pub use error::{ApplicationError, Result};
+pub use shell_capture::{CaptureSink, ShellCaptureUseCase};
 pub use use_cases::{
     CreateTimerSpec, EditChanges, FilesService, LaunchActionUseCase, ListProvidersUseCase,
     OpenViewUseCase, Places, PreviewKind, PreviewPayload, QueryProviderUseCase,
