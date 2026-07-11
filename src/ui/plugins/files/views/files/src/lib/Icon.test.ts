@@ -24,6 +24,7 @@ const ALL_NAMES: IconName[] = [
     'grid',
     'list',
     'eye',
+    'close',
 ];
 
 describe('Icon', () => {
@@ -36,6 +37,11 @@ describe('Icon', () => {
 
     it('renders an svg element for the drive icon', () => {
         const { container } = render(Icon, { props: { name: 'drive' } });
+        expect(container.querySelector('svg')).not.toBeNull();
+    });
+
+    it('renders an svg element for the close icon', () => {
+        const { container } = render(Icon, { props: { name: 'close' } });
         expect(container.querySelector('svg')).not.toBeNull();
     });
 

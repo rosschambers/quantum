@@ -593,6 +593,7 @@
         onFilterInput={handleFilterInput}
         onToggleDeep={toggleDeep}
         onToggleDual={() => (dualPane = !dualPane)}
+        onClose={() => ipc.close()}
     />
 
     <div id="body">

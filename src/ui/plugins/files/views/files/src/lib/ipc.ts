@@ -53,6 +53,12 @@ export interface FilesIpc {
      * channel. Returns the client's unsubscribe handle.
      */
     subscribeFilesEvents(callback: (event: FilesEvent) => void): () => void;
+    /**
+     * Hide the file-explorer window by its canonical view name. This is the
+     * in-app close: under a tiling compositor the panel has no titlebar close
+     * button, so the toolbar drives this to dismiss the window.
+     */
+    close(): void;
 }
 
 /**
@@ -114,6 +120,9 @@ export function createFilesIpc(client: Client = createClient()): FilesIpc {
                 'files.event',
                 callback as unknown as (payload: unknown) => void,
             );
+        },
+        close(): void {
+            void client.call('view.hide', { name: 'plugin/files/files' }).catch(() => {});
         },
     };
 }

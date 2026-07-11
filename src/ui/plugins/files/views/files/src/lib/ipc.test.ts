@@ -156,6 +156,13 @@ describe('createFilesIpc', () => {
         expect(fake.calls[0]).toEqual(['files.cancel_sizes', { path: '/f' }]);
     });
 
+    it('close calls view.hide with the canonical files view name', () => {
+        const fake = makeFakeClient();
+        const ipc = createFilesIpc(fake.client);
+        ipc.close();
+        expect(fake.calls[0]).toEqual(['view.hide', { name: 'plugin/files/files' }]);
+    });
+
     it('subscribeFilesEvents registers on the files.event channel', () => {
         const fake = makeFakeClient();
         const ipc = createFilesIpc(fake.client);

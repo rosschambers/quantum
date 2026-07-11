@@ -18,6 +18,7 @@ function renderToolbar(extra: Partial<Record<string, unknown>> = {}) {
             onFilterInput: vi.fn(),
             onToggleDeep: vi.fn(),
             onToggleDual: vi.fn(),
+            onClose: vi.fn(),
             ...extra,
         },
     });
@@ -64,5 +65,21 @@ describe('Toolbar', () => {
         for (const button of container.querySelectorAll('.icon-btn')) {
             expect(button.getAttribute('title')).toBeTruthy();
         }
+    });
+
+    it('renders a close button carrying a Close tooltip', () => {
+        const { container } = renderToolbar();
+        const close = container.querySelector('.b-close') as HTMLButtonElement;
+        expect(close).not.toBeNull();
+        expect(close.getAttribute('title')).toBe('Close (Alt+F4)');
+        expect(close.getAttribute('aria-label')).toBeTruthy();
+    });
+
+    it('calls onClose when the close button is clicked', async () => {
+        const onClose = vi.fn();
+        const { container } = renderToolbar({ onClose });
+        const close = container.querySelector('.b-close') as HTMLButtonElement;
+        await fireEvent.click(close);
+        expect(onClose).toHaveBeenCalledTimes(1);
     });
 });

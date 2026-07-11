@@ -20,7 +20,8 @@
         | 'dotfile'
         | 'grid'
         | 'list'
-        | 'eye';
+        | 'eye'
+        | 'close';
 </script>
 
 <script lang="ts">
@@ -123,6 +124,8 @@
     {:else if name === 'eye'}
         <path d="M2 12s3.5-6 10-6 10 6 10 6-3.5 6-10 6-10-6-10-6z" />
         <circle cx="12" cy="12" r="2.5" />
+    {:else if name === 'close'}
+        <path d="M6 6l12 12M18 6L6 18" />
     {/if}
 </svg>
 

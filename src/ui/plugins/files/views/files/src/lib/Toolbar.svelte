@@ -35,6 +35,7 @@
         onFilterInput: (value: string) => void;
         onToggleDeep: () => void;
         onToggleDual: () => void;
+        onClose: () => void;
     }
 
     let {
@@ -52,6 +53,7 @@
         onFilterInput,
         onToggleDeep,
         onToggleDual,
+        onClose,
     }: Props = $props();
 
     // Up is enabled everywhere except the filesystem root.
@@ -122,6 +124,16 @@
     >
         <Icon name="columns" size={16} />
     </button>
+
+    <button
+        type="button"
+        class="icon-btn b-close"
+        title="Close (Alt+F4)"
+        aria-label="Close file explorer"
+        onclick={onClose}
+    >
+        <Icon name="close" size={16} />
+    </button>
 </div>
 
 <style>
@@ -153,6 +165,9 @@
     .icon-btn.active {
         background: color-mix(in oklab, var(--color-accent) 18%, transparent);
         color: var(--color-accent);
+    }
+    .icon-btn.b-close {
+        margin-left: 2px;
     }
     .icon-btn:disabled {
         opacity: 0.35;
