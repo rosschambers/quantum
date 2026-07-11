@@ -6,29 +6,13 @@
 // keeps it unit-testable without mocking the client.
 
 import type { FileEntry } from '@quantum/client';
+import { parentOf } from './path';
 
 /** The column a pane sorts its entries by. */
 export type SortColumn = 'name' | 'size' | 'mtime';
 
 /** Sort direction: 1 for ascending, -1 for descending. */
 export type SortDirection = 1 | -1;
-
-/**
- * Compute the parent directory of a POSIX path via string manipulation.
- * The root `/` is its own parent; a top-level directory such as `/home`
- * resolves to `/`.
- */
-function parentDirectory(path: string): string {
-    if (path === '/') {
-        return '/';
-    }
-    const withoutTrailingSlash = path.endsWith('/') ? path.slice(0, -1) : path;
-    const lastSlash = withoutTrailingSlash.lastIndexOf('/');
-    if (lastSlash <= 0) {
-        return '/';
-    }
-    return withoutTrailingSlash.slice(0, lastSlash);
-}
 
 export class PaneState {
     /** The directory currently shown in the pane. */
@@ -98,9 +82,17 @@ export class PaneState {
         this.clearSelection();
     }
 
-    /** Navigate to the parent directory of the current path. */
+    /**
+     * Navigate to the parent directory of the current path. A no-op at the
+     * filesystem root, where the parent equals the current path, so `up()` does
+     * not push a duplicate history entry.
+     */
     up(): void {
-        this.navigate(parentDirectory(this.path));
+        const parent = parentOf(this.path);
+        if (parent === this.path) {
+            return;
+        }
+        this.navigate(parent);
     }
 
     /**

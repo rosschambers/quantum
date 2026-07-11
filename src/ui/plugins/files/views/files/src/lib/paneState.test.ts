@@ -124,6 +124,13 @@ describe('PaneState up', () => {
         expect(pane.path).toBe('/');
     });
 
+    it('does not push a duplicate history entry when already at root', () => {
+        const pane = new PaneState('/');
+        pane.up();
+        expect(pane.path).toBe('/');
+        expect(pane.history.length).toBe(1);
+    });
+
     it('goes to root from a top-level directory', () => {
         const pane = new PaneState('/home');
         pane.up();
