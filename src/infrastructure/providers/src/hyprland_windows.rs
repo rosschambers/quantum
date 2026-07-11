@@ -1,5 +1,7 @@
 use async_trait::async_trait;
 use serde_json::json;
+use std::collections::HashMap;
+use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use tokio::sync::RwLock;
@@ -27,6 +29,178 @@ struct WindowInfo {
     title_lower: String,
     class_lower: String,
     workspace_name_lower: String,
+    /// The window's application icon, resolved from its class at refresh time.
+    /// `None` when no icon could be resolved, so the launcher renders no icon
+    /// rather than a broken reference the webview cannot load.
+    icon: Option<quantum_domain::IconRef>,
+}
+
+/// Resolve a freedesktop icon reference to a concrete file path.
+///
+/// If `icon` is already an absolute path that exists on disk, it is returned
+/// as-is. Otherwise it is treated as a freedesktop icon name and looked up
+/// against the installed icon themes (preferring a 48px raster size). Returns
+/// `None` when nothing resolves. This mirrors the sibling desktop-apps
+/// provider's helper; the two are kept independent so neither provider depends
+/// on the other.
+fn resolve_icon_path(icon: Option<&str>) -> Option<PathBuf> {
+    let name = icon?;
+    let as_path = std::path::Path::new(name);
+    if as_path.is_absolute() && as_path.exists() {
+        return Some(as_path.to_path_buf());
+    }
+    freedesktop_icons::lookup(name).with_size(48).find()
+}
+
+/// Resolve a Hyprland window `class` to an application [`IconRef`], using an
+/// injected `resolve` function so the resolution order is unit-testable without
+/// touching the real icon theme. The order is:
+///
+/// 1. If the lowercased class matches a `StartupWMClass` index entry, resolve
+///    that entry's `Icon=` name (Visual Studio Code's class `Code` maps to icon
+///    `vscode`).
+/// 2. Otherwise try the lowercased class directly as an icon name (most
+///    classes, for example `firefox`, are also their icon name).
+/// 3. Otherwise try the original-case class as an icon name.
+/// 4. Otherwise `None`.
+fn resolve_class_icon_with(
+    index: &HashMap<String, String>,
+    class: &str,
+    resolve: impl Fn(&str) -> Option<PathBuf>,
+) -> Option<quantum_domain::IconRef> {
+    let class_lower = class.to_lowercase();
+
+    if let Some(name) = index.get(&class_lower) {
+        if let Some(path) = resolve(name) {
+            return Some(quantum_domain::IconRef::Path(path));
+        }
+    }
+
+    if let Some(path) = resolve(&class_lower) {
+        return Some(quantum_domain::IconRef::Path(path));
+    }
+
+    if let Some(path) = resolve(class) {
+        return Some(quantum_domain::IconRef::Path(path));
+    }
+
+    None
+}
+
+/// Resolve a window `class` to an application [`IconRef`] against the real
+/// installed icon themes, using [`resolve_class_icon_with`] with the concrete
+/// [`resolve_icon_path`] resolver.
+fn resolve_class_icon(
+    index: &HashMap<String, String>,
+    class: &str,
+) -> Option<quantum_domain::IconRef> {
+    resolve_class_icon_with(index, class, |name| resolve_icon_path(Some(name)))
+}
+
+/// Build a map from lowercased window class to icon name by scanning installed
+/// desktop entries. Two keys are inserted per entry: its `StartupWMClass` (the
+/// authoritative window class, for classes that differ from the icon name) and
+/// its desktop-file app id / stem (a secondary fallback). Both map to the
+/// entry's `Icon=` value. A `StartupWMClass` key takes precedence over an app
+/// id key when both would collide. Directories that cannot be read and files
+/// that cannot be parsed are skipped; a total scan failure yields an empty map.
+fn build_wm_class_icon_index() -> HashMap<String, String> {
+    use freedesktop_desktop_entry::DesktopEntry;
+
+    let data_home = std::env::var("XDG_DATA_HOME")
+        .unwrap_or_else(|_| format!("{}/.local/share", std::env::var("HOME").unwrap_or_default()));
+    let data_dirs = std::env::var("XDG_DATA_DIRS")
+        .unwrap_or_else(|_| "/usr/local/share:/usr/share".to_string());
+
+    let mut base_dirs = vec![data_home];
+    base_dirs.extend(data_dirs.split(':').map(|s| s.to_string()));
+
+    let mut index: HashMap<String, String> = HashMap::new();
+
+    for base_dir in base_dirs {
+        let app_dir = std::path::Path::new(&base_dir).join("applications");
+        let entries = match std::fs::read_dir(&app_dir) {
+            Ok(entries) => entries,
+            Err(_) => continue,
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.extension().and_then(|s| s.to_str()) != Some("desktop") {
+                continue;
+            }
+            let Ok(content) = std::fs::read_to_string(&path) else {
+                continue;
+            };
+            let Ok(desktop_entry) = DesktopEntry::decode(&path, &content) else {
+                continue;
+            };
+            let Some(icon) = desktop_entry.icon() else {
+                continue;
+            };
+            let icon = icon.to_string();
+
+            // Secondary key: the app id / file stem. Inserted first so a
+            // StartupWMClass key can override it on collision.
+            if let Some(stem) = path.file_stem().and_then(|s| s.to_str()) {
+                index
+                    .entry(stem.to_lowercase())
+                    .or_insert_with(|| icon.clone());
+            }
+
+            // Authoritative key: StartupWMClass. Always wins.
+            if let Some(wm_class) = desktop_entry.startup_wm_class() {
+                index.insert(wm_class.to_lowercase(), icon.clone());
+            }
+        }
+    }
+
+    index
+}
+
+/// Parse a Hyprland `j/clients` JSON response into window records, resolving
+/// each window's icon through the injected `resolve_icon` function. Keeping the
+/// resolver injectable makes the icon-population path unit-testable without the
+/// installed icon theme. A malformed response yields an empty list.
+fn parse_windows_with(
+    response: &str,
+    resolve_icon: impl Fn(&str) -> Option<quantum_domain::IconRef>,
+) -> Vec<WindowInfo> {
+    let mut windows = Vec::new();
+
+    if let Ok(json) = serde_json::from_str::<serde_json::Value>(response) {
+        if let Some(clients) = json.as_array() {
+            for client in clients {
+                if let (Some(address), Some(title), Some(class), Some(workspace_id)) = (
+                    client["address"].as_str(),
+                    client["title"].as_str(),
+                    client["class"].as_str(),
+                    client["workspace"]["id"].as_i64(),
+                ) {
+                    let workspace_name = client["workspace"]["name"]
+                        .as_str()
+                        .unwrap_or("")
+                        .to_string();
+                    let title_lower = title.to_lowercase();
+                    let class_lower = class.to_lowercase();
+                    let workspace_name_lower = workspace_name.to_lowercase();
+                    let icon = resolve_icon(class);
+                    windows.push(WindowInfo {
+                        address: address.to_string(),
+                        title: title.to_string(),
+                        class: class.to_string(),
+                        workspace_id,
+                        workspace_name,
+                        title_lower,
+                        class_lower,
+                        workspace_name_lower,
+                        icon,
+                    });
+                }
+            }
+        }
+    }
+
+    windows
 }
 
 /// Format a friendly subtitle from a workspace name, id, and window class.
@@ -53,6 +227,11 @@ pub struct HyprlandWindowsProvider {
     client: Arc<dyn HyprlandClient>,
     windows: RwLock<Vec<WindowInfo>>,
     last_refresh: Mutex<Option<Instant>>,
+    /// Map from lowercased window class to icon name, built once at
+    /// construction by scanning installed desktop entries. Lets classes whose
+    /// name differs from their icon (for example `Code` -> `vscode`) resolve
+    /// correctly. Empty when the desktop-entry scan finds nothing.
+    wm_class_icon_index: HashMap<String, String>,
 }
 
 impl HyprlandWindowsProvider {
@@ -63,6 +242,7 @@ impl HyprlandWindowsProvider {
             client,
             windows: RwLock::new(Vec::new()),
             last_refresh: Mutex::new(None),
+            wm_class_icon_index: build_wm_class_icon_index(),
         };
 
         // Try to load initial windows
@@ -84,44 +264,12 @@ impl HyprlandWindowsProvider {
         self.refresh_windows().await
     }
 
-    /// Parse a Hyprland `j/clients` JSON response into window records. Shared by
-    /// the cached search path and the one-shot `snapshot` so the parsing lives
-    /// in one place. A malformed response yields an empty list.
-    fn parse_windows(response: &str) -> Vec<WindowInfo> {
-        let mut windows = Vec::new();
-
-        if let Ok(json) = serde_json::from_str::<serde_json::Value>(response) {
-            if let Some(clients) = json.as_array() {
-                for client in clients {
-                    if let (Some(address), Some(title), Some(class), Some(workspace_id)) = (
-                        client["address"].as_str(),
-                        client["title"].as_str(),
-                        client["class"].as_str(),
-                        client["workspace"]["id"].as_i64(),
-                    ) {
-                        let workspace_name = client["workspace"]["name"]
-                            .as_str()
-                            .unwrap_or("")
-                            .to_string();
-                        let title_lower = title.to_lowercase();
-                        let class_lower = class.to_lowercase();
-                        let workspace_name_lower = workspace_name.to_lowercase();
-                        windows.push(WindowInfo {
-                            address: address.to_string(),
-                            title: title.to_string(),
-                            class: class.to_string(),
-                            workspace_id,
-                            workspace_name,
-                            title_lower,
-                            class_lower,
-                            workspace_name_lower,
-                        });
-                    }
-                }
-            }
-        }
-
-        windows
+    /// Parse a Hyprland `j/clients` JSON response into window records, resolving
+    /// each window's icon from its class against `index`. Shared by the cached
+    /// search path and the one-shot `snapshot` so the parsing lives in one
+    /// place. A malformed response yields an empty list.
+    fn parse_windows(response: &str, index: &HashMap<String, String>) -> Vec<WindowInfo> {
+        parse_windows_with(response, |class| resolve_class_icon(index, class))
     }
 
     /// Refresh the list of windows from Hyprland.
@@ -129,7 +277,7 @@ impl HyprlandWindowsProvider {
         // Request clients from Hyprland
         let response = self.client.command("j/clients").await?;
 
-        *self.windows.write().await = Self::parse_windows(&response);
+        *self.windows.write().await = Self::parse_windows(&response, &self.wm_class_icon_index);
 
         if let Ok(mut guard) = self.last_refresh.lock() {
             *guard = Some(Instant::now());
@@ -178,7 +326,7 @@ impl ProviderSource for HyprlandWindowsProvider {
                         &window.workspace_name,
                         &window.class,
                     )),
-                    icon: None,
+                    icon: window.icon.clone(),
                     score: MatchScore::new(score),
                     action: Action::Custom {
                         kind: "hyprland_focus".to_string(),
@@ -230,7 +378,7 @@ impl ProviderSource for HyprlandWindowsProvider {
         // reflects the current windows. On any Hyprland error degrade to an
         // empty list so the menu falls back to its static items.
         let windows = match self.client.command("j/clients").await {
-            Ok(response) => Self::parse_windows(&response),
+            Ok(response) => Self::parse_windows(&response, &self.wm_class_icon_index),
             Err(_) => return Some(json!({ "windows": [] })),
         };
 
@@ -488,5 +636,122 @@ mod tests {
     #[test]
     fn subtitle_fallback_when_name_missing() {
         assert_eq!(format_subtitle(7, "", "code"), "Workspace 7 \u{00B7} code");
+    }
+
+    /// When the class matches a `StartupWMClass` index entry, the mapped icon
+    /// name (not the raw class) is what gets resolved. Visual Studio Code's
+    /// class is `Code` but its icon is `vscode`; the index must redirect the
+    /// lookup to `vscode`, and the resolver must never be asked for `code`.
+    #[test]
+    fn resolve_class_icon_uses_mapped_name_on_index_hit() {
+        let mut index = HashMap::new();
+        index.insert("code".to_string(), "vscode".to_string());
+        let asked = std::cell::RefCell::new(Vec::new());
+
+        let result = resolve_class_icon_with(&index, "Code", |name| {
+            asked.borrow_mut().push(name.to_string());
+            if name == "vscode" {
+                Some(PathBuf::from("/x/vscode.png"))
+            } else {
+                None
+            }
+        });
+
+        assert_eq!(
+            result,
+            Some(quantum_domain::IconRef::Path(PathBuf::from(
+                "/x/vscode.png"
+            )))
+        );
+        let asked = asked.borrow();
+        assert!(
+            asked.iter().any(|name| name == "vscode"),
+            "resolver should be asked for the mapped icon name, asked: {asked:?}"
+        );
+        assert!(
+            !asked.iter().any(|name| name == "code"),
+            "resolver must not be asked for the raw class once the index hit resolves"
+        );
+    }
+
+    /// With no index entry, the lowercased class is tried directly as an icon
+    /// name. Most classes (firefox, steam, alacritty) are also their icon name.
+    #[test]
+    fn resolve_class_icon_falls_back_to_class_as_name() {
+        let index = HashMap::new();
+
+        let result = resolve_class_icon_with(&index, "Firefox", |name| {
+            if name == "firefox" {
+                Some(PathBuf::from("/x/firefox.png"))
+            } else {
+                None
+            }
+        });
+
+        assert_eq!(
+            result,
+            Some(quantum_domain::IconRef::Path(PathBuf::from(
+                "/x/firefox.png"
+            )))
+        );
+    }
+
+    /// When nothing resolves, `None` is emitted rather than a bogus
+    /// `IconRef::Name` the webview cannot load.
+    #[test]
+    fn resolve_class_icon_returns_none_when_nothing_resolves() {
+        let index = HashMap::new();
+        let result = resolve_class_icon_with(&index, "NoSuchApp", |_name| None);
+        assert!(result.is_none());
+    }
+
+    /// `parse_windows` populates each window's icon via the injected class
+    /// resolver, so the search path can emit a concrete icon per window.
+    #[test]
+    fn parse_windows_sets_icon_from_resolver() {
+        let response = r#"[
+            {
+                "address": "0x1",
+                "title": "VSCode",
+                "class": "Code",
+                "workspace": {"id": 1, "name": "1"}
+            }
+        ]"#;
+
+        let windows = parse_windows_with(response, |class| {
+            if class == "Code" {
+                Some(quantum_domain::IconRef::Path(PathBuf::from(
+                    "/x/vscode.png",
+                )))
+            } else {
+                None
+            }
+        });
+
+        assert_eq!(windows.len(), 1);
+        assert_eq!(
+            windows[0].icon,
+            Some(quantum_domain::IconRef::Path(PathBuf::from(
+                "/x/vscode.png"
+            )))
+        );
+    }
+
+    /// A window whose class resolves to no icon carries `icon: None`.
+    #[test]
+    fn parse_windows_leaves_icon_none_when_unresolved() {
+        let response = r#"[
+            {
+                "address": "0x1",
+                "title": "Mystery",
+                "class": "UnknownClass",
+                "workspace": {"id": 1, "name": "1"}
+            }
+        ]"#;
+
+        let windows = parse_windows_with(response, |_class| None);
+
+        assert_eq!(windows.len(), 1);
+        assert!(windows[0].icon.is_none());
     }
 }
