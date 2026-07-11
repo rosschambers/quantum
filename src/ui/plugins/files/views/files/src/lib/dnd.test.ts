@@ -29,4 +29,26 @@ describe('isValidDrop', () => {
     it('rejects an empty source set (nothing to move)', () => {
         expect(isValidDrop([], '/a')).toBe(false);
     });
+
+    it('rejects dropping a source onto its own direct parent directory', () => {
+        // "/dir/file" already lives in "/dir"; moving it there is a no-op the
+        // backend rejects with AlreadyExists, so it must not be offered.
+        expect(isValidDrop(['/dir/file'], '/dir')).toBe(false);
+        expect(isValidDrop(['/home/user/report.txt'], '/home/user')).toBe(false);
+    });
+
+    it('rejects dropping a top-level source onto the root it lives in', () => {
+        // The parent of "/a" is "/", so dropping "/a" onto "/" is a no-op.
+        expect(isValidDrop(['/a'], '/')).toBe(false);
+    });
+
+    it('accepts dropping a source into a different directory', () => {
+        expect(isValidDrop(['/dir/file'], '/other')).toBe(true);
+    });
+
+    it('rejects when any single source already lives in the destination', () => {
+        // "/dir/b" lives in "/dir"; even paired with a movable source the drop
+        // is rejected as a whole.
+        expect(isValidDrop(['/elsewhere/a', '/dir/b'], '/dir')).toBe(false);
+    });
 });

@@ -58,3 +58,26 @@ export function pathBaseName(path: string): string {
     const parts = path.split('/').filter((part) => part.length > 0);
     return parts.length === 0 ? '/' : parts[parts.length - 1];
 }
+
+/**
+ * The parent directory of an absolute POSIX path. The root "/" is its own
+ * parent, and a top-level directory such as "/home" resolves to "/". A trailing
+ * slash is ignored. This is the single source of truth for "the directory that
+ * contains this path", reused by the drag-and-drop guard and pane navigation.
+ * Examples:
+ *   "/"              -> "/"
+ *   "/home"          -> "/"
+ *   "/home/user/x"   -> "/home/user"
+ *   "/home/user/"    -> "/home"
+ */
+export function parentOf(path: string): string {
+    if (path === '/') {
+        return '/';
+    }
+    const withoutTrailingSlash = path.endsWith('/') ? path.slice(0, -1) : path;
+    const lastSlash = withoutTrailingSlash.lastIndexOf('/');
+    if (lastSlash <= 0) {
+        return '/';
+    }
+    return withoutTrailingSlash.slice(0, lastSlash);
+}
