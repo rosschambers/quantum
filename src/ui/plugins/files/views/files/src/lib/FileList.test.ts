@@ -134,4 +134,66 @@ describe('FileList background drop target', () => {
         await fireEvent.drop(list, { dataTransfer });
         expect(onMove).not.toHaveBeenCalled();
     });
+
+    it('moves a drop landing on the inner content, not only the thin list edge', async () => {
+        const onMove = vi.fn();
+        const { container } = render(FileList, {
+            props: {
+                entries: makeEntries(3),
+                selection: new Set<string>(),
+                maxSize: 3,
+                viewportHeight: 600,
+                path: '/panes/right',
+                onMove,
+                onSelect: vi.fn(),
+                onOpen: vi.fn(),
+                onContextMenu: vi.fn(),
+            },
+        });
+        // The full-height sizer covers the list; a drop on it (target is a child
+        // of the scroll container, not equal to it) must still move into the pane.
+        const sizer = container.querySelector('.sizer') as HTMLElement;
+        beginDrag(['/panes/left/a']);
+        const dataTransfer = fakeDataTransfer();
+
+        await fireEvent.dragOver(sizer, { dataTransfer });
+        const list = container.querySelector('.list') as HTMLElement;
+        expect(list.classList.contains('droptarget')).toBe(true);
+
+        await fireEvent.drop(sizer, { dataTransfer });
+        expect(onMove).toHaveBeenCalledTimes(1);
+        expect(onMove).toHaveBeenCalledWith(['/panes/left/a'], '/panes/right');
+    });
+
+    it('routes a drop on a directory row to that row and does not also fire the list', async () => {
+        const onMove = vi.fn();
+        const directory: FileEntry = {
+            ...makeEntry(0),
+            name: 'sub',
+            path: '/dir/sub',
+            kind: 'directory',
+        };
+        const { container } = render(FileList, {
+            props: {
+                entries: [directory],
+                selection: new Set<string>(),
+                maxSize: 1,
+                viewportHeight: 600,
+                path: '/dir',
+                onMove,
+                onSelect: vi.fn(),
+                onOpen: vi.fn(),
+                onContextMenu: vi.fn(),
+            },
+        });
+        const row = container.querySelector('[data-path="/dir/sub"]') as HTMLElement;
+        beginDrag(['/other/a']);
+        const dataTransfer = fakeDataTransfer();
+
+        await fireEvent.dragOver(row, { dataTransfer });
+        await fireEvent.drop(row, { dataTransfer });
+
+        expect(onMove).toHaveBeenCalledTimes(1);
+        expect(onMove).toHaveBeenCalledWith(['/other/a'], '/dir/sub');
+    });
 });

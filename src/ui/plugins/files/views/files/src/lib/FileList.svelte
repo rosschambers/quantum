@@ -108,13 +108,15 @@
         return [...selection];
     }
 
-    // True while a valid drag hovers the empty list background, driving the
-    // outline. Only the background (not a row) reaches these handlers, guarded
-    // by `event.target === event.currentTarget`, so a drop is handled once.
+    // True while a valid drag hovers anywhere in the pane, driving the outline.
+    // The whole pane area is a drop target: a drop over empty space or over a
+    // non-directory row bubbles here and moves into this pane's directory. A
+    // directory `Row` stops propagation in its own drop handler, so a drop ON a
+    // directory targets that directory and never reaches these handlers.
     let isListDropTarget = $state(false);
 
-    function backgroundDrop(event: DragEvent): boolean {
-        if (event.target !== event.currentTarget || path === undefined || onMove === undefined) {
+    function listAcceptsDrop(): boolean {
+        if (path === undefined || onMove === undefined) {
             return false;
         }
         const sources = getDragSources();
@@ -122,22 +124,28 @@
     }
 
     function handleListDragOver(event: DragEvent): void {
-        if (!backgroundDrop(event)) {
+        if (!listAcceptsDrop()) {
             return;
         }
         event.preventDefault();
         isListDropTarget = true;
     }
 
+    // Dragover fires for child elements too, so a naive dragleave would clear
+    // the highlight every time the pointer crosses between children and flicker.
+    // Clear only when the drag actually leaves the list: when `relatedTarget`
+    // (the element being entered) is not contained by the scroll container.
     function handleListDragLeave(event: DragEvent): void {
-        if (event.target !== event.currentTarget) {
+        const list = event.currentTarget;
+        const related = event.relatedTarget;
+        if (list instanceof Node && related instanceof Node && list.contains(related)) {
             return;
         }
         isListDropTarget = false;
     }
 
     function handleListDrop(event: DragEvent): void {
-        if (!backgroundDrop(event)) {
+        if (!listAcceptsDrop()) {
             return;
         }
         event.preventDefault();
