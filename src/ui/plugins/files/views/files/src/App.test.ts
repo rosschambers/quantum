@@ -88,25 +88,111 @@ describe('App dual panes', () => {
     });
 });
 
-describe('App type-ahead', () => {
-    it('selects the first entry whose name starts with the typed buffer', async () => {
-        const entries = [
-            makeEntry({ name: 'apple', path: `${HOME}/apple` }),
-            makeEntry({ name: 'banana', path: `${HOME}/banana` }),
-            makeEntry({ name: 'cherry', path: `${HOME}/cherry` }),
+describe('App type-to-filter', () => {
+    function filterEntries(): FileEntry[] {
+        return [
+            makeEntry({ name: 'docs', path: `${HOME}/docs`, kind: 'directory' }),
+            makeEntry({ name: 'downloads', path: `${HOME}/downloads`, kind: 'directory' }),
+            makeEntry({ name: 'music', path: `${HOME}/music`, kind: 'directory' }),
+            makeEntry({ name: 'notes.txt', path: `${HOME}/notes.txt` }),
         ];
-        const ipc = createFakeIpc(entries);
+    }
+
+    // The filter applies only to the active pane, and the same data-path also
+    // appears in the sidebar tree and the inactive pane; scope row lookups to
+    // the active pane's rows (`.frow`) so assertions are unambiguous.
+    function activeRow(container: HTMLElement, path: string): Element | null {
+        const active = container.querySelector('.pane:not(.inactive-pane)');
+        return active?.querySelector(`.frow[data-path="${path}"]`) ?? null;
+    }
+
+    it('bare typing appends to the active filter and narrows the list live', async () => {
+        const ipc = createFakeIpc(filterEntries());
         const { container } = render(App, { props: { ipc } });
 
         await vi.waitFor(() => {
-            expect(container.querySelector(`[data-path="${HOME}/banana"]`)).not.toBeNull();
+            expect(activeRow(container, `${HOME}/music`)).not.toBeNull();
         });
 
-        await fireEvent.keyDown(window, { key: 'b' });
+        await fireEvent.keyDown(window, { key: 'd' });
+        await fireEvent.keyDown(window, { key: 'o' });
 
-        const selected = container.querySelector('.frow.sel');
-        expect(selected).not.toBeNull();
-        expect(selected?.textContent).toContain('banana');
+        // The toolbar filter field is the indicator: it shows the typed text.
+        const filterInput = container.querySelector('.filter-input') as HTMLInputElement;
+        expect(filterInput.value).toBe('do');
+
+        // The active list is narrowed to names containing "do".
+        await vi.waitFor(() => {
+            expect(activeRow(container, `${HOME}/docs`)).not.toBeNull();
+            expect(activeRow(container, `${HOME}/downloads`)).not.toBeNull();
+            expect(activeRow(container, `${HOME}/music`)).toBeNull();
+            expect(activeRow(container, `${HOME}/notes.txt`)).toBeNull();
+        });
+    });
+
+    it('Backspace shortens a non-empty filter instead of navigating up', async () => {
+        const ipc = createFakeIpc(filterEntries());
+        const { container } = render(App, { props: { ipc } });
+
+        await vi.waitFor(() => {
+            expect(ipc.list).toHaveBeenCalledWith(HOME);
+        });
+
+        await fireEvent.keyDown(window, { key: 'd' });
+        await fireEvent.keyDown(window, { key: 'o' });
+        await fireEvent.keyDown(window, { key: 'Backspace' });
+
+        const filterInput = container.querySelector('.filter-input') as HTMLInputElement;
+        await vi.waitFor(() => {
+            expect(filterInput.value).toBe('d');
+        });
+        // It must not have navigated to the parent directory. Navigating up
+        // resets the pane's filter, so a still-populated 'd' filter already
+        // proves it did not; assert the active pane path is unchanged too.
+        const activePath = container.querySelector('.pane:not(.inactive-pane) .pane-path');
+        expect(activePath?.textContent).toBe(HOME);
+    });
+
+    it('Escape clears a non-empty filter and keeps the list intact', async () => {
+        const ipc = createFakeIpc(filterEntries());
+        const { container } = render(App, { props: { ipc } });
+
+        await vi.waitFor(() => {
+            expect(activeRow(container, `${HOME}/music`)).not.toBeNull();
+        });
+
+        await fireEvent.keyDown(window, { key: 'd' });
+        await fireEvent.keyDown(window, { key: 'o' });
+
+        const filterInput = container.querySelector('.filter-input') as HTMLInputElement;
+        await vi.waitFor(() => {
+            expect(filterInput.value).toBe('do');
+        });
+
+        await fireEvent.keyDown(window, { key: 'Escape' });
+
+        await vi.waitFor(() => {
+            expect(filterInput.value).toBe('');
+            // Every entry is visible again once the filter clears.
+            expect(activeRow(container, `${HOME}/music`)).not.toBeNull();
+        });
+    });
+
+    it('typing directly into the filter input still filters the list', async () => {
+        const ipc = createFakeIpc(filterEntries());
+        const { container } = render(App, { props: { ipc } });
+
+        await vi.waitFor(() => {
+            expect(activeRow(container, `${HOME}/music`)).not.toBeNull();
+        });
+
+        const filterInput = container.querySelector('.filter-input') as HTMLInputElement;
+        await fireEvent.input(filterInput, { target: { value: 'mu' } });
+
+        await vi.waitFor(() => {
+            expect(activeRow(container, `${HOME}/music`)).not.toBeNull();
+            expect(activeRow(container, `${HOME}/docs`)).toBeNull();
+        });
     });
 });
 

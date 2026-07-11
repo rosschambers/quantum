@@ -11,7 +11,10 @@
      * per-pane loader effects list the directory, watch it for changes, and
      * request recursive sizes on navigation; a single event handler reloads a
      * pane on `changed`, streams folder sizes in on `size`, and toasts operation
-     * failures. Keyboard, selection, and type-ahead all act on the active pane.
+     * failures. Keyboard, selection, and live filtering all act on the active
+     * pane: bare printable typing narrows the active pane's list through its
+     * filter, Backspace edits that filter (or navigates up when it is empty),
+     * and Escape clears it (or closes menus/modals when it is empty).
      */
     import type {
         ApplicationInfo,
@@ -78,13 +81,10 @@
     let propertiesTarget = $state<PropertiesTarget | null>(null);
     let promptRequest = $state<PromptRequest | null>(null);
     let cachedApplications = $state<ApplicationInfo[]>([]);
-    let typeaheadBuffer = $state('');
 
     // Plain (non-reactive) scratch: the event that opened the current menu (so a
-    // secondary "Open with" menu can drop from the same spot) and the type-ahead
-    // reset timer.
+    // secondary "Open with" menu can drop from the same spot).
     let lastMenuEvent: MouseEvent | null = null;
-    let typeaheadTimer: ReturnType<typeof setTimeout> | undefined;
 
     const active = $derived(panes[activePaneIndex]);
     const otherIndex = $derived(activePaneIndex === 0 ? 1 : 0);
@@ -250,10 +250,17 @@
     setupPaneLoader(1);
 
     // Window-level keyboard handling. Ignored while a text input is focused,
-    // except for Escape which always closes an open menu or modal.
+    // except for Escape which clears an active filter or closes an open menu or
+    // modal.
     $effect(() => {
         function onKeyDown(event: KeyboardEvent): void {
             if (event.key === 'Escape') {
+                // A non-empty filter is cleared first and swallows the Escape;
+                // only an empty filter falls through to closing menus/modals.
+                if (active.filter !== '') {
+                    handleFilterInput('');
+                    return;
+                }
                 closeContextMenu();
                 if (propertiesTarget !== null || promptRequest !== null) {
                     propertiesTarget = null;
@@ -294,7 +301,13 @@
                     openEntry(index, entry);
                 }
             } else if (event.key === 'Backspace') {
-                pane.up();
+                // While filtering, Backspace edits the filter; with an empty
+                // filter it keeps its "go up" behavior.
+                if (pane.filter !== '') {
+                    handleFilterInput(pane.filter.slice(0, -1));
+                } else {
+                    pane.up();
+                }
             } else if (event.altKey && event.key === 'ArrowLeft') {
                 pane.back();
             } else if (event.altKey && event.key === 'ArrowRight') {
@@ -308,7 +321,9 @@
                 event.preventDefault();
                 activePaneIndex = otherIndex;
             } else if (isPrintable(event)) {
-                typeAhead(event.key);
+                // Bare printable typing filters the active pane's list live,
+                // appending to the same filter the toolbar filter box uses.
+                handleFilterInput(pane.filter + event.key);
             }
         }
         window.addEventListener('keydown', onKeyDown);
@@ -320,26 +335,6 @@
         return (
             event.key.length === 1 && !event.ctrlKey && !event.metaKey && !event.altKey
         );
-    }
-
-    /** Accumulate a type-ahead buffer and select the first name-prefix match. */
-    function typeAhead(character: string): void {
-        clearTimeout(typeaheadTimer);
-        typeaheadBuffer += character;
-        typeaheadTimer = setTimeout(() => {
-            typeaheadBuffer = '';
-        }, 900);
-
-        const pane = active;
-        const index = activePaneIndex;
-        const visible = pane.visibleEntries();
-        const prefix = typeaheadBuffer.toLowerCase();
-        const matchIndex = visible.findIndex((entry) => entry.name.toLowerCase().startsWith(prefix));
-        if (matchIndex >= 0) {
-            pane.selectOnly(visible[matchIndex].path);
-            anchors[index] = matchIndex;
-            cursors[index] = matchIndex;
-        }
     }
 
     // ── Selection and opening ───────────────────────────────────────────────
@@ -612,10 +607,6 @@
     />
 </div>
 
-{#if typeaheadBuffer !== ''}
-    <div class="typeahead-chip">{typeaheadBuffer}</div>
-{/if}
-
 <Toasts />
 
 {#if propertiesTarget !== null}
@@ -764,19 +755,5 @@
     }
     .cols .sorted {
         color: var(--color-accent);
-    }
-    .typeahead-chip {
-        position: fixed;
-        bottom: 34px;
-        left: 24px;
-        z-index: 200;
-        background: var(--color-bg-alt);
-        border: 1px solid var(--color-accent);
-        border-radius: 8px;
-        padding: 6px 12px;
-        font-family: var(--font-mono, ui-monospace, monospace);
-        font-size: 12px;
-        color: var(--color-fg);
-        box-shadow: 0 8px 24px var(--color-shadow);
     }
 </style>
