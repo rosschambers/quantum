@@ -323,6 +323,11 @@ pub fn compress_command(paths: &[String], destination: &str) -> Result<Vec<Strin
 /// Build the extraction command line for `path`, dispatching by extension: a
 /// `.zip` uses `unzip`, and everything else uses `tar -xf`, which auto-detects
 /// gzip, zstd, and plain tar. Both extract into the archive's parent directory.
+///
+/// The zip branch passes `-n` so `unzip` never overwrites an existing file,
+/// preserving anything already present in the destination. The `tar -xf` branch
+/// keeps tar's default behaviour, which does overwrite existing files; making
+/// tar non-overwriting portably is out of scope here.
 pub fn extract_command(path: &str) -> Vec<String> {
     let parent = Path::new(path)
         .parent()
@@ -332,7 +337,7 @@ pub fn extract_command(path: &str) -> Vec<String> {
     if path.to_ascii_lowercase().ends_with(".zip") {
         vec![
             "unzip".to_string(),
-            "-o".to_string(),
+            "-n".to_string(),
             path.to_string(),
             "-d".to_string(),
             parent,
@@ -714,7 +719,7 @@ mod tests {
             extract_command("/home/user/archive.zip"),
             vec![
                 "unzip".to_string(),
-                "-o".to_string(),
+                "-n".to_string(),
                 "/home/user/archive.zip".to_string(),
                 "-d".to_string(),
                 "/home/user".to_string(),
