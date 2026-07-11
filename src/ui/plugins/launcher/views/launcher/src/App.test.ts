@@ -456,6 +456,35 @@ describe('App.svelte', () => {
     await waitFor(() => expect(screen.queryByText('hi')).toBeNull());
   });
 
+  it('shows the prefix legend when the input is empty', async () => {
+    mockCall.mockResolvedValue({ matches: [] });
+
+    render(App);
+    await act();
+
+    await waitFor(() => {
+      expect(screen.getByText(/> launch/)).toBeDefined();
+      expect(screen.getByText(/! terminal/)).toBeDefined();
+      expect(screen.getByText(/\$ run & show/)).toBeDefined();
+    });
+  });
+
+  it('hides the prefix legend when the input is non-empty', async () => {
+    mockCall.mockResolvedValue({ matches: [] });
+
+    render(App);
+    await act();
+    const input = screen.getByPlaceholderText('Search...') as HTMLInputElement;
+
+    // The legend is visible while the query is empty.
+    await waitFor(() => expect(screen.getByText(/run & show/)).toBeDefined());
+
+    // Setting a non-empty query hides it.
+    await fireEvent.input(input, { target: { value: 'firefox' } });
+
+    await waitFor(() => expect(screen.queryByText(/run & show/)).toBeNull());
+  });
+
   it('window focus event refocuses input', async () => {
     mockCall.mockResolvedValue({ matches: [] });
 

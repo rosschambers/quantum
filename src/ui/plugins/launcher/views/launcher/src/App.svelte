@@ -245,6 +245,13 @@
       />
     </div>
 
+    {#if !searchText.trim()}
+      <!-- An empty input shows a one-line legend of the command prefixes so
+           the `>`, `!`, and `$` modes are discoverable; it hides the moment
+           the user types anything. -->
+      <div class="prefix-legend">&gt; launch &nbsp;·&nbsp; ! terminal &nbsp;·&nbsp; $ run &amp; show</div>
+    {/if}
+
     <div class="results-container">
       {#if capture !== null}
         <CommandOutput running={capture.running} result={capture.result} />
