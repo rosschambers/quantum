@@ -64,6 +64,66 @@ describe('App.svelte', () => {
     );
   });
 
+  it('pins a > command query to the shell provider', async () => {
+    const user = userEvent.setup();
+    mockCall.mockResolvedValue({ matches: [] });
+
+    render(App);
+    const input = screen.getByPlaceholderText('Search...');
+
+    await user.type(input, '>kill quantumd');
+
+    await waitFor(
+      () => {
+        expect(mockCall).toHaveBeenCalledWith('search', {
+          text: '>kill quantumd',
+          providers: ['shell'],
+        });
+      },
+      { timeout: 200 }
+    );
+  });
+
+  it('pins a ! command query to the shell provider', async () => {
+    const user = userEvent.setup();
+    mockCall.mockResolvedValue({ matches: [] });
+
+    render(App);
+    const input = screen.getByPlaceholderText('Search...');
+
+    await user.type(input, '!htop');
+
+    await waitFor(
+      () => {
+        expect(mockCall).toHaveBeenCalledWith('search', {
+          text: '!htop',
+          providers: ['shell'],
+        });
+      },
+      { timeout: 200 }
+    );
+  });
+
+  it('leaves a plain query fanning out to all providers', async () => {
+    const user = userEvent.setup();
+    mockCall.mockResolvedValue({ matches: [] });
+
+    render(App);
+    const input = screen.getByPlaceholderText('Search...');
+
+    await user.type(input, 'firefox');
+
+    await waitFor(
+      () => {
+        expect(mockCall).toHaveBeenCalledWith('search', {
+          text: 'firefox',
+          providers: [],
+        });
+      },
+      { timeout: 200 }
+    );
+  });
+
   it('renders matches when search returns results', async () => {
     const matches = [
       {

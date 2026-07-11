@@ -28,10 +28,19 @@
 
     // An empty query fetches the default (usage-ranked) apps. Pin it to the
     // desktop-apps provider so other providers (shell-command, window
-    // switcher) don't fire on empty input. A non-empty query fans out to all
-    // providers.
+    // switcher) don't fire on empty input. A command query (prefixed with `>`
+    // to run detached or `!` to run in a terminal) is pinned to the shell
+    // provider so the command is the sole, top result. Any other non-empty
+    // query fans out to all providers.
     const trimmed = text.trim();
-    const providers = trimmed ? [] : ['desktop-apps'];
+    let providers: string[];
+    if (!trimmed) {
+      providers = ['desktop-apps'];
+    } else if (trimmed.startsWith('>') || trimmed.startsWith('!')) {
+      providers = ['shell'];
+    } else {
+      providers = [];
+    }
 
     isLoading = true;
     lastSearchTimeout = window.setTimeout(async () => {
