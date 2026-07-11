@@ -187,7 +187,7 @@
         color: var(--color-muted);
     }
     .meta .v {
-        font-family: var(--font-mono);
+        font-family: var(--font-mono, ui-monospace, monospace);
         font-size: 10px;
         text-align: right;
     }
@@ -198,7 +198,7 @@
         padding: 8px;
         font-size: 10px;
         line-height: 1.5;
-        font-family: var(--font-mono);
+        font-family: var(--font-mono, ui-monospace, monospace);
         color: var(--color-fg-alt);
         overflow: hidden;
         max-height: 180px;

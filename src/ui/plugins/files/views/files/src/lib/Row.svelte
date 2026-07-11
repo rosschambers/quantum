@@ -214,7 +214,7 @@
         overflow: hidden;
     }
     .frow:hover {
-        background: var(--color-surface-hover);
+        background: var(--color-surface-hover, hsla(230, 14%, 42%, 1));
     }
     .frow.sel {
         background: color-mix(in oklab, var(--color-accent) 16%, transparent);
@@ -249,14 +249,14 @@
     .nm .sub {
         font-size: 10px;
         color: var(--color-muted);
-        font-family: var(--font-mono);
+        font-family: var(--font-mono, ui-monospace, monospace);
         flex: none;
     }
     .sz {
         width: 130px;
         flex: none;
         text-align: right;
-        font-family: var(--font-mono);
+        font-family: var(--font-mono, ui-monospace, monospace);
         font-size: 11px;
         color: var(--color-muted);
         display: flex;
@@ -282,7 +282,7 @@
         width: 130px;
         flex: none;
         text-align: right;
-        font-family: var(--font-mono);
+        font-family: var(--font-mono, ui-monospace, monospace);
         font-size: 10px;
         color: var(--color-muted);
     }

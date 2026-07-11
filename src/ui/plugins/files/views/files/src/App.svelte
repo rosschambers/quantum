@@ -713,7 +713,7 @@
     .pane-path {
         flex: none;
         font-size: 10px;
-        font-family: var(--font-mono);
+        font-family: var(--font-mono, ui-monospace, monospace);
         color: var(--color-muted);
         padding: 4px 12px;
         border-bottom: 1px solid var(--color-border);
@@ -774,7 +774,7 @@
         border: 1px solid var(--color-accent);
         border-radius: 8px;
         padding: 6px 12px;
-        font-family: var(--font-mono);
+        font-family: var(--font-mono, ui-monospace, monospace);
         font-size: 12px;
         color: var(--color-fg);
         box-shadow: 0 8px 24px var(--color-shadow);

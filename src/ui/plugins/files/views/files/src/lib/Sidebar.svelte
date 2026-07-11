@@ -157,7 +157,7 @@
         user-select: none;
     }
     .side-item:hover {
-        background: var(--color-surface-hover);
+        background: var(--color-surface-hover, hsla(230, 14%, 42%, 1));
     }
     .side-item.active {
         background: color-mix(in oklab, var(--color-accent) 14%, transparent);
@@ -178,7 +178,7 @@
         cursor: pointer;
     }
     .drive:hover {
-        background: var(--color-surface-hover);
+        background: var(--color-surface-hover, hsla(230, 14%, 42%, 1));
     }
     .drive .top {
         display: flex;

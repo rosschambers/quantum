@@ -47,7 +47,7 @@
         border-top: 1px solid var(--color-border);
         font-size: 10px;
         color: var(--color-muted);
-        font-family: var(--font-mono);
+        font-family: var(--font-mono, ui-monospace, monospace);
     }
     .free {
         margin-left: auto;

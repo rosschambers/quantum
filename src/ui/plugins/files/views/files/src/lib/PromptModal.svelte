@@ -111,7 +111,7 @@
         border-radius: 8px;
         padding: 8px 10px;
         color: var(--color-fg);
-        font-family: var(--font-mono);
+        font-family: var(--font-mono, ui-monospace, monospace);
         font-size: 12px;
         outline: none;
     }
@@ -136,7 +136,7 @@
         color: var(--color-fg-alt);
     }
     .btn.ghost:hover {
-        background: var(--color-surface-hover);
+        background: var(--color-surface-hover, hsla(230, 14%, 42%, 1));
     }
     .btn.primary {
         background: var(--color-accent);

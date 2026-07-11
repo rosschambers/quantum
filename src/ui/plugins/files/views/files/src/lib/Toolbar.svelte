@@ -148,7 +148,7 @@
         cursor: pointer;
     }
     .icon-btn:hover {
-        background: var(--color-surface-hover);
+        background: var(--color-surface-hover, hsla(230, 14%, 42%, 1));
     }
     .icon-btn.active {
         background: color-mix(in oklab, var(--color-accent) 18%, transparent);

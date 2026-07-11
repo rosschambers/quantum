@@ -116,7 +116,7 @@
         flex: none;
     }
     .v {
-        font-family: var(--font-mono);
+        font-family: var(--font-mono, ui-monospace, monospace);
         font-size: 11px;
         text-align: right;
         word-break: break-all;

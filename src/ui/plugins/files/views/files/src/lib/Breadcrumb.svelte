@@ -138,7 +138,7 @@
         font: inherit;
     }
     .seg:hover {
-        background: var(--color-surface-hover);
+        background: var(--color-surface-hover, hsla(230, 14%, 42%, 1));
         color: var(--color-fg);
     }
     .seg.last {
@@ -166,7 +166,7 @@
         border: none;
         outline: none;
         color: var(--color-fg);
-        font-family: var(--font-mono);
+        font-family: var(--font-mono, ui-monospace, monospace);
         font-size: 12px;
     }
 </style>

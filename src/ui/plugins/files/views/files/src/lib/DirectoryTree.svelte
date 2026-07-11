@@ -192,7 +192,7 @@
         white-space: nowrap;
     }
     .tree-row:hover {
-        background: var(--color-surface-hover);
+        background: var(--color-surface-hover, hsla(230, 14%, 42%, 1));
     }
     .tree-row.active {
         background: color-mix(in oklab, var(--color-accent) 14%, transparent);
