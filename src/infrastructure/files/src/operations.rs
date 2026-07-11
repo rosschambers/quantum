@@ -378,9 +378,44 @@ pub async fn run_trash(paths: &[String]) -> Result<(), FilesError> {
     run_command(&trash_command(paths)).await
 }
 
-/// Compress `paths` into `destination` by shelling out to `tar --zstd`.
+/// Split an archive file name into its stem and full (possibly multi-part)
+/// extension at the FIRST dot, so `bundle.tar.zst` becomes `("bundle",
+/// ".tar.zst")` rather than losing the `.tar` part. A name without a dot has an
+/// empty extension. A leading dot is treated as part of the stem so a dotfile
+/// archive is not mistaken for an all-extension name.
+fn split_archive_name(file_name: &str) -> (&str, &str) {
+    match file_name[1..].find('.') {
+        Some(relative_index) => file_name.split_at(relative_index + 1),
+        None => (file_name, ""),
+    }
+}
+
+/// Resolve a compress `destination` to a path that does not already exist, so a
+/// compress never silently overwrites an existing archive. When the destination
+/// is free it is returned unchanged; otherwise the next free ` (copy)` /
+/// ` (copy N)` name is chosen in the same directory, preserving the full archive
+/// extension (`.tar.zst`, `.zip`, and so on).
+fn resolve_compress_destination(destination: &str) -> String {
+    let destination_path = Path::new(destination);
+    if !occupied(destination_path) {
+        return destination.to_string();
+    }
+    let (parent, file_name) = match (destination_path.parent(), destination_path.file_name()) {
+        (Some(parent), Some(file_name)) => (parent, file_name.to_string_lossy().to_string()),
+        _ => return destination.to_string(),
+    };
+    let (stem, extension) = split_archive_name(&file_name);
+    let existing = |candidate: &str| occupied(&parent.join(candidate));
+    let free_name = next_free_name(stem, extension, &existing);
+    parent.join(free_name).to_string_lossy().to_string()
+}
+
+/// Compress `paths` into `destination` by shelling out to `tar --zstd`. The
+/// destination is first resolved to a non-colliding name so an existing archive
+/// is never overwritten.
 pub async fn run_compress(paths: &[String], destination: &str) -> Result<(), FilesError> {
-    run_command(&compress_command(paths, destination)?).await
+    let resolved = resolve_compress_destination(destination);
+    run_command(&compress_command(paths, &resolved)?).await
 }
 
 /// Extract the archive at `path` into its parent directory.
@@ -699,6 +734,36 @@ mod tests {
                 "a.txt".to_string(),
                 "b.txt".to_string(),
             ]
+        );
+    }
+
+    #[test]
+    fn split_archive_name_keeps_multi_part_extension() {
+        assert_eq!(split_archive_name("bundle.tar.zst"), ("bundle", ".tar.zst"));
+        assert_eq!(split_archive_name("photos.zip"), ("photos", ".zip"));
+        assert_eq!(split_archive_name("noextension"), ("noextension", ""));
+        assert_eq!(split_archive_name(".hidden.tar.gz"), (".hidden", ".tar.gz"));
+    }
+
+    #[test]
+    fn resolve_compress_destination_avoids_overwriting_existing_archive() {
+        let directory = tempfile::tempdir().expect("temp dir");
+        let destination = directory.path().join("bundle.tar.zst");
+        // A free destination is returned unchanged.
+        let free = destination.to_string_lossy().to_string();
+        assert_eq!(resolve_compress_destination(&free), free);
+        // Once the archive exists, the resolver picks the next free name and
+        // never returns the occupied path.
+        std::fs::write(&destination, b"existing").expect("write archive");
+        let resolved = resolve_compress_destination(&free);
+        assert_ne!(resolved, free);
+        assert_eq!(
+            resolved,
+            directory
+                .path()
+                .join("bundle (copy).tar.zst")
+                .to_string_lossy()
+                .to_string()
         );
     }
 
