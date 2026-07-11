@@ -62,9 +62,21 @@ pub struct Places {
     pub drives: Vec<DriveInfo>,
 }
 
+/// A reference-counted subscription: the single spawned forwarding task shared
+/// by every subscriber of a path, plus the number of live subscribers. The task
+/// (and, for a watch, the underlying `notify` watch armed once) is torn down
+/// only when the count falls back to zero. Dual-pane is the default and both
+/// panes start on the same path, so subscriptions must be shared rather than
+/// clobbering each other.
+struct Subscription {
+    count: usize,
+    handle: JoinHandle<()>,
+}
+
 /// Orchestrates the file-explorer subsystem. Holds the injected ports plus the
-/// per-path handles of the spawned watch and size-computation tasks so they can
-/// be torn down on `unwatch` / `cancel_sizes`.
+/// per-path reference-counted handles of the spawned watch and size-computation
+/// tasks so they can be shared across panes and torn down on the final
+/// `unwatch` / `cancel_sizes`.
 pub struct FilesService {
     filesystem: Arc<dyn FileSystemPort>,
     watcher: Arc<dyn DirectoryWatcher>,
@@ -73,12 +85,14 @@ pub struct FilesService {
     pins: Arc<dyn PinsPort>,
     applications: Arc<dyn ApplicationCatalog>,
     event_bus: Arc<dyn EventBus>,
-    /// Handles of the per-path directory-watch forwarding tasks. Keyed by the
-    /// watched path so `unwatch` can abort exactly the right task.
-    watch_handles: Mutex<HashMap<String, JoinHandle<()>>>,
-    /// Handles of the per-path recursive-size forwarding tasks. Keyed by the
-    /// path being sized so `cancel_sizes` can abort exactly the right task.
-    size_handles: Mutex<HashMap<String, JoinHandle<()>>>,
+    /// Reference-counted per-path directory-watch subscriptions. Keyed by the
+    /// watched path; the underlying watch is armed once and released only when
+    /// the last subscriber calls `unwatch`.
+    watch_handles: Mutex<HashMap<String, Subscription>>,
+    /// Reference-counted per-path recursive-size subscriptions. Keyed by the
+    /// path being sized; the computation runs once and is cancelled only when
+    /// the last subscriber calls `cancel_sizes`.
+    size_handles: Mutex<HashMap<String, Subscription>>,
 }
 
 impl FilesService {
@@ -214,9 +228,17 @@ impl FilesService {
     }
 
     /// Start watching `path`, spawning a task that republishes each change as a
-    /// `changed` event on `files.event`. Replacing a watch on the same path
-    /// aborts the previous task.
+    /// `changed` event on `files.event`. Reference-counted per path: a second
+    /// subscriber (for example the other pane, which starts on the same path)
+    /// increments the count and shares the single armed watch and forwarding
+    /// task rather than arming a second `notify` watch or spawning a duplicate
+    /// forwarder.
     pub fn watch(&self, path: &str) -> Result<()> {
+        let mut handles = Self::lock(&self.watch_handles);
+        if let Some(subscription) = handles.get_mut(path) {
+            subscription.count += 1;
+            return Ok(());
+        }
         let stream = self.watcher.watch(path)?;
         let event_bus = self.event_bus.clone();
         let handle = tokio::spawn(async move {
@@ -231,25 +253,44 @@ impl FilesService {
                     .await;
             }
         });
-        if let Some(previous) = Self::lock(&self.watch_handles).insert(path.to_string(), handle) {
-            previous.abort();
-        }
+        handles.insert(path.to_string(), Subscription { count: 1, handle });
         Ok(())
     }
 
-    /// Stop watching `path`, aborting its forwarding task and releasing the
-    /// underlying watch.
+    /// Stop watching `path`. Decrements the reference count; only when the last
+    /// subscriber leaves does it abort the forwarding task and release the
+    /// underlying watch, so one pane navigating away never tears down a watch
+    /// the other pane still needs.
     pub fn unwatch(&self, path: &str) {
-        if let Some(handle) = Self::lock(&self.watch_handles).remove(path) {
-            handle.abort();
+        let mut handles = Self::lock(&self.watch_handles);
+        let remaining = match handles.get_mut(path) {
+            Some(subscription) => {
+                subscription.count -= 1;
+                subscription.count
+            }
+            None => return,
+        };
+        if remaining > 0 {
+            return;
         }
+        if let Some(subscription) = handles.remove(path) {
+            subscription.handle.abort();
+        }
+        drop(handles);
         self.watcher.unwatch(path);
     }
 
     /// Start computing the recursive size of `path`, spawning a task that
-    /// republishes each update as a `size` event on `files.event`. Replacing a
-    /// computation on the same path aborts the previous task.
+    /// republishes each update as a `size` event on `files.event`. Reference-
+    /// counted per path: a second subscriber increments the count and shares the
+    /// single running computation and forwarding task rather than starting a
+    /// duplicate.
     pub fn sizes(&self, path: &str) {
+        let mut handles = Self::lock(&self.size_handles);
+        if let Some(subscription) = handles.get_mut(path) {
+            subscription.count += 1;
+            return;
+        }
         let stream = self.sizer.compute(path);
         let event_bus = self.event_bus.clone();
         let handle = tokio::spawn(async move {
@@ -266,17 +307,29 @@ impl FilesService {
                     .await;
             }
         });
-        if let Some(previous) = Self::lock(&self.size_handles).insert(path.to_string(), handle) {
-            previous.abort();
-        }
+        handles.insert(path.to_string(), Subscription { count: 1, handle });
     }
 
-    /// Cancel the recursive-size computation for `path`, aborting its
-    /// forwarding task and releasing the underlying computation.
+    /// Cancel the recursive-size computation for `path`. Decrements the
+    /// reference count; only when the last subscriber leaves does it abort the
+    /// forwarding task and cancel the underlying computation, so one pane never
+    /// tears down a size stream the other pane still needs.
     pub fn cancel_sizes(&self, path: &str) {
-        if let Some(handle) = Self::lock(&self.size_handles).remove(path) {
-            handle.abort();
+        let mut handles = Self::lock(&self.size_handles);
+        let remaining = match handles.get_mut(path) {
+            Some(subscription) => {
+                subscription.count -= 1;
+                subscription.count
+            }
+            None => return,
+        };
+        if remaining > 0 {
+            return;
         }
+        if let Some(subscription) = handles.remove(path) {
+            subscription.handle.abort();
+        }
+        drop(handles);
         self.sizer.cancel(path);
     }
 
@@ -293,8 +346,8 @@ impl FilesService {
     /// Lock a handle map, recovering the guard if a panicking task poisoned the
     /// mutex. The guard is never held across an await, so recovery is safe.
     fn lock(
-        handles: &Mutex<HashMap<String, JoinHandle<()>>>,
-    ) -> std::sync::MutexGuard<'_, HashMap<String, JoinHandle<()>>> {
+        handles: &Mutex<HashMap<String, Subscription>>,
+    ) -> std::sync::MutexGuard<'_, HashMap<String, Subscription>> {
         handles
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
@@ -773,6 +826,188 @@ mod tests {
         assert!(events[0].1.contains("\"event\":\"size\""));
         assert!(events[0].1.contains("\"bytes\":2048"));
         assert!(events[0].1.contains("\"complete\":true"));
+    }
+
+    /// Directory-watcher mock that counts how many times the underlying watch is
+    /// armed and released, and exposes a channel so a test can push change events
+    /// into the live subscription's stream at will.
+    struct CountingWatcher {
+        watch_calls: Arc<std::sync::atomic::AtomicUsize>,
+        unwatch_calls: Arc<std::sync::atomic::AtomicUsize>,
+        sender: Arc<Mutex<Option<futures::channel::mpsc::UnboundedSender<String>>>>,
+    }
+
+    impl DirectoryWatcher for CountingWatcher {
+        fn watch(
+            &self,
+            _path: &str,
+        ) -> std::result::Result<BoxStream<'static, String>, FilesError> {
+            self.watch_calls
+                .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            let (sender, receiver) = futures::channel::mpsc::unbounded();
+            *self
+                .sender
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(sender);
+            Ok(receiver.boxed())
+        }
+        fn unwatch(&self, _path: &str) {
+            self.unwatch_calls
+                .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        }
+    }
+
+    /// Recursive-sizer mock that counts computations started and cancelled, and
+    /// exposes a channel so a test can push size updates into the live stream.
+    struct CountingSizer {
+        compute_calls: Arc<std::sync::atomic::AtomicUsize>,
+        cancel_calls: Arc<std::sync::atomic::AtomicUsize>,
+        sender: Arc<Mutex<Option<futures::channel::mpsc::UnboundedSender<SizeUpdate>>>>,
+    }
+
+    impl RecursiveSizer for CountingSizer {
+        fn compute(&self, _path: &str) -> BoxStream<'static, SizeUpdate> {
+            self.compute_calls
+                .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            let (sender, receiver) = futures::channel::mpsc::unbounded();
+            *self
+                .sender
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(sender);
+            receiver.boxed()
+        }
+        fn cancel(&self, _path: &str) {
+            self.cancel_calls
+                .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        }
+    }
+
+    #[tokio::test]
+    async fn watch_is_reference_counted_across_panes() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        let watch_calls = Arc::new(AtomicUsize::new(0));
+        let unwatch_calls = Arc::new(AtomicUsize::new(0));
+        let sender_slot = Arc::new(Mutex::new(None));
+        let watcher = CountingWatcher {
+            watch_calls: watch_calls.clone(),
+            unwatch_calls: unwatch_calls.clone(),
+            sender: sender_slot.clone(),
+        };
+        let event_bus = Arc::new(FakeEventBus::new());
+        let service = FilesService::new(
+            Arc::new(FakeFileSystem::default()),
+            Arc::new(watcher),
+            Arc::new(FakeOpener),
+            Arc::new(FakeSizer { updates: vec![] }),
+            Arc::new(FakePins { pins: vec![] }),
+            Arc::new(FakeApplications {
+                applications: vec![],
+            }),
+            event_bus.clone(),
+        );
+
+        // Both panes subscribe to the same path; the watcher is armed once.
+        service.watch("/home/user").expect("first watch");
+        service.watch("/home/user").expect("second watch");
+        assert_eq!(watch_calls.load(Ordering::SeqCst), 1);
+
+        // One pane navigates away. The subscription must stay live for the other.
+        service.unwatch("/home/user");
+        assert_eq!(unwatch_calls.load(Ordering::SeqCst), 0);
+
+        let send_change = |name: &str| {
+            sender_slot
+                .lock()
+                .unwrap()
+                .as_ref()
+                .expect("watcher armed")
+                .unbounded_send(name.to_string())
+                .expect("send change");
+        };
+        send_change("/home/user/still-live.txt");
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        {
+            let events = event_bus.events.lock().await;
+            assert_eq!(events.len(), 1, "change should still forward: {events:?}");
+            assert!(events[0].1.contains("/home/user/still-live.txt"));
+        }
+
+        // The second pane navigates away. Now the watch is finally released.
+        service.unwatch("/home/user");
+        assert_eq!(unwatch_calls.load(Ordering::SeqCst), 1);
+
+        // With the forwarder aborted, further changes are not forwarded.
+        send_change("/home/user/after-teardown.txt");
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        let events = event_bus.events.lock().await;
+        assert_eq!(events.len(), 1, "no forwarding after teardown: {events:?}");
+    }
+
+    #[tokio::test]
+    async fn sizes_is_reference_counted_across_panes() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        let compute_calls = Arc::new(AtomicUsize::new(0));
+        let cancel_calls = Arc::new(AtomicUsize::new(0));
+        let sender_slot = Arc::new(Mutex::new(None));
+        let sizer = CountingSizer {
+            compute_calls: compute_calls.clone(),
+            cancel_calls: cancel_calls.clone(),
+            sender: sender_slot.clone(),
+        };
+        let event_bus = Arc::new(FakeEventBus::new());
+        let service = FilesService::new(
+            Arc::new(FakeFileSystem::default()),
+            Arc::new(FakeWatcher { changes: vec![] }),
+            Arc::new(FakeOpener),
+            Arc::new(sizer),
+            Arc::new(FakePins { pins: vec![] }),
+            Arc::new(FakeApplications {
+                applications: vec![],
+            }),
+            event_bus.clone(),
+        );
+
+        // Both panes request the size of the same path; compute runs once.
+        service.sizes("/home/user/projects");
+        service.sizes("/home/user/projects");
+        assert_eq!(compute_calls.load(Ordering::SeqCst), 1);
+
+        // One pane cancels. The computation must stay live for the other.
+        service.cancel_sizes("/home/user/projects");
+        assert_eq!(cancel_calls.load(Ordering::SeqCst), 0);
+
+        let send_update = |bytes: u64, complete: bool| {
+            sender_slot
+                .lock()
+                .unwrap()
+                .as_ref()
+                .expect("compute started")
+                .unbounded_send(SizeUpdate {
+                    path: "/home/user/projects".to_string(),
+                    bytes,
+                    complete,
+                })
+                .expect("send update");
+        };
+        send_update(1024, false);
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        {
+            let events = event_bus.events.lock().await;
+            assert_eq!(events.len(), 1, "size should still forward: {events:?}");
+            assert!(events[0].1.contains("\"bytes\":1024"));
+        }
+
+        // The second pane cancels. Now the computation is finally cancelled.
+        service.cancel_sizes("/home/user/projects");
+        assert_eq!(cancel_calls.load(Ordering::SeqCst), 1);
+
+        // With the forwarder aborted, further updates are not forwarded.
+        send_update(2048, true);
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        let events = event_bus.events.lock().await;
+        assert_eq!(events.len(), 1, "no forwarding after cancel: {events:?}");
     }
 
     #[tokio::test]
