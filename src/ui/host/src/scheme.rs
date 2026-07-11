@@ -225,34 +225,58 @@ fn is_image_extension(path: &std::path::Path) -> bool {
         .unwrap_or(false)
 }
 
-/// The directories icon files are allowed to be served from. Computed from
-/// `XDG_DATA_HOME`/`XDG_DATA_DIRS` (each with an `/icons` suffix) plus the
-/// standard system locations and the user's `~/.icons`.
+/// All candidate icon directories for a given environment, before existence
+/// filtering. Icon files live under both `<data-dir>/icons` (themed) and the
+/// legacy `<data-dir>/pixmaps` (flat); StatusNotifierItem applications
+/// frequently ship their tray icon only in pixmaps — for example on NixOS
+/// Steam installs `steam_tray_mono.png` to `/run/current-system/sw/share/pixmaps`,
+/// a data dir but not `/usr/share` — so both suffixes are served. Pure so the
+/// derivation is unit-testable without touching the real filesystem or process
+/// environment.
+fn icon_root_candidates(
+    home: Option<&str>,
+    xdg_data_home: Option<&str>,
+    xdg_data_dirs: &str,
+) -> Vec<std::path::PathBuf> {
+    let mut candidates: Vec<std::path::PathBuf> = Vec::new();
+    if let Some(home) = home {
+        candidates.push(std::path::PathBuf::from(home).join(".icons"));
+        candidates.push(std::path::PathBuf::from(home).join(".local/share/icons"));
+        candidates.push(std::path::PathBuf::from(home).join(".local/share/pixmaps"));
+    }
+    if let Some(data_home) = xdg_data_home {
+        candidates.push(std::path::PathBuf::from(data_home).join("icons"));
+        candidates.push(std::path::PathBuf::from(data_home).join("pixmaps"));
+    }
+    for dir in xdg_data_dirs.split(':') {
+        candidates.push(std::path::PathBuf::from(dir).join("icons"));
+        candidates.push(std::path::PathBuf::from(dir).join("pixmaps"));
+    }
+    candidates.push(std::path::PathBuf::from("/usr/share/icons"));
+    candidates.push(std::path::PathBuf::from("/usr/local/share/icons"));
+    candidates.push(std::path::PathBuf::from("/usr/share/pixmaps"));
+    candidates
+}
+
+/// The directories icon files are allowed to be served from: the candidate
+/// list from the process environment, canonicalized and filtered to those that
+/// actually exist on disk.
 fn allowed_icon_roots() -> Vec<std::path::PathBuf> {
+    let home = std::env::var("HOME").ok();
+    let xdg_data_home = std::env::var("XDG_DATA_HOME").ok();
+    let xdg_data_dirs = std::env::var("XDG_DATA_DIRS")
+        .unwrap_or_else(|_| "/usr/local/share:/usr/share".to_string());
+
     let mut roots: Vec<std::path::PathBuf> = Vec::new();
-    let mut push_canonical = |p: std::path::PathBuf| {
-        if let Ok(c) = std::fs::canonicalize(&p) {
-            if !roots.contains(&c) {
-                roots.push(c);
+    for candidate in
+        icon_root_candidates(home.as_deref(), xdg_data_home.as_deref(), &xdg_data_dirs)
+    {
+        if let Ok(canonical) = std::fs::canonicalize(&candidate) {
+            if !roots.contains(&canonical) {
+                roots.push(canonical);
             }
         }
-    };
-
-    if let Ok(home) = std::env::var("HOME") {
-        push_canonical(std::path::PathBuf::from(&home).join(".icons"));
-        push_canonical(std::path::PathBuf::from(&home).join(".local/share/icons"));
     }
-    if let Ok(data_home) = std::env::var("XDG_DATA_HOME") {
-        push_canonical(std::path::PathBuf::from(data_home).join("icons"));
-    }
-    let data_dirs = std::env::var("XDG_DATA_DIRS")
-        .unwrap_or_else(|_| "/usr/local/share:/usr/share".to_string());
-    for dir in data_dirs.split(':') {
-        push_canonical(std::path::PathBuf::from(dir).join("icons"));
-    }
-    push_canonical(std::path::PathBuf::from("/usr/share/icons"));
-    push_canonical(std::path::PathBuf::from("/usr/local/share/icons"));
-    push_canonical(std::path::PathBuf::from("/usr/share/pixmaps"));
     roots
 }
 
@@ -759,6 +783,26 @@ mod tests {
 
         let bytes = read_icon_file_from(icon.to_str().unwrap(), &roots);
         assert_eq!(bytes.as_deref(), Some(&b"\x89PNG\r\n\x1a\n"[..]));
+    }
+
+    #[test]
+    fn icon_root_candidates_include_pixmaps_and_icons_for_every_data_dir() {
+        use std::path::PathBuf;
+        // Regression: a StatusNotifierItem icon resolved to a data dir's
+        // `pixmaps` subdirectory (NixOS Steam ships `steam_tray_mono.png` to
+        // `/run/current-system/sw/share/pixmaps`) was rejected because only
+        // `/usr/share/pixmaps` and the `icons` suffix were allowed. Every data
+        // dir must contribute both an `icons` and a `pixmaps` candidate.
+        let candidates = icon_root_candidates(
+            Some("/home/user"),
+            Some("/home/user/.local/share"),
+            "/run/current-system/sw/share:/usr/share",
+        );
+        assert!(candidates.contains(&PathBuf::from("/run/current-system/sw/share/pixmaps")));
+        assert!(candidates.contains(&PathBuf::from("/run/current-system/sw/share/icons")));
+        assert!(candidates.contains(&PathBuf::from("/usr/share/pixmaps")));
+        assert!(candidates.contains(&PathBuf::from("/home/user/.local/share/pixmaps")));
+        assert!(candidates.contains(&PathBuf::from("/home/user/.local/share/icons")));
     }
 
     #[test]
