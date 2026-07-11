@@ -114,6 +114,12 @@ export function buildEntryMenu(ctx: EntryMenuContext): MenuItem[] {
     if (entry.content_kind === 'archive') {
         items.push({ label: 'Extract', onSelect: () => ctx.onOperation({ kind: 'extract', path: entry.path }) });
     } else {
+        // The menu builder is synchronous and has no view of the directory's
+        // contents (the pane may be showing a filtered or deep-search listing,
+        // not the true directory), so it cannot guarantee a collision-free name.
+        // It emits a candidate "<name>.tar.zst"; making the archive name
+        // collision-safe (for example appending " (2)") is the backend's
+        // responsibility when it performs the compress operation.
         const destination = joinPath(ctx.path, `${entry.name}.tar.zst`);
         items.push({
             label: 'Compress',
