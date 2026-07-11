@@ -174,22 +174,6 @@ pub(crate) fn canonical_view_key(view: &str, catalog: &crate::ViewCatalog) -> St
     }
 }
 
-/// Whether the given view opts into destroy-on-dismiss, resolved the same way
-/// as `canonical_view_key` derives its descriptor key: alias-resolve the
-/// prefix, ignore any `@monitor` suffix, and read the catalog. A catalog miss
-/// defaults to false (park hidden, today's behavior).
-pub(crate) fn view_destroy_on_dismiss(view: &str, catalog: &crate::ViewCatalog) -> bool {
-    let (prefix, _suffix) = split_view_key(view);
-    let canonical = match resolve_alias(prefix) {
-        Some(c) => c.to_string(),
-        None => prefix.to_string(),
-    };
-    catalog
-        .get(&canonical)
-        .map(|d| d.destroy_on_dismiss)
-        .unwrap_or(false)
-}
-
 /// Operations that all managed windows must support.
 pub trait WindowOps {
     fn show(&mut self);
@@ -502,28 +486,19 @@ impl<C: WindowConstructor> WindowRegistry<C> {
             WindowRequest::Open { view, mode } => {
                 tracing::debug!("WindowRegistry::handle view={} mode={:?}", view, mode);
                 let key = canonical_view_key(&view, &self.catalog);
-                // A flagged view treats dismiss (Hide, or Toggle while shown)
-                // as a full teardown: remove and destroy so the renderer is
-                // freed. "Present in the map" is equivalent to "currently
-                // shown" for flagged views, since nothing else parks them.
-                if view_destroy_on_dismiss(&view, &self.catalog) {
-                    let present = self.windows.contains_key(&key);
-                    let is_dismiss = matches!(mode, WindowMode::Hide)
-                        || (matches!(mode, WindowMode::Toggle) && present);
-                    if is_dismiss {
-                        self.remove_and_destroy(&key);
-                        tracing::info!("dismissed (destroyed) window: {view}");
-                        return;
-                    }
-                }
-                // For a flagged view, any non-dismiss request must end up
-                // shown: normalize so a freshly constructed window is never
-                // toggled back to hidden.
-                let mode = if view_destroy_on_dismiss(&view, &self.catalog) {
-                    WindowMode::Show
-                } else {
-                    mode
-                };
+                // Overlays are NEVER destroyed on dismiss. Destroying a
+                // gtk4-layer-shell window drives gtk_window_destroy ->
+                // gtk_application_window_removed ->
+                // gdk_wayland_toplevel_remove_from_session, which segfaults
+                // because a layer surface is not the xdg-toplevel GTK's session
+                // management expects to remove. This was observed as repeated
+                // SIGSEGV in live quantumd coredumps when overlays (the
+                // bluetooth and sound menus) were opened and dismissed; both
+                // destroy-alone and hide-then-destroy crash. Overlays therefore
+                // persist and are hidden on dismiss, then reused on the next
+                // open, using the ordinary show/hide/toggle handling below. The
+                // renderer stays resident (the memory an eager teardown aimed to
+                // reclaim) until a session-safe teardown exists.
                 let (_, requested_suffix) = split_view_key(&view);
                 let requested = requested_suffix.map(str::to_string);
                 // A single-instance view (overlay/panel) keeps one window under
@@ -1157,35 +1132,13 @@ mod tests {
     }
 
     #[test]
-    fn flagged_view_hide_destroys_window() {
-        let count = Rc::new(Cell::new(0));
-        let shown = Rc::new(Cell::new(false));
-        let destroyed = Rc::new(Cell::new(0));
-        let mut reg = WindowRegistry::new(
-            fake_ctor_with_destroy(&count, &shown, &destroyed),
-            first_party_catalog(),
-        );
-        reg.handle(WindowRequest::Open {
-            view: "plugin/power-menu/power-menu@DP-1".into(),
-            mode: WindowMode::Show,
-        });
-        assert_eq!(count.get(), 1);
-        reg.handle(WindowRequest::Open {
-            view: "plugin/power-menu/power-menu@DP-1".into(),
-            mode: WindowMode::Hide,
-        });
-        assert_eq!(destroyed.get(), 1, "flagged Hide must destroy");
-    }
-
-    #[test]
-    fn dismiss_destroys_once_without_hiding_first() {
-        // Regression for a real quantumd coredump: dismissing a
-        // destroy_on_dismiss overlay used to hide() (releasing the
-        // gtk4-layer-shell Wayland surface) and then destroy(), which drove
-        // gtk_application_window_removed against the freed surface and aborted
-        // with `gdk_surface_get_display: assertion 'GDK_IS_SURFACE (surface)'
-        // failed`. The teardown path must destroy WITHOUT hiding first, and
-        // must destroy at most once.
+    fn dismiss_hides_overlay_and_never_destroys() {
+        // Regression for repeated live quantumd SIGSEGV coredumps: dismissing
+        // an overlay must NOT destroy its window. Destroying a gtk4-layer-shell
+        // window drives gtk_window_destroy -> gtk_application_window_removed ->
+        // gdk_wayland_toplevel_remove_from_session, which segfaults because a
+        // layer surface is not the xdg-toplevel GTK's session management
+        // expects. The overlay is hidden and kept for reuse instead.
         let count = Rc::new(Cell::new(0));
         let shown = Rc::new(Cell::new(false));
         let destroyed = Rc::new(Cell::new(0));
@@ -1198,55 +1151,35 @@ mod tests {
             view: "plugin/power-menu/power-menu@DP-1".into(),
             mode: WindowMode::Show,
         });
-        // First dismiss: destroys exactly once, never hiding first.
+        assert_eq!(count.get(), 1, "first open constructs the window");
+        // Dismiss hides the window and never destroys it.
         reg.handle(WindowRequest::Open {
             view: "plugin/power-menu/power-menu@DP-1".into(),
             mode: WindowMode::Hide,
         });
-        assert_eq!(destroyed.get(), 1, "dismiss must destroy exactly once");
-        assert_eq!(hidden.get(), 0, "dismiss must not hide before destroy");
-        // Second dismiss on the already-gone window is a no-op (nothing in the
-        // map), so the destroy count stays at one.
-        reg.handle(WindowRequest::Open {
-            view: "plugin/power-menu/power-menu@DP-1".into(),
-            mode: WindowMode::Hide,
-        });
-        assert_eq!(destroyed.get(), 1, "double dismiss still destroys once");
-        assert_eq!(hidden.get(), 0);
-    }
-
-    #[test]
-    fn flagged_view_reconstructs_after_dismiss() {
-        let count = Rc::new(Cell::new(0));
-        let shown = Rc::new(Cell::new(false));
-        let destroyed = Rc::new(Cell::new(0));
-        let mut reg = WindowRegistry::new(
-            fake_ctor_with_destroy(&count, &shown, &destroyed),
-            first_party_catalog(),
-        );
+        assert_eq!(destroyed.get(), 0, "dismiss must never destroy the overlay");
+        assert_eq!(hidden.get(), 1, "dismiss hides the overlay");
+        assert!(!shown.get(), "overlay is hidden after dismiss");
+        // Reopening reuses the parked window rather than reconstructing it.
         reg.handle(WindowRequest::Open {
             view: "plugin/power-menu/power-menu@DP-1".into(),
             mode: WindowMode::Show,
         });
-        reg.handle(WindowRequest::Open {
-            view: "plugin/power-menu/power-menu@DP-1".into(),
-            mode: WindowMode::Hide,
-        });
-        reg.handle(WindowRequest::Open {
-            view: "plugin/power-menu/power-menu@DP-1".into(),
-            mode: WindowMode::Show,
-        });
-        assert_eq!(count.get(), 2, "reopen after dismiss reconstructs");
-        assert_eq!(destroyed.get(), 1);
+        assert_eq!(count.get(), 1, "reopen reuses the hidden window");
+        assert_eq!(destroyed.get(), 0, "reopen still never destroys");
+        assert!(shown.get(), "overlay is shown again after reopen");
     }
 
     #[test]
-    fn flagged_view_toggle_off_destroys_toggle_on_constructs() {
+    fn overlay_toggle_off_hides_toggle_on_reuses() {
+        // Overlays persist: toggling one off hides it (never destroys), and
+        // toggling it back on reuses the same window rather than reconstructing.
         let count = Rc::new(Cell::new(0));
         let shown = Rc::new(Cell::new(false));
         let destroyed = Rc::new(Cell::new(0));
+        let hidden = Rc::new(Cell::new(0));
         let mut reg = WindowRegistry::new(
-            fake_ctor_with_destroy(&count, &shown, &destroyed),
+            fake_ctor_with_teardown(&count, &shown, &destroyed, &hidden),
             first_party_catalog(),
         );
         // Toggle when absent -> construct + show.
@@ -1255,13 +1188,21 @@ mod tests {
             mode: WindowMode::Toggle,
         });
         assert_eq!(count.get(), 1);
-        assert_eq!(destroyed.get(), 0);
-        // Toggle when present -> destroy.
+        assert!(shown.get());
+        // Toggle when present -> hide, never destroy.
         reg.handle(WindowRequest::Open {
             view: "plugin/power-menu/power-menu@DP-1".into(),
             mode: WindowMode::Toggle,
         });
-        assert_eq!(destroyed.get(), 1, "flagged toggle-off must destroy");
+        assert_eq!(destroyed.get(), 0, "toggle-off must never destroy");
+        assert!(!shown.get(), "toggle-off hides the overlay");
+        // Toggle again -> reuse (no reconstruct) and show.
+        reg.handle(WindowRequest::Open {
+            view: "plugin/power-menu/power-menu@DP-1".into(),
+            mode: WindowMode::Toggle,
+        });
+        assert_eq!(count.get(), 1, "toggle-on reuses the parked window");
+        assert!(shown.get());
     }
 
     #[test]
