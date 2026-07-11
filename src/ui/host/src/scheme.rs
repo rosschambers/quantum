@@ -268,8 +268,7 @@ fn allowed_icon_roots() -> Vec<std::path::PathBuf> {
         .unwrap_or_else(|_| "/usr/local/share:/usr/share".to_string());
 
     let mut roots: Vec<std::path::PathBuf> = Vec::new();
-    for candidate in
-        icon_root_candidates(home.as_deref(), xdg_data_home.as_deref(), &xdg_data_dirs)
+    for candidate in icon_root_candidates(home.as_deref(), xdg_data_home.as_deref(), &xdg_data_dirs)
     {
         if let Ok(canonical) = std::fs::canonicalize(&candidate) {
             if !roots.contains(&canonical) {
