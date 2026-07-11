@@ -4,6 +4,7 @@ pub mod error;
 
 pub mod registry;
 pub mod shell;
+pub mod shell_notification_emitter;
 
 pub mod app_usage;
 pub mod audio;
@@ -33,6 +34,7 @@ pub mod wifi;
 pub use error::ProvidersError;
 pub use registry::InMemoryProviderRegistry;
 pub use shell::TokioShellExecutor;
+pub use shell_notification_emitter::ProviderNotificationEmitter;
 
 pub use audio::PulseAudioProvider;
 pub use battery::UpowerBatteryProvider;
