@@ -255,9 +255,14 @@ fn search_blocking(
 }
 
 /// Filesystem types treated as real disks worth listing in the sidebar even
-/// when their backing source is not under `/dev/`.
-const DISK_FILESYSTEM_ALLOWLIST: [&str; 11] = [
+/// when their backing source is not under `/dev/`. Network and remote
+/// filesystems (`cifs`, `smb3`, `nfs`, `nfs4`) are included so mounted shares
+/// appear in the drives sidebar; `statvfs` works on these and `mounts_blocking`
+/// skips any mount whose `statvfs` fails, so a briefly-unavailable network
+/// mount is handled gracefully.
+const DISK_FILESYSTEM_ALLOWLIST: [&str; 15] = [
     "ext2", "ext3", "ext4", "btrfs", "xfs", "vfat", "exfat", "ntfs", "ntfs3", "f2fs", "zfs",
+    "cifs", "smb3", "nfs", "nfs4",
 ];
 
 /// Decode the octal escapes that `/proc/self/mounts` uses for characters that
@@ -664,6 +669,33 @@ mod tests {
         );
         let mount_points = parse_mounts(content);
         assert_eq!(mount_points, vec!["/".to_string(), "/boot".to_string()]);
+    }
+
+    #[test]
+    fn parse_mounts_keeps_network_shares_while_excluding_pseudo_filesystems() {
+        let content = concat!(
+            "proc /proc proc rw,nosuid,nodev,noexec,relatime 0 0\n",
+            "tmpfs /run tmpfs rw,nosuid,nodev 0 0\n",
+            "//server/share /share cifs rw,relatime 0 0\n",
+            "nfsserver:/export /data nfs4 rw,relatime 0 0\n",
+        );
+        let mount_points = parse_mounts(content);
+        assert!(
+            mount_points.contains(&"/share".to_string()),
+            "cifs share should be kept, got {mount_points:?}"
+        );
+        assert!(
+            mount_points.contains(&"/data".to_string()),
+            "nfs4 mount should be kept, got {mount_points:?}"
+        );
+        assert!(
+            !mount_points.contains(&"/proc".to_string()),
+            "pseudo filesystems must still be excluded, got {mount_points:?}"
+        );
+        assert!(
+            !mount_points.contains(&"/run".to_string()),
+            "pseudo filesystems must still be excluded, got {mount_points:?}"
+        );
     }
 
     #[test]
