@@ -455,25 +455,22 @@ impl<C: WindowConstructor> WindowRegistry<C> {
         &self.catalog
     }
 
-    /// Tear a stored window down for good: drop its `window_monitor` record,
-    /// remove it from the map, and (if it was present) destroy it. `destroy()`
-    /// removes the window from the `GtkApplication` and disposes its `WebView`
-    /// so the web process terminates. Shared by the `Close` handler and the
-    /// flagged destroy-on-dismiss path.
-    fn remove_and_destroy(&mut self, key: &str)
+    /// Hide a stored window. Quantum windows are NEVER destroyed: calling
+    /// `gtk_window_destroy` on a gtk4-layer-shell surface drives
+    /// `gtk_application_window_removed` -> `gdk_wayland_toplevel_remove_from_session`,
+    /// which segfaults because a layer surface is not the xdg-toplevel GTK's
+    /// session management expects to remove (repeated live quantumd SIGSEGV
+    /// coredumps: overlays toggled during bluetooth pairing, and running a
+    /// launcher command). Both destroy-alone and hide-then-destroy crash, so
+    /// the window is hidden and KEPT in the map for reuse on the next open. Its
+    /// renderer stays resident (the memory an eager teardown aimed to reclaim)
+    /// until a session-safe teardown exists. Shared by the `Close` handler.
+    fn hide_window(&mut self, key: &str)
     where
         C::Window: WindowOps,
     {
-        self.window_monitor.remove(key);
-        if let Some(mut window) = self.windows.remove(key) {
-            // Destroy WITHOUT hiding first. hide() releases the
-            // gtk4-layer-shell Wayland surface; a following destroy() then
-            // drives gtk_application_window_removed against the freed surface
-            // and aborts with `gdk_surface_get_display: assertion
-            // 'GDK_IS_SURFACE (surface)' failed` (observed in a live quantumd
-            // coredump when the bluetooth overlay was toggled rapidly during
-            // pairing). destroy() alone tears the window fully down.
-            window.destroy();
+        if let Some(window) = self.windows.get_mut(key) {
+            window.hide();
         }
     }
 
@@ -513,10 +510,13 @@ impl<C: WindowConstructor> WindowRegistry<C> {
                     .is_some_and(|built| *built != requested)
                 {
                     if let Some(mut old) = self.windows.remove(&key) {
-                        // Same hazard as remove_and_destroy: destroy without
-                        // hiding first so the layer-shell surface is not freed
-                        // out from under gtk_window_destroy.
-                        old.destroy();
+                        // Hide, never destroy: destroying a layer-shell window
+                        // segfaults (see hide_window). The evicted window is
+                        // orphaned hidden on its old monitor and a fresh one is
+                        // built below on the requested monitor. Monitor eviction
+                        // is rare (hotplug), so an orphaned hidden surface is an
+                        // acceptable leak versus a crash.
+                        old.hide();
                     }
                 }
                 let window = match self.windows.entry(key.clone()) {
@@ -565,13 +565,10 @@ impl<C: WindowConstructor> WindowRegistry<C> {
             WindowRequest::Close { view } => {
                 let key = canonical_view_key(&view, &self.catalog);
                 if self.windows.contains_key(&key) {
-                    // remove_and_destroy hides first to release the layer-shell
-                    // surface cleanly, then destroys to remove the window from
-                    // the GtkApplication and dispose its WebView so the web
-                    // process terminates. Dropping the struct alone does not do
-                    // this, because the application holds its own reference.
-                    self.remove_and_destroy(&key);
-                    tracing::info!("closed window: {view}");
+                    // Hide, never destroy (see hide_window): destroying a
+                    // layer-shell window segfaults. The window is kept for reuse.
+                    self.hide_window(&key);
+                    tracing::info!("hid window (close request): {view}");
                 } else {
                     self.window_monitor.remove(&key);
                     tracing::debug!("close request for unknown view: {view}");
@@ -967,16 +964,21 @@ mod tests {
             mode: WindowMode::Show,
         });
         assert_eq!(count.get(), 1);
+        assert!(shown.get(), "window is shown after open");
         reg.handle(WindowRequest::Close {
             view: "plugin/launcher/launcher".into(),
         });
-        // Reopen via the canonical name reconstructs, proving the close
-        // removed the entry the alias-keyed open inserted.
+        // The canonical-name close hid the alias-keyed window: if it had missed
+        // the key, the window would still be shown. Close hides (never destroys)
+        // and keeps the window, so reopening via the canonical name reuses it
+        // (the counter does not grow).
+        assert!(!shown.get(), "canonical close hid the alias-opened window");
         reg.handle(WindowRequest::Open {
             view: "plugin/launcher/launcher".into(),
             mode: WindowMode::Show,
         });
-        assert_eq!(count.get(), 2);
+        assert_eq!(count.get(), 1, "reopen reuses the same-keyed window");
+        assert!(shown.get(), "reopened window is shown");
     }
 
     #[test]
@@ -1058,7 +1060,10 @@ mod tests {
     }
 
     #[test]
-    fn close_removes_window_from_registry() {
+    fn close_hides_window_and_keeps_it_for_reuse() {
+        // Close must NOT destroy: destroying a gtk4-layer-shell window
+        // segfaults in gdk_wayland_toplevel_remove_from_session. The window is
+        // hidden and kept, so reopening reuses it (the counter does not grow).
         let count = Rc::new(Cell::new(0));
         let shown = Rc::new(Cell::new(false));
         let mut reg = WindowRegistry::new(fake_ctor(&count, &shown), first_party_catalog());
@@ -1070,26 +1075,26 @@ mod tests {
         reg.handle(WindowRequest::Close {
             view: "plugin/launcher/launcher".into(),
         });
-        // Re-opening should reconstruct (counter increments again),
-        // which is the observable signal that Close actually removed
-        // the entry from the windows map.
+        assert!(!shown.get(), "close hides the window");
         reg.handle(WindowRequest::Open {
             view: "plugin/launcher/launcher".into(),
             mode: WindowMode::Show,
         });
-        assert_eq!(count.get(), 2, "window was reconstructed after close");
+        assert_eq!(count.get(), 1, "reopen reuses the kept window, no reconstruct");
         assert!(shown.get(), "reopened window is visible");
     }
 
     #[test]
-    fn close_request_destroys_window() {
-        // Closing a window must tear it down for good, not just hide it, so the
-        // embedded WebView is finalized and its WebKitWebProcess terminates.
+    fn close_hides_without_destroying() {
+        // Regression for a live SIGSEGV: Close must hide, never destroy, because
+        // gtk_window_destroy on a layer-shell surface aborts in
+        // gdk_wayland_toplevel_remove_from_session.
         let count = Rc::new(Cell::new(0));
         let shown = Rc::new(Cell::new(false));
         let destroyed = Rc::new(Cell::new(0));
+        let hidden = Rc::new(Cell::new(0));
         let mut reg = WindowRegistry::new(
-            fake_ctor_with_destroy(&count, &shown, &destroyed),
+            fake_ctor_with_teardown(&count, &shown, &destroyed, &hidden),
             first_party_catalog(),
         );
         reg.handle(WindowRequest::Open {
@@ -1099,20 +1104,23 @@ mod tests {
         reg.handle(WindowRequest::Close {
             view: "plugin/launcher/launcher".into(),
         });
-        assert_eq!(destroyed.get(), 1, "close must destroy the window");
+        assert_eq!(destroyed.get(), 0, "close must never destroy the window");
+        assert_eq!(hidden.get(), 1, "close hides the window");
     }
 
     #[test]
-    fn monitor_eviction_destroys_old_window() {
+    fn monitor_eviction_hides_old_and_reconstructs() {
         // Opening a single-instance overlay on one monitor and then another
         // evicts the surface pinned to the old monitor and reconstructs it on
-        // the new one. The evicted window must be destroyed, not just hidden,
-        // or its WebKitWebProcess leaks.
+        // the new one. The evicted window must be HIDDEN, not destroyed:
+        // destroying a layer-shell surface segfaults. The orphaned hidden
+        // surface is an accepted rare leak (monitor hotplug) versus a crash.
         let count = Rc::new(Cell::new(0));
         let shown = Rc::new(Cell::new(false));
         let destroyed = Rc::new(Cell::new(0));
+        let hidden = Rc::new(Cell::new(0));
         let mut reg = WindowRegistry::new(
-            fake_ctor_with_destroy(&count, &shown, &destroyed),
+            fake_ctor_with_teardown(&count, &shown, &destroyed, &hidden),
             first_party_catalog(),
         );
         reg.handle(WindowRequest::Open {
@@ -1128,7 +1136,8 @@ mod tests {
             2,
             "eviction must reconstruct on the new monitor"
         );
-        assert_eq!(destroyed.get(), 1, "eviction must destroy the old window");
+        assert_eq!(destroyed.get(), 0, "eviction must never destroy the old window");
+        assert!(hidden.get() >= 1, "eviction hides the old window");
     }
 
     #[test]
