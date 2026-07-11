@@ -57,6 +57,50 @@ describe('wireBarMenu', () => {
         expect(menuItem('Do thing')).toBeTruthy();
     });
 
+    function setupWithTrigger(
+        items: MenuItem[],
+        trigger: 'click' | 'contextmenu',
+    ) {
+        const node = document.createElement('button');
+        document.body.appendChild(node);
+        const { client, call } = makeMockClient();
+        const teardown = wireBarMenu(node, client as never, () => items, trigger);
+        return { node, call, teardown };
+    }
+
+    it('opens on a left-click when trigger is "click"', () => {
+        const { node } = setupWithTrigger([{ label: 'Do thing' }], 'click');
+
+        expect(contextMenu()).toBeNull();
+        node.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+
+        expect(contextMenu()).not.toBeNull();
+        expect(menuItem('Do thing')).toBeTruthy();
+    });
+
+    it('ignores right-click when trigger is "click"', () => {
+        const { node } = setupWithTrigger([{ label: 'Do thing' }], 'click');
+
+        node.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true }));
+
+        expect(contextMenu()).toBeNull();
+    });
+
+    it('ignores a left-click with the default contextmenu trigger', () => {
+        const { node } = setup([{ label: 'Do thing' }]);
+
+        node.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+
+        expect(contextMenu()).toBeNull();
+    });
+
+    it('removes the click listener on teardown when trigger is "click"', () => {
+        const { node, teardown } = setupWithTrigger([{ label: 'X' }], 'click');
+        teardown();
+        node.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+        expect(contextMenu()).toBeNull();
+    });
+
     it('expands the input region on open and resets it on close', () => {
         const { node, call } = setup([{ label: 'X' }]);
         node.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true }));

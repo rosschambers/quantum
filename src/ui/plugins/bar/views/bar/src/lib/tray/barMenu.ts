@@ -39,8 +39,13 @@ export function barViewName(): string {
 }
 
 /**
- * Wire a right-click quick-actions menu onto `node`. Returns a teardown that
- * removes the listener.
+ * Wire a quick-actions menu onto `node`. Returns a teardown that removes the
+ * listener.
+ *
+ * `trigger` selects the DOM event that opens the menu: the default
+ * `'contextmenu'` keeps every bar indicator on right-click, while `'click'`
+ * opens the menu on a plain left-click (used by the kill-window button, whose
+ * left-click must open the menu rather than force-kill a window).
  *
  * The menu drops down from below the button (true dropdown) via `anchorRect`.
  * `onPlaced` expands the bar's input region to cover the menu so it is
@@ -51,6 +56,7 @@ export function wireBarMenu(
     node: HTMLElement,
     client: Client,
     buildItems: () => MenuItem[] | Promise<MenuItem[]>,
+    trigger: 'click' | 'contextmenu' = 'contextmenu',
 ): () => void {
     const expandInputRegion = (rect: {
         x: number;
@@ -110,9 +116,9 @@ export function wireBarMenu(
         }
     };
 
-    node.addEventListener('contextmenu', listener);
+    node.addEventListener(trigger, listener);
     return () => {
-        node.removeEventListener('contextmenu', listener);
+        node.removeEventListener(trigger, listener);
         // Unmounting an indicator while its menu is open must dismiss the menu
         // and reset the bar's input region via the runtime's onClose hook.
         closeContextMenu();
