@@ -58,6 +58,16 @@ fn parent_of(source: &Path) -> Result<&Path, FilesError> {
         .ok_or_else(|| FilesError::Unsupported(format!("path has no parent: {}", display(source))))
 }
 
+/// Report whether `target` is `source` itself or lies anywhere within its
+/// subtree. Uses [`std::path::Path::starts_with`], which compares whole path
+/// components, so `/x` is not treated as a prefix of `/xy`. Guards the recursive
+/// copy and move paths against copying a directory into its own descendant,
+/// which would otherwise recreate the freshly written target inside the source
+/// and recurse until the disk fills.
+fn is_within(source: &Path, target: &Path) -> bool {
+    target == source || target.starts_with(source)
+}
+
 /// Recursively copy `source` to the new path `destination`. Directories are
 /// created and walked; regular files are copied byte for byte; symlinks are
 /// recreated pointing at the same target rather than followed. `destination` is
@@ -107,6 +117,12 @@ pub fn copy_into(sources: &[String], destination: &str) -> Result<(), FilesError
     for source in sources {
         let source_path = Path::new(source);
         let target = destination_dir.join(final_name(source_path)?);
+        if is_within(source_path, &target) {
+            return Err(FilesError::Unsupported(format!(
+                "cannot copy {} into its own subtree",
+                display(source_path)
+            )));
+        }
         if occupied(&target) {
             return Err(FilesError::AlreadyExists(display(&target)));
         }
@@ -125,6 +141,12 @@ pub fn move_into(sources: &[String], destination: &str) -> Result<(), FilesError
     for source in sources {
         let source_path = Path::new(source);
         let target = destination_dir.join(final_name(source_path)?);
+        if is_within(source_path, &target) {
+            return Err(FilesError::Unsupported(format!(
+                "cannot move {} into its own subtree",
+                display(source_path)
+            )));
+        }
         if occupied(&target) {
             return Err(FilesError::AlreadyExists(display(&target)));
         }
@@ -410,6 +432,60 @@ mod tests {
         assert!(
             matches!(error, FilesError::AlreadyExists(_)),
             "got {error:?}"
+        );
+    }
+
+    #[test]
+    fn copy_directory_into_its_own_subtree_is_rejected() {
+        let dir = tempfile::tempdir().expect("create tempdir");
+        let root = dir.path().join("root");
+        fs::create_dir(&root).expect("create root directory");
+        fs::write(root.join("file.txt"), b"payload").expect("write file");
+        let sub = root.join("sub");
+        fs::create_dir(&sub).expect("create sub directory");
+
+        let error = copy_into(&[path_string(&root)], &path_string(&sub))
+            .expect_err("copying a directory into its own subtree should fail");
+        assert!(matches!(error, FilesError::Unsupported(_)), "got {error:?}");
+        // The guard must reject before any recursion creates a runaway tree.
+        assert!(
+            !sub.join("root").exists(),
+            "no target should have been created inside the source subtree"
+        );
+    }
+
+    #[test]
+    fn copy_directory_to_a_sibling_still_works() {
+        let dir = tempfile::tempdir().expect("create tempdir");
+        let root = dir.path().join("root");
+        fs::create_dir(&root).expect("create root directory");
+        fs::write(root.join("file.txt"), b"payload").expect("write file");
+        let destination = dir.path().join("destination");
+        fs::create_dir(&destination).expect("create destination directory");
+
+        copy_into(&[path_string(&root)], &path_string(&destination)).expect("sibling copy");
+
+        assert_eq!(
+            fs::read_to_string(destination.join("root").join("file.txt")).expect("read copied"),
+            "payload"
+        );
+    }
+
+    #[test]
+    fn move_directory_into_its_own_subtree_is_rejected() {
+        let dir = tempfile::tempdir().expect("create tempdir");
+        let root = dir.path().join("root");
+        fs::create_dir(&root).expect("create root directory");
+        fs::write(root.join("file.txt"), b"payload").expect("write file");
+        let sub = root.join("sub");
+        fs::create_dir(&sub).expect("create sub directory");
+
+        let error = move_into(&[path_string(&root)], &path_string(&sub))
+            .expect_err("moving a directory into its own subtree should fail");
+        assert!(matches!(error, FilesError::Unsupported(_)), "got {error:?}");
+        assert!(
+            !sub.join("root").exists(),
+            "no target should have been created inside the source subtree"
         );
     }
 
