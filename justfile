@@ -15,6 +15,11 @@ test:
 fmt:
     {{devsh}} cargo fmt --all
 
+# Point git at the committed hooks so pre-commit runs the rustfmt check.
+# Run once per clone.
+install-hooks:
+    git config core.hooksPath scripts/hooks
+
 lint:
     {{devsh}} cargo clippy --workspace --all-targets -- -D warnings
 

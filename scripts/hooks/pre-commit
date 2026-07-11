@@ -1,0 +1,25 @@
+#!/usr/bin/env bash
+# Pre-commit hook: reject commits whose staged Rust files are not rustfmt-clean.
+#
+# CI runs `cargo fmt --all -- --check` (rustfmt 1.95) as the first Rust step and
+# aborts the whole job on a single unformatted line, which also skips clippy and
+# the test suite. This hook catches that locally so a formatting nit never gets
+# pushed and never masks a real clippy or test failure in CI.
+#
+# Runs only when Rust files are staged, and uses the same nix-shell toolchain as
+# CI via scripts/devsh.sh so the local and CI rustfmt versions match exactly.
+set -euo pipefail
+
+REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+
+# Skip if no staged Rust files: format checks are irrelevant to frontend-only or
+# documentation-only commits, and entering the nix-shell is not free.
+if ! git -C "$REPO_DIR" diff --cached --name-only --diff-filter=ACM | grep -q '\.rs$'; then
+    exit 0
+fi
+
+if ! "$REPO_DIR/scripts/devsh.sh" cargo fmt --all -- --check; then
+    echo ""
+    echo "pre-commit: Rust code is not formatted. Run 'just fmt' and re-stage." >&2
+    exit 1
+fi
