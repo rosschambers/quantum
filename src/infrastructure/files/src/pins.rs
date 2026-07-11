@@ -60,6 +60,12 @@ impl PinStore {
         let serialized = serde_json::to_string_pretty(pins)
             .map_err(|error| FilesError::Io(format!("failed to serialize pin store: {error}")))?;
 
+        // A fixed `.tmp` sibling mirrors the timer store's established pattern
+        // (`timer_store.rs`), which also writes to `path.with_extension("tmp")`.
+        // Both stores assume a single writer: `quantumd` owns the file and no
+        // two processes write it concurrently, so a fixed name cannot race. A
+        // unique or process-identifier-based temporary name would only matter
+        // with concurrent writers, which this subsystem does not have.
         let temp_path = self.path.with_extension("tmp");
         std::fs::write(&temp_path, serialized.as_bytes()).map_err(|error| {
             FilesError::Io(format!("failed to write {}: {error}", temp_path.display()))
