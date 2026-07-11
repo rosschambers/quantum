@@ -217,7 +217,7 @@
         background: var(--color-surface-hover);
     }
     .frow.sel {
-        background: rgba(166, 227, 161, 0.16);
+        background: color-mix(in oklab, var(--color-accent) 16%, transparent);
         color: var(--color-fg);
     }
     .frow.droptarget {

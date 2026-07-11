@@ -160,7 +160,7 @@
         background: var(--color-surface-hover);
     }
     .side-item.active {
-        background: rgba(166, 227, 161, 0.14);
+        background: color-mix(in oklab, var(--color-accent) 14%, transparent);
         color: var(--color-accent);
     }
     .side-item.droptarget {

@@ -151,7 +151,7 @@
         background: var(--color-surface-hover);
     }
     .icon-btn.active {
-        background: rgba(166, 227, 161, 0.18);
+        background: color-mix(in oklab, var(--color-accent) 18%, transparent);
         color: var(--color-accent);
     }
     .icon-btn:disabled {

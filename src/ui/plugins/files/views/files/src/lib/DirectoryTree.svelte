@@ -195,7 +195,7 @@
         background: var(--color-surface-hover);
     }
     .tree-row.active {
-        background: rgba(166, 227, 161, 0.14);
+        background: color-mix(in oklab, var(--color-accent) 14%, transparent);
         color: var(--color-accent);
     }
     .tree-row.droptarget {
