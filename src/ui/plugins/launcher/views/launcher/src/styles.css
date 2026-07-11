@@ -133,11 +133,12 @@ input::placeholder {
   object-fit: contain;
 }
 
-/* Empty-state placeholder (no icon resolved): a subtle filled square so the
-   row still aligns. */
+/* Empty-state placeholder (no icon resolved): an invisible box that only
+   reserves the icon slot so the row still aligns. A filled square here read as
+   a jarring "broken icon"; the title keeps its fixed indent regardless, so an
+   empty transparent slot is cleaner than a visible placeholder. */
 .match-item div.icon {
-  background: var(--color-muted, #6c7086);
-  border-radius: var(--radius-sm, 2px);
+  background: transparent;
 }
 
 .match-item .title {
