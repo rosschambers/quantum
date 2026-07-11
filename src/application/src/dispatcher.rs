@@ -2,7 +2,7 @@ use crate::{
     ApplicationError, CreateTimerSpec, EditChanges, FilesService, LaunchActionUseCase,
     ListProvidersUseCase, OpenViewUseCase, QueryProviderUseCase, ReloadPluginsUseCase,
     ReloadThemeUseCase, Result, ScheduleActionUseCase, SearchUseCase, SetThemeUseCase,
-    SubscribeProviderUseCase, TimerService,
+    ShellCaptureUseCase, SubscribeProviderUseCase, TimerService,
 };
 use quantum_domain::{DomainError, WindowMode};
 use serde::de::DeserializeOwned;
@@ -23,6 +23,7 @@ pub struct Dispatcher {
     reload_plugins: Arc<ReloadPluginsUseCase>,
     timer_service: Arc<TimerService>,
     files_service: Arc<FilesService>,
+    shell_capture: Arc<ShellCaptureUseCase>,
 }
 
 /// Params for the three `view.*` handlers (`view.toggle`, `view.show`,
@@ -39,6 +40,14 @@ struct ViewParams {
 #[derive(serde::Deserialize)]
 struct PathParam {
     path: String,
+}
+
+/// Params for `shell.run_capture`: the single shell command line to run and
+/// capture. The leading launcher prefix (`$`) is stripped by the frontend
+/// before the call, so `command` is the bare command text.
+#[derive(serde::Deserialize)]
+struct ShellRunCaptureParams {
+    command: String,
 }
 
 /// Serialize a handler response into a JSON value, mapping a serialization
@@ -73,6 +82,7 @@ impl Dispatcher {
         reload_plugins: Arc<ReloadPluginsUseCase>,
         timer_service: Arc<TimerService>,
         files_service: Arc<FilesService>,
+        shell_capture: Arc<ShellCaptureUseCase>,
     ) -> Self {
         Self {
             search,
@@ -87,6 +97,7 @@ impl Dispatcher {
             reload_plugins,
             timer_service,
             files_service,
+            shell_capture,
         }
     }
 
@@ -130,6 +141,7 @@ impl Dispatcher {
             "files.sizes" => self.handle_files_sizes(params).await,
             "files.cancel_sizes" => self.handle_files_cancel_sizes(params).await,
             "system.status" => self.handle_system_status(params).await,
+            "shell.run_capture" => self.handle_shell_run_capture(params).await,
             _ => Err(ApplicationError::Domain(DomainError::Unsupported(
                 method.to_string(),
             ))),
@@ -435,6 +447,17 @@ impl Dispatcher {
         self.files_service.cancel_sizes(&p.path);
         Ok(json!({}))
     }
+
+    async fn handle_shell_run_capture(&self, params: Option<&RawValue>) -> Result<Value> {
+        let params: ShellRunCaptureParams = parse_params(params, "shell.run_capture")?;
+        if params.command.trim().is_empty() {
+            return Err(ApplicationError::Unknown(
+                "invalid shell.run_capture params: command must not be empty".to_string(),
+            ));
+        }
+        let result = self.shell_capture.run(&params.command).await;
+        to_json(result)
+    }
 }
 
 #[cfg(test)]
@@ -446,10 +469,10 @@ mod tests {
     use quantum_domain::{
         Action, ActionOutcome, ApplicationCatalog, ApplicationInfo, CivilNow, Clock, ContentKind,
         DirectoryWatcher, DomainError, DriveInfo, EventBus, FileEntry, FileEntryKind, FileOpener,
-        FileOperation, FileSystemPort, FilesError, Match, MatchScore, PermissionClass, Pin,
-        PinsPort, ProviderId, ProviderRegistry, ProviderSource, Query, RecursiveSizer, SizeUpdate,
-        ThemeStore, Timer, TimerBroadcast, TimerError, TimerNotifier, TimerStore, TimerStoreData,
-        Weekday, WindowHost,
+        FileOperation, FileSystemPort, FilesError, Match, MatchScore, NotificationEmitter,
+        PermissionClass, Pin, PinsPort, ProviderId, ProviderRegistry, ProviderSource, Query,
+        RecursiveSizer, ShellExecutor, ShellOutput, SizeUpdate, ThemeStore, Timer, TimerBroadcast,
+        TimerError, TimerNotifier, TimerStore, TimerStoreData, Weekday, WindowHost,
     };
     use std::collections::HashMap;
 
@@ -746,6 +769,43 @@ mod tests {
         }
     }
 
+    /// A [`ShellExecutor`] that returns a fixed successful output, so the
+    /// `shell.run_capture` routing test has a known stdout to assert against
+    /// without touching a real process.
+    struct FakeShellExecutor;
+
+    #[async_trait]
+    impl ShellExecutor for FakeShellExecutor {
+        async fn run_with_timeout(
+            &self,
+            _command: &[String],
+            _timeout_ms: u64,
+        ) -> std::result::Result<ShellOutput, DomainError> {
+            Ok(ShellOutput {
+                stdout: "hi\n".to_string(),
+                stderr: String::new(),
+                status: 0,
+            })
+        }
+
+        async fn spawn_detached(
+            &self,
+            _command: &[String],
+        ) -> std::result::Result<(), DomainError> {
+            Ok(())
+        }
+    }
+
+    /// A no-op [`NotificationEmitter`] for the dispatcher routing test: the
+    /// emission path itself is covered by the `ShellCaptureUseCase` unit tests,
+    /// so here it only needs to satisfy the port.
+    struct NoopNotificationEmitter;
+
+    #[async_trait]
+    impl NotificationEmitter for NoopNotificationEmitter {
+        async fn emit(&self, _summary: &str, _body: &str) {}
+    }
+
     struct FilesFakeApplications;
 
     #[async_trait]
@@ -805,6 +865,11 @@ mod tests {
             Arc::new(FakeTimerNotifier),
             Arc::new(FakeTimerBroadcast),
         ));
+        let shell_capture = Arc::new(ShellCaptureUseCase::new(
+            Arc::new(FakeShellExecutor),
+            Arc::new(NoopNotificationEmitter),
+            10_000,
+        ));
         Arc::new(Dispatcher::new(
             search,
             launch_action,
@@ -818,6 +883,7 @@ mod tests {
             reload_plugins,
             timer_service,
             build_files_service(),
+            shell_capture,
         ))
     }
 
@@ -1081,5 +1147,33 @@ mod tests {
         let dispatcher = build_dispatcher();
         let resp = dispatcher.dispatch("files.list", None).await;
         assert!(resp.is_err());
+    }
+
+    #[tokio::test]
+    async fn dispatches_shell_run_capture() {
+        let dispatcher = build_dispatcher();
+        let params = raw(json!({ "command": "echo hi" }));
+        let resp = dispatcher
+            .dispatch("shell.run_capture", Some(&params))
+            .await
+            .expect("shell.run_capture");
+
+        let result: quantum_domain::ShellCaptureResult =
+            serde_json::from_value(resp).expect("shell capture result");
+        assert_eq!(result.command, "echo hi");
+        assert_eq!(result.stdout, "hi\n");
+        assert_eq!(result.exit_code, 0);
+        assert!(!result.timed_out);
+    }
+
+    #[tokio::test]
+    async fn shell_run_capture_rejects_empty_command() {
+        let dispatcher = build_dispatcher();
+        let params = raw(json!({ "command": "   " }));
+        let resp = dispatcher
+            .dispatch("shell.run_capture", Some(&params))
+            .await;
+
+        assert!(matches!(resp, Err(ApplicationError::Unknown(_))));
     }
 }
