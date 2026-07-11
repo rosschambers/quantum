@@ -6,12 +6,21 @@
 // `ipc.ts` (Task 17) is the place that calls the daemon.
 //
 // The daemon exposes these file-explorer methods (documented here, not wrapped):
-//   files.list        list entries for a directory
-//   files.places      pins and mounted drives
-//   files.preview     a preview payload for a path
-//   files.operate     perform a FileOperation
+//   files.list          list entries for a directory
+//   files.places        pins and mounted drives
+//   files.pin           pin a directory to the sidebar
+//   files.unpin         unpin a directory from the sidebar
+//   files.operation     perform a FileOperation
+//   files.open          open a path with its default application
+//   files.open_with     open a path with a chosen application
 //   files.applications  applications that can open a path
-//   files.open        open a path with an application
+//   files.open_terminal open a terminal in a directory
+//   files.preview       a preview payload for a path
+//   files.search        recursively search a directory
+//   files.watch         start watching a directory for changes
+//   files.unwatch       stop watching a directory
+//   files.sizes         start computing recursive directory sizes
+//   files.cancel_sizes  stop computing recursive directory sizes
 // Live changes are published on the `files.event` channel as a `FilesEvent`.
 
 /** The kind of a file-system entry. Mirrors the Rust `FileEntryKind` enum. */
