@@ -83,8 +83,23 @@
     let cachedApplications = $state<ApplicationInfo[]>([]);
 
     // Plain (non-reactive) scratch: the event that opened the current menu (so a
-    // secondary "Open with" menu can drop from the same spot).
+    // secondary "Open with" menu can drop from the same spot) and the pending
+    // drive-refresh debounce timer.
     let lastMenuEvent: MouseEvent | null = null;
+    let driveRefreshTimer: ReturnType<typeof setTimeout> | undefined;
+
+    /** How long to collapse a burst of file events into a single drive refetch. */
+    const DRIVE_REFRESH_DEBOUNCE_MS = 1000;
+
+    // A recursive delete fires many `changed` events; refetching drives per
+    // event would hammer the daemon. Instead, clear and reset a single timer so
+    // a burst collapses into one `refreshPlaces()` once it settles.
+    function scheduleDriveRefresh(): void {
+        clearTimeout(driveRefreshTimer);
+        driveRefreshTimer = setTimeout(() => {
+            void refreshPlaces();
+        }, DRIVE_REFRESH_DEBOUNCE_MS);
+    }
 
     const active = $derived(panes[activePaneIndex]);
     const otherIndex = $derived(activePaneIndex === 0 ? 1 : 0);
@@ -213,6 +228,9 @@
                     void loadPane(pane);
                 }
             }
+            // A change to any watched directory can alter free space (a delete,
+            // a move); refresh the sidebar drives after the burst settles.
+            scheduleDriveRefresh();
         } else if (event.event === 'size') {
             for (const pane of panes) {
                 const entry = pane.entries.find((candidate) => candidate.path === event.path);
@@ -220,12 +238,14 @@
                     entry.recursive_size = event.bytes;
                 }
             }
+        } else if (event.event === 'operation_complete') {
+            // Intentionally silent for toasts: successful operations are already
+            // toasted by `runOperation`'s onDone, so echoing the event would
+            // double the toast. It still refreshes drive free space.
+            scheduleDriveRefresh();
         } else if (event.event === 'operation_failed') {
             pushToast(event.message, 'error');
         }
-        // `operation_complete` is intentionally silent: successful operations
-        // are already toasted by `runOperation`'s onDone, so echoing the event
-        // would double the toast.
     }
 
     // Per-pane loader: on navigation (path change) list the directory, watch it,

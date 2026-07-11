@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, fireEvent } from '@testing-library/svelte/svelte5';
-import type { FileEntry, MenuItem } from '@quantum/client';
+import type { FileEntry, FilesEvent, MenuItem } from '@quantum/client';
 import App from './App.svelte';
 import type { FilesIpc } from './lib/ipc';
 
@@ -217,6 +217,43 @@ describe('App navigation', () => {
         await vi.waitFor(() => {
             expect(ipc.list).toHaveBeenCalledWith(`${HOME}/docs`);
         });
+    });
+});
+
+describe('App drive refresh debounce', () => {
+    it('refetches places once after a burst of file events, after the debounce', async () => {
+        const ipc = createFakeIpc([]);
+        let handler: ((event: FilesEvent) => void) | null = null;
+        ipc.subscribeFilesEvents = vi.fn((callback) => {
+            handler = callback;
+            return () => {};
+        });
+        render(App, { props: { ipc } });
+
+        // Let startup settle: places is fetched once and the event handler is
+        // registered. Use real timers for this async settling.
+        await vi.waitFor(() => expect(handler).not.toBeNull());
+        await vi.waitFor(() => expect(ipc.places).toHaveBeenCalledTimes(1));
+        (ipc.places as ReturnType<typeof vi.fn>).mockClear();
+
+        // Switch to fake timers so the debounce window is deterministic.
+        vi.useFakeTimers();
+        try {
+            const notify = handler as unknown as (event: FilesEvent) => void;
+            notify({ event: 'changed', path: '/somewhere' });
+            notify({ event: 'operation_complete', operation: { kind: 'delete', paths: ['/x'] } });
+            notify({ event: 'changed', path: '/elsewhere' });
+
+            // The burst has not refetched yet; the debounce is still pending.
+            expect(ipc.places).not.toHaveBeenCalled();
+
+            await vi.advanceTimersByTimeAsync(1000);
+
+            // Exactly one refetch collapses the whole burst.
+            expect(ipc.places).toHaveBeenCalledTimes(1);
+        } finally {
+            vi.useRealTimers();
+        }
     });
 });
 
