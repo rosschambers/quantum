@@ -2052,6 +2052,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "quantum-processes"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "thiserror",
+]
+
+[[package]]
 name = "quantum-providers"
 version = "0.1.0"
 dependencies = [
@@ -2071,6 +2080,7 @@ dependencies = [
  "quantum-domain",
  "quantum-hyprland",
  "quantum-plugins",
+ "quantum-processes",
  "serde",
  "serde_json",
  "shell-words",
