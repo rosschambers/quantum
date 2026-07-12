@@ -1,5 +1,5 @@
 <script lang="ts" module>
-    export type IconName = 'close' | 'app' | 'process' | 'search';
+    export type IconName = 'close' | 'app' | 'process' | 'self' | 'search';
 </script>
 
 <script lang="ts">
@@ -46,6 +46,9 @@
     {:else if name === 'process'}
         <rect x="6" y="6" width="12" height="12" rx="2" />
         <path d="M12 2v4M12 18v4M2 12h4M18 12h4" />
+    {:else if name === 'self'}
+        <circle cx="12" cy="12" r="9" />
+        <path d="M12 7v5l3 3" />
     {:else if name === 'search'}
         <circle cx="11" cy="11" r="7" />
         <path d="M21 21l-4.5-4.5" />

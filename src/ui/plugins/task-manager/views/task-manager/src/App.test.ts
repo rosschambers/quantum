@@ -6,7 +6,33 @@ import {
     PROCESSES_UNWATCH,
     type Client,
 } from '@quantum/client';
+import type { ProcessSnapshot } from '@quantum/client';
 import App from './App.svelte';
+
+/** A minimal but well-formed snapshot the tree can render. */
+function sampleSnapshot(): ProcessSnapshot {
+    const leaf = (pid: number, name: string) => ({
+        pid,
+        name,
+        cpu_percent: 1,
+        mem_bytes: 100 * 1024 * 1024,
+        aggregate_cpu_percent: 1,
+        aggregate_mem_bytes: 100 * 1024 * 1024,
+        protected: false,
+        children: [],
+    });
+    return {
+        global: {
+            cpu_percent: 18,
+            mem_used_bytes: 8 * 1024 * 1024 * 1024,
+            mem_total_bytes: 32 * 1024 * 1024 * 1024,
+            net_rx_bytes_per_second: 1024 * 1024,
+            net_tx_bytes_per_second: 256 * 1024,
+        },
+        apps: [leaf(4001, 'firefox'), leaf(4002, 'kitty')],
+        background: [leaf(4003, 'systemd')],
+    };
+}
 
 /**
  * A hand-rolled stub `Client` with spies on every method. `subscribe` records
@@ -68,26 +94,18 @@ describe('App shell', () => {
         });
     });
 
-    it('reflects the latest snapshot in the placeholder body', async () => {
+    it('renders the process tree from the latest snapshot', async () => {
         const stub = createStubClient();
         const { getByText } = render(App, { props: { client: stub.client } });
 
         await vi.waitFor(() => expect(stub.subscribe).toHaveBeenCalled());
 
-        stub.emit({
-            global: {
-                cpu_percent: 0,
-                mem_used_bytes: 0,
-                mem_total_bytes: 0,
-                net_rx_bytes_per_second: 0,
-                net_tx_bytes_per_second: 0,
-            },
-            apps: [{ name: 'firefox' }, { name: 'kitty' }],
-            background: [{ name: 'systemd' }],
-        });
+        stub.emit(sampleSnapshot());
 
         await vi.waitFor(() => {
-            expect(getByText('3 top-level processes')).toBeTruthy();
+            // The Apps section header and an app root are rendered by the tree.
+            expect(getByText(/Apps/)).toBeTruthy();
+            expect(getByText('firefox')).toBeTruthy();
         });
     });
 

@@ -9,6 +9,7 @@
     } from '@quantum/client';
     import Icon from './lib/Icon.svelte';
     import GraphStrip from './lib/GraphStrip.svelte';
+    import ProcessTree from './lib/ProcessTree.svelte';
 
     /**
      * The IPC client is injected so tests can pass a stub with spies. In the
@@ -29,15 +30,6 @@
 
     /** Titlebar filter text. Filtering logic lands in a later task; this only holds the value. */
     let filterText = $state('');
-
-    /**
-     * Count of top-level entries in the latest snapshot. Proves the
-     * subscription is live before the tree view exists; the real tree
-     * replaces this placeholder in a later task.
-     */
-    const processCount = $derived(
-        snapshot === null ? null : snapshot.apps.length + snapshot.background.length,
-    );
 
     // Process subscription lifecycle. Start the watch, then subscribe to the
     // snapshot channel. `destroy_on_dismiss` makes this cleanup unreliable on
@@ -104,13 +96,15 @@
         </button>
     </div>
     <GraphStrip global={snapshot?.global ?? null} />
-    <div class="body">
-        {#if processCount === null}
-            Loading…
-        {:else}
-            {processCount} top-level processes
-        {/if}
-    </div>
+    {#if snapshot === null}
+        <div class="body">Loading…</div>
+    {:else}
+        <ProcessTree
+            apps={snapshot.apps}
+            background={snapshot.background}
+            memTotalBytes={snapshot.global.mem_total_bytes}
+        />
+    {/if}
 </div>
 
 <style>
