@@ -32,6 +32,8 @@
     import Toasts from './lib/Toasts.svelte';
     import PropertiesModal from './lib/PropertiesModal.svelte';
     import PromptModal from './lib/PromptModal.svelte';
+    import ConfirmModal from './lib/ConfirmModal.svelte';
+    import { resolveShortcut, type ShortcutAction } from './lib/keymap';
     import { buildEntryMenu, buildBackgroundMenu, type PinTarget } from './lib/menus';
     import { runOperation, type OperationResult } from './lib/operations';
     import {
@@ -51,6 +53,13 @@
         title: string;
         initial: string;
         onSubmit: (value: string) => void;
+    }
+    /** An open confirmation request (destructive action, for example permanent delete). */
+    interface ConfirmRequest {
+        title: string;
+        message: string;
+        confirmLabel: string;
+        onConfirm: () => void;
     }
 
     interface Props {
@@ -77,6 +86,7 @@
     let breadcrumbEditing = $state(false);
     let propertiesTarget = $state<PropertiesTarget | null>(null);
     let promptRequest = $state<PromptRequest | null>(null);
+    let confirmRequest = $state<ConfirmRequest | null>(null);
     let cachedApplications = $state<ApplicationInfo[]>([]);
     let typeaheadBuffer = $state('');
 
@@ -254,10 +264,17 @@
     $effect(() => {
         function onKeyDown(event: KeyboardEvent): void {
             if (event.key === 'Escape') {
+                const hadOpen =
+                    propertiesTarget !== null ||
+                    promptRequest !== null ||
+                    confirmRequest !== null;
                 closeContextMenu();
-                if (propertiesTarget !== null || promptRequest !== null) {
+                if (hadOpen) {
                     propertiesTarget = null;
                     promptRequest = null;
+                    confirmRequest = null;
+                } else {
+                    active.clearSelection();
                 }
                 return;
             }
@@ -267,6 +284,13 @@
                 target instanceof HTMLElement &&
                 (target.tagName === 'INPUT' || target.isContentEditable);
             if (inInput) {
+                return;
+            }
+
+            const action = resolveShortcut(event);
+            if (action !== null && action.kind !== 'clear-selection') {
+                event.preventDefault();
+                dispatchShortcut(action);
                 return;
             }
 
@@ -340,6 +364,110 @@
             anchors[index] = matchIndex;
             cursors[index] = matchIndex;
         }
+    }
+
+    // ── Keyboard shortcuts ──────────────────────────────────────────────────
+
+    /** The paths a management shortcut targets: the selection, else the cursor entry. */
+    function targetPaths(): string[] {
+        const selected = [...active.selection];
+        if (selected.length > 0) {
+            return selected;
+        }
+        const entry = active.visibleEntries()[cursors[activePaneIndex]];
+        return entry !== undefined ? [entry.path] : [];
+    }
+
+    /** Clamp a pane's cursor and anchor into its current visible range. */
+    function clampCursor(index: number): void {
+        const length = panes[index].visibleEntries().length;
+        const high = Math.max(0, length - 1);
+        cursors[index] = clamp(cursors[index], 0, high);
+        anchors[index] = clamp(anchors[index], 0, high);
+    }
+
+    function dispatchShortcut(action: ShortcutAction): void {
+        const index = activePaneIndex;
+        const paths = targetPaths();
+        switch (action.kind) {
+            case 'select-all':
+                active.selectAll();
+                break;
+            case 'clipboard':
+                if (paths.length > 0) {
+                    setClipboard(action.operation, paths);
+                }
+                break;
+            case 'paste':
+                paste(active.path);
+                break;
+            case 'trash':
+                if (paths.length > 0) {
+                    runOp({ kind: 'trash', paths });
+                }
+                break;
+            case 'delete-permanent':
+                if (paths.length > 0) {
+                    confirmRequest = {
+                        title: 'Delete permanently',
+                        message: `Permanently delete ${paths.length} item${paths.length === 1 ? '' : 's'}? This cannot be undone.`,
+                        confirmLabel: 'Delete',
+                        onConfirm: () => {
+                            runOp({ kind: 'delete', paths });
+                        },
+                    };
+                }
+                break;
+            case 'rename': {
+                const entry = active.visibleEntries()[cursors[index]];
+                if (entry !== undefined) {
+                    openPrompt('Rename', entry.name, (name) =>
+                        runOp({ kind: 'rename', path: entry.path, new_name: name }),
+                    );
+                }
+                break;
+            }
+            case 'duplicate':
+                for (const path of paths) {
+                    runOp({ kind: 'duplicate', path });
+                }
+                break;
+            case 'new-folder':
+                openPrompt('New folder', 'New Folder', (name) =>
+                    runOp({ kind: 'new_folder', parent: active.path, name }),
+                );
+                break;
+            case 'refresh':
+                void loadPane(active);
+                break;
+            case 'cursor': {
+                const visible = active.visibleEntries();
+                if (visible.length === 0) {
+                    break;
+                }
+                const next = action.to === 'first' ? 0 : visible.length - 1;
+                active.selectOnly(visible[next].path);
+                cursors[index] = next;
+                anchors[index] = next;
+                break;
+            }
+            case 'toggle-hidden':
+                toggleHidden();
+                break;
+            case 'clear-selection':
+                active.clearSelection();
+                break;
+        }
+    }
+
+    /** Flip the show-hidden preference on both panes and re-clamp cursors. */
+    function toggleHidden(): void {
+        const next = !panes[0].showHidden;
+        panes[0].showHidden = next;
+        panes[1].showHidden = next;
+        clampCursor(0);
+        clampCursor(1);
+        // Phase 2 adds: void ipc.setPreferences({ show_hidden: next });
     }
 
     // ── Selection and opening ───────────────────────────────────────────────
@@ -628,6 +756,20 @@
         initial={promptRequest.initial}
         onSubmit={submitPrompt}
         onCancel={() => (promptRequest = null)}
+    />
+{/if}
+
+{#if confirmRequest !== null}
+    <ConfirmModal
+        title={confirmRequest.title}
+        message={confirmRequest.message}
+        confirmLabel={confirmRequest.confirmLabel}
+        onConfirm={() => {
+            const request = confirmRequest;
+            confirmRequest = null;
+            request?.onConfirm();
+        }}
+        onCancel={() => (confirmRequest = null)}
     />
 {/if}
 
