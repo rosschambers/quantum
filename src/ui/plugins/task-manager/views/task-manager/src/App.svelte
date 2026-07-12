@@ -8,6 +8,7 @@
         type ProcessSnapshot,
     } from '@quantum/client';
     import Icon from './lib/Icon.svelte';
+    import GraphStrip from './lib/GraphStrip.svelte';
 
     /**
      * The IPC client is injected so tests can pass a stub with spies. In the
@@ -102,6 +103,7 @@
             <Icon name="close" size={14} />
         </button>
     </div>
+    <GraphStrip global={snapshot?.global ?? null} />
     <div class="body">
         {#if processCount === null}
             Loading…
