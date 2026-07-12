@@ -263,6 +263,11 @@
     // except for Escape which always closes an open menu or modal.
     $effect(() => {
         function onKeyDown(event: KeyboardEvent): void {
+            const target = event.target;
+            const inInput =
+                target instanceof HTMLElement &&
+                (target.tagName === 'INPUT' || target.isContentEditable);
+
             if (event.key === 'Escape') {
                 const hadOpen =
                     propertiesTarget !== null ||
@@ -273,16 +278,14 @@
                     propertiesTarget = null;
                     promptRequest = null;
                     confirmRequest = null;
-                } else {
+                } else if (!inInput) {
+                    // Only a bare Escape over the file list clears the selection;
+                    // Escape while typing in the filter or location bar must not.
                     active.clearSelection();
                 }
                 return;
             }
 
-            const target = event.target;
-            const inInput =
-                target instanceof HTMLElement &&
-                (target.tagName === 'INPUT' || target.isContentEditable);
             if (inInput) {
                 return;
             }
@@ -457,6 +460,13 @@
             case 'clear-selection':
                 active.clearSelection();
                 break;
+            default: {
+                // Compile-time exhaustiveness: a new ShortcutAction variant that
+                // is not handled above becomes a type error here rather than a
+                // silent no-op.
+                const unhandled: never = action;
+                void unhandled;
+            }
         }
     }
 
