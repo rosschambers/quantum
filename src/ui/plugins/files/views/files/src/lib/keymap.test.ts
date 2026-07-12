@@ -38,6 +38,9 @@ describe('resolveShortcut', () => {
         expect(resolveShortcut(key({ key: 'h', ctrlKey: true }))).toEqual({ kind: 'toggle-hidden' });
         expect(resolveShortcut(key({ key: 'Escape' }))).toEqual({ kind: 'clear-selection' });
     });
+    test('? is help', () => {
+        expect(resolveShortcut(key({ key: '?', shiftKey: true }))).toEqual({ kind: 'help' });
+    });
     test('non-shortcuts resolve to null', () => {
         expect(resolveShortcut(key({ key: 'n', ctrlKey: true }))).toBeNull();
         expect(resolveShortcut(key({ key: 'a' }))).toBeNull();
