@@ -207,6 +207,17 @@
             .catch(() => {
                 // Fall back to the root-seeded panes already in place.
             });
+        // Load the persisted show-hidden preference independently of the places
+        // load; on failure keep the default (both panes showing hidden files).
+        void ipc
+            .getPreferences()
+            .then((preferences) => {
+                panes[0].showHidden = preferences.show_hidden;
+                panes[1].showHidden = preferences.show_hidden;
+            })
+            .catch(() => {
+                // Keep the default showHidden of both panes.
+            });
     });
 
     // The single files.event subscription: reload changed panes, stream folder
@@ -477,7 +488,9 @@
         panes[1].showHidden = next;
         clampCursor(0);
         clampCursor(1);
-        // Phase 2 adds: void ipc.setPreferences({ show_hidden: next });
+        void ipc.setPreferences({ show_hidden: next }).catch(() => {
+            pushToast('Failed to save hidden-files preference', 'error');
+        });
     }
 
     // ── Selection and opening ───────────────────────────────────────────────

@@ -58,6 +58,8 @@ function createFakeIpc(entries: FileEntry[]): FilesIpc {
         unwatch: vi.fn(() => Promise.resolve()),
         sizes: vi.fn(() => Promise.resolve()),
         cancelSizes: vi.fn(() => Promise.resolve()),
+        getPreferences: vi.fn(() => Promise.resolve({ show_hidden: true })),
+        setPreferences: vi.fn(() => Promise.resolve()),
         subscribeFilesEvents: vi.fn(() => () => {}),
     };
 }
@@ -130,6 +132,23 @@ describe('App navigation', () => {
 
         await vi.waitFor(() => {
             expect(ipc.list).toHaveBeenCalledWith(`${HOME}/docs`);
+        });
+    });
+});
+
+describe('App hidden-files preference', () => {
+    it('hides dotfiles on startup when getPreferences resolves show_hidden false', async () => {
+        const entries = [
+            makeEntry({ name: '.hidden', path: `${HOME}/.hidden` }),
+            makeEntry({ name: 'visible', path: `${HOME}/visible` }),
+        ];
+        const ipc = createFakeIpc(entries);
+        ipc.getPreferences = vi.fn(() => Promise.resolve({ show_hidden: false }));
+        const { container } = render(App, { props: { ipc } });
+
+        await vi.waitFor(() => {
+            expect(container.querySelector(`.pane [data-path="${HOME}/visible"]`)).not.toBeNull();
+            expect(container.querySelector(`.pane [data-path="${HOME}/.hidden"]`)).toBeNull();
         });
     });
 });
