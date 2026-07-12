@@ -18,6 +18,7 @@
 //! thread-local holding the `!Send` `WebView` is safe and needs no locking.
 
 use std::cell::RefCell;
+use webkit6::prelude::SettingsExt;
 
 thread_local! {
     /// The lazily created, never-shown anchor whose render process the warm
@@ -39,4 +40,31 @@ pub fn new_webview(share_process: bool) -> webkit6::WebView {
         let anchor = slot.get_or_insert_with(webkit6::WebView::new).clone();
         webkit6::WebView::builder().related_view(&anchor).build()
     })
+}
+
+/// Disable WebKit subsystems no Quantum view uses.
+///
+/// Every view is a static Svelte user interface driven over the `quantum://`
+/// IPC bridge: none use a 3D canvas, media capture (camera/microphone),
+/// WebRTC, Web Audio, encrypted media (DRM), DNS prefetching (the scheme is
+/// local), hyperlink auditing, back/forward navigation, or the legacy HTML5
+/// database / offline application cache. Turning these off keeps each renderer
+/// from initializing machinery it will never exercise. Base media playback
+/// (`enable_media`), JavaScript, and local storage are left on deliberately.
+///
+/// Call this on the [`webkit6::Settings`] of every view before applying them.
+pub fn apply_widget_settings(settings: &webkit6::Settings) {
+    settings.set_enable_webgl(false);
+    settings.set_enable_webrtc(false);
+    settings.set_enable_media_stream(false);
+    settings.set_enable_mock_capture_devices(false);
+    settings.set_enable_webaudio(false);
+    settings.set_enable_encrypted_media(false);
+    settings.set_enable_media_capabilities(false);
+    settings.set_enable_mediasource(false);
+    settings.set_enable_back_forward_navigation_gestures(false);
+    settings.set_enable_hyperlink_auditing(false);
+    settings.set_enable_dns_prefetching(false);
+    settings.set_enable_html5_database(false);
+    settings.set_enable_offline_web_application_cache(false);
 }

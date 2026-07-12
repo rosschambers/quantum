@@ -217,6 +217,7 @@ impl PanelWindow {
         settings.set_enable_write_console_messages_to_stdout(inspector_enabled);
         settings.set_enable_developer_extras(inspector_enabled);
         settings.set_javascript_can_open_windows_automatically(false);
+        crate::web_process::apply_widget_settings(&settings);
         webkit6::prelude::WebViewExt::set_settings(&webview, &settings);
 
         // Replace WebKit's browser right-click menu (back/forward/reload) with

@@ -433,6 +433,7 @@ fn build_webview(
         webkit6::prelude::WebViewExt::settings(&webview).unwrap_or_default();
     settings.set_enable_write_console_messages_to_stdout(inspector_enabled);
     settings.set_enable_developer_extras(inspector_enabled);
+    crate::web_process::apply_widget_settings(&settings);
     webkit6::prelude::WebViewExt::set_settings(&webview, &settings);
 
     // Replace WebKit's browser right-click menu (back/forward/reload) with
