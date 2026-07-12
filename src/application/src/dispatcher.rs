@@ -446,10 +446,10 @@ mod tests {
     use quantum_domain::{
         Action, ActionOutcome, ApplicationCatalog, ApplicationInfo, CivilNow, Clock, ContentKind,
         DirectoryWatcher, DomainError, DriveInfo, EventBus, FileEntry, FileEntryKind, FileOpener,
-        FileOperation, FileSystemPort, FilesError, Match, MatchScore, PermissionClass, Pin,
-        PinsPort, ProviderId, ProviderRegistry, ProviderSource, Query, RecursiveSizer, SizeUpdate,
-        ThemeStore, Timer, TimerBroadcast, TimerError, TimerNotifier, TimerStore, TimerStoreData,
-        Weekday, WindowHost,
+        FileOperation, FilePreferences, FileSystemPort, FilesError, Match, MatchScore,
+        PermissionClass, Pin, PinsPort, PreferencesPort, ProviderId, ProviderRegistry,
+        ProviderSource, Query, RecursiveSizer, SizeUpdate, ThemeStore, Timer, TimerBroadcast,
+        TimerError, TimerNotifier, TimerStore, TimerStoreData, Weekday, WindowHost,
     };
     use std::collections::HashMap;
 
@@ -755,6 +755,18 @@ mod tests {
         }
     }
 
+    struct FilesFakePreferences;
+
+    #[async_trait]
+    impl PreferencesPort for FilesFakePreferences {
+        async fn load(&self) -> FilePreferences {
+            FilePreferences::default()
+        }
+        async fn save(&self, _preferences: FilePreferences) -> std::result::Result<(), FilesError> {
+            Ok(())
+        }
+    }
+
     /// Assemble a `FilesService` over the files fakes for dispatcher routing
     /// tests. The `FakeEventBus` above is reused for the event bus.
     fn build_files_service() -> Arc<FilesService> {
@@ -764,6 +776,7 @@ mod tests {
             Arc::new(FilesFakeOpener),
             Arc::new(FilesFakeSizer),
             Arc::new(FilesFakePins),
+            Arc::new(FilesFakePreferences),
             Arc::new(FilesFakeApplications),
             Arc::new(FakeEventBus),
         ))
