@@ -14,9 +14,9 @@ use tracing_subscriber::EnvFilter;
 
 use quantum_application::{
     ApplicationError, Dispatcher as AppDispatcher, FilesService, LaunchActionUseCase,
-    ListProvidersUseCase, OpenViewUseCase, QueryProviderUseCase, ReloadPluginsUseCase,
-    ReloadThemeUseCase, ScheduleActionUseCase, SearchUseCase, SetThemeUseCase, ShellCaptureUseCase,
-    SubscribeProviderUseCase, TimerService,
+    ListProvidersUseCase, OpenViewUseCase, ProcessesService, QueryProviderUseCase,
+    ReloadPluginsUseCase, ReloadThemeUseCase, ScheduleActionUseCase, SearchUseCase,
+    SetThemeUseCase, ShellCaptureUseCase, SubscribeProviderUseCase, TimerService,
 };
 use quantum_config::{Config, ConfigStore};
 use quantum_domain::{DomainError, EventBus, ProviderId, ProviderSource};
@@ -28,6 +28,9 @@ use quantum_files::{
 use quantum_hyprland::HyprlandSocketClient;
 use quantum_ipc::{
     DispatchError, DispatchResult, Dispatcher as IpcDispatcher, EventEnvelope, UnixSocketServer,
+};
+use quantum_processes::{
+    LibcProcessKiller, ProcessSampleSource, ProcfsSampler, TokioProcessMonitor,
 };
 use quantum_providers::{
     BluezProvider, DeclarativeShellProvider, DesktopAppsProvider, HyprlandActiveWindowProvider,
@@ -490,6 +493,21 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
+/// A Hyprland client used when no real Hyprland IPC socket is available. Every
+/// command errors, which the process monitor tolerates by falling back to an
+/// empty window map, so the task manager still works (all processes land under
+/// background) on a host without Hyprland.
+struct NullHyprlandClient;
+
+#[async_trait]
+impl quantum_domain::HyprlandClient for NullHyprlandClient {
+    async fn command(&self, _cmd: &str) -> std::result::Result<String, DomainError> {
+        Err(DomainError::ActionFailed {
+            reason: "hyprland unavailable".to_string(),
+        })
+    }
+}
+
 struct DaemonSetup {
     socket_path: std::path::PathBuf,
     ipc_dispatcher: Arc<dyn UiIpcDispatcher>,
@@ -933,6 +951,31 @@ async fn setup_daemon(
         event_bus.clone(),
     ));
 
+    // Process task-manager service. Each infrastructure adapter is wrapped as
+    // its domain port trait object, mirroring the files wiring above. The `/proc`
+    // sampler feeds the gated one-hertz monitor; the killer resolves subtrees
+    // against the monitor's freshest snapshot. When Hyprland is unavailable a
+    // null client is used, and the monitor degrades to an empty window map (all
+    // processes under background). Like the file explorer, the subsystem needs
+    // no pre-subscription: the monitor idles until the first `processes.watch`.
+    let process_sampler: Box<dyn ProcessSampleSource> = Box::new(ProcfsSampler::new());
+    let process_hyprland: Arc<dyn quantum_domain::HyprlandClient> = match &hypr_client_opt {
+        Some(client) => client.clone(),
+        None => Arc::new(NullHyprlandClient),
+    };
+    let process_monitor = TokioProcessMonitor::new(
+        tokio::runtime::Handle::current(),
+        process_sampler,
+        process_hyprland,
+    );
+    let process_latest = process_monitor.latest();
+    let process_killer = LibcProcessKiller::with_libc(process_latest);
+    let processes_service = Arc::new(ProcessesService::new(
+        Arc::new(process_monitor) as Arc<dyn quantum_domain::ProcessMonitor>,
+        Arc::new(process_killer) as Arc<dyn quantum_domain::ProcessKiller>,
+        event_bus.clone(),
+    ));
+
     // Shell command-capture use case: runs a launcher `$` command through the
     // shared shell executor and surfaces its output both inline (the returned
     // result) and as a notification through the notifications provider.
@@ -956,6 +999,7 @@ async fn setup_daemon(
         reload_plugins_use_case,
         timer_service.clone(),
         files_service,
+        processes_service,
         shell_capture_use_case,
     ));
     let _ipc_dispatcher = Arc::new(AppDispatcherAdapter::new(dispatcher));

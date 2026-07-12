@@ -2170,6 +2170,7 @@ dependencies = [
  "quantum-hyprland",
  "quantum-ipc",
  "quantum-plugins",
+ "quantum-processes",
  "quantum-providers",
  "quantum-theme",
  "quantum-ui",

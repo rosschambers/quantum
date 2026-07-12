@@ -1,4 +1,4 @@
-use quantum_domain::{DomainError, FilesError, TimerError};
+use quantum_domain::{DomainError, FilesError, ProcessesError, TimerError};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
@@ -73,6 +73,30 @@ impl From<TimerError> for ApplicationError {
         let message = error.to_string();
         match error {
             TimerError::NotFound(_) => ApplicationError::Domain(DomainError::NotFound(message)),
+            _ => ApplicationError::Domain(DomainError::ActionFailed { reason: message }),
+        }
+    }
+}
+
+/// Map process-subsystem errors onto the `ApplicationError`/`DomainError`
+/// variants, following the same shape as the timer conversion above.
+///
+/// `ProcessesError` is not itself part of the serialized IPC contract (unlike
+/// `FilesError`, it derives neither `Serialize` nor `Clone`), so rather than
+/// give it a dedicated `ApplicationError` variant it is folded into
+/// `DomainError`, preserving the original `Display` message:
+///
+/// - `ProcessesError::NotFound` is the subsystem's "not found" condition, so it
+///   maps to `DomainError::NotFound`, carrying the missing pid's message and a
+///   stable domain-range JSON-RPC code.
+/// - Every other `ProcessesError` (permission denied, protected, sampling) is an
+///   operation failure, so it maps to `DomainError::ActionFailed`, again keeping
+///   the human-readable cause.
+impl From<ProcessesError> for ApplicationError {
+    fn from(error: ProcessesError) -> ApplicationError {
+        let message = error.to_string();
+        match error {
+            ProcessesError::NotFound(_) => ApplicationError::Domain(DomainError::NotFound(message)),
             _ => ApplicationError::Domain(DomainError::ActionFailed { reason: message }),
         }
     }
