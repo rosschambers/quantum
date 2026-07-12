@@ -159,6 +159,17 @@ export {
   type FilesEvent,
 } from './files';
 export {
+  PROCESSES_EVENT_CHANNEL,
+  PROCESSES_WATCH,
+  PROCESSES_UNWATCH,
+  PROCESSES_KILL,
+  type GlobalStats,
+  type WindowInfo,
+  type ProcessNode,
+  type ProcessSnapshot,
+  type KillSignal,
+} from './processes';
+export {
   type IconRef,
   type SystemTrayMenuNode,
   type SystemTrayItem,

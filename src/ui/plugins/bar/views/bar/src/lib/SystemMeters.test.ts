@@ -1,6 +1,22 @@
-import { describe, it, expect, vi } from 'vitest';
-import { render } from '@testing-library/svelte/svelte5';
+import { describe, it, expect, vi, afterEach } from 'vitest';
+import { render, fireEvent } from '@testing-library/svelte/svelte5';
+import { tick } from 'svelte';
+import { closeContextMenu } from '@quantum/client';
 import SystemMeters from './SystemMeters.svelte';
+
+function contextMenu(): HTMLElement | null {
+    return document.querySelector('[data-quantum-context-menu]');
+}
+
+function menuItem(text: string): HTMLButtonElement | undefined {
+    return Array.from(
+        document.querySelectorAll('[data-quantum-context-menu] [role="menuitem"]'),
+    ).find((el) => el.textContent?.includes(text)) as HTMLButtonElement | undefined;
+}
+
+afterEach(() => {
+    closeContextMenu();
+});
 
 function mockClient() {
     let savedCallback: ((p: unknown) => void) | undefined;
@@ -176,5 +192,37 @@ describe('SystemMeters', () => {
             .querySelector('.meter.cpu .sparkline path')!
             .getAttribute('stroke');
         expect(sparkStroke).toBe(ringStroke);
+    });
+
+    it('opens a quick-actions menu on right-click', async () => {
+        const { client } = mockClient();
+        const { container } = render(SystemMeters, { props: { client } });
+        await tick();
+
+        expect(contextMenu()).toBeNull();
+        await fireEvent.contextMenu(container.querySelector('.meters') as HTMLElement);
+        await tick();
+
+        expect(contextMenu()).not.toBeNull();
+        expect(menuItem('Open Task Manager')).toBeTruthy();
+    });
+
+    it('toggles the task manager panel from the menu without a monitor suffix', async () => {
+        const { client } = mockClient();
+        const { container } = render(SystemMeters, { props: { client } });
+        await tick();
+
+        await fireEvent.contextMenu(container.querySelector('.meters') as HTMLElement);
+        await tick();
+
+        const open = menuItem('Open Task Manager');
+        expect(open).toBeTruthy();
+        client.call.mockClear();
+        await fireEvent.click(open as HTMLButtonElement);
+        await tick();
+
+        expect(client.call).toHaveBeenCalledWith('view.toggle', {
+            name: 'plugin/task-manager/task-manager',
+        });
     });
 });

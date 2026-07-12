@@ -11,6 +11,7 @@ members = [
     "src/infrastructure/providers",
     "src/infrastructure/plugins",
     "src/infrastructure/files",
+    "src/infrastructure/processes",
     "src/ui/host",
     "src/binaries/quantumd",
     "src/binaries/quantumctl",
@@ -47,6 +48,7 @@ anyhow = "1"
 cargo_metadata = "0.18"
 futures = "0.3"
 include_dir = "0.7"
+libc = "0.2"
 
 # Trim dev-build debug info. The gtk/webkit `-sys` dependency tree emits a large
 # amount of DWARF; full debuginfo on it dominates link time and target size

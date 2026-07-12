@@ -1,8 +1,8 @@
 use crate::{
     ApplicationError, CreateTimerSpec, EditChanges, FilesService, LaunchActionUseCase,
-    ListProvidersUseCase, OpenViewUseCase, QueryProviderUseCase, ReloadPluginsUseCase,
-    ReloadThemeUseCase, Result, ScheduleActionUseCase, SearchUseCase, SetThemeUseCase,
-    ShellCaptureUseCase, SubscribeProviderUseCase, TimerService,
+    ListProvidersUseCase, OpenViewUseCase, ProcessesService, QueryProviderUseCase,
+    ReloadPluginsUseCase, ReloadThemeUseCase, Result, ScheduleActionUseCase, SearchUseCase,
+    SetThemeUseCase, ShellCaptureUseCase, SubscribeProviderUseCase, TimerService,
 };
 use quantum_domain::{DomainError, WindowMode};
 use serde::de::DeserializeOwned;
@@ -23,6 +23,7 @@ pub struct Dispatcher {
     reload_plugins: Arc<ReloadPluginsUseCase>,
     timer_service: Arc<TimerService>,
     files_service: Arc<FilesService>,
+    processes_service: Arc<ProcessesService>,
     shell_capture: Arc<ShellCaptureUseCase>,
 }
 
@@ -82,6 +83,7 @@ impl Dispatcher {
         reload_plugins: Arc<ReloadPluginsUseCase>,
         timer_service: Arc<TimerService>,
         files_service: Arc<FilesService>,
+        processes_service: Arc<ProcessesService>,
         shell_capture: Arc<ShellCaptureUseCase>,
     ) -> Self {
         Self {
@@ -97,6 +99,7 @@ impl Dispatcher {
             reload_plugins,
             timer_service,
             files_service,
+            processes_service,
             shell_capture,
         }
     }
@@ -140,6 +143,9 @@ impl Dispatcher {
             "files.unwatch" => self.handle_files_unwatch(params).await,
             "files.sizes" => self.handle_files_sizes(params).await,
             "files.cancel_sizes" => self.handle_files_cancel_sizes(params).await,
+            "processes.watch" => self.handle_processes_watch(params).await,
+            "processes.unwatch" => self.handle_processes_unwatch(params).await,
+            "processes.kill" => self.handle_processes_kill(params).await,
             "system.status" => self.handle_system_status(params).await,
             "shell.run_capture" => self.handle_shell_run_capture(params).await,
             _ => Err(ApplicationError::Domain(DomainError::Unsupported(
@@ -448,6 +454,27 @@ impl Dispatcher {
         Ok(json!({}))
     }
 
+    async fn handle_processes_watch(&self, _params: Option<&RawValue>) -> Result<Value> {
+        self.processes_service.watch();
+        Ok(json!({}))
+    }
+
+    async fn handle_processes_unwatch(&self, _params: Option<&RawValue>) -> Result<Value> {
+        self.processes_service.unwatch();
+        Ok(json!({}))
+    }
+
+    async fn handle_processes_kill(&self, params: Option<&RawValue>) -> Result<Value> {
+        #[derive(serde::Deserialize)]
+        struct KillParams {
+            pid: i32,
+            signal: quantum_domain::KillSignal,
+        }
+        let p: KillParams = parse_params(params, "processes.kill")?;
+        self.processes_service.kill(p.pid, p.signal).await?;
+        Ok(json!({}))
+    }
+
     async fn handle_shell_run_capture(&self, params: Option<&RawValue>) -> Result<Value> {
         let params: ShellRunCaptureParams = parse_params(params, "shell.run_capture")?;
         if params.command.trim().is_empty() {
@@ -469,12 +496,15 @@ mod tests {
     use quantum_domain::{
         Action, ActionOutcome, ApplicationCatalog, ApplicationInfo, CivilNow, Clock, ContentKind,
         DirectoryWatcher, DomainError, DriveInfo, EventBus, FileEntry, FileEntryKind, FileOpener,
-        FileOperation, FileSystemPort, FilesError, Match, MatchScore, NotificationEmitter,
-        PermissionClass, Pin, PinsPort, ProviderId, ProviderRegistry, ProviderSource, Query,
+        FileOperation, FileSystemPort, FilesError, KillSignal, Match, MatchScore,
+        NotificationEmitter, PermissionClass, Pin, PinsPort, ProcessKiller, ProcessMonitor,
+        ProcessSnapshot, ProcessesError, ProviderId, ProviderRegistry, ProviderSource, Query,
         RecursiveSizer, ShellExecutor, ShellOutput, SizeUpdate, ThemeStore, Timer, TimerBroadcast,
         TimerError, TimerNotifier, TimerStore, TimerStoreData, Weekday, WindowHost,
     };
     use std::collections::HashMap;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::Mutex as StdMutex;
 
     /// Convenience: encode a `serde_json::Value` as a `Box<RawValue>` so
     /// tests can keep using `json!` literals while exercising the
@@ -829,7 +859,72 @@ mod tests {
         ))
     }
 
+    /// Process-monitor fake for the dispatcher routing tests: counts how many
+    /// times `watch` is called so a test can prove `processes.watch` reaches the
+    /// monitor, and hands out an empty stream so no forwarding task lingers.
+    struct ProcessesCountingMonitor {
+        watch_calls: Arc<AtomicUsize>,
+    }
+
+    impl ProcessMonitor for ProcessesCountingMonitor {
+        fn watch(&self) -> BoxStream<'static, ProcessSnapshot> {
+            self.watch_calls.fetch_add(1, Ordering::SeqCst);
+            stream::empty().boxed()
+        }
+        fn unwatch(&self) {}
+    }
+
+    /// Process-killer fake for the dispatcher routing tests: records every
+    /// `(pid, signal)` it is asked to kill, and can be configured to fail with a
+    /// protected-process error instead.
+    struct ProcessesRecordingKiller {
+        calls: Arc<StdMutex<Vec<(i32, KillSignal)>>>,
+        protected: bool,
+    }
+
+    #[async_trait]
+    impl ProcessKiller for ProcessesRecordingKiller {
+        async fn kill_subtree(
+            &self,
+            pid: i32,
+            signal: KillSignal,
+        ) -> std::result::Result<(), ProcessesError> {
+            if let Ok(mut calls) = self.calls.lock() {
+                calls.push((pid, signal));
+            }
+            if self.protected {
+                Err(ProcessesError::Protected(pid))
+            } else {
+                Ok(())
+            }
+        }
+    }
+
+    /// Assemble a default `ProcessesService` over inert process fakes, for the
+    /// dispatcher tests that do not inspect the process ports.
+    fn build_processes_service() -> Arc<ProcessesService> {
+        Arc::new(ProcessesService::new(
+            Arc::new(ProcessesCountingMonitor {
+                watch_calls: Arc::new(AtomicUsize::new(0)),
+            }),
+            Arc::new(ProcessesRecordingKiller {
+                calls: Arc::new(StdMutex::new(Vec::new())),
+                protected: false,
+            }),
+            Arc::new(FakeEventBus),
+        ))
+    }
+
     fn build_dispatcher() -> Arc<Dispatcher> {
+        build_dispatcher_with_processes(build_processes_service())
+    }
+
+    /// Assemble a dispatcher over the standard fakes but with a caller-supplied
+    /// `ProcessesService`, so the process routing tests can inject monitor and
+    /// killer fakes they retain handles to.
+    fn build_dispatcher_with_processes(
+        processes_service: Arc<ProcessesService>,
+    ) -> Arc<Dispatcher> {
         let mut providers = HashMap::new();
         providers.insert(
             "apps".into(),
@@ -883,6 +978,7 @@ mod tests {
             reload_plugins,
             timer_service,
             build_files_service(),
+            processes_service,
             shell_capture,
         ))
     }
@@ -1146,6 +1242,80 @@ mod tests {
     async fn files_list_missing_params_errors() {
         let dispatcher = build_dispatcher();
         let resp = dispatcher.dispatch("files.list", None).await;
+        assert!(resp.is_err());
+    }
+
+    #[tokio::test]
+    async fn dispatches_processes_watch_triggers_monitor() {
+        let watch_calls = Arc::new(AtomicUsize::new(0));
+        let monitor = Arc::new(ProcessesCountingMonitor {
+            watch_calls: watch_calls.clone(),
+        });
+        let killer = Arc::new(ProcessesRecordingKiller {
+            calls: Arc::new(StdMutex::new(Vec::new())),
+            protected: false,
+        });
+        let service = Arc::new(ProcessesService::new(
+            monitor,
+            killer,
+            Arc::new(FakeEventBus),
+        ));
+        let dispatcher = build_dispatcher_with_processes(service);
+
+        dispatcher
+            .dispatch("processes.watch", None)
+            .await
+            .expect("processes.watch");
+
+        assert_eq!(watch_calls.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn dispatches_processes_kill_forwards_pid_and_signal() {
+        let calls = Arc::new(StdMutex::new(Vec::new()));
+        let monitor = Arc::new(ProcessesCountingMonitor {
+            watch_calls: Arc::new(AtomicUsize::new(0)),
+        });
+        let killer = Arc::new(ProcessesRecordingKiller {
+            calls: calls.clone(),
+            protected: false,
+        });
+        let service = Arc::new(ProcessesService::new(
+            monitor,
+            killer,
+            Arc::new(FakeEventBus),
+        ));
+        let dispatcher = build_dispatcher_with_processes(service);
+
+        let params = raw(json!({ "pid": 4321, "signal": "kill" }));
+        dispatcher
+            .dispatch("processes.kill", Some(&params))
+            .await
+            .expect("processes.kill");
+
+        let recorded = calls.lock().expect("calls").clone();
+        assert_eq!(recorded, vec![(4321, KillSignal::Kill)]);
+    }
+
+    #[tokio::test]
+    async fn dispatches_processes_kill_protected_error_surfaces() {
+        let monitor = Arc::new(ProcessesCountingMonitor {
+            watch_calls: Arc::new(AtomicUsize::new(0)),
+        });
+        let killer = Arc::new(ProcessesRecordingKiller {
+            calls: Arc::new(StdMutex::new(Vec::new())),
+            protected: true,
+        });
+        let service = Arc::new(ProcessesService::new(
+            monitor,
+            killer,
+            Arc::new(FakeEventBus),
+        ));
+        let dispatcher = build_dispatcher_with_processes(service);
+
+        let params = raw(json!({ "pid": 100, "signal": "term" }));
+        let resp = dispatcher.dispatch("processes.kill", Some(&params)).await;
+
         assert!(resp.is_err());
     }
 
