@@ -103,6 +103,7 @@
             apps={snapshot.apps}
             background={snapshot.background}
             memTotalBytes={snapshot.global.mem_total_bytes}
+            {filterText}
         />
     {/if}
 </div>

@@ -3,6 +3,8 @@
     import Icon from './Icon.svelte';
     import {
         flattenTree,
+        filterTree,
+        splitHighlight,
         glyphFor,
         fmtMem,
         type SortState,
@@ -23,9 +25,20 @@
         background: ProcessNode[];
         /** Machine total memory, used to size the inline memory bars. */
         memTotalBytes: number;
+        /**
+         * Titlebar filter text. When non-empty, the tree is pruned to subtrees
+         * containing a name/window-title match, both sections are forced open,
+         * every surviving node is force-expanded so matches are visible, and the
+         * matched substring is highlighted in the accent colour.
+         */
+        filterText?: string;
     }
 
-    let { apps, background, memTotalBytes }: Props = $props();
+    let { apps, background, memTotalBytes, filterText = '' }: Props = $props();
+
+    // A non-empty (non-whitespace) filter switches the tree into filtered mode:
+    // pruned rows, forced-open sections, force-expanded nodes, and highlights.
+    const filtering = $derived(filterText.trim() !== '');
 
     const BYTES_PER_MB = 1024 * 1024;
     const INDENT_PER_LEVEL = 18;
@@ -50,8 +63,27 @@
         expanded = next;
     });
 
-    const appRows = $derived(appsOpen ? flattenTree(apps, expanded, sort) : []);
-    const backgroundRows = $derived(backgroundOpen ? flattenTree(background, expanded, sort) : []);
+    // While filtering, prune each forest to the matching subtrees and force the
+    // sections open and every node expanded so matches are always visible; the
+    // saved expansion and section-open state are ignored until the filter clears.
+    const appRows = $derived(
+        filtering
+            ? flattenTree(filterTree(apps, filterText), expanded, sort, true)
+            : appsOpen
+              ? flattenTree(apps, expanded, sort)
+              : [],
+    );
+    const backgroundRows = $derived(
+        filtering
+            ? flattenTree(filterTree(background, filterText), expanded, sort, true)
+            : backgroundOpen
+              ? flattenTree(background, expanded, sort)
+              : [],
+    );
+
+    // With a filter active and nothing left in either section, show the empty
+    // state instead of two bare section headers.
+    const noMatches = $derived(filtering && appRows.length === 0 && backgroundRows.length === 0);
 
     function toggleExpanded(pid: number): void {
         const next = new Set(expanded);
@@ -119,38 +151,50 @@
             </tr>
         </thead>
         <tbody>
-            <tr class="section">
-                <td colspan="4">
-                    <button type="button" class="section-toggle" onclick={() => (appsOpen = !appsOpen)}>
-                        {appsOpen ? '▾' : '▸'} Apps
-                    </button>
-                </td>
-            </tr>
-            {#if appsOpen}
-                {#each appRows as row (row.node.pid)}
-                    {@render processRow(row, true)}
-                {/each}
-            {/if}
+            {#if noMatches}
+                <tr class="empty">
+                    <td colspan="4">No processes match "{filterText.trim()}"</td>
+                </tr>
+            {:else}
+                <tr class="section">
+                    <td colspan="4">
+                        <button
+                            type="button"
+                            class="section-toggle"
+                            onclick={() => (appsOpen = !appsOpen)}
+                        >
+                            {appsOpen || filtering ? '▾' : '▸'} Apps
+                        </button>
+                    </td>
+                </tr>
+                {#if appsOpen || filtering}
+                    {#each appRows as row (row.node.pid)}
+                        {@render processRow(row, true)}
+                    {/each}
+                {/if}
 
-            <tr class="section">
-                <td colspan="4">
-                    <button
-                        type="button"
-                        class="section-toggle"
-                        onclick={() => (backgroundOpen = !backgroundOpen)}
-                    >
-                        {backgroundOpen ? '▾' : '▸'} Background
-                    </button>
-                </td>
-            </tr>
-            {#if backgroundOpen}
-                {#each backgroundRows as row (row.node.pid)}
-                    {@render processRow(row, false)}
-                {/each}
+                <tr class="section">
+                    <td colspan="4">
+                        <button
+                            type="button"
+                            class="section-toggle"
+                            onclick={() => (backgroundOpen = !backgroundOpen)}
+                        >
+                            {backgroundOpen || filtering ? '▾' : '▸'} Background
+                        </button>
+                    </td>
+                </tr>
+                {#if backgroundOpen || filtering}
+                    {#each backgroundRows as row (row.node.pid)}
+                        {@render processRow(row, false)}
+                    {/each}
+                {/if}
             {/if}
         </tbody>
     </table>
 </div>
+
+{#snippet highlighted(text: string)}{@const parts = splitHighlight(text, filterText)}{parts.before}{#if parts.match}<mark>{parts.match}</mark>{/if}{parts.after}{/snippet}
 
 {#snippet processRow(row: RenderRow, isApps: boolean)}
     {@const node = row.node}
@@ -171,12 +215,12 @@
                 <span class="glyph {glyph}">
                     <Icon name={glyph} size={glyphSize(glyph)} />
                 </span>
-                <span class="pname">{node.name}</span>
+                <span class="pname">{@render highlighted(node.name)}</span>
                 {#if node.protected}
                     <span class="wintitle">(protected)</span>
                 {/if}
                 {#if isAppRoot && node.window}
-                    <span class="wintitle">— {node.window.title}</span>
+                    <span class="wintitle">— {@render highlighted(node.window.title)}</span>
                 {/if}
             </div>
         </td>
@@ -255,6 +299,21 @@
     }
     tr.section:hover td {
         background: transparent;
+    }
+    tr.empty td {
+        color: var(--color-muted, #8a8578);
+        text-align: center;
+        padding: 24px;
+    }
+    tr.empty:hover td {
+        background: transparent;
+    }
+    /* The matched substring of a filtered row: no background fill, just the
+       accent colour and a touch more weight, matching the design playground. */
+    mark {
+        background: none;
+        color: var(--color-accent, #a6e3a1);
+        font-weight: 600;
     }
     .section-toggle {
         background: none;

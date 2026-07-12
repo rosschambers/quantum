@@ -136,4 +136,70 @@ describe('App shell', () => {
             name: 'plugin/task-manager/task-manager',
         });
     });
+
+    it('filters the tree to matching processes as the filter is typed', async () => {
+        const stub = createStubClient();
+        const { getByText, queryByText, getByLabelText } = render(App, {
+            props: { client: stub.client },
+        });
+
+        await vi.waitFor(() => expect(stub.subscribe).toHaveBeenCalled());
+        stub.emit(sampleSnapshot());
+        await vi.waitFor(() => expect(getByText('firefox')).toBeTruthy());
+        // Both apps are visible before filtering.
+        expect(queryByText('kitty')).toBeTruthy();
+
+        await fireEvent.input(getByLabelText('Filter processes'), {
+            target: { value: 'firefox' },
+        });
+
+        await vi.waitFor(() => {
+            expect(getByText('firefox')).toBeTruthy();
+            // The non-matching app and background process drop out.
+            expect(queryByText('kitty')).toBeNull();
+            expect(queryByText('systemd')).toBeNull();
+        });
+    });
+
+    it('shows the empty state when the filter matches nothing', async () => {
+        const stub = createStubClient();
+        const { getByText, getByLabelText } = render(App, { props: { client: stub.client } });
+
+        await vi.waitFor(() => expect(stub.subscribe).toHaveBeenCalled());
+        stub.emit(sampleSnapshot());
+        await vi.waitFor(() => expect(getByText('firefox')).toBeTruthy());
+
+        await fireEvent.input(getByLabelText('Filter processes'), {
+            target: { value: 'zzz-nothing' },
+        });
+
+        await vi.waitFor(() =>
+            expect(getByText('No processes match "zzz-nothing"')).toBeTruthy(),
+        );
+    });
+
+    it('clears a non-empty filter on Escape without closing the panel', async () => {
+        const stub = createStubClient();
+        const { getByText, queryByText, getByLabelText } = render(App, {
+            props: { client: stub.client },
+        });
+
+        await vi.waitFor(() => expect(stub.subscribe).toHaveBeenCalled());
+        stub.emit(sampleSnapshot());
+        await vi.waitFor(() => expect(getByText('firefox')).toBeTruthy());
+
+        await fireEvent.input(getByLabelText('Filter processes'), {
+            target: { value: 'firefox' },
+        });
+        await vi.waitFor(() => expect(queryByText('kitty')).toBeNull());
+
+        await fireEvent.keyDown(window, { key: 'Escape' });
+
+        // The filter is cleared, so the pruned-out app returns, and the panel is
+        // NOT hidden (Escape only clears while the filter is non-empty).
+        await vi.waitFor(() => expect(queryByText('kitty')).toBeTruthy());
+        expect(stub.call).not.toHaveBeenCalledWith('view.hide', {
+            name: 'plugin/task-manager/task-manager',
+        });
+    });
 });

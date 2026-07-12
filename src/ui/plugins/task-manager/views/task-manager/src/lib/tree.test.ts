@@ -1,6 +1,14 @@
 import { describe, it, expect } from 'vitest';
 import type { ProcessNode } from '@quantum/client';
-import { sortNodes, flattenTree, glyphFor, fmtMem, type SortState } from './tree';
+import {
+    sortNodes,
+    flattenTree,
+    glyphFor,
+    fmtMem,
+    filterTree,
+    splitHighlight,
+    type SortState,
+} from './tree';
 
 /** Build a `ProcessNode` with sensible defaults; aggregates default to self usage. */
 function node(partial: Partial<ProcessNode> & { pid: number; name: string }): ProcessNode {
@@ -114,6 +122,107 @@ describe('glyphFor', () => {
         const guarded = node({ pid: 3, name: 'quantumd', protected: true });
         expect(glyphFor(guarded, false)).toBe('self');
         expect(glyphFor(guarded, true)).toBe('self');
+    });
+});
+
+describe('filterTree', () => {
+    function buildForest(): ProcessNode[] {
+        return [
+            node({
+                pid: 1,
+                name: 'firefox',
+                window: { class: 'firefox', title: 'quantum design — Mozilla Firefox' },
+                children: [
+                    node({ pid: 11, name: 'Isolated Web Content' }),
+                    node({ pid: 12, name: 'WebExtensions' }),
+                ],
+            }),
+            node({
+                pid: 2,
+                name: 'kitty',
+                children: [node({ pid: 21, name: 'zsh', children: [node({ pid: 22, name: 'nvim' })] })],
+            }),
+        ];
+    }
+
+    it('returns the roots unchanged for an empty or whitespace filter', () => {
+        const forest = buildForest();
+        expect(filterTree(forest, '')).toBe(forest);
+        expect(filterTree(forest, '   ')).toBe(forest);
+    });
+
+    it('keeps ancestors of a deep match while pruning non-matching branches', () => {
+        // "nvim" matches only pid 22, deep under kitty; firefox has no match.
+        const filtered = filterTree(buildForest(), 'nvim');
+        expect(filtered.map((n) => n.pid)).toEqual([2]);
+        expect(filtered[0].children.map((n) => n.pid)).toEqual([21]);
+        expect(filtered[0].children[0].children.map((n) => n.pid)).toEqual([22]);
+    });
+
+    it('matches on the window title even when the name does not', () => {
+        // "mozilla" appears only in firefox's window title, not any process name.
+        const filtered = filterTree(buildForest(), 'mozilla');
+        expect(filtered.map((n) => n.pid)).toEqual([1]);
+    });
+
+    it('drops a matched node\'s non-matching children', () => {
+        // "firefox" matches the root by name; its children match neither name
+        // nor title, so they are pruned even though the parent survives.
+        const filtered = filterTree(buildForest(), 'firefox');
+        expect(filtered.map((n) => n.pid)).toEqual([1]);
+        expect(filtered[0].children).toEqual([]);
+    });
+
+    it('excludes a whole subtree when nothing in it matches', () => {
+        const filtered = filterTree(buildForest(), 'zzz-no-such-process');
+        expect(filtered).toEqual([]);
+    });
+
+    it('does not mutate the input forest', () => {
+        const forest = buildForest();
+        filterTree(forest, 'nvim');
+        expect(forest[0].children.map((n) => n.pid)).toEqual([11, 12]);
+        expect(forest[1].children[0].children.map((n) => n.pid)).toEqual([22]);
+    });
+});
+
+describe('flattenTree forceExpand', () => {
+    const sort: SortState = { column: 'cpu', descending: true };
+
+    it('reveals every level regardless of the expansion set when forced open', () => {
+        const forest: ProcessNode[] = [
+            node({ pid: 1, name: 'firefox', children: [node({ pid: 11, name: 'renderer' })] }),
+        ];
+        // Empty expansion set, but forceExpand shows the child anyway.
+        const rows = flattenTree(forest, new Set<number>(), sort, true);
+        expect(rows.map((r) => r.node.pid)).toEqual([1, 11]);
+        expect(rows[0].expanded).toBe(true);
+    });
+});
+
+describe('splitHighlight', () => {
+    it('splits a string into before, match, and after around the first hit', () => {
+        expect(splitHighlight('firefox', 'ref')).toEqual({
+            before: 'fi',
+            match: 'ref',
+            after: 'ox',
+        });
+    });
+
+    it('preserves the original casing of the matched slice', () => {
+        expect(splitHighlight('Isolated Web Content', 'web')).toEqual({
+            before: 'Isolated ',
+            match: 'Web',
+            after: ' Content',
+        });
+    });
+
+    it('returns the whole string as before when the filter is empty', () => {
+        expect(splitHighlight('kitty', '')).toEqual({ before: 'kitty', match: '', after: '' });
+    });
+
+    it('returns the whole string as before when there is no match', () => {
+        expect(splitHighlight('kitty', 'zsh')).toEqual({ before: 'kitty', match: '', after: '' });
     });
 });
 
