@@ -79,6 +79,7 @@ impl PanelWindow {
         overlay: bool,
         width: i32,
         height: i32,
+        share_process: bool,
     ) -> Self {
         // The theme store backs the quantum:// scheme handler registered on
         // the GTK default context, and is also cloned into the event
@@ -193,8 +194,10 @@ impl PanelWindow {
         // In windowed mode we let the compositor place it like any other
         // xdg-toplevel — Hyprland's default behavior is fine for testing.
 
-        // Create and embed WebView
-        let webview = webkit6::WebView::new();
+        // Create and embed WebView. A warm panel (the launcher) shares the
+        // render process via the anchor; a transient destroy_on_dismiss panel
+        // (files, overlays) gets its own so dismissal frees the whole renderer.
+        let webview = crate::web_process::new_webview(share_process);
 
         // For the fullscreen overlay the WebView must paint transparent
         // too, so the page's `.backdrop` controls the dim, not WebKit's

@@ -27,12 +27,16 @@ const DEFAULT_PANEL_HEIGHT: i32 = 320;
 /// Resolved panel construction parameters derived from a [`ViewDescriptor`].
 /// `overlay` selects fullscreen-overlay treatment versus a fixed-size centered
 /// panel; `width`/`height` size the centered panel (and are ignored by the
-/// overlay path, which spans the whole output).
+/// overlay path, which spans the whole output). `share_process` is true for a
+/// warm panel (the launcher) so it joins the shared render process, and false
+/// for a `destroy_on_dismiss` panel (files and the overlays) so tearing it down
+/// on dismiss frees a whole renderer.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct PanelParams {
     pub overlay: bool,
     pub width: i32,
     pub height: i32,
+    pub share_process: bool,
 }
 
 /// Resolved widget construction parameters derived from a [`ViewDescriptor`].
@@ -59,6 +63,10 @@ pub(crate) fn panel_params(descriptor: &ViewDescriptor) -> PanelParams {
             .height
             .map(|h| h as i32)
             .unwrap_or(DEFAULT_PANEL_HEIGHT),
+        // A warm panel (destroy_on_dismiss = false, e.g. the launcher) shares
+        // the render process; a transient panel (destroy_on_dismiss = true,
+        // e.g. files and the overlays) keeps its own so dismissal frees it.
+        share_process: !descriptor.destroy_on_dismiss,
     }
 }
 
@@ -335,6 +343,7 @@ impl ManagedWindowConstructor {
                     params.overlay,
                     params.width,
                     params.height,
+                    params.share_process,
                 ))
             }
             ViewKind::Toast => ManagedWindow::Widget(WidgetWindow::new_toast(
@@ -598,6 +607,7 @@ mod tests {
                 overlay: false,
                 width: 600,
                 height: 420,
+                share_process: true,
             }
         );
     }
@@ -614,6 +624,7 @@ mod tests {
                 overlay: false,
                 width: DEFAULT_PANEL_WIDTH,
                 height: DEFAULT_PANEL_HEIGHT,
+                share_process: true,
             }
         );
     }
@@ -632,6 +643,7 @@ mod tests {
                 overlay: true,
                 width: DEFAULT_PANEL_WIDTH,
                 height: DEFAULT_PANEL_HEIGHT,
+                share_process: true,
             }
         );
     }
@@ -650,8 +662,33 @@ mod tests {
                 overlay: true,
                 width: 440,
                 height: 320,
+                share_process: true,
             }
         );
+    }
+
+    #[test]
+    fn panel_params_shares_process_for_warm_panel() {
+        // A panel that is NOT destroyed on dismiss (the launcher) is warm and
+        // joins the shared render process.
+        let descriptor = ViewDescriptor {
+            kind: ViewKind::Panel,
+            destroy_on_dismiss: false,
+            ..ViewDescriptor::default()
+        };
+        assert!(panel_params(&descriptor).share_process);
+    }
+
+    #[test]
+    fn panel_params_isolates_process_for_transient_panel() {
+        // A destroy_on_dismiss panel (files) or overlay keeps its own render
+        // process so tearing it down on dismiss frees a whole renderer.
+        let descriptor = ViewDescriptor {
+            kind: ViewKind::Panel,
+            destroy_on_dismiss: true,
+            ..ViewDescriptor::default()
+        };
+        assert!(!panel_params(&descriptor).share_process);
     }
 
     #[test]
