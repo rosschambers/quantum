@@ -44,7 +44,8 @@ pub use ports::{
     TimerBroadcast, TimerNotifier, TimerStore, WindowHost, WindowInputRegion,
 };
 pub use processes::{
-    GlobalStats, KillSignal, ProcessNode, ProcessSnapshot, ProcessesError, WindowInfo,
+    build_forest, collect_subtree_pids, GlobalStats, KillSignal, ProcessNode, ProcessSnapshot,
+    ProcessesError, RawProcess, WindowInfo,
 };
 pub use query::Query;
 pub use score::MatchScore;
