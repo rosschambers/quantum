@@ -62,7 +62,8 @@ pub fn apply_widget_settings(settings: &webkit6::Settings) {
     settings.set_enable_media_capabilities(false);
     settings.set_enable_mediasource(false);
     settings.set_enable_back_forward_navigation_gestures(false);
-    settings.set_enable_hyperlink_auditing(false);
+    // `enable_hyperlink_auditing` is deprecated in WebKitGTK 2.52 and does
+    // nothing (it logs a warning per view), so it is intentionally omitted.
     settings.set_enable_dns_prefetching(false);
     settings.set_enable_html5_database(false);
     settings.set_enable_offline_web_application_cache(false);
