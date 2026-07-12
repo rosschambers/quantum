@@ -180,4 +180,9 @@ export class PaneState {
     clearSelection(): void {
         this.selection = new Set();
     }
+
+    /** Select every currently visible entry. */
+    selectAll(): void {
+        this.selection = new Set(this.visibleEntries().map((entry) => entry.path));
+    }
 }

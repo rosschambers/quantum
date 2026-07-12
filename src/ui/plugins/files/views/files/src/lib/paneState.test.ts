@@ -19,6 +19,11 @@ function entry(overrides: Partial<FileEntry> & { name: string }): FileEntry {
     };
 }
 
+/** Build a plain file `FileEntry` from an explicit path and name. */
+function fileEntry(path: string, name: string): FileEntry {
+    return entry({ name, path, kind: 'file' });
+}
+
 describe('PaneState construction', () => {
     it('seeds path and single-entry history', () => {
         const pane = new PaneState('/home/user');
@@ -301,5 +306,12 @@ describe('PaneState selection', () => {
             '/a/banana.txt',
             '/a/cherry.txt',
         ]);
+    });
+
+    it('selectAll selects exactly the visible entries', () => {
+        const pane = new PaneState('/');
+        pane.entries = [fileEntry('/a', 'a'), fileEntry('/b', 'b'), fileEntry('/c', 'c')];
+        pane.selectAll();
+        expect([...pane.selection].sort()).toEqual(['/a', '/b', '/c']);
     });
 });
