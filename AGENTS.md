@@ -244,6 +244,28 @@ broken CI before; do not reintroduce them:
   to a writable JSON store at `$XDG_STATE_HOME/quantum/files.json` (atomic
   temp-file plus rename, the timer-store pattern). The UI performs no filesystem
   input/output — it only speaks `files.*` IPC through `@quantum/client`.
+- **Processes subsystem (task manager).** Process sampling, correlation, and
+  signalling live in the `quantum-processes` infrastructure crate: a procfs
+  sampler that reads `/proc` for per-process and global statistics, a Hyprland
+  client correlation that maps process ids to their owning windows, a gated
+  one-hertz monitor (`TokioProcessMonitor`) that only samples while at least one
+  watcher is listening, and a libc subtree killer (`LibcProcessKiller`) that
+  resolves a target's process subtree from the monitor's freshest snapshot and
+  delivers a signal to every member — refusing to signal quantumd's own process
+  tree so killing a process from the panel can never take the daemon down. The
+  domain ports are `ProcessMonitor` (streams snapshots) and `ProcessKiller`
+  (`kill_subtree(pid, signal)`); `ProcessesService` in `application` wires them
+  to the `EventBus`, turning frontend requests into port calls. Dispatcher IPC
+  methods are `processes.watch` / `processes.unwatch` / `processes.kill`, the
+  last taking `{ pid, signal: "term"|"kill" }` (`KillSignal` serializes
+  lowercase). Streaming snapshots publish on the `processes.event` channel,
+  each carrying a serialized `ProcessSnapshot`. The subsystem is entirely
+  on-demand: there is no pre-subscription (unlike streaming providers),
+  `processes.watch` / `processes.unwatch` are reference-counted, and the monitor
+  does zero sampling while the panel is closed. The frontend is the
+  `task-manager` panel plugin (a `kind = "panel"` view like the file explorer),
+  opened from the bar `SystemMeters` right-click "Open Task Manager" menu item
+  and the `SUPER+ESCAPE` Hyprland keybind.
 - **Notifications: toast vs center.** A toast is the *transient* popup (it
   always auto-dismisses); the notification itself lives in the *center* until
   dismissed. `timeout_ms == 0` means "never expire" — it persists in the center

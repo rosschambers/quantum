@@ -1,7 +1,8 @@
 <script lang="ts">
-    import type { Client } from '@quantum/client';
+    import type { Client, MenuItem } from '@quantum/client';
     import type { SystemStats } from '../lib/types';
     import { SYSTEM_STATS_CHANNEL, SYSTEM_STATS_PROVIDER } from './channels';
+    import { wireBarMenu } from './tray/barMenu';
 
     interface Props {
         client: Client;
@@ -9,6 +10,26 @@
 
     let { client }: Props = $props();
     let stats: SystemStats | null = $state(null);
+    let metersElement: HTMLDivElement | undefined = $state(undefined);
+
+    // Right-click the meters to open the task manager panel. The panel is a
+    // single shared window (not per-monitor), so it opens by its plain
+    // canonical name with no `@<connector>` suffix.
+    $effect(() => {
+        const node = metersElement;
+        if (!node) return;
+        return wireBarMenu(node, client, buildMenuItems);
+    });
+
+    function buildMenuItems(): MenuItem[] {
+        return [{ label: 'Open Task Manager', onSelect: openTaskManager }];
+    }
+
+    function openTaskManager(): void {
+        client
+            .call('view.toggle', { name: 'plugin/task-manager/task-manager' })
+            .catch((error) => console.error('view.toggle task-manager failed:', error));
+    }
 
     /**
      * Rolling history of CPU% and MEM% samples used to draw the inline
@@ -164,7 +185,7 @@
     const memPath = $derived(smoothPath(memHistory, SPARK_W, SPARK_H));
 </script>
 
-<div class="meters">
+<div class="meters" bind:this={metersElement}>
     <div class="meter cpu" title={tooltipFor('CPU', cpu)}>
         <svg
             class="ring"
