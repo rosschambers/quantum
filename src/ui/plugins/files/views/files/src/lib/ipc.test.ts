@@ -156,6 +156,20 @@ describe('createFilesIpc', () => {
         expect(fake.calls[0]).toEqual(['files.cancel_sizes', { path: '/f' }]);
     });
 
+    it('getPreferences calls files.get_preferences with an empty parameter object', () => {
+        const fake = makeFakeClient();
+        const ipc = createFilesIpc(fake.client);
+        ipc.getPreferences();
+        expect(fake.calls[0]).toEqual(['files.get_preferences', {}]);
+    });
+
+    it('setPreferences passes the preferences object through to files.set_preferences', () => {
+        const fake = makeFakeClient();
+        const ipc = createFilesIpc(fake.client);
+        ipc.setPreferences({ show_hidden: false });
+        expect(fake.calls[0]).toEqual(['files.set_preferences', { show_hidden: false }]);
+    });
+
     it('subscribeFilesEvents registers on the files.event channel', () => {
         const fake = makeFakeClient();
         const ipc = createFilesIpc(fake.client);

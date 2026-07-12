@@ -89,6 +89,11 @@ export interface Places {
   drives: DriveInfo[];
 }
 
+/** Persisted file-explorer preferences. Wire fields are snake_case to match the Rust DTO. */
+export interface FilePreferences {
+  show_hidden: boolean;
+}
+
 /** The kind of preview a path resolves to. Mirrors the Rust `PreviewKind` enum. */
 export type PreviewKind = 'image' | 'text' | 'none';
 
