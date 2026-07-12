@@ -134,6 +134,15 @@ impl ProcessKiller for LibcProcessKiller {
             return Err(ProcessesError::Protected(pid));
         }
 
+        // Defense in depth: the check above trusts the `protected` flag baked
+        // into the snapshot by `build_forest`. Independently refuse if this
+        // daemon's own pid is anywhere in the resolved subtree, so a regression
+        // in the marking path can never leave quantum able to signal itself.
+        let own_pid = std::process::id() as i32;
+        if pids.contains(&own_pid) {
+            return Err(ProcessesError::Protected(pid));
+        }
+
         // 4. Signal each member, children before the parent. A descendant that
         //    vanished mid-teardown (ESRCH -> NotFound) is ignored; any other
         //    descendant error is logged and teardown continues. A hard error on
@@ -263,6 +272,26 @@ mod tests {
         assert!(
             calls.lock().expect("calls").is_empty(),
             "no signal may be sent when the subtree is protected"
+        );
+    }
+
+    // Defense in depth: even if the snapshot wrongly marks this daemon's own
+    // pid as unprotected, the killer independently refuses to signal itself.
+    #[tokio::test]
+    async fn own_pid_refused_even_when_snapshot_marks_it_unprotected() {
+        let own_pid = std::process::id() as i32;
+        // The snapshot lies: quantum's own pid is present but `protected: false`.
+        let tree = node(own_pid, false, vec![]);
+        let calls = Arc::new(Mutex::new(Vec::new()));
+        let sender = Box::new(RecordingSender::new(Arc::clone(&calls)));
+        let killer = LibcProcessKiller::new(cell(Some(snapshot(vec![], vec![tree]))), sender);
+
+        let result = killer.kill_subtree(own_pid, KillSignal::Term).await;
+
+        assert!(matches!(result, Err(ProcessesError::Protected(_))));
+        assert!(
+            calls.lock().expect("calls").is_empty(),
+            "the daemon must never signal its own pid, snapshot flag notwithstanding"
         );
     }
 

@@ -262,8 +262,11 @@ pub trait ApplicationCatalog: Send + Sync {
 
 /// Streams process snapshots while at least one watcher is registered. Sampling
 /// is reference-counted: `watch` registers interest and returns a stream of
-/// snapshots; `unwatch` drops one registration so the monitor can stop sampling
-/// once no one is listening. Synchronous: registering a watch does not yield.
+/// snapshots. Interest is released when that stream is dropped (which drops the
+/// underlying subscription); the monitor stops sampling once no stream remains.
+/// `unwatch` is an explicit hook for implementations that track registrations
+/// out of band, and may be a no-op when dropping the stream already releases
+/// the registration. Synchronous: registering a watch does not yield.
 pub trait ProcessMonitor: Send + Sync {
     fn watch(&self) -> BoxStream<'static, ProcessSnapshot>;
     fn unwatch(&self);
