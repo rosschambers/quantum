@@ -35,6 +35,8 @@ export class PaneState {
     sortDirection = $state<SortDirection>(1);
     /** Whether a listing or search is in flight. */
     loading = $state(false);
+    /** Whether dotfiles (names beginning with ".") are shown. */
+    showHidden = $state(true);
 
     /** True when there is an earlier entry to navigate back to. */
     canGoBack = $derived(this.historyIndex > 0);
@@ -98,15 +100,19 @@ export class PaneState {
     /**
      * The entries to render: filtered by the case-insensitive name substring
      * (unless deepSearch is active, in which case entries are already search
-     * results and are not re-filtered), then sorted folders-first and by the
-     * active column and direction.
+     * results and are not re-filtered), then, when showHidden is false, with
+     * dotfiles dropped, then sorted folders-first and by the active column and
+     * direction.
      */
     visibleEntries(): FileEntry[] {
         const filterText = this.filter.toLowerCase();
-        const filtered =
+        const nameFiltered =
             this.deepSearch || filterText === ''
                 ? this.entries.slice()
                 : this.entries.filter((item) => item.name.toLowerCase().includes(filterText));
+        const filtered = this.showHidden
+            ? nameFiltered
+            : nameFiltered.filter((item) => !item.name.startsWith('.'));
         filtered.sort((a, b) => this.compareEntries(a, b));
         return filtered;
     }
@@ -179,5 +185,10 @@ export class PaneState {
     /** Empty the selection. */
     clearSelection(): void {
         this.selection = new Set();
+    }
+
+    /** Select every currently visible entry. */
+    selectAll(): void {
+        this.selection = new Set(this.visibleEntries().map((entry) => entry.path));
     }
 }

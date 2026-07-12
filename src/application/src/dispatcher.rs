@@ -132,6 +132,8 @@ impl Dispatcher {
             "files.places" => self.handle_files_places(params).await,
             "files.pin" => self.handle_files_pin(params).await,
             "files.unpin" => self.handle_files_unpin(params).await,
+            "files.get_preferences" => self.handle_files_get_preferences(params).await,
+            "files.set_preferences" => self.handle_files_set_preferences(params).await,
             "files.operation" => self.handle_files_operation(params).await,
             "files.open" => self.handle_files_open(params).await,
             "files.open_with" => self.handle_files_open_with(params).await,
@@ -371,6 +373,18 @@ impl Dispatcher {
         to_json(pins)
     }
 
+    async fn handle_files_get_preferences(&self, _params: Option<&RawValue>) -> Result<Value> {
+        let preferences = self.files_service.get_preferences().await;
+        to_json(preferences)
+    }
+
+    async fn handle_files_set_preferences(&self, params: Option<&RawValue>) -> Result<Value> {
+        let preferences: quantum_domain::FilePreferences =
+            parse_params(params, "files.set_preferences")?;
+        self.files_service.set_preferences(preferences).await?;
+        Ok(Value::Null)
+    }
+
     async fn handle_files_operation(&self, params: Option<&RawValue>) -> Result<Value> {
         let operation: quantum_domain::FileOperation = parse_params(params, "files.operation")?;
         self.files_service.operation(operation).await?;
@@ -496,11 +510,12 @@ mod tests {
     use quantum_domain::{
         Action, ActionOutcome, ApplicationCatalog, ApplicationInfo, CivilNow, Clock, ContentKind,
         DirectoryWatcher, DomainError, DriveInfo, EventBus, FileEntry, FileEntryKind, FileOpener,
-        FileOperation, FileSystemPort, FilesError, KillSignal, Match, MatchScore,
-        NotificationEmitter, PermissionClass, Pin, PinsPort, ProcessKiller, ProcessMonitor,
-        ProcessSnapshot, ProcessesError, ProviderId, ProviderRegistry, ProviderSource, Query,
-        RecursiveSizer, ShellExecutor, ShellOutput, SizeUpdate, ThemeStore, Timer, TimerBroadcast,
-        TimerError, TimerNotifier, TimerStore, TimerStoreData, Weekday, WindowHost,
+        FileOperation, FilePreferences, FileSystemPort, FilesError, KillSignal, Match, MatchScore,
+        NotificationEmitter, PermissionClass, Pin, PinsPort, PreferencesPort, ProcessKiller,
+        ProcessMonitor, ProcessSnapshot, ProcessesError, ProviderId, ProviderRegistry,
+        ProviderSource, Query, RecursiveSizer, ShellExecutor, ShellOutput, SizeUpdate, ThemeStore,
+        Timer, TimerBroadcast, TimerError, TimerNotifier, TimerStore, TimerStoreData, Weekday,
+        WindowHost,
     };
     use std::collections::HashMap;
     use std::sync::atomic::{AtomicUsize, Ordering};
@@ -845,6 +860,18 @@ mod tests {
         }
     }
 
+    struct FilesFakePreferences;
+
+    #[async_trait]
+    impl PreferencesPort for FilesFakePreferences {
+        async fn load(&self) -> FilePreferences {
+            FilePreferences::default()
+        }
+        async fn save(&self, _preferences: FilePreferences) -> std::result::Result<(), FilesError> {
+            Ok(())
+        }
+    }
+
     /// Assemble a `FilesService` over the files fakes for dispatcher routing
     /// tests. The `FakeEventBus` above is reused for the event bus.
     fn build_files_service() -> Arc<FilesService> {
@@ -854,6 +881,7 @@ mod tests {
             Arc::new(FilesFakeOpener),
             Arc::new(FilesFakeSizer),
             Arc::new(FilesFakePins),
+            Arc::new(FilesFakePreferences),
             Arc::new(FilesFakeApplications),
             Arc::new(FakeEventBus),
         ))
@@ -1345,5 +1373,30 @@ mod tests {
             .await;
 
         assert!(matches!(resp, Err(ApplicationError::Unknown(_))));
+    }
+
+    #[tokio::test]
+    async fn dispatches_files_get_preferences() {
+        let dispatcher = build_dispatcher();
+        let resp = dispatcher
+            .dispatch("files.get_preferences", None)
+            .await
+            .expect("files.get_preferences");
+
+        let preferences: FilePreferences = serde_json::from_value(resp).expect("preferences");
+        // The fake preferences port returns the defaults (dotfiles shown).
+        assert!(preferences.show_hidden);
+    }
+
+    #[tokio::test]
+    async fn dispatches_files_set_preferences() {
+        let dispatcher = build_dispatcher();
+        let params = raw(json!({ "show_hidden": false }));
+        let resp = dispatcher
+            .dispatch("files.set_preferences", Some(&params))
+            .await
+            .expect("files.set_preferences");
+
+        assert_eq!(resp, Value::Null);
     }
 }

@@ -154,6 +154,7 @@ export {
   type ApplicationInfo,
   type FileOperation,
   type Places,
+  type FilePreferences,
   type PreviewKind,
   type PreviewPayload,
   type FilesEvent,

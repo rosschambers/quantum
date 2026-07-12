@@ -35,6 +35,8 @@
     import Toasts from './lib/Toasts.svelte';
     import PropertiesModal from './lib/PropertiesModal.svelte';
     import PromptModal from './lib/PromptModal.svelte';
+    import ConfirmModal from './lib/ConfirmModal.svelte';
+    import { resolveShortcut, type ShortcutAction } from './lib/keymap';
     import { buildEntryMenu, buildBackgroundMenu, type PinTarget } from './lib/menus';
     import { runOperation, type OperationResult } from './lib/operations';
     import {
@@ -54,6 +56,13 @@
         title: string;
         initial: string;
         onSubmit: (value: string) => void;
+    }
+    /** An open confirmation request (destructive action, for example permanent delete). */
+    interface ConfirmRequest {
+        title: string;
+        message: string;
+        confirmLabel: string;
+        onConfirm: () => void;
     }
 
     interface Props {
@@ -80,6 +89,7 @@
     let breadcrumbEditing = $state(false);
     let propertiesTarget = $state<PropertiesTarget | null>(null);
     let promptRequest = $state<PromptRequest | null>(null);
+    let confirmRequest = $state<ConfirmRequest | null>(null);
     let cachedApplications = $state<ApplicationInfo[]>([]);
 
     // Plain (non-reactive) scratch: the event that opened the current menu (so a
@@ -212,6 +222,17 @@
             .catch(() => {
                 // Fall back to the root-seeded panes already in place.
             });
+        // Load the persisted show-hidden preference independently of the places
+        // load; on failure keep the default (both panes showing hidden files).
+        void ipc
+            .getPreferences()
+            .then((preferences) => {
+                panes[0].showHidden = preferences.show_hidden;
+                panes[1].showHidden = preferences.show_hidden;
+            })
+            .catch(() => {
+                // Keep the default showHidden of both panes.
+            });
     });
 
     // The single files.event subscription: reload changed panes, stream folder
@@ -274,6 +295,11 @@
     // modal.
     $effect(() => {
         function onKeyDown(event: KeyboardEvent): void {
+            const target = event.target;
+            const inInput =
+                target instanceof HTMLElement &&
+                (target.tagName === 'INPUT' || target.isContentEditable);
+
             if (event.key === 'Escape') {
                 // A non-empty filter is cleared first and swallows the Escape;
                 // only an empty filter falls through to closing menus/modals.
@@ -281,19 +307,31 @@
                     handleFilterInput('');
                     return;
                 }
+                const hadOpen =
+                    propertiesTarget !== null ||
+                    promptRequest !== null ||
+                    confirmRequest !== null;
                 closeContextMenu();
-                if (propertiesTarget !== null || promptRequest !== null) {
+                if (hadOpen) {
                     propertiesTarget = null;
                     promptRequest = null;
+                    confirmRequest = null;
+                } else if (!inInput) {
+                    // Only a bare Escape over the file list clears the selection;
+                    // Escape while typing in the filter or location bar must not.
+                    active.clearSelection();
                 }
                 return;
             }
 
-            const target = event.target;
-            const inInput =
-                target instanceof HTMLElement &&
-                (target.tagName === 'INPUT' || target.isContentEditable);
             if (inInput) {
+                return;
+            }
+
+            const action = resolveShortcut(event);
+            if (action !== null && action.kind !== 'clear-selection') {
+                event.preventDefault();
+                dispatchShortcut(action);
                 return;
             }
 
@@ -355,6 +393,139 @@
         return (
             event.key.length === 1 && !event.ctrlKey && !event.metaKey && !event.altKey
         );
+    }
+
+    /** Accumulate a type-ahead buffer and select the first name-prefix match. */
+    function typeAhead(character: string): void {
+        clearTimeout(typeaheadTimer);
+        typeaheadBuffer += character;
+        typeaheadTimer = setTimeout(() => {
+            typeaheadBuffer = '';
+        }, 900);
+
+        const pane = active;
+        const index = activePaneIndex;
+        const visible = pane.visibleEntries();
+        const prefix = typeaheadBuffer.toLowerCase();
+        const matchIndex = visible.findIndex((entry) => entry.name.toLowerCase().startsWith(prefix));
+        if (matchIndex >= 0) {
+            pane.selectOnly(visible[matchIndex].path);
+            anchors[index] = matchIndex;
+            cursors[index] = matchIndex;
+        }
+    }
+
+    // ── Keyboard shortcuts ──────────────────────────────────────────────────
+
+    /** The paths a management shortcut targets: the selection, else the cursor entry. */
+    function targetPaths(): string[] {
+        const selected = [...active.selection];
+        if (selected.length > 0) {
+            return selected;
+        }
+        const entry = active.visibleEntries()[cursors[activePaneIndex]];
+        return entry !== undefined ? [entry.path] : [];
+    }
+
+    /** Clamp a pane's cursor and anchor into its current visible range. */
+    function clampCursor(index: number): void {
+        const length = panes[index].visibleEntries().length;
+        const high = Math.max(0, length - 1);
+        cursors[index] = clamp(cursors[index], 0, high);
+        anchors[index] = clamp(anchors[index], 0, high);
+    }
+
+    function dispatchShortcut(action: ShortcutAction): void {
+        const index = activePaneIndex;
+        const paths = targetPaths();
+        switch (action.kind) {
+            case 'select-all':
+                active.selectAll();
+                break;
+            case 'clipboard':
+                if (paths.length > 0) {
+                    setClipboard(action.operation, paths);
+                }
+                break;
+            case 'paste':
+                paste(active.path);
+                break;
+            case 'trash':
+                if (paths.length > 0) {
+                    runOp({ kind: 'trash', paths });
+                }
+                break;
+            case 'delete-permanent':
+                if (paths.length > 0) {
+                    confirmRequest = {
+                        title: 'Delete permanently',
+                        message: `Permanently delete ${paths.length} item${paths.length === 1 ? '' : 's'}? This cannot be undone.`,
+                        confirmLabel: 'Delete',
+                        onConfirm: () => {
+                            runOp({ kind: 'delete', paths });
+                        },
+                    };
+                }
+                break;
+            case 'rename': {
+                const entry = active.visibleEntries()[cursors[index]];
+                if (entry !== undefined) {
+                    openPrompt('Rename', entry.name, (name) =>
+                        runOp({ kind: 'rename', path: entry.path, new_name: name }),
+                    );
+                }
+                break;
+            }
+            case 'duplicate':
+                for (const path of paths) {
+                    runOp({ kind: 'duplicate', path });
+                }
+                break;
+            case 'new-folder':
+                openPrompt('New folder', 'New Folder', (name) =>
+                    runOp({ kind: 'new_folder', parent: active.path, name }),
+                );
+                break;
+            case 'refresh':
+                void loadPane(active);
+                break;
+            case 'cursor': {
+                const visible = active.visibleEntries();
+                if (visible.length === 0) {
+                    break;
+                }
+                const next = action.to === 'first' ? 0 : visible.length - 1;
+                active.selectOnly(visible[next].path);
+                cursors[index] = next;
+                anchors[index] = next;
+                break;
+            }
+            case 'toggle-hidden':
+                toggleHidden();
+                break;
+            case 'clear-selection':
+                active.clearSelection();
+                break;
+            default: {
+                // Compile-time exhaustiveness: a new ShortcutAction variant that
+                // is not handled above becomes a type error here rather than a
+                // silent no-op.
+                const unhandled: never = action;
+                void unhandled;
+            }
+        }
+    }
+
+    /** Flip the show-hidden preference on both panes and re-clamp cursors. */
+    function toggleHidden(): void {
+        const next = !panes[0].showHidden;
+        panes[0].showHidden = next;
+        panes[1].showHidden = next;
+        clampCursor(0);
+        clampCursor(1);
+        void ipc.setPreferences({ show_hidden: next }).catch(() => {
+            pushToast('Failed to save hidden-files preference', 'error');
+        });
     }
 
     // ── Selection and opening ───────────────────────────────────────────────
@@ -640,6 +811,20 @@
         initial={promptRequest.initial}
         onSubmit={submitPrompt}
         onCancel={() => (promptRequest = null)}
+    />
+{/if}
+
+{#if confirmRequest !== null}
+    <ConfirmModal
+        title={confirmRequest.title}
+        message={confirmRequest.message}
+        confirmLabel={confirmRequest.confirmLabel}
+        onConfirm={() => {
+            const request = confirmRequest;
+            confirmRequest = null;
+            request?.onConfirm();
+        }}
+        onCancel={() => (confirmRequest = null)}
     />
 {/if}
 

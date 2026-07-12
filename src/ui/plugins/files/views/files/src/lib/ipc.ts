@@ -12,6 +12,7 @@ import {
     type Pin,
     type ApplicationInfo,
     type FileOperation,
+    type FilePreferences,
     type PreviewPayload,
     type FilesEvent,
 } from '@quantum/client';
@@ -48,6 +49,10 @@ export interface FilesIpc {
     sizes(path: string): Promise<void>;
     /** Cancel an in-flight recursive size computation. */
     cancelSizes(path: string): Promise<void>;
+    /** Load the persisted file-explorer preferences. */
+    getPreferences(): Promise<FilePreferences>;
+    /** Persist the file-explorer preferences. */
+    setPreferences(preferences: FilePreferences): Promise<void>;
     /**
      * Subscribe to asynchronous file-explorer events on the `files.event`
      * channel. Returns the client's unsubscribe handle.
@@ -114,6 +119,12 @@ export function createFilesIpc(client: Client = createClient()): FilesIpc {
         },
         cancelSizes(path: string): Promise<void> {
             return client.call('files.cancel_sizes', { path }) as Promise<void>;
+        },
+        getPreferences(): Promise<FilePreferences> {
+            return client.call('files.get_preferences', {}) as Promise<FilePreferences>;
+        },
+        setPreferences(preferences: FilePreferences): Promise<void> {
+            return client.call('files.set_preferences', preferences) as Promise<void>;
         },
         subscribeFilesEvents(callback: (event: FilesEvent) => void): () => void {
             return client.subscribe(

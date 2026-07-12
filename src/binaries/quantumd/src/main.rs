@@ -22,8 +22,8 @@ use quantum_config::{Config, ConfigStore};
 use quantum_domain::{DomainError, EventBus, ProviderId, ProviderSource};
 use quantum_files::pins::default_store_path as pins_default_store_path;
 use quantum_files::{
-    BackgroundSizer, DesktopApplicationCatalog, LocalFileSystem, NotifyDirectoryWatcher, PinStore,
-    ProcessFileOpener,
+    preferences_default_store_path, BackgroundSizer, DesktopApplicationCatalog, LocalFileSystem,
+    NotifyDirectoryWatcher, PinStore, PreferencesStore, ProcessFileOpener,
 };
 use quantum_hyprland::HyprlandSocketClient;
 use quantum_ipc::{
@@ -928,7 +928,8 @@ async fn setup_daemon(
     // domain port trait object. There is no configuration key for a preferred
     // terminal today, so the opener receives `None` and falls back to
     // `$TERMINAL` then `xdg-terminal-exec`. The pin store persists to
-    // `$XDG_STATE_HOME/quantum/files.json`. Unlike the streaming providers, the
+    // `$XDG_STATE_HOME/quantum/files.json` and the preferences store to
+    // `$XDG_STATE_HOME/quantum/files-preferences.json`. Unlike the streaming providers, the
     // file explorer needs no pre-subscription: watches and recursive sizes are
     // started on demand by `files.watch` / `files.sizes`.
     let files_filesystem: Arc<dyn quantum_domain::FileSystemPort> =
@@ -939,6 +940,8 @@ async fn setup_daemon(
     let files_sizer: Arc<dyn quantum_domain::RecursiveSizer> = Arc::new(BackgroundSizer::new());
     let files_pins: Arc<dyn quantum_domain::PinsPort> =
         Arc::new(PinStore::new(pins_default_store_path()));
+    let files_preferences: Arc<dyn quantum_domain::PreferencesPort> =
+        Arc::new(PreferencesStore::new(preferences_default_store_path()));
     let files_applications: Arc<dyn quantum_domain::ApplicationCatalog> =
         Arc::new(DesktopApplicationCatalog::new());
     let files_service = Arc::new(FilesService::new(
@@ -947,6 +950,7 @@ async fn setup_daemon(
         files_opener,
         files_sizer,
         files_pins,
+        files_preferences,
         files_applications,
         event_bus.clone(),
     ));

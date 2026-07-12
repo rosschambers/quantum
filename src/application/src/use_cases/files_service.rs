@@ -20,7 +20,8 @@ use crate::error::Result;
 use futures::stream::StreamExt;
 use quantum_domain::{
     ApplicationCatalog, ApplicationInfo, ContentKind, DirectoryWatcher, DriveInfo, EventBus,
-    FileEntry, FileOpener, FileOperation, FileSystemPort, Pin, PinsPort, RecursiveSizer,
+    FileEntry, FileOpener, FileOperation, FilePreferences, FileSystemPort, Pin, PinsPort,
+    PreferencesPort, RecursiveSizer,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -83,6 +84,7 @@ pub struct FilesService {
     opener: Arc<dyn FileOpener>,
     sizer: Arc<dyn RecursiveSizer>,
     pins: Arc<dyn PinsPort>,
+    preferences: Arc<dyn PreferencesPort>,
     applications: Arc<dyn ApplicationCatalog>,
     event_bus: Arc<dyn EventBus>,
     /// Reference-counted per-path directory-watch subscriptions. Keyed by the
@@ -103,6 +105,7 @@ impl FilesService {
         opener: Arc<dyn FileOpener>,
         sizer: Arc<dyn RecursiveSizer>,
         pins: Arc<dyn PinsPort>,
+        preferences: Arc<dyn PreferencesPort>,
         applications: Arc<dyn ApplicationCatalog>,
         event_bus: Arc<dyn EventBus>,
     ) -> Self {
@@ -112,6 +115,7 @@ impl FilesService {
             opener,
             sizer,
             pins,
+            preferences,
             applications,
             event_bus,
             watch_handles: Mutex::new(HashMap::new()),
@@ -181,6 +185,18 @@ impl FilesService {
     /// Remove the pin at `path`, returning the full pin list after the change.
     pub async fn unpin(&self, path: &str) -> Result<Vec<Pin>> {
         Ok(self.pins.remove(path).await?)
+    }
+
+    /// Load the persisted explorer preferences. Never fails: a missing or
+    /// unreadable store yields the defaults.
+    pub async fn get_preferences(&self) -> FilePreferences {
+        self.preferences.load().await
+    }
+
+    /// Persist the explorer preferences, reporting an input/output failure.
+    pub async fn set_preferences(&self, preferences: FilePreferences) -> Result<()> {
+        self.preferences.save(preferences).await?;
+        Ok(())
     }
 
     /// Perform a mutating filesystem operation. On success, publish an
@@ -518,6 +534,37 @@ mod tests {
         }
     }
 
+    /// Preferences mock backed by an in-memory cell so `save` then `load`
+    /// round-trips within a test. Starts at the defaults.
+    struct FakePreferences {
+        stored: Mutex<FilePreferences>,
+    }
+
+    impl FakePreferences {
+        fn new() -> Self {
+            Self {
+                stored: Mutex::new(FilePreferences::default()),
+            }
+        }
+    }
+
+    #[async_trait]
+    impl PreferencesPort for FakePreferences {
+        async fn load(&self) -> FilePreferences {
+            self.stored
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner())
+                .clone()
+        }
+        async fn save(&self, preferences: FilePreferences) -> std::result::Result<(), FilesError> {
+            *self
+                .stored
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner()) = preferences;
+            Ok(())
+        }
+    }
+
     /// Application-catalog mock seeded with a fixed list.
     struct FakeApplications {
         applications: Vec<ApplicationInfo>,
@@ -582,6 +629,7 @@ mod tests {
             Arc::new(FakeOpener),
             Arc::new(sizer),
             Arc::new(pins),
+            Arc::new(FakePreferences::new()),
             Arc::new(applications),
             event_bus.clone(),
         );
@@ -723,6 +771,32 @@ mod tests {
         let places = service.places().await.expect("places");
         assert_eq!(places.pins, pins);
         assert_eq!(places.drives, drives);
+    }
+
+    #[tokio::test]
+    async fn preferences_set_then_get_roundtrips() {
+        let (service, _fakes) = build_service(
+            FakeFileSystem::default(),
+            FakeWatcher { changes: vec![] },
+            FakeSizer { updates: vec![] },
+            FakePins { pins: vec![] },
+            FakeApplications {
+                applications: vec![],
+            },
+        );
+
+        // The store starts at the defaults (dotfiles shown).
+        assert!(service.get_preferences().await.show_hidden);
+
+        service
+            .set_preferences(FilePreferences { show_hidden: false })
+            .await
+            .expect("set preferences");
+
+        assert_eq!(
+            service.get_preferences().await,
+            FilePreferences { show_hidden: false }
+        );
     }
 
     #[tokio::test]
@@ -901,6 +975,7 @@ mod tests {
             Arc::new(FakeOpener),
             Arc::new(FakeSizer { updates: vec![] }),
             Arc::new(FakePins { pins: vec![] }),
+            Arc::new(FakePreferences::new()),
             Arc::new(FakeApplications {
                 applications: vec![],
             }),
@@ -963,6 +1038,7 @@ mod tests {
             Arc::new(FakeOpener),
             Arc::new(sizer),
             Arc::new(FakePins { pins: vec![] }),
+            Arc::new(FakePreferences::new()),
             Arc::new(FakeApplications {
                 applications: vec![],
             }),

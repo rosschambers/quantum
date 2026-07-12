@@ -12,6 +12,7 @@ pub mod filesystem;
 pub mod opener;
 pub mod operations;
 pub mod pins;
+pub mod preferences;
 pub mod sizer;
 pub mod watcher;
 
@@ -19,5 +20,6 @@ pub use applications::DesktopApplicationCatalog;
 pub use filesystem::LocalFileSystem;
 pub use opener::ProcessFileOpener;
 pub use pins::{Pin, PinStore};
+pub use preferences::{preferences_default_store_path, PreferencesStore};
 pub use sizer::BackgroundSizer;
 pub use watcher::NotifyDirectoryWatcher;

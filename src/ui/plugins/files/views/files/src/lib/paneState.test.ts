@@ -19,6 +19,11 @@ function entry(overrides: Partial<FileEntry> & { name: string }): FileEntry {
     };
 }
 
+/** Build a plain file `FileEntry` from an explicit path and name. */
+function fileEntry(path: string, name: string): FileEntry {
+    return entry({ name, path, kind: 'file' });
+}
+
 describe('PaneState construction', () => {
     it('seeds path and single-entry history', () => {
         const pane = new PaneState('/home/user');
@@ -228,6 +233,20 @@ describe('PaneState visibleEntries', () => {
             'new.txt',
         ]);
     });
+
+    it('hides dotfiles when showHidden is false', () => {
+        const pane = new PaneState('/');
+        pane.entries = [fileEntry('/.git', '.git'), fileEntry('/a', 'a')];
+        pane.showHidden = false;
+        expect(pane.visibleEntries().map((e) => e.name)).toEqual(['a']);
+    });
+
+    it('shows dotfiles when showHidden is true', () => {
+        const pane = new PaneState('/');
+        pane.entries = [fileEntry('/.git', '.git'), fileEntry('/a', 'a')];
+        pane.showHidden = true;
+        expect(pane.visibleEntries().map((e) => e.name).sort()).toEqual(['.git', 'a']);
+    });
 });
 
 describe('PaneState toggleSort', () => {
@@ -301,5 +320,12 @@ describe('PaneState selection', () => {
             '/a/banana.txt',
             '/a/cherry.txt',
         ]);
+    });
+
+    it('selectAll selects exactly the visible entries', () => {
+        const pane = new PaneState('/');
+        pane.entries = [fileEntry('/a', 'a'), fileEntry('/b', 'b'), fileEntry('/c', 'c')];
+        pane.selectAll();
+        expect([...pane.selection].sort()).toEqual(['/a', '/b', '/c']);
     });
 });
