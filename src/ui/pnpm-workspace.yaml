@@ -3,7 +3,5 @@ packages:
   - 'plugins/*/views/*'
   - 'themes/*/views/*'
   - 'themes/*/views/*/*'
-allowBuilds:
-  esbuild: set this to true or false
 onlyBuiltDependencies:
   - esbuild
