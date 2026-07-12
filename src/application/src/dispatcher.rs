@@ -118,6 +118,8 @@ impl Dispatcher {
             "files.places" => self.handle_files_places(params).await,
             "files.pin" => self.handle_files_pin(params).await,
             "files.unpin" => self.handle_files_unpin(params).await,
+            "files.get_preferences" => self.handle_files_get_preferences(params).await,
+            "files.set_preferences" => self.handle_files_set_preferences(params).await,
             "files.operation" => self.handle_files_operation(params).await,
             "files.open" => self.handle_files_open(params).await,
             "files.open_with" => self.handle_files_open_with(params).await,
@@ -351,6 +353,18 @@ impl Dispatcher {
         let p: PathParam = parse_params(params, "files.unpin")?;
         let pins = self.files_service.unpin(&p.path).await?;
         to_json(pins)
+    }
+
+    async fn handle_files_get_preferences(&self, _params: Option<&RawValue>) -> Result<Value> {
+        let preferences = self.files_service.get_preferences().await;
+        to_json(preferences)
+    }
+
+    async fn handle_files_set_preferences(&self, params: Option<&RawValue>) -> Result<Value> {
+        let preferences: quantum_domain::FilePreferences =
+            parse_params(params, "files.set_preferences")?;
+        self.files_service.set_preferences(preferences).await?;
+        Ok(Value::Null)
     }
 
     async fn handle_files_operation(&self, params: Option<&RawValue>) -> Result<Value> {
@@ -1094,5 +1108,30 @@ mod tests {
         let dispatcher = build_dispatcher();
         let resp = dispatcher.dispatch("files.list", None).await;
         assert!(resp.is_err());
+    }
+
+    #[tokio::test]
+    async fn dispatches_files_get_preferences() {
+        let dispatcher = build_dispatcher();
+        let resp = dispatcher
+            .dispatch("files.get_preferences", None)
+            .await
+            .expect("files.get_preferences");
+
+        let preferences: FilePreferences = serde_json::from_value(resp).expect("preferences");
+        // The fake preferences port returns the defaults (dotfiles shown).
+        assert!(preferences.show_hidden);
+    }
+
+    #[tokio::test]
+    async fn dispatches_files_set_preferences() {
+        let dispatcher = build_dispatcher();
+        let params = raw(json!({ "show_hidden": false }));
+        let resp = dispatcher
+            .dispatch("files.set_preferences", Some(&params))
+            .await
+            .expect("files.set_preferences");
+
+        assert_eq!(resp, Value::Null);
     }
 }
