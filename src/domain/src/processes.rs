@@ -264,7 +264,7 @@ pub fn build_forest(
 /// when `target` is not present anywhere in `roots`. The ordering lets a caller
 /// signal leaves before their parents when tearing a subtree down.
 pub fn collect_subtree_pids(roots: &[ProcessNode], target: i32) -> Option<Vec<i32>> {
-    fn find<'a>(roots: &'a [ProcessNode], target: i32) -> Option<&'a ProcessNode> {
+    fn find(roots: &[ProcessNode], target: i32) -> Option<&ProcessNode> {
         for node in roots {
             if node.pid == target {
                 return Some(node);
