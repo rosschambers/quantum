@@ -1,5 +1,12 @@
 <script lang="ts">
-    import type { ProcessNode } from '@quantum/client';
+    import { untrack } from 'svelte';
+    import {
+        openContextMenu,
+        PROCESSES_KILL,
+        type Client,
+        type KillSignal,
+        type ProcessNode,
+    } from '@quantum/client';
     import Icon from './Icon.svelte';
     import {
         flattenTree,
@@ -11,6 +18,13 @@
         type SortColumn,
         type RenderRow,
     } from './tree';
+    import {
+        buildKillMenuItems,
+        collectSubtreePids,
+        collectPids,
+        reconcileDying,
+        killErrorMessage,
+    } from './kill';
 
     /**
      * The app-grouped process tree. Two sections — Apps (roots expanded one
@@ -32,9 +46,14 @@
          * matched substring is highlighted in the accent colour.
          */
         filterText?: string;
+        /**
+         * IPC client, injected so tests can pass a stub. Used to signal a
+         * process subtree via `processes.kill` from the right-click menu.
+         */
+        client: Client;
     }
 
-    let { apps, background, memTotalBytes, filterText = '' }: Props = $props();
+    let { apps, background, memTotalBytes, filterText = '', client }: Props = $props();
 
     // A non-empty (non-whitespace) filter switches the tree into filtered mode:
     // pruned rows, forced-open sections, force-expanded nodes, and highlights.
@@ -49,6 +68,66 @@
     let sort = $state<SortState>({ column: 'cpu', descending: true });
     let appsOpen = $state(true);
     let backgroundOpen = $state(false);
+
+    // Pids of subtrees a kill was issued for. Marked optimistically the instant
+    // the menu action fires, so the whole subtree fades at once; a killed
+    // process then vanishes naturally when the next snapshot no longer lists it.
+    let dying = $state<Set<number>>(new Set());
+    // The last kill error, shown in a dismissible strip above the table; null
+    // when there is nothing to show. Cleared by the next successful kill.
+    let killError = $state<string | null>(null);
+
+    // Reconcile the dying set against every fresh snapshot: drop any faded pid
+    // the snapshot no longer contains (it actually exited). `apps`/`background`
+    // are the reactive triggers; `dying` is read via `untrack` so writing it
+    // here cannot re-trigger this effect. reconcile only ever shrinks the set,
+    // so a size change is a sufficient, loop-free signal that a write is needed.
+    $effect(() => {
+        const present = collectPids([...apps, ...background]);
+        untrack(() => {
+            const next = reconcileDying(dying, present);
+            if (next.size !== dying.size) {
+                dying = next;
+            }
+        });
+    });
+
+    /**
+     * Open the kill context menu for a right-clicked row. A protected row gets a
+     * single disabled notice; every other row gets End / Force kill wired to
+     * `killSubtree`. The shared `openContextMenu` runtime owns placement,
+     * dismissal, and theming (it suppresses the default browser menu itself).
+     */
+    function onRowContextMenu(event: MouseEvent, node: ProcessNode): void {
+        openContextMenu(
+            event,
+            buildKillMenuItems(node, (signal) => killSubtree(node, signal)),
+        );
+    }
+
+    /**
+     * Signal a process subtree. The whole subtree is marked dying immediately
+     * (optimistic fade); on success the error strip is cleared, on failure the
+     * optimistic fade is rolled back (the processes did not die) and the
+     * rejection message is surfaced in the strip.
+     */
+    function killSubtree(node: ProcessNode, signal: KillSignal): void {
+        const pids = collectSubtreePids(node);
+        dying = new Set([...dying, ...pids]);
+        client
+            .call(PROCESSES_KILL, { pid: node.pid, signal })
+            .then(() => {
+                killError = null;
+            })
+            .catch((error: unknown) => {
+                const reverted = new Set(dying);
+                for (const pid of pids) {
+                    reverted.delete(pid);
+                }
+                dying = reverted;
+                killError = killErrorMessage(error);
+            });
+    }
 
     // Seed the default expansion once: app roots open one level. A plain (non-
     // reactive) flag guards it so a later collapse is not undone by the next
@@ -120,6 +199,19 @@
 </script>
 
 <div class="treewrap">
+    {#if killError}
+        <div class="kill-error" role="alert">
+            <span class="kill-error-message">{killError}</span>
+            <button
+                type="button"
+                class="kill-error-dismiss"
+                aria-label="Dismiss error"
+                onclick={() => (killError = null)}
+            >
+                <Icon name="close" size={12} />
+            </button>
+        </div>
+    {/if}
     <table>
         <thead>
             <tr>
@@ -200,7 +292,11 @@
     {@const node = row.node}
     {@const isAppRoot = isApps && row.depth === 0}
     {@const glyph = glyphFor(node, isAppRoot)}
-    <tr data-pid={node.pid}>
+    <tr
+        data-pid={node.pid}
+        class:dying={dying.has(node.pid)}
+        oncontextmenu={(event) => onRowContextMenu(event, node)}
+    >
         <td>
             <div class="name" style="padding-left: {row.depth * INDENT_PER_LEVEL}px">
                 <button
@@ -241,6 +337,51 @@
         flex: 1;
         overflow-y: auto;
         padding: 0 14px 12px;
+    }
+    /* Inline error strip shown above the table when a kill call rejects. Uses
+       the theme destructive token; a small X dismisses it. */
+    .kill-error {
+        position: sticky;
+        top: 0;
+        z-index: 3;
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        margin: 8px 0;
+        padding: 6px 8px 6px 10px;
+        border-radius: 8px;
+        background: color-mix(in srgb, var(--color-error, #af4e3c) 18%, transparent);
+        border: 1px solid var(--color-error, #af4e3c);
+        color: var(--color-fg, #e8e4d8);
+        font-size: 12.5px;
+    }
+    .kill-error-message {
+        flex: 1;
+        overflow: hidden;
+        text-overflow: ellipsis;
+    }
+    .kill-error-dismiss {
+        flex: none;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        width: 20px;
+        height: 20px;
+        padding: 0;
+        border: 0;
+        border-radius: 6px;
+        background: none;
+        color: var(--color-fg-alt, #d8d4c8);
+        cursor: pointer;
+    }
+    .kill-error-dismiss:hover {
+        background: var(--color-error, #af4e3c);
+        color: var(--color-fg, #e8e4d8);
+    }
+    /* A killed subtree fades until the next snapshot drops it. */
+    tr.dying td {
+        opacity: 0.35;
+        transition: opacity 0.4s;
     }
     table {
         width: 100%;
