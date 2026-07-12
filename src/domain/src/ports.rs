@@ -1,4 +1,4 @@
-use crate::files::{ApplicationInfo, FileOperation, FilesError, Pin};
+use crate::files::{ApplicationInfo, FileOperation, FilePreferences, FilesError, Pin};
 use crate::timer::{CivilNow, Timer, TimerError, TimerStoreData};
 use crate::{Action, DomainError, DriveInfo, FileEntry, Match, ProviderId, Query};
 use async_trait::async_trait;
@@ -242,6 +242,16 @@ pub trait PinsPort: Send + Sync {
     async fn load(&self) -> Vec<Pin>;
     async fn add(&self, pin: Pin) -> Result<Vec<Pin>, FilesError>;
     async fn remove(&self, path: &str) -> Result<Vec<Pin>, FilesError>;
+}
+
+/// Persistence for the explorer's per-user preferences. `load` never fails: a
+/// missing or unreadable store yields [`FilePreferences::default`], so the
+/// explorer always has a usable configuration. `save` reports an input/output
+/// failure so a caller can surface it to the user.
+#[async_trait]
+pub trait PreferencesPort: Send + Sync {
+    async fn load(&self) -> FilePreferences;
+    async fn save(&self, preferences: FilePreferences) -> Result<(), FilesError>;
 }
 
 /// Source of the applications offered by the explorer's "Open with" menu.

@@ -140,6 +140,28 @@ pub struct Pin {
     pub path: String,
 }
 
+/// Persisted per-user preferences for the file explorer. Currently a single
+/// flag controlling whether dotfiles (names beginning with ".") are shown.
+/// `show_hidden` defaults to `true`, matching the explorer's original
+/// behaviour, so a preferences file missing the field or absent entirely still
+/// yields the same visible listing as before the preference existed.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct FilePreferences {
+    #[serde(default = "default_show_hidden")]
+    pub show_hidden: bool,
+}
+
+/// The default for [`FilePreferences::show_hidden`]: dotfiles are shown.
+fn default_show_hidden() -> bool {
+    true
+}
+
+impl Default for FilePreferences {
+    fn default() -> Self {
+        Self { show_hidden: true }
+    }
+}
+
 /// A launchable application offered by the explorer's "Open with" menu. `id`
 /// is the desktop-entry identifier used to launch it; `name` is its
 /// human-readable display name.
@@ -266,6 +288,18 @@ mod tests {
         assert_eq!(json["path"], "/home/user/projects");
         let back: Pin = serde_json::from_value(json).expect("round trip");
         assert_eq!(back, pin);
+    }
+
+    #[test]
+    fn file_preferences_default_shows_hidden() {
+        assert!(FilePreferences::default().show_hidden);
+    }
+
+    #[test]
+    fn file_preferences_missing_field_defaults_to_shown() {
+        let preferences: FilePreferences =
+            serde_json::from_str("{}").expect("deserialize empty object");
+        assert!(preferences.show_hidden);
     }
 
     #[test]
