@@ -277,6 +277,19 @@ describe('App hidden-files preference', () => {
     });
 });
 
+describe('App keyboard shortcuts cheat sheet', () => {
+    it('pressing ? opens the shortcuts cheat sheet', async () => {
+        const ipc = createFakeIpc([]);
+        const { container } = render(App, { props: { ipc } });
+
+        await fireEvent.keyDown(window, { key: '?', shiftKey: true });
+
+        await vi.waitFor(() => {
+            expect(container.querySelector('[data-hint-row]')).not.toBeNull();
+        });
+    });
+});
+
 describe('App context menu and properties modal', () => {
     it('opens the entry context menu on right-click', async () => {
         const ipc = createFakeIpc([makeEntry({ name: 'alpha', path: `${HOME}/alpha` })]);
