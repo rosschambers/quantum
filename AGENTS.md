@@ -254,8 +254,20 @@ broken CI before; do not reintroduce them:
   (activate an action), `clear_toasts` (broadcasts `NotificationEvent::
   ToastsCleared` — display-only, store untouched; the bell sends it when opening
   the center). The store is capped (`MAX_NOTIFICATIONS`).
-
-## UI and Frontend Conventions
+- **zbus deserialization: match the WIRE signature, and never swallow D-Bus
+  errors silently.** `OwnedValue`/`Value` deserialize only a variant (`v`); a
+  concrete struct out-argument must be deserialized as its concrete tuple type.
+  com.canonical.dbusmenu `GetLayout` returns `u(ia{sv}av)` — deserializing as
+  `(u32, OwnedValue)` (signature `uv`) fails with a signature mismatch on EVERY
+  call, which left all tray menus permanently empty while three upstream
+  "fixes" changed nothing. Use `RawMenuLayout` in `system_tray/menu.rs` (the
+  signature is pinned by a unit test) and verify against the real bus with the
+  ignored test `fetch_menu_deserializes_a_live_dbusmenu` (parametrized by
+  `QUANTUM_TEST_MENU_BUS` / `QUANTUM_TEST_MENU_PATH`). The bug stayed invisible
+  because the initial fetch did `Err(_) => return Vec::new()` — every D-Bus
+  error path must at least `tracing::warn!`, and debugging any tray/D-Bus issue
+  should start by checking the actual reply signature with
+  `busctl --user call <bus> <path> <interface> <method> ...`.
 
 - **Layer-shell usage differs by window type — `QUANTUM_LAYER_SHELL` gates
   only plain panels, not the bar.** `WidgetWindow` (the bar and the clock)
