@@ -8,6 +8,7 @@ pub mod multiplex;
 pub mod registry;
 pub mod scheme;
 pub mod view_catalog;
+pub mod web_process;
 pub mod window_host;
 pub mod windows;
 
