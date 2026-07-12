@@ -1,0 +1,24 @@
+/*
+ * Base reset and top-level layout for the task manager panel. Mirrors the
+ * files panel base styles; component-specific styles land alongside their
+ * components in later tasks. Tokens are sourced from the active theme's
+ * token block injected into index.html.
+ */
+* {
+    box-sizing: border-box;
+    margin: 0;
+    padding: 0;
+}
+html,
+body {
+    height: 100%;
+}
+body {
+    font-family: var(--font-sans, system-ui, -apple-system, sans-serif);
+    background: var(--color-bg, #292520);
+    color: var(--color-fg, #e8e4d8);
+    overflow: hidden;
+}
+#app {
+    height: 100%;
+}

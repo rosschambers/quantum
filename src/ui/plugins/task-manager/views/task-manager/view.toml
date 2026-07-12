@@ -1,0 +1,4 @@
+kind = "panel"
+width = 1040
+height = 640
+destroy_on_dismiss = true
