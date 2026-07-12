@@ -18,7 +18,6 @@
 //! thread-local holding the `!Send` `WebView` is safe and needs no locking.
 
 use std::cell::RefCell;
-use webkit6::prelude::SettingsExt;
 
 thread_local! {
     /// The lazily created, never-shown anchor whose render process the warm
