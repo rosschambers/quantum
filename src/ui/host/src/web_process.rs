@@ -4,13 +4,18 @@
 //! construct property (via [`webkit6::WebView::builder`]) makes a new view share
 //! the render process and network session of an existing "anchor" view. Every
 //! Quantum view is same-origin (the `quantum://` scheme) on the same
-//! `WebContext`, so warm, always-resident views (bar, clock, timers, toast, and
-//! the launcher) can all ride a single shared render process instead of one
-//! process each.
+//! `WebContext`, so every view — the always-resident widgets (bar, clock,
+//! timers, toast) and every panel and overlay (launcher, wifi, power, sound,
+//! bluetooth, notification center, files, task manager) — can ride a single
+//! shared render process instead of one process each.
 //!
-//! Transient overlays that are destroyed on dismiss deliberately do NOT share
-//! the anchor: giving each its own render process means tearing it down on
-//! dismiss frees a whole process, which is the point of `destroy_on_dismiss`.
+//! Overlays are hidden and reused on dismiss, never destroyed (destroying a
+//! layer-shell window segfaults; see `WindowRegistry::handle`), so their
+//! renderer stays resident for the session either way. Sharing therefore keeps
+//! every resident overlay renderer in the one shared process rather than paying
+//! a whole separate process per overlay type. The `share_process` parameter is
+//! retained so a future session-safe teardown could isolate genuinely
+//! destroyed views again.
 //!
 //! The anchor is a single hidden `WebView` created lazily on the first
 //! shared-process request and cached in a `thread_local!` for the lifetime of
