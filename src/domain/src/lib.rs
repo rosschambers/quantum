@@ -39,9 +39,10 @@ pub use match_result::{IconRef, Match};
 pub use notifications::{Notification, NotificationEvent, NotificationUrgency};
 pub use ports::{
     ActionOutcome, ApplicationCatalog, Clock, DirectoryWatcher, EventBus, FileOpener,
-    FileSystemPort, HyprlandClient, NotificationEmitter, PinsPort, PluginCatalog, ProviderRegistry,
-    ProviderSource, RecursiveSizer, ShellExecutor, ShellOutput, SizeUpdate, ThemeStore,
-    TimerBroadcast, TimerNotifier, TimerStore, WindowHost, WindowInputRegion,
+    FileSystemPort, HyprlandClient, NotificationEmitter, PinsPort, PluginCatalog, ProcessKiller,
+    ProcessMonitor, ProviderRegistry, ProviderSource, RecursiveSizer, ShellExecutor, ShellOutput,
+    SizeUpdate, ThemeStore, TimerBroadcast, TimerNotifier, TimerStore, WindowHost,
+    WindowInputRegion,
 };
 pub use processes::{
     build_forest, collect_subtree_pids, GlobalStats, KillSignal, ProcessNode, ProcessSnapshot,

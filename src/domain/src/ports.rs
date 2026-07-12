@@ -1,4 +1,5 @@
 use crate::files::{ApplicationInfo, FileOperation, FilesError, Pin};
+use crate::processes::{KillSignal, ProcessSnapshot, ProcessesError};
 use crate::timer::{CivilNow, Timer, TimerError, TimerStoreData};
 use crate::{Action, DomainError, DriveInfo, FileEntry, Match, ProviderId, Query};
 use async_trait::async_trait;
@@ -259,6 +260,22 @@ pub trait ApplicationCatalog: Send + Sync {
     async fn list_applications(&self) -> Vec<ApplicationInfo>;
 }
 
+/// Streams process snapshots while at least one watcher is registered. Sampling
+/// is reference-counted: `watch` registers interest and returns a stream of
+/// snapshots; `unwatch` drops one registration so the monitor can stop sampling
+/// once no one is listening. Synchronous: registering a watch does not yield.
+pub trait ProcessMonitor: Send + Sync {
+    fn watch(&self) -> BoxStream<'static, ProcessSnapshot>;
+    fn unwatch(&self);
+}
+
+/// Signals a process and its whole subtree. Implementations resolve the subtree
+/// and deliver `signal` to each member, refusing to kill protected processes.
+#[async_trait]
+pub trait ProcessKiller: Send + Sync {
+    async fn kill_subtree(&self, pid: i32, signal: KillSignal) -> Result<(), ProcessesError>;
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -391,6 +408,23 @@ mod notification_emitter_tests {
     #[test]
     fn notification_emitter_port_is_object_safe() {
         let _: Option<Arc<dyn NotificationEmitter>> = None;
+    }
+}
+
+#[cfg(test)]
+mod process_port_tests {
+    use super::*;
+
+    // Compile-time proof that both process ports are object-safe and can be
+    // used behind `Arc<dyn Trait>`. If either trait stopped being object-safe,
+    // this would fail to compile.
+    #[allow(dead_code)]
+    fn assert_object_safe(_monitor: Arc<dyn ProcessMonitor>, _killer: Arc<dyn ProcessKiller>) {}
+
+    #[test]
+    fn process_ports_are_object_safe() {
+        let _: Option<Arc<dyn ProcessMonitor>> = None;
+        let _: Option<Arc<dyn ProcessKiller>> = None;
     }
 }
 
