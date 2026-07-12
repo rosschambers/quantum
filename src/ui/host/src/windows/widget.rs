@@ -415,7 +415,10 @@ fn build_webview(
     event_tx: broadcast::Sender<EventEnvelope>,
     monitor: Option<&gdk::Monitor>,
 ) -> WebView {
-    let webview = webkit6::WebView::new();
+    // Widget-style views (bar, clock, timers, toast) are always-warm and never
+    // destroyed on dismiss, so they share a single render process via the
+    // shared web-process anchor to cut per-view renderer memory.
+    let webview = crate::web_process::new_webview(true);
 
     // Transparent WebView background so the layer-shell surface's
     // overflow region stays see-through. Without this WebKit paints
