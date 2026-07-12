@@ -35,6 +35,7 @@
         onFilterInput: (value: string) => void;
         onToggleDeep: () => void;
         onToggleDual: () => void;
+        onHelp: () => void;
         onClose: () => void;
     }
 
@@ -53,6 +54,7 @@
         onFilterInput,
         onToggleDeep,
         onToggleDual,
+        onHelp,
         onClose,
     }: Props = $props();
 
@@ -127,6 +129,16 @@
 
     <button
         type="button"
+        class="icon-btn b-help"
+        title="Keyboard shortcuts (?)"
+        aria-label="Keyboard shortcuts"
+        onclick={onHelp}
+    >
+        <span class="help-glyph" aria-hidden="true">?</span>
+    </button>
+
+    <button
+        type="button"
         class="icon-btn b-close"
         title="Close (Alt+F4)"
         aria-label="Close file explorer"
@@ -168,6 +180,11 @@
     }
     .icon-btn.b-close {
         margin-left: 2px;
+    }
+    .help-glyph {
+        font-size: 15px;
+        font-weight: 700;
+        line-height: 1;
     }
     .icon-btn:disabled {
         opacity: 0.35;
