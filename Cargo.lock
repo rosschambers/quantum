@@ -2055,9 +2055,12 @@ dependencies = [
 name = "quantum-processes"
 version = "0.1.0"
 dependencies = [
+ "async-trait",
+ "futures",
  "quantum-domain",
  "serde_json",
  "tokio",
+ "tokio-stream",
  "tracing",
 ]
 
