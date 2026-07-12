@@ -7,5 +7,7 @@
 
 pub mod procfs_parse;
 pub mod sampler;
+pub mod windows;
 
 pub use sampler::{parse_net_dev, parse_pid_stat, parse_pid_status_rss, PidStat, ProcfsSampler};
+pub use windows::window_pid_map;

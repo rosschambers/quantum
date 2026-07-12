@@ -2056,6 +2056,7 @@ name = "quantum-processes"
 version = "0.1.0"
 dependencies = [
  "quantum-domain",
+ "serde_json",
  "tokio",
  "tracing",
 ]
