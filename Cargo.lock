@@ -2055,9 +2055,9 @@ dependencies = [
 name = "quantum-processes"
 version = "0.1.0"
 dependencies = [
- "serde",
- "serde_json",
- "thiserror",
+ "quantum-domain",
+ "tokio",
+ "tracing",
 ]
 
 [[package]]

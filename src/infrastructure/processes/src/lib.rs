@@ -6,3 +6,6 @@
 //! provider layer (and later tasks) to read `/proc/stat` and `/proc/meminfo`.
 
 pub mod procfs_parse;
+pub mod sampler;
+
+pub use sampler::{parse_net_dev, parse_pid_stat, parse_pid_status_rss, PidStat, ProcfsSampler};
