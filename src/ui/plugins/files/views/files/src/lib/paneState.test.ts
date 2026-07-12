@@ -233,6 +233,20 @@ describe('PaneState visibleEntries', () => {
             'new.txt',
         ]);
     });
+
+    it('hides dotfiles when showHidden is false', () => {
+        const pane = new PaneState('/');
+        pane.entries = [fileEntry('/.git', '.git'), fileEntry('/a', 'a')];
+        pane.showHidden = false;
+        expect(pane.visibleEntries().map((e) => e.name)).toEqual(['a']);
+    });
+
+    it('shows dotfiles when showHidden is true', () => {
+        const pane = new PaneState('/');
+        pane.entries = [fileEntry('/.git', '.git'), fileEntry('/a', 'a')];
+        pane.showHidden = true;
+        expect(pane.visibleEntries().map((e) => e.name).sort()).toEqual(['.git', 'a']);
+    });
 });
 
 describe('PaneState toggleSort', () => {
