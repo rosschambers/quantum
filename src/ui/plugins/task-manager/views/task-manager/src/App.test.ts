@@ -34,6 +34,25 @@ function sampleSnapshot(): ProcessSnapshot {
     };
 }
 
+/** A snapshot whose single app root carries a distinguishing name. */
+function snapshotWithApp(name: string): ProcessSnapshot {
+    const snapshot = sampleSnapshot();
+    snapshot.apps = [
+        {
+            pid: 5000,
+            name,
+            cpu_percent: 1,
+            mem_bytes: 100 * 1024 * 1024,
+            aggregate_cpu_percent: 1,
+            aggregate_mem_bytes: 100 * 1024 * 1024,
+            protected: false,
+            children: [],
+        },
+    ];
+    snapshot.background = [];
+    return snapshot;
+}
+
 /**
  * A hand-rolled stub `Client` with spies on every method. `subscribe` records
  * the channel and callback so a test can push a synthetic snapshot, and returns
@@ -176,6 +195,47 @@ describe('App shell', () => {
         await vi.waitFor(() =>
             expect(getByText('No processes match "zzz-nothing"')).toBeTruthy(),
         );
+    });
+
+    it('coalesces rapid snapshots into one applied render per animation frame (latest wins)', async () => {
+        // Drive requestAnimationFrame manually so the coalescing is deterministic:
+        // capture the scheduled callback instead of waiting on the real timer.
+        const frames: FrameRequestCallback[] = [];
+        const original = window.requestAnimationFrame;
+        const rafSpy = vi.fn((callback: FrameRequestCallback) => {
+            frames.push(callback);
+            return frames.length;
+        });
+        window.requestAnimationFrame =
+            rafSpy as unknown as typeof window.requestAnimationFrame;
+
+        try {
+            const stub = createStubClient();
+            const { getByText, queryByText } = render(App, { props: { client: stub.client } });
+            await vi.waitFor(() => expect(stub.subscribe).toHaveBeenCalled());
+
+            // Three snapshots arrive back-to-back before a frame can fire.
+            stub.emit(snapshotWithApp('proc-alpha'));
+            stub.emit(snapshotWithApp('proc-beta'));
+            stub.emit(snapshotWithApp('proc-gamma'));
+
+            // Exactly one frame is scheduled for the whole burst, and nothing is
+            // applied to the reactive snapshot until that frame fires.
+            expect(rafSpy).toHaveBeenCalledTimes(1);
+            expect(queryByText('proc-alpha')).toBeNull();
+            expect(queryByText('proc-gamma')).toBeNull();
+
+            // Fire the single scheduled frame; only the LAST payload is applied.
+            frames[0](0);
+
+            await vi.waitFor(() => {
+                expect(getByText('proc-gamma')).toBeTruthy();
+                expect(queryByText('proc-alpha')).toBeNull();
+                expect(queryByText('proc-beta')).toBeNull();
+            });
+        } finally {
+            window.requestAnimationFrame = original;
+        }
     });
 
     it('clears a non-empty filter on Escape without closing the panel', async () => {

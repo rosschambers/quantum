@@ -28,8 +28,18 @@
     /** Latest process snapshot pushed on the processes channel; null until the first arrives. */
     let snapshot: ProcessSnapshot | null = $state(null);
 
-    /** Titlebar filter text. Filtering logic lands in a later task; this only holds the value. */
-    let filterText = $state('');
+    // Frame coalescing. Snapshots arrive at ~1 Hz, but under CPU starvation a
+    // render can still be in flight when the next arrives; setting the reactive
+    // `snapshot` synchronously would queue full re-renders behind each other and
+    // the panel would appear frozen. Instead the newest payload is parked in a
+    // plain (non-reactive) `pending` and applied from a single
+    // `requestAnimationFrame`. If more payloads arrive before the frame fires,
+    // `pending` is overwritten (latest wins) and no second frame is scheduled, so
+    // at most one snapshot is applied per frame and intermediates are dropped.
+    // The browser throttles rAF under load, which self-throttles the panel to a
+    // lower frame rate showing the latest state rather than freezing.
+    let pending: ProcessSnapshot | null = null;
+    let frame: number | null = null;
 
     // Process subscription lifecycle. Start the watch, then subscribe to the
     // snapshot channel. `destroy_on_dismiss` makes this cleanup unreliable on
@@ -39,13 +49,33 @@
     $effect(() => {
         client.call(PROCESSES_WATCH, {}).catch(() => {});
         const unsubscribe = client.subscribe(PROCESSES_EVENT_CHANNEL, (payload: unknown) => {
-            snapshot = payload as ProcessSnapshot;
+            pending = payload as ProcessSnapshot;
+            // No browser frame scheduler (a non-DOM test harness): apply at once
+            // so the panel still updates without a rAF to coalesce behind.
+            if (typeof window === 'undefined' || typeof window.requestAnimationFrame !== 'function') {
+                snapshot = pending;
+                return;
+            }
+            // A frame is already scheduled: the latest `pending` will win when it
+            // fires. Do not schedule a second one.
+            if (frame !== null) return;
+            frame = window.requestAnimationFrame(() => {
+                frame = null;
+                snapshot = pending;
+            });
         });
         return () => {
             unsubscribe?.();
+            if (frame !== null && typeof window !== 'undefined') {
+                window.cancelAnimationFrame(frame);
+                frame = null;
+            }
             client.call(PROCESSES_UNWATCH, {}).catch(() => {});
         };
     });
+
+    /** Titlebar filter text. Filtering logic lands in a later task; this only holds the value. */
+    let filterText = $state('');
 
     // Window-level Escape: clear a non-empty filter first, otherwise close.
     // Matches the files panel, which listens on `window` (not `document`).
