@@ -1,20 +1,28 @@
 //! [`RecursiveSizer`] implementation: cancellable background directory sizing.
 //!
-//! [`BackgroundSizer`] walks a directory tree on a blocking thread, summing the
-//! sizes of every regular file beneath a root. The walk uses synchronous
-//! `std::fs` recursion, so it runs on [`tokio::task::spawn_blocking`] to keep the
-//! async runtime free. It emits a [`SizeUpdate`] with the running total no more
-//! than once every 100 milliseconds (throttled by wall-clock), then a final
-//! update with `complete` set to `true` when the walk finishes.
+//! [`BackgroundSizer::compute`] sizes each immediate child directory of the
+//! requested directory: it enumerates the directory's entries and, for every
+//! entry that is itself a directory, recursively sums the sizes of every regular
+//! file beneath that child and emits [`SizeUpdate`]s keyed by the CHILD
+//! directory's path. Regular files directly in the requested directory and
+//! symlinked children are ignored (their sizes are already known from the
+//! listing, or must not be followed). Each child walk uses synchronous
+//! `std::fs` recursion, so the work runs on [`tokio::task::spawn_blocking`] to
+//! keep the async runtime free. Per child it emits a [`SizeUpdate`] with the
+//! running total no more than once every 100 milliseconds (throttled by
+//! wall-clock), then a final update with `complete` set to `true` when that
+//! child's walk finishes.
 //!
-//! Symlinks are never followed: an entry that is a symlink is skipped and its
-//! target is neither traversed nor counted, so a link into a large tree outside
-//! the root cannot inflate the total.
+//! Symlinks are never followed: a symlinked child directory is skipped entirely,
+//! and inside a child a symlink entry is skipped and its target is neither
+//! traversed nor counted, so a link into a large tree outside the child cannot
+//! inflate the total.
 //!
-//! Each computation registers an `Arc<AtomicBool>` cancellation flag keyed by
-//! path. [`RecursiveSizer::cancel`] sets that flag; the walk checks it for every
-//! directory and entry and stops promptly, ending the stream WITHOUT a
-//! completion item. The registry entry is removed once the walk finishes or is
+//! Each computation registers a single `Arc<AtomicBool>` cancellation flag keyed
+//! by the requested directory's path, shared by every child walk.
+//! [`RecursiveSizer::cancel`] sets that flag; every child walk checks it for
+//! every directory and entry and stops promptly, ending the stream WITHOUT a
+//! completion item. The registry entry is removed once the walks finish or are
 //! cancelled.
 //!
 //! The blocking walk writes updates to a [`tokio::sync::mpsc`] channel; a bridge
@@ -23,7 +31,6 @@
 //! crate free of a `tokio-stream` dependency.
 
 use std::collections::HashMap;
-use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -52,67 +59,95 @@ impl BackgroundSizer {
     }
 }
 
-/// Recursively sum the sizes of every regular file beneath `root`, emitting
-/// throttled progress and a final completion item.
-///
-/// Symlinks are skipped rather than followed. The `cancel` flag is checked for
-/// every directory and entry; when set, the walk returns immediately without
-/// emitting a completion item. Any emission failure (the consumer dropped the
-/// stream) also ends the walk.
-fn walk_and_emit(root: &str, cancel: &AtomicBool, updates: &UpdateSender<SizeUpdate>) {
-    let mut total: u64 = 0;
-    let mut last_emit = Instant::now();
-    let mut pending = vec![PathBuf::from(root)];
-
-    while let Some(directory) = pending.pop() {
+/// Enumerate `dir`'s immediate children and recursively size each child
+/// directory, emitting updates keyed by the child's path. Regular files and
+/// symlinks directly in `dir` are ignored. Stops early on cancellation or when
+/// the consumer drops the stream.
+fn walk_and_emit(dir: &str, cancel: &AtomicBool, updates: &UpdateSender<SizeUpdate>) {
+    if cancel.load(Ordering::Relaxed) {
+        return;
+    }
+    let entries = match std::fs::read_dir(dir) {
+        Ok(entries) => entries,
+        Err(_) => return,
+    };
+    for entry in entries {
         if cancel.load(Ordering::Relaxed) {
             return;
         }
+        let entry = match entry {
+            Ok(entry) => entry,
+            Err(_) => continue,
+        };
+        let child_path = entry.path();
+        // `symlink_metadata` reports on the link itself: a symlinked directory
+        // has `is_dir() == false` here, so symlinks are skipped, not followed.
+        let metadata = match std::fs::symlink_metadata(&child_path) {
+            Ok(metadata) => metadata,
+            Err(_) => continue,
+        };
+        if !metadata.file_type().is_dir() {
+            continue;
+        }
+        let key = child_path.to_string_lossy().to_string();
+        if !size_child(&child_path, &key, cancel, updates) {
+            return;
+        }
+    }
+}
 
+/// Recursively sum every regular file beneath `root`, emitting throttled
+/// progress and a final completion keyed by `key`. Returns `false` when the
+/// walk was cancelled or the consumer dropped the stream, so the caller stops.
+fn size_child(
+    root: &std::path::Path,
+    key: &str,
+    cancel: &AtomicBool,
+    updates: &UpdateSender<SizeUpdate>,
+) -> bool {
+    let mut total: u64 = 0;
+    let mut last_emit = Instant::now();
+    let mut pending = vec![root.to_path_buf()];
+
+    while let Some(directory) = pending.pop() {
+        if cancel.load(Ordering::Relaxed) {
+            return false;
+        }
         let entries = match std::fs::read_dir(&directory) {
             Ok(entries) => entries,
             Err(_) => continue,
         };
-
         for entry in entries {
             if cancel.load(Ordering::Relaxed) {
-                return;
+                return false;
             }
-
             let entry = match entry {
                 Ok(entry) => entry,
                 Err(_) => continue,
             };
             let entry_path = entry.path();
-
-            // `symlink_metadata` reports on the link itself, never its target,
-            // so symlinks are identified rather than followed.
             let metadata = match std::fs::symlink_metadata(&entry_path) {
                 Ok(metadata) => metadata,
                 Err(_) => continue,
             };
             let file_type = metadata.file_type();
-
             if file_type.is_symlink() {
                 continue;
             }
-
             if file_type.is_dir() {
                 pending.push(entry_path);
                 continue;
             }
-
             if file_type.is_file() {
                 total = total.saturating_add(metadata.len());
-
                 if last_emit.elapsed() >= PROGRESS_INTERVAL {
                     let progress = SizeUpdate {
-                        path: root.to_string(),
+                        path: key.to_string(),
                         bytes: total,
                         complete: false,
                     };
                     if updates.send(progress).is_err() {
-                        return;
+                        return false;
                     }
                     last_emit = Instant::now();
                 }
@@ -121,14 +156,15 @@ fn walk_and_emit(root: &str, cancel: &AtomicBool, updates: &UpdateSender<SizeUpd
     }
 
     if cancel.load(Ordering::Relaxed) {
-        return;
+        return false;
     }
-
-    let _ = updates.send(SizeUpdate {
-        path: root.to_string(),
-        bytes: total,
-        complete: true,
-    });
+    updates
+        .send(SizeUpdate {
+            path: key.to_string(),
+            bytes: total,
+            complete: true,
+        })
+        .is_ok()
 }
 
 /// Forward every update from the blocking walk onto the returned stream, then
@@ -204,88 +240,122 @@ mod tests {
     use super::*;
     use futures::StreamExt;
     use quantum_domain::{RecursiveSizer, SizeUpdate};
-    use std::os::unix::fs::symlink;
 
-    /// Build the described tree and assert the final update reports the total of
-    /// every regular file beneath the root and marks the walk complete.
+    /// A directory's child directories are each sized and reported under their own
+    /// path; loose files in the directory and the directory itself are not emitted.
     #[tokio::test]
-    async fn sums_every_regular_file_and_marks_complete() {
+    async fn sizes_each_child_directory_under_its_own_path() {
         let directory = tempfile::tempdir().expect("create temporary directory");
         let root = directory.path();
 
-        std::fs::write(root.join("a.bin"), vec![0u8; 1000]).expect("write a.bin");
-        std::fs::write(root.join("b.bin"), vec![0u8; 2000]).expect("write b.bin");
-        let subdirectory = root.join("nested");
-        std::fs::create_dir(&subdirectory).expect("create nested directory");
-        std::fs::write(subdirectory.join("c.bin"), vec![0u8; 3000]).expect("write c.bin");
+        // Loose file directly in root: must NOT be emitted.
+        std::fs::write(root.join("loose.bin"), vec![0u8; 500]).expect("write loose.bin");
 
-        let path = root.to_str().expect("temporary path is valid unicode");
+        let a = root.join("a");
+        std::fs::create_dir(&a).expect("create a");
+        std::fs::write(a.join("f1"), vec![0u8; 4000]).expect("write a/f1");
+        let a_nested = a.join("nested");
+        std::fs::create_dir(&a_nested).expect("create a/nested");
+        std::fs::write(a_nested.join("f2"), vec![0u8; 2000]).expect("write a/nested/f2");
+
+        let b = root.join("b");
+        std::fs::create_dir(&b).expect("create b");
+        std::fs::write(b.join("g1"), vec![0u8; 2000]).expect("write b/g1");
+
+        let path = root.to_str().expect("valid unicode");
         let sizer = BackgroundSizer::new();
         let updates: Vec<SizeUpdate> = sizer.compute(path).collect().await;
 
-        let completed = updates
+        let a_key = a.to_str().unwrap();
+        let b_key = b.to_str().unwrap();
+        let root_key = root.to_str().unwrap();
+
+        let a_final = updates
             .iter()
-            .find(|update| update.complete)
-            .expect("a completed update");
-        assert_eq!(completed.bytes, 6000, "final total should sum all files");
-        assert_eq!(
-            updates.last().map(|update| update.complete),
-            Some(true),
-            "the final emitted item should be the completion"
+            .find(|u| u.path == a_key && u.complete)
+            .expect("a complete");
+        assert_eq!(a_final.bytes, 6000, "a is the recursive sum of its files");
+        let b_final = updates
+            .iter()
+            .find(|u| u.path == b_key && u.complete)
+            .expect("b complete");
+        assert_eq!(b_final.bytes, 2000);
+        assert!(
+            updates.iter().all(|u| u.path != root_key),
+            "the parent directory is never emitted"
+        );
+        assert!(
+            updates.iter().all(|u| !u.path.ends_with("loose.bin")),
+            "loose files are not emitted",
         );
     }
 
-    /// A walk cancelled before it is drained must never yield a completion item.
-    /// A large tree plus an immediate synchronous cancel guarantees the walk
-    /// cannot finish before the flag is set.
+    /// A symlinked child directory is not sized (it is skipped, not followed).
+    #[tokio::test]
+    async fn skips_symlinked_child_directories() {
+        use std::os::unix::fs::symlink;
+        let outside = tempfile::tempdir().expect("outside");
+        std::fs::write(outside.path().join("big.bin"), vec![0u8; 1_000_000]).expect("write big");
+
+        let directory = tempfile::tempdir().expect("tree");
+        let root = directory.path();
+        symlink(outside.path(), root.join("link")).expect("symlink child dir");
+
+        let path = root.to_str().expect("valid unicode");
+        let sizer = BackgroundSizer::new();
+        let updates: Vec<SizeUpdate> = sizer.compute(path).collect().await;
+        assert!(
+            updates.iter().all(|u| !u.path.ends_with("link")),
+            "symlinked child is skipped"
+        );
+    }
+
+    /// A symlink INSIDE a child directory is not followed; its target is excluded.
+    #[tokio::test]
+    async fn does_not_follow_symlinks_inside_a_child() {
+        use std::os::unix::fs::symlink;
+        let outside = tempfile::tempdir().expect("outside");
+        let big = outside.path().join("large.bin");
+        std::fs::write(&big, vec![0u8; 1_000_000]).expect("write large");
+
+        let directory = tempfile::tempdir().expect("tree");
+        let root = directory.path();
+        let child = root.join("child");
+        std::fs::create_dir(&child).expect("create child");
+        std::fs::write(child.join("real.bin"), vec![0u8; 500]).expect("write real");
+        symlink(&big, child.join("link.bin")).expect("symlink into child");
+
+        let path = root.to_str().expect("valid unicode");
+        let sizer = BackgroundSizer::new();
+        let updates: Vec<SizeUpdate> = sizer.compute(path).collect().await;
+        let child_key = child.to_str().unwrap();
+        let child_final = updates
+            .iter()
+            .find(|u| u.path == child_key && u.complete)
+            .expect("child complete");
+        assert_eq!(child_final.bytes, 500, "symlink target excluded");
+    }
+
+    /// A cancelled walk yields no completion items, across all child walks.
     #[tokio::test]
     async fn cancelled_walk_never_yields_completion() {
-        let directory = tempfile::tempdir().expect("create temporary directory");
+        let directory = tempfile::tempdir().expect("tree");
         let root = directory.path();
-        for index in 0..1000 {
-            std::fs::write(root.join(format!("file-{index}.bin")), vec![0u8; 64])
-                .expect("write filler file");
+        for c in 0..20 {
+            let child = root.join(format!("child-{c}"));
+            std::fs::create_dir(&child).expect("create child");
+            for f in 0..50 {
+                std::fs::write(child.join(format!("f-{f}.bin")), vec![0u8; 64]).expect("write");
+            }
         }
-
-        let path = root
-            .to_str()
-            .expect("temporary path is valid unicode")
-            .to_string();
+        let path = root.to_str().expect("valid unicode").to_string();
         let sizer = BackgroundSizer::new();
         let stream = sizer.compute(&path);
         sizer.cancel(&path);
-
         let updates: Vec<SizeUpdate> = stream.collect().await;
         assert!(
-            updates.iter().all(|update| !update.complete),
-            "a cancelled walk must not emit a completion item, got {updates:?}"
-        );
-    }
-
-    /// A symlink pointing at a file outside the tree must not be traversed, so
-    /// its target's size is excluded from the total.
-    #[tokio::test]
-    async fn does_not_follow_symlinks_out_of_the_tree() {
-        let outside = tempfile::tempdir().expect("create outside directory");
-        let big_target = outside.path().join("large.bin");
-        std::fs::write(&big_target, vec![0u8; 1_000_000]).expect("write large target");
-
-        let directory = tempfile::tempdir().expect("create tree directory");
-        let root = directory.path();
-        std::fs::write(root.join("real.bin"), vec![0u8; 500]).expect("write real file");
-        symlink(&big_target, root.join("link.bin")).expect("create symlink into tree");
-
-        let path = root.to_str().expect("temporary path is valid unicode");
-        let sizer = BackgroundSizer::new();
-        let updates: Vec<SizeUpdate> = sizer.compute(path).collect().await;
-
-        let completed = updates
-            .iter()
-            .find(|update| update.complete)
-            .expect("a completed update");
-        assert_eq!(
-            completed.bytes, 500,
-            "the symlink target's size must be excluded from the total"
+            updates.iter().all(|u| !u.complete),
+            "cancelled: no completion, got {updates:?}"
         );
     }
 }

@@ -236,8 +236,18 @@ pub trait FileOpener: Send + Sync {
     async fn open_terminal(&self, directory: &str) -> Result<(), FilesError>;
 }
 
-/// Computes the recursive size of a directory tree, streaming progress as it
-/// walks. Synchronous: starting a computation returns a stream immediately.
+/// Computes recursive on-disk sizes for the child directories of a directory,
+/// streaming progress as it walks. Synchronous: starting a computation returns a
+/// stream immediately.
+///
+/// `compute(dir)` sizes each immediate child directory of `dir`: for every entry
+/// of `dir` that is itself a directory (never a symlink), it recursively sums the
+/// sizes of every regular file beneath that child and emits [`SizeUpdate`]s keyed
+/// by the CHILD directory's path — throttled progress updates followed by one
+/// final `complete: true` per child. Regular files directly in `dir` and
+/// symlinked children are not emitted, and symlinks encountered inside a child
+/// are skipped rather than followed. `cancel(dir)` stops all in-flight child
+/// walks promptly; a cancelled walk emits no completion item.
 pub trait RecursiveSizer: Send + Sync {
     fn compute(&self, path: &str) -> BoxStream<'static, SizeUpdate>;
     fn cancel(&self, path: &str);
