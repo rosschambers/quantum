@@ -55,6 +55,94 @@ afterEach(() => {
     cleanup();
 });
 
+/**
+ * Force a scroll container's measured geometry in jsdom (which never lays out,
+ * so `clientHeight` is 0 and `scrollTop` is inert) and fire a scroll event so the
+ * component re-measures. This drives the virtualization window deterministically.
+ */
+function drive(wrap: Element, scrollTop: number, clientHeight: number): Promise<boolean> {
+    Object.defineProperty(wrap, 'clientHeight', { configurable: true, value: clientHeight });
+    Object.defineProperty(wrap, 'scrollTop', { configurable: true, value: scrollTop });
+    return fireEvent.scroll(wrap);
+}
+
+describe('ProcessTree virtualization', () => {
+    // A tall single-section tree: 30 app leaves plus the two section headers.
+    function tallApps(count: number): ProcessNode[] {
+        return Array.from({ length: count }, (_unused, index) =>
+            node({ pid: 1000 + index, name: `proc-${index}` }),
+        );
+    }
+
+    it('renders only the windowed rows plus spacers, and scrolling reveals later rows', async () => {
+        const { client } = stubClient();
+        const { container } = render(ProcessTree, {
+            props: { apps: tallApps(30), background: [], memTotalBytes: MEM_TOTAL, client },
+        });
+
+        const wrap = container.querySelector('.treewrap')!;
+        // A viewport that fits roughly three rows over a 30-row tree.
+        await drive(wrap, 0, 78);
+
+        // Far fewer than 30 rows are in the DOM; the top of the list is present
+        // and a deep row is not yet mounted.
+        const mountedAtTop = container.querySelectorAll('tr[data-pid]').length;
+        expect(mountedAtTop).toBeLessThan(30);
+        expect(container.querySelector('tr[data-pid="1000"]')).not.toBeNull();
+        expect(container.querySelector('tr[data-pid="1029"]')).toBeNull();
+        // A bottom spacer row stands in for the un-mounted remainder.
+        expect(container.querySelector('tr.spacer')).not.toBeNull();
+
+        // Scroll to the end: the deep row mounts and the top row unmounts.
+        await drive(wrap, 750, 78);
+        expect(container.querySelector('tr[data-pid="1029"]')).not.toBeNull();
+        expect(container.querySelector('tr[data-pid="1000"]')).toBeNull();
+    });
+
+    it('keeps sort, expansion and kill working on the windowed rows', async () => {
+        const { client, call } = stubClient();
+        const { container } = render(ProcessTree, {
+            props: {
+                apps: [
+                    node({
+                        pid: 4001,
+                        name: 'firefox',
+                        aggregate_cpu_percent: 5,
+                        children: [node({ pid: 4011, name: 'renderer', aggregate_cpu_percent: 2 })],
+                    }),
+                    node({ pid: 4002, name: 'kitty', aggregate_cpu_percent: 9 }),
+                ],
+                background: [],
+                memTotalBytes: MEM_TOTAL,
+                client,
+            },
+        });
+
+        const wrap = container.querySelector('.treewrap')!;
+        await drive(wrap, 0, 400);
+
+        // Default CPU-descending sort puts kitty (9) above firefox (5).
+        const order = () =>
+            Array.from(container.querySelectorAll<HTMLElement>('tr[data-pid]')).map(
+                (r) => r.dataset.pid,
+            );
+        expect(order()[0]).toBe('4002');
+
+        // Toggle the CPU sort to ascending; firefox now leads.
+        const cpuSort = Array.from(container.querySelectorAll<HTMLButtonElement>('.sorter')).find(
+            (b) => b.textContent?.includes('CPU'),
+        )!;
+        await fireEvent.click(cpuSort);
+        expect(order()[0]).toBe('4001');
+
+        // firefox is seeded expanded, so its child renders inside the window; a
+        // right-click kill on the child still reaches processes.kill.
+        await fireEvent.contextMenu(container.querySelector('tr[data-pid="4011"]')!);
+        await fireEvent.click(menuButton('End')!);
+        expect(call).toHaveBeenCalledWith(PROCESSES_KILL, { pid: 4011, signal: 'term' });
+    });
+});
+
 describe('ProcessTree kill menu', () => {
     it('opens End and Force kill on right-click of a normal row', async () => {
         const { client } = stubClient();

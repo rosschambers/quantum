@@ -7,6 +7,7 @@ import {
     fmtMem,
     filterTree,
     splitHighlight,
+    visibleWindow,
     type SortState,
 } from './tree';
 
@@ -235,5 +236,79 @@ describe('fmtMem', () => {
     it('rolls over to one decimal of gigabytes at 1024 MB', () => {
         expect(fmtMem(1024)).toBe('1.0 GB');
         expect(fmtMem(1536)).toBe('1.5 GB');
+    });
+});
+
+describe('visibleWindow', () => {
+    // A 100-item list of 25px rows in a 100px viewport (four rows visible).
+    const COUNT = 100;
+    const ROW = 25;
+    const VIEWPORT = 100;
+
+    it('returns an empty window with no padding for an empty list', () => {
+        expect(visibleWindow(0, ROW, 0, VIEWPORT, 2)).toEqual({
+            start: 0,
+            end: 0,
+            topPad: 0,
+            bottomPad: 0,
+        });
+    });
+
+    it('windows from the top with no overscan', () => {
+        // Rows 0..3 are visible; the rest is one bottom spacer.
+        expect(visibleWindow(COUNT, ROW, 0, VIEWPORT, 0)).toEqual({
+            start: 0,
+            end: 4,
+            topPad: 0,
+            bottomPad: (COUNT - 4) * ROW,
+        });
+    });
+
+    it('applies overscan and clamps it at the top edge', () => {
+        // Overscan cannot push start below zero.
+        expect(visibleWindow(COUNT, ROW, 0, VIEWPORT, 2)).toEqual({
+            start: 0,
+            end: 6,
+            topPad: 0,
+            bottomPad: (COUNT - 6) * ROW,
+        });
+    });
+
+    it('windows a middle scroll position with overscan on both sides', () => {
+        // scrollTop 250 => first visible row 10, last visible row 14.
+        expect(visibleWindow(COUNT, ROW, 250, VIEWPORT, 2)).toEqual({
+            start: 8,
+            end: 16,
+            topPad: 8 * ROW,
+            bottomPad: (COUNT - 16) * ROW,
+        });
+    });
+
+    it('clamps the end and zeroes the bottom pad when scrolled to the end', () => {
+        // Max scroll for 100 rows of 25px in a 100px viewport is 2400.
+        expect(visibleWindow(COUNT, ROW, 2400, VIEWPORT, 2)).toEqual({
+            start: 94,
+            end: 100,
+            topPad: 94 * ROW,
+            bottomPad: 0,
+        });
+    });
+
+    it('shows the whole list with no padding when the viewport is taller than the content', () => {
+        expect(visibleWindow(3, ROW, 0, 1000, 2)).toEqual({
+            start: 0,
+            end: 3,
+            topPad: 0,
+            bottomPad: 0,
+        });
+    });
+
+    it('degrades to the full list when the row height is not positive', () => {
+        expect(visibleWindow(10, 0, 0, VIEWPORT, 2)).toEqual({
+            start: 0,
+            end: 10,
+            topPad: 0,
+            bottomPad: 0,
+        });
     });
 });

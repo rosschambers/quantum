@@ -127,6 +127,51 @@ export function filterTree(roots: ProcessNode[], text: string): ProcessNode[] {
     return prune(roots);
 }
 
+/**
+ * The visible slice of a virtualized list plus the spacer heights that stand in
+ * for the rows outside it. `start`/`end` are indices into the item list (a
+ * half-open range, so the visible items are `items.slice(start, end)`);
+ * `topPad`/`bottomPad` are the pixel heights of the spacer rows rendered before
+ * and after the visible slice so the scroll extent stays correct.
+ */
+export interface VisibleWindow {
+    start: number;
+    end: number;
+    topPad: number;
+    bottomPad: number;
+}
+
+/**
+ * Compute which items of a uniform-height list are visible in a scroll viewport,
+ * plus the spacer heights for the hidden remainder. All items are assumed to be
+ * `rowHeight` pixels tall (the task-manager tree accepts minor section-header
+ * imprecision for a single uniform height). `overscan` extra items are rendered
+ * on each side so a fast scroll does not flash blank rows; the range is clamped
+ * to `[0, itemCount]`. A non-positive `rowHeight` cannot be windowed, so the
+ * whole list is returned with no padding.
+ */
+export function visibleWindow(
+    itemCount: number,
+    rowHeight: number,
+    scrollTop: number,
+    viewportHeight: number,
+    overscan: number,
+): VisibleWindow {
+    if (itemCount <= 0 || rowHeight <= 0) {
+        return { start: 0, end: rowHeight <= 0 ? Math.max(0, itemCount) : 0, topPad: 0, bottomPad: 0 };
+    }
+    const firstVisible = Math.floor(scrollTop / rowHeight);
+    const lastVisible = Math.ceil((scrollTop + viewportHeight) / rowHeight);
+    const start = Math.max(0, Math.min(itemCount, firstVisible - overscan));
+    const end = Math.max(start, Math.min(itemCount, lastVisible + overscan));
+    return {
+        start,
+        end,
+        topPad: start * rowHeight,
+        bottomPad: (itemCount - end) * rowHeight,
+    };
+}
+
 /** The three slices of a string split around the first case-insensitive match. */
 export interface HighlightParts {
     /** Text before the match. */
