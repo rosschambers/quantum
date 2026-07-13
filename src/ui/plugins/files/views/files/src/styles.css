@@ -21,3 +21,24 @@ body {
 #app {
     height: 100%;
 }
+/*
+ * Styled scrollbars. WebKitGTK's native overlay scrollbar double-paints on
+ * hover over the virtualized list's promoted compositing layer; an explicit
+ * styled (non-overlay) scrollbar renders once and matches the theme.
+ */
+::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+}
+::-webkit-scrollbar-track {
+    background: transparent;
+}
+::-webkit-scrollbar-thumb {
+    background: var(--color-border);
+    border-radius: 6px;
+    border: 2px solid transparent;
+    background-clip: padding-box;
+}
+::-webkit-scrollbar-thumb:hover {
+    background: var(--color-muted);
+}
