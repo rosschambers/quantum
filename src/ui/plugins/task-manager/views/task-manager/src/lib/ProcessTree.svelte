@@ -387,6 +387,19 @@
         width: 100%;
         border-collapse: collapse;
         font-size: 13px;
+        /* Fixed layout so a long app name or window title cannot stretch the
+           Name column and shove the numeric columns off a narrow (partial-
+           width) window. Column widths below are honoured instead of content. */
+        table-layout: fixed;
+    }
+    /* Cap the numeric columns at tight fixed widths so the Name column (no
+       explicit width) takes only the remaining space and its contents truncate
+       with an ellipsis rather than widening the table on a narrow window. */
+    .pid-col {
+        width: 64px;
+    }
+    thead th.num:not(.pid-col) {
+        width: 92px;
     }
     thead th {
         position: sticky;
@@ -484,17 +497,30 @@
         align-items: center;
         gap: 6px;
         overflow: hidden;
-        text-overflow: ellipsis;
+        /* min-width: 0 lets this flex container actually shrink inside the
+           fixed-width cell so its children can ellipsize. */
+        min-width: 0;
     }
     .pname {
+        /* min-width: 0 is required for text-overflow to trigger on a flex item.
+           The process name keeps its natural width but will truncate before it
+           overflows the cell. */
+        min-width: 0;
+        white-space: nowrap;
         overflow: hidden;
         text-overflow: ellipsis;
+        flex: 0 1 auto;
     }
     .wintitle {
         color: var(--color-muted, #8a8578);
         font-size: 12px;
+        min-width: 0;
+        white-space: nowrap;
         overflow: hidden;
         text-overflow: ellipsis;
+        /* The window title absorbs the remaining space and is the first thing
+           to truncate as the window narrows. */
+        flex: 1 1 auto;
     }
     .chev {
         width: 14px;
