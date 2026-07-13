@@ -96,6 +96,11 @@ async fn run_loop(
     // is the protected pid passed to `build_forest`.
     let protected_pid = std::process::id() as i32;
     let mut interval = tokio::time::interval(Duration::from_secs(1));
+    // Skip missed ticks rather than bursting to catch up: after a system
+    // suspend/resume the monotonic clock jumps, and `Skip` re-anchors the next
+    // deadline to the first period boundary after "now" so resume yields a
+    // single catch-up tick, never a burst or spin (tokio#7883).
+    interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     loop {
         interval.tick().await;
 

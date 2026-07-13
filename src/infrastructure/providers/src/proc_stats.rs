@@ -26,8 +26,19 @@ impl ProcStatsProvider {
             // GTK + WebKit render path) then stay idle between real
             // changes instead of waking up once a second.
             let mut last_published: Option<serde_json::Value> = None;
+            // Periodic cadence via `interval` + `Skip`, not a bare `sleep`
+            // loop. After a system suspend/resume the monotonic clock jumps,
+            // and a long-lived `sleep`-in-loop can hit tokio's past-deadline
+            // self-wake spin (tokio#7883), busy-looping the /proc reads at
+            // ~100% of a core until the daemon is restarted. `Skip` re-anchors
+            // the next deadline to the first period boundary after "now", so a
+            // resume produces a single catch-up tick and then normal cadence,
+            // never a spin. See
+            // docs/plans/2026-07-12-suspend-resume-timer-spin-design.md.
+            let mut interval = tokio::time::interval(std::time::Duration::from_secs(1));
+            interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
             loop {
-                tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+                interval.tick().await;
                 // No subscriber (no bar connected): skip the /proc read and
                 // parse entirely for this tick. The broadcast sender reports
                 // zero receivers, so nothing would consume the payload anyway.
@@ -172,6 +183,39 @@ mod tests {
         let a = build_payload(100_000, 1_000_000, 4096, 8192);
         let b = build_payload(200_000, 1_000_000, 4096, 8192);
         assert_ne!(a, b);
+    }
+
+    // Locks the suspend-resilience contract the polling loop depends on: an
+    // `interval` configured with `MissedTickBehavior::Skip` must, when the
+    // clock jumps far ahead at once (as `CLOCK_MONOTONIC` effectively does on
+    // resume), fire a single catch-up tick and then wait a full period — it
+    // must NOT burst or spin. A regression to `sleep`-in-loop or the default
+    // `Burst` behavior would break this and reintroduce the post-resume
+    // busy-loop (tokio#7883). See
+    // docs/plans/2026-07-12-suspend-resume-timer-spin-design.md.
+    #[tokio::test(start_paused = true)]
+    async fn skip_interval_does_not_spin_after_a_large_clock_jump() {
+        use std::time::Duration;
+        let mut interval = tokio::time::interval(Duration::from_secs(1));
+        interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+
+        // First tick completes immediately (interval's first tick is at t0).
+        interval.tick().await;
+
+        // Simulate a long suspend: jump the clock far past many periods.
+        tokio::time::advance(Duration::from_secs(3_600)).await;
+
+        // Exactly one catch-up tick is available now...
+        interval.tick().await;
+
+        // ...and the very next tick must NOT be immediately ready. If Skip
+        // re-anchored correctly, it waits ~one period; a spinning/bursting
+        // interval would resolve this select on the `tick` branch at once.
+        let next = tokio::time::timeout(Duration::from_millis(10), interval.tick()).await;
+        assert!(
+            next.is_err(),
+            "after a clock jump the next tick must wait a full period, not fire immediately"
+        );
     }
 
     #[tokio::test]
