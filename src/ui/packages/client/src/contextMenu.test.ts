@@ -252,6 +252,30 @@ describe('checked and radio state', () => {
   });
 });
 
+describe('shortcut accelerators', () => {
+  it('renders a shortcut span when a menu item has a shortcut', () => {
+    openContextMenu(rightClickAt(10, 10), [{ label: 'Copy', shortcut: 'Ctrl+C', onSelect: vi.fn() }]);
+    const item = buttonWithText(menuRoot()!, 'Copy');
+    const span = item.querySelector('[data-shortcut]');
+    expect(span).not.toBeNull();
+    expect(span!.textContent).toBe('Ctrl+C');
+  });
+
+  it('renders no shortcut span when the item has none', () => {
+    openContextMenu(rightClickAt(10, 10), [{ label: 'Open', onSelect: vi.fn() }]);
+    const item = buttonWithText(menuRoot()!, 'Open');
+    expect(item.querySelector('[data-shortcut]')).toBeNull();
+  });
+
+  it('does not render a shortcut span when the item has children', () => {
+    openContextMenu(rightClickAt(10, 10), [
+      { label: 'Parent', shortcut: 'Ctrl+C', children: [{ label: 'Child', onSelect: vi.fn() }] },
+    ]);
+    const parent = buttonWithText(menuRoot()!, 'Parent');
+    expect(parent.querySelector('[data-shortcut]')).toBeNull();
+  });
+});
+
 describe('nested submenus', () => {
   it('opens a flyout submenu on mouseenter of a parent item', () => {
     openContextMenu(rightClickAt(10, 10), [

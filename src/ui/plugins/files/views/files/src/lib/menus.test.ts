@@ -6,6 +6,7 @@ import {
     type EntryMenuContext,
     type BackgroundMenuContext,
 } from './menus';
+import { SHORTCUT_KEYS } from './shortcuts';
 
 /** Build a `FileEntry` with sensible defaults, overriding only what a test cares about. */
 function entry(overrides: Partial<FileEntry> & { name: string }): FileEntry {
@@ -239,6 +240,44 @@ describe('buildEntryMenu actions', () => {
         const items = buildEntryMenu(entryContext({ entry: target, onProperties }));
         item(items, 'Properties')?.onSelect?.();
         expect(onProperties).toHaveBeenCalledWith(target);
+    });
+});
+
+describe('buildEntryMenu shortcut accelerators', () => {
+    it('entry menu items carry keyboard shortcuts', () => {
+        const items = buildEntryMenu(entryContext());
+        expect(item(items, 'Cut')?.shortcut).toBe(SHORTCUT_KEYS.cut);
+        expect(item(items, 'Copy')?.shortcut).toBe(SHORTCUT_KEYS.copy);
+        expect(item(items, 'Paste')?.shortcut).toBe(SHORTCUT_KEYS.paste);
+        expect(item(items, 'Duplicate')?.shortcut).toBe(SHORTCUT_KEYS.duplicate);
+        expect(item(items, 'Rename')?.shortcut).toBe(SHORTCUT_KEYS.rename);
+        expect(item(items, 'Move to trash')?.shortcut).toBe(SHORTCUT_KEYS.trash);
+        expect(item(items, 'Delete permanently')?.shortcut).toBe(SHORTCUT_KEYS.deletePermanent);
+    });
+
+    it('entry menu items without a keybind carry no shortcut', () => {
+        const items = buildEntryMenu(entryContext());
+        expect(item(items, 'Open')?.shortcut).toBeUndefined();
+        expect(item(items, 'Open with...')?.shortcut).toBeUndefined();
+        expect(item(items, 'Open terminal here')?.shortcut).toBeUndefined();
+        expect(item(items, 'Copy path')?.shortcut).toBeUndefined();
+        expect(item(items, 'Properties')?.shortcut).toBeUndefined();
+    });
+});
+
+describe('buildBackgroundMenu shortcut accelerators', () => {
+    it('New folder and Paste carry their shortcuts', () => {
+        const items = buildBackgroundMenu(backgroundContext());
+        expect(item(items, 'New folder')?.shortcut).toBe(SHORTCUT_KEYS.newFolder);
+        expect(item(items, 'Paste')?.shortcut).toBe(SHORTCUT_KEYS.paste);
+    });
+
+    it('background items without a keybind carry no shortcut', () => {
+        const items = buildBackgroundMenu(backgroundContext());
+        expect(item(items, 'New file')?.shortcut).toBeUndefined();
+        expect(item(items, 'Open terminal here')?.shortcut).toBeUndefined();
+        expect(item(items, 'Pin this folder')?.shortcut).toBeUndefined();
+        expect(item(items, 'Properties')?.shortcut).toBeUndefined();
     });
 });
 

@@ -16,6 +16,7 @@
 import type { ApplicationInfo, FileEntry, FileOperation, MenuItem } from '@quantum/client';
 import type { ClipboardOperation } from './clipboard.svelte';
 import { pathBaseName } from './path';
+import { SHORTCUT_KEYS } from './shortcuts';
 
 /** A pin target: the path to pin and the label to show for it. A `FileEntry` satisfies this. */
 export interface PinTarget {
@@ -103,11 +104,15 @@ export function buildEntryMenu(ctx: EntryMenuContext): MenuItem[] {
         { label: 'Open with...', onSelect: () => ctx.onOpenWithPicker(entry) },
         { label: 'Open terminal here', onSelect: () => ctx.onOpenTerminal(terminalDirectory) },
         separator,
-        { label: 'Cut', onSelect: () => ctx.onClipboard('cut', paths) },
-        { label: 'Copy', onSelect: () => ctx.onClipboard('copy', paths) },
-        { label: 'Paste', onSelect: () => ctx.onPaste(ctx.path) },
-        { label: 'Duplicate', onSelect: () => ctx.onOperation({ kind: 'duplicate', path: entry.path }) },
-        { label: 'Rename', onSelect: () => ctx.onRename(entry) },
+        { label: 'Cut', shortcut: SHORTCUT_KEYS.cut, onSelect: () => ctx.onClipboard('cut', paths) },
+        { label: 'Copy', shortcut: SHORTCUT_KEYS.copy, onSelect: () => ctx.onClipboard('copy', paths) },
+        { label: 'Paste', shortcut: SHORTCUT_KEYS.paste, onSelect: () => ctx.onPaste(ctx.path) },
+        {
+            label: 'Duplicate',
+            shortcut: SHORTCUT_KEYS.duplicate,
+            onSelect: () => ctx.onOperation({ kind: 'duplicate', path: entry.path }),
+        },
+        { label: 'Rename', shortcut: SHORTCUT_KEYS.rename, onSelect: () => ctx.onRename(entry) },
         separator,
     ];
 
@@ -140,9 +145,15 @@ export function buildEntryMenu(ctx: EntryMenuContext): MenuItem[] {
 
     items.push(
         separator,
-        { label: 'Move to trash', danger: true, onSelect: () => ctx.onOperation({ kind: 'trash', paths }) },
+        {
+            label: 'Move to trash',
+            shortcut: SHORTCUT_KEYS.trash,
+            danger: true,
+            onSelect: () => ctx.onOperation({ kind: 'trash', paths }),
+        },
         {
             label: 'Delete permanently',
+            shortcut: SHORTCUT_KEYS.deletePermanent,
             danger: true,
             onSelect: () => ctx.onOperation({ kind: 'delete', paths }),
         },
@@ -157,10 +168,10 @@ export function buildEntryMenu(ctx: EntryMenuContext): MenuItem[] {
 export function buildBackgroundMenu(ctx: BackgroundMenuContext): MenuItem[] {
     const target: PinTarget = { path: ctx.path, name: pathBaseName(ctx.path) };
     return [
-        { label: 'New folder', onSelect: () => ctx.onNewFolder(ctx.path) },
+        { label: 'New folder', shortcut: SHORTCUT_KEYS.newFolder, onSelect: () => ctx.onNewFolder(ctx.path) },
         { label: 'New file', onSelect: () => ctx.onNewFile(ctx.path) },
         separator,
-        { label: 'Paste', onSelect: () => ctx.onPaste(ctx.path) },
+        { label: 'Paste', shortcut: SHORTCUT_KEYS.paste, onSelect: () => ctx.onPaste(ctx.path) },
         separator,
         { label: 'Open terminal here', onSelect: () => ctx.onOpenTerminal(ctx.path) },
         { label: 'Pin this folder', onSelect: () => ctx.onPin(target) },

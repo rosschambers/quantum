@@ -36,6 +36,7 @@
     import PropertiesModal from './lib/PropertiesModal.svelte';
     import PromptModal from './lib/PromptModal.svelte';
     import ConfirmModal from './lib/ConfirmModal.svelte';
+    import ShortcutsModal from './lib/ShortcutsModal.svelte';
     import { resolveShortcut, type ShortcutAction } from './lib/keymap';
     import { buildEntryMenu, buildBackgroundMenu, type PinTarget } from './lib/menus';
     import { runOperation, type OperationResult } from './lib/operations';
@@ -90,6 +91,7 @@
     let propertiesTarget = $state<PropertiesTarget | null>(null);
     let promptRequest = $state<PromptRequest | null>(null);
     let confirmRequest = $state<ConfirmRequest | null>(null);
+    let helpOpen = $state(false);
     let cachedApplications = $state<ApplicationInfo[]>([]);
 
     // Plain (non-reactive) scratch: the event that opened the current menu (so a
@@ -310,12 +312,14 @@
                 const hadOpen =
                     propertiesTarget !== null ||
                     promptRequest !== null ||
-                    confirmRequest !== null;
+                    confirmRequest !== null ||
+                    helpOpen;
                 closeContextMenu();
                 if (hadOpen) {
                     propertiesTarget = null;
                     promptRequest = null;
                     confirmRequest = null;
+                    helpOpen = false;
                 } else if (!inInput) {
                     // Only a bare Escape over the file list clears the selection;
                     // Escape while typing in the filter or location bar must not.
@@ -505,6 +509,9 @@
                 break;
             case 'clear-selection':
                 active.clearSelection();
+                break;
+            case 'help':
+                helpOpen = true;
                 break;
             default: {
                 // Compile-time exhaustiveness: a new ShortcutAction variant that
@@ -764,6 +771,7 @@
         onFilterInput={handleFilterInput}
         onToggleDeep={toggleDeep}
         onToggleDual={() => (dualPane = !dualPane)}
+        onHelp={() => (helpOpen = true)}
         onClose={() => ipc.close()}
     />
 
@@ -826,6 +834,10 @@
         }}
         onCancel={() => (confirmRequest = null)}
     />
+{/if}
+
+{#if helpOpen}
+    <ShortcutsModal onClose={() => (helpOpen = false)} />
 {/if}
 
 {#snippet paneView(index: number)}

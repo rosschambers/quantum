@@ -18,6 +18,7 @@ function renderToolbar(extra: Partial<Record<string, unknown>> = {}) {
             onFilterInput: vi.fn(),
             onToggleDeep: vi.fn(),
             onToggleDual: vi.fn(),
+            onHelp: vi.fn(),
             onClose: vi.fn(),
             ...extra,
         },
@@ -81,5 +82,16 @@ describe('Toolbar', () => {
         const close = container.querySelector('.b-close') as HTMLButtonElement;
         await fireEvent.click(close);
         expect(onClose).toHaveBeenCalledTimes(1);
+    });
+
+    it('calls onHelp when the keyboard-shortcuts button is clicked', async () => {
+        const onHelp = vi.fn();
+        const { container } = renderToolbar({ onHelp });
+        const help = container.querySelector('.b-help') as HTMLButtonElement;
+        expect(help).not.toBeNull();
+        expect(help.getAttribute('title')).toBe('Keyboard shortcuts (?)');
+        expect(help.getAttribute('aria-label')).toBe('Keyboard shortcuts');
+        await fireEvent.click(help);
+        expect(onHelp).toHaveBeenCalledTimes(1);
     });
 });

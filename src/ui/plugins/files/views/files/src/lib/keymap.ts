@@ -17,7 +17,8 @@ export type ShortcutAction =
     | { kind: 'refresh' }
     | { kind: 'cursor'; to: 'first' | 'last' }
     | { kind: 'toggle-hidden' }
-    | { kind: 'clear-selection' };
+    | { kind: 'clear-selection' }
+    | { kind: 'help' };
 
 /** Map a keyboard event to a shortcut action, or null when it is not one. */
 export function resolveShortcut(event: KeyboardEvent): ShortcutAction | null {
@@ -53,6 +54,8 @@ export function resolveShortcut(event: KeyboardEvent): ShortcutAction | null {
         case 'Home': return { kind: 'cursor', to: 'first' };
         case 'End': return { kind: 'cursor', to: 'last' };
         case 'Escape': return { kind: 'clear-selection' };
+        // `?` is Shift+/, so shiftKey may be true; match the key alone.
+        case '?': return { kind: 'help' };
         default: return null;
     }
 }

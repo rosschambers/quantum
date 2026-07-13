@@ -30,6 +30,13 @@ export interface MenuItem {
    * underlying state and rebuilds items to reflect changes.
    */
   checked?: boolean | 'radio';
+  /**
+   * Optional keyboard accelerator label (for example `Ctrl+C`), shown
+   * right-aligned and muted at the trailing edge of the item. Rendered via
+   * textContent only, never as markup. Ignored when the item has `children`,
+   * because that trailing slot shows the submenu indicator instead.
+   */
+  shortcut?: string;
   /** Invoked once when the item is selected, after the menu closes. */
   onSelect?: () => void;
 }
@@ -146,6 +153,12 @@ const MENU_STYLES = `
   padding-left: var(--space-2, 0.5rem);
   color: var(--color-fg-alt, #a6adc8);
 }
+[data-quantum-context-menu] button > span[data-shortcut="true"] {
+  margin-left: auto;
+  padding-left: var(--space-4, 1.5rem);
+  color: var(--color-muted, #6c7086);
+  font-size: var(--font-size-xs, 11px);
+}
 `;
 
 /**
@@ -241,6 +254,11 @@ function renderItemElement(doc: Document, item: MenuItem): HTMLElement {
     indicator.dataset.submenuIndicator = 'true';
     indicator.textContent = SUBMENU_GLYPH;
     button.appendChild(indicator);
+  } else if (item.shortcut) {
+    const shortcut = doc.createElement('span');
+    shortcut.dataset.shortcut = 'true';
+    shortcut.textContent = item.shortcut;
+    button.appendChild(shortcut);
   }
   if (item.danger) {
     button.dataset.danger = 'true';
