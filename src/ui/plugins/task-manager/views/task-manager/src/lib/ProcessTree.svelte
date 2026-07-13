@@ -14,6 +14,7 @@
         splitHighlight,
         glyphFor,
         fmtMem,
+        visibleWindow,
         type SortState,
         type SortColumn,
         type RenderRow,
@@ -164,6 +165,82 @@
     // state instead of two bare section headers.
     const noMatches = $derived(filtering && appRows.length === 0 && backgroundRows.length === 0);
 
+    // --- Virtualization -----------------------------------------------------
+    // Under load the tree can hold 200+ rows, and mounting them all every second
+    // is what makes the panel expensive to render. The two sections are
+    // flattened into one uniform item list and only the slice visible in the
+    // scroll viewport (plus a small overscan) is mounted; spacer rows stand in
+    // for the remainder so the scrollbar extent is unchanged.
+    //
+    // A single ROW_HEIGHT is used for every item. Process rows are about 26px
+    // (5px padding top and bottom, a ~13px line, a 1px divider). Section headers
+    // are a little taller; that is accepted as minor spacer imprecision in
+    // exchange for one drift-free height (per-item heights would buy nothing the
+    // user can see here).
+    const ROW_HEIGHT = 26;
+    const OVERSCAN = 4;
+
+    type TreeItem =
+        | { kind: 'section'; section: 'apps' | 'background'; open: boolean }
+        | { kind: 'row'; row: RenderRow; isApps: boolean };
+
+    // The scroll container and its measured geometry. `measure` runs on scroll
+    // and on resize; jsdom never lays out, so tests drive these values directly.
+    let wrap = $state<HTMLDivElement | undefined>(undefined);
+    let scrollTop = $state(0);
+    let viewportHeight = $state(0);
+
+    function measure(): void {
+        if (!wrap) return;
+        scrollTop = wrap.scrollTop;
+        viewportHeight = wrap.clientHeight;
+    }
+
+    $effect(() => {
+        if (!wrap) return;
+        measure();
+        if (typeof ResizeObserver === 'undefined') return;
+        const observer = new ResizeObserver(() => measure());
+        observer.observe(wrap);
+        return () => observer.disconnect();
+    });
+
+    // One flat, display-ordered list of section headers and their (open) rows,
+    // so a single window can cover both sections uniformly.
+    const items = $derived.by<TreeItem[]>(() => {
+        if (noMatches) return [];
+        const list: TreeItem[] = [];
+        list.push({ kind: 'section', section: 'apps', open: appsOpen || filtering });
+        if (appsOpen || filtering) {
+            for (const row of appRows) list.push({ kind: 'row', row, isApps: true });
+        }
+        list.push({ kind: 'section', section: 'background', open: backgroundOpen || filtering });
+        if (backgroundOpen || filtering) {
+            for (const row of backgroundRows) list.push({ kind: 'row', row, isApps: false });
+        }
+        return list;
+    });
+
+    const win = $derived(
+        visibleWindow(items.length, ROW_HEIGHT, scrollTop, viewportHeight, OVERSCAN),
+    );
+    const visibleItems = $derived(items.slice(win.start, win.end));
+
+    // Section headers get a stable string key; rows keep their pid key so Svelte
+    // reconciles the same process across snapshots. The two key spaces never
+    // collide (numeric pids versus `section-*` strings).
+    function itemKey(item: TreeItem): string | number {
+        return item.kind === 'section' ? `section-${item.section}` : item.row.node.pid;
+    }
+
+    function toggleSection(section: 'apps' | 'background'): void {
+        if (section === 'apps') {
+            appsOpen = !appsOpen;
+        } else {
+            backgroundOpen = !backgroundOpen;
+        }
+    }
+
     function toggleExpanded(pid: number): void {
         const next = new Set(expanded);
         if (next.has(pid)) {
@@ -198,7 +275,7 @@
     }
 </script>
 
-<div class="treewrap">
+<div class="treewrap" bind:this={wrap} onscroll={measure}>
     {#if killError}
         <div class="kill-error" role="alert">
             <span class="kill-error-message">{killError}</span>
@@ -248,43 +325,33 @@
                     <td colspan="4">No processes match "{filterText.trim()}"</td>
                 </tr>
             {:else}
-                <tr class="section">
-                    <td colspan="4">
-                        <button
-                            type="button"
-                            class="section-toggle"
-                            onclick={() => (appsOpen = !appsOpen)}
-                        >
-                            {appsOpen || filtering ? '▾' : '▸'} Apps
-                        </button>
-                    </td>
+                <tr class="spacer" aria-hidden="true">
+                    <td colspan="4" style="height: {win.topPad}px"></td>
                 </tr>
-                {#if appsOpen || filtering}
-                    {#each appRows as row (row.node.pid)}
-                        {@render processRow(row, true)}
-                    {/each}
-                {/if}
-
-                <tr class="section">
-                    <td colspan="4">
-                        <button
-                            type="button"
-                            class="section-toggle"
-                            onclick={() => (backgroundOpen = !backgroundOpen)}
-                        >
-                            {backgroundOpen || filtering ? '▾' : '▸'} Background
-                        </button>
-                    </td>
+                {#each visibleItems as item (itemKey(item))}
+                    {#if item.kind === 'section'}
+                        {@render sectionRow(item.section, item.open)}
+                    {:else}
+                        {@render processRow(item.row, item.isApps)}
+                    {/if}
+                {/each}
+                <tr class="spacer" aria-hidden="true">
+                    <td colspan="4" style="height: {win.bottomPad}px"></td>
                 </tr>
-                {#if backgroundOpen || filtering}
-                    {#each backgroundRows as row (row.node.pid)}
-                        {@render processRow(row, false)}
-                    {/each}
-                {/if}
             {/if}
         </tbody>
     </table>
 </div>
+
+{#snippet sectionRow(section: 'apps' | 'background', open: boolean)}
+    <tr class="section">
+        <td colspan="4">
+            <button type="button" class="section-toggle" onclick={() => toggleSection(section)}>
+                {open ? '▾' : '▸'} {section === 'apps' ? 'Apps' : 'Background'}
+            </button>
+        </td>
+    </tr>
+{/snippet}
 
 {#snippet highlighted(text: string)}{@const parts = splitHighlight(text, filterText)}{parts.before}{#if parts.match}<mark>{parts.match}</mark>{/if}{parts.after}{/snippet}
 
@@ -452,6 +519,15 @@
         padding: 12px 8px 4px;
     }
     tr.section:hover td {
+        background: transparent;
+    }
+    /* Virtualization spacers: zero padding and border so their inline height is
+       the exact stand-in for the un-mounted rows above and below the window. */
+    tr.spacer td {
+        padding: 0;
+        border: 0;
+    }
+    tr.spacer:hover td {
         background: transparent;
     }
     tr.empty td {

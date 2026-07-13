@@ -7,6 +7,7 @@ pub mod messages;
 pub mod multiplex;
 pub mod registry;
 pub mod scheme;
+pub mod subscriptions;
 pub mod view_catalog;
 pub mod web_process;
 pub mod window_host;
@@ -22,6 +23,7 @@ pub use registry::{
     canonicalize_view_name, ManagedWindow, ManagedWindowConstructor, WindowOps, WindowRegistry,
 };
 pub use scheme::{register_quantum_scheme, register_quantum_scheme_on_default, token_push_js};
+pub use subscriptions::{should_forward, WebviewSubscriptions};
 pub use view_catalog::ViewCatalog;
 pub use window_host::{DummyWindowHost, GtkWindowHost};
 pub use windows::PanelWindow;

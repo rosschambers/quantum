@@ -2,10 +2,12 @@
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use std::collections::HashSet;
 use std::sync::Arc;
 use tokio::runtime::Handle;
 use webkit6::{prelude::*, WebView};
 
+use crate::subscriptions::WebviewSubscriptions;
 use crate::IpcDispatcher;
 
 /// Post-process a serialized JSON string so it is safe to splice into a
@@ -30,7 +32,17 @@ pub struct BridgeMessage {
 
 /// Register the bridge message handler on a WebView.
 /// Wires WebKit script messages to the Tokio dispatcher with JS evaluation for responses.
-pub fn register_bridge(webview: &WebView, dispatcher: Arc<dyn IpcDispatcher>, runtime: Handle) {
+///
+/// `subs` is the webview's per-webview subscription set. The two webview-local
+/// methods `bridge.subscribe` / `bridge.unsubscribe` mutate it here instead of
+/// dispatching to the global dispatcher, so the paired forwarder can filter the
+/// broadcast down to the channels this webview actually asked for.
+pub fn register_bridge(
+    webview: &WebView,
+    dispatcher: Arc<dyn IpcDispatcher>,
+    runtime: Handle,
+    subs: WebviewSubscriptions,
+) {
     let ucm = match webview.user_content_manager() {
         Some(mgr) => mgr,
         None => {
@@ -82,11 +94,8 @@ pub fn register_bridge(webview: &WebView, dispatcher: Arc<dyn IpcDispatcher>, ru
             return;
         };
 
-        let dispatcher = dispatcher.clone();
         let webview = webview_clone.clone();
         let id = parsed.id;
-        let method = parsed.method.clone();
-        let params = parsed.params.clone();
 
         // One-shot channel for the JS expression to evaluate once the
         // dispatcher completes. The receiver is awaited on the GLib main
@@ -94,28 +103,55 @@ pub fn register_bridge(webview: &WebView, dispatcher: Arc<dyn IpcDispatcher>, ru
         // rather than busy-polling.
         let (tx, rx) = tokio::sync::oneshot::channel::<String>();
 
-        runtime.spawn(async move {
-            let result = dispatcher.dispatch(&method, params).await;
-            let js = match result {
-                Ok(value) => {
-                    let payload = serde_json::to_string(&value).unwrap_or_else(|_| "null".into());
-                    let payload = json_to_js_expression(&payload);
-                    format!("window.__quantum_resolve({id}, {payload})")
+        if parsed.method == "bridge.subscribe" || parsed.method == "bridge.unsubscribe" {
+            // Webview-local: update this webview's subscription set and resolve
+            // the caller's promise WITHOUT dispatching to the global
+            // dispatcher. Once seeded the set stays `Some`, so an unsubscribe
+            // of the last channel narrows the filter to nothing but never
+            // reverts to the forward-all state.
+            if let Some(channel) = parsed.params.get("channel").and_then(Value::as_str) {
+                if let Ok(mut guard) = subs.lock() {
+                    if parsed.method == "bridge.subscribe" {
+                        guard
+                            .get_or_insert_with(HashSet::new)
+                            .insert(channel.to_string());
+                    } else if let Some(set) = guard.as_mut() {
+                        set.remove(channel);
+                    }
                 }
-                Err(err) => {
-                    let error_json = serde_json::to_string(&serde_json::json!({
-                        "code": err.code,
-                        "message": err.message,
-                    }))
-                    .unwrap_or_else(|_| "{}".into());
-                    let error_json = json_to_js_expression(&error_json);
-                    format!("window.__quantum_reject({id}, {error_json})")
-                }
-            };
+            }
+            // Resolve so the client's `call` settles. Reuse the same
+            // oneshot -> spawn_local evaluation path the dispatched case uses.
+            let _ = tx.send(format!("window.__quantum_resolve({id}, null)"));
+        } else {
+            let dispatcher = dispatcher.clone();
+            let method = parsed.method.clone();
+            let params = parsed.params.clone();
 
-            // Ignore send failure: the GTK side has gone away.
-            let _ = tx.send(js);
-        });
+            runtime.spawn(async move {
+                let result = dispatcher.dispatch(&method, params).await;
+                let js = match result {
+                    Ok(value) => {
+                        let payload =
+                            serde_json::to_string(&value).unwrap_or_else(|_| "null".into());
+                        let payload = json_to_js_expression(&payload);
+                        format!("window.__quantum_resolve({id}, {payload})")
+                    }
+                    Err(err) => {
+                        let error_json = serde_json::to_string(&serde_json::json!({
+                            "code": err.code,
+                            "message": err.message,
+                        }))
+                        .unwrap_or_else(|_| "{}".into());
+                        let error_json = json_to_js_expression(&error_json);
+                        format!("window.__quantum_reject({id}, {error_json})")
+                    }
+                };
+
+                // Ignore send failure: the GTK side has gone away.
+                let _ = tx.send(js);
+            });
+        }
 
         // Drive the oneshot on the GLib main context. `spawn_local` yields
         // to the loop while awaiting, so there is no busy loop on the GTK

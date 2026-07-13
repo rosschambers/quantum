@@ -241,10 +241,17 @@ impl PanelWindow {
         webview.load_uri(&url);
         window.set_child(Some(&webview));
 
+        // Per-webview subscription set, shared between the bridge (which
+        // seeds and updates it from `bridge.subscribe` / `bridge.unsubscribe`
+        // messages) and the broadcast forwarder below (which filters on it).
+        // `None` until the client seeds its first subscription: forward all.
+        let subs: crate::subscriptions::WebviewSubscriptions =
+            std::sync::Arc::new(std::sync::Mutex::new(None));
+
         // Register the bridge to wire JS messages to the dispatcher. The
         // dispatcher Arc is consumed here; the bridge keeps its own clone
         // inside the script message handler closure.
-        crate::bridge::register_bridge(&webview, dispatcher, runtime.clone());
+        crate::bridge::register_bridge(&webview, dispatcher, runtime.clone(), subs.clone());
 
         // Subscribe to broadcast events and forward them to the WebView as
         // `window.__quantum_notify(channel, payload)` calls.
@@ -257,10 +264,23 @@ impl PanelWindow {
         let (js_tx, mut js_rx) = tokio::sync::mpsc::unbounded_channel::<String>();
         let mut event_rx = event_tx.subscribe();
         let theme_store_for_notify = theme_store.clone();
+        let subs_for_notify = subs.clone();
         runtime.spawn(async move {
             loop {
                 match event_rx.recv().await {
                     Ok(env) => {
+                        // Filter server-side: skip channels this webview never
+                        // subscribed to (once seeded). The lock is held only
+                        // for the pure decision, never across an await. A
+                        // poisoned lock fails open so a panic elsewhere can
+                        // never silently freeze this webview's live updates.
+                        let forward = match subs_for_notify.lock() {
+                            Ok(guard) => crate::subscriptions::should_forward(&env.channel, &guard),
+                            Err(_) => true,
+                        };
+                        if !forward {
+                            continue;
+                        }
                         let channel =
                             serde_json::to_string(&env.channel).unwrap_or_else(|_| "\"\"".into());
                         // `env.payload` is `Box<RawValue>` carrying raw JSON
