@@ -98,7 +98,6 @@ pub fn run(
         quantum_ui::register_quantum_scheme_on_default(theme_store_for_scheme.clone());
 
         let ctor = ManagedWindowConstructor::new(
-            app.clone(),
             dispatcher_for_activate.clone(),
             theme_store_for_activate.clone(),
             runtime.clone(),

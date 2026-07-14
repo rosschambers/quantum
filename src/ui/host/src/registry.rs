@@ -226,7 +226,6 @@ pub enum ManagedWindow {
 
 /// Real window constructor that builds GTK windows.
 pub struct ManagedWindowConstructor {
-    app: gtk4::Application,
     dispatcher: Arc<dyn IpcDispatcher>,
     theme_store: Arc<dyn ThemeStore>,
     runtime: Handle,
@@ -239,7 +238,6 @@ impl ManagedWindowConstructor {
     /// [`ViewDescriptor`] for each canonical view name so `construct`
     /// dispatches on declared window semantics instead of hardcoded names.
     pub fn new(
-        app: gtk4::Application,
         dispatcher: Arc<dyn IpcDispatcher>,
         theme_store: Arc<dyn ThemeStore>,
         runtime: Handle,
@@ -247,7 +245,6 @@ impl ManagedWindowConstructor {
         catalog: crate::ViewCatalog,
     ) -> Self {
         Self {
-            app,
             dispatcher,
             theme_store,
             runtime,
@@ -271,9 +268,8 @@ impl ManagedWindowConstructor {
     /// Build the shared [`WindowContext`] for a single construction, cloning
     /// the host-context fields the windows consume and bundling in the
     /// resolved monitor.
-    fn window_context(&self, monitor: Option<gdk::Monitor>) -> WindowContext<'_> {
+    fn window_context(&self, monitor: Option<gdk::Monitor>) -> WindowContext {
         WindowContext {
-            app: &self.app,
             dispatcher: self.dispatcher.clone(),
             theme_store: self.theme_store.clone(),
             runtime: self.runtime.clone(),

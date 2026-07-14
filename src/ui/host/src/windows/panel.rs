@@ -74,7 +74,7 @@ impl PanelWindow {
     /// centered panel and are ignored for overlays, which span the whole
     /// output.
     pub(crate) fn new(
-        ctx: WindowContext<'_>,
+        ctx: WindowContext,
         canonical_name: impl Into<String>,
         overlay: bool,
         width: i32,

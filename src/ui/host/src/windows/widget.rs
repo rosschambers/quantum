@@ -78,7 +78,7 @@ impl WidgetWindow {
     /// timers widget for free placement and dragging); `position` is then
     /// ignored. `fill_output` has no effect on the top-anchored bar path.
     pub(crate) fn new(
-        ctx: WindowContext<'_>,
+        ctx: WindowContext,
         view_name: String,
         anchor: ViewAnchor,
         position: ViewPosition,
@@ -294,11 +294,7 @@ impl WidgetWindow {
     /// zone, takes no keyboard focus, and is not top-anchored (so runtime
     /// `set_height` requests are ignored). It reuses the same transparent
     /// background and WebView/bridge/event-forwarding setup.
-    pub(crate) fn new_toast(
-        ctx: WindowContext<'_>,
-        view_name: String,
-        position: ViewPosition,
-    ) -> Self {
+    pub(crate) fn new_toast(ctx: WindowContext, view_name: String, position: ViewPosition) -> Self {
         let WindowContext {
             dispatcher,
             theme_store,

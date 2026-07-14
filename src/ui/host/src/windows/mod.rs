@@ -47,18 +47,16 @@ pub(crate) fn suppress_browser_context_menu(webview: &webkit6::WebView, inspecto
     webview.connect_context_menu(move |_view, _menu, _hit_test| !inspector_enabled);
 }
 
-/// The shared host context every window constructor needs: the GTK
-/// application to attach to, the IPC dispatcher and theme store, the Tokio
-/// runtime handle and broadcast sender for event forwarding, and the optional
-/// monitor to pin the surface to.
+/// The shared host context every window constructor needs: the IPC
+/// dispatcher and theme store, the Tokio runtime handle and broadcast sender
+/// for event forwarding, and the optional monitor to pin the surface to.
 ///
 /// Bundling these into one value keeps the per-window constructors down to a
 /// handful of window-specific arguments. The struct is single-threaded by
 /// construction (it carries non-`Send` GTK types) and is consumed by each
 /// `new` call, mirroring how the constructors already move their `Arc` clones
 /// and the `Handle`/`Sender` into the window.
-pub(crate) struct WindowContext<'a> {
-    pub app: &'a gtk4::Application,
+pub(crate) struct WindowContext {
     pub dispatcher: Arc<dyn IpcDispatcher>,
     pub theme_store: Arc<dyn ThemeStore>,
     pub runtime: Handle,
