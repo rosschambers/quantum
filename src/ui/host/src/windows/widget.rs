@@ -36,7 +36,7 @@ pub fn monitor_name(monitor: &gdk::Monitor) -> Option<String> {
 
 /// A widget window - positioned on-screen as a background-layer widget.
 pub struct WidgetWindow {
-    window: gtk4::ApplicationWindow,
+    window: gtk4::Window,
     #[allow(dead_code)]
     webview: WebView,
     /// Whether this widget anchors as a top bar (Layer::Top, anchored
@@ -90,17 +90,13 @@ impl WidgetWindow {
         // subscriber below so a `theme.reloaded` event can push freshly
         // resolved tokens into this already-open WebView.
         let WindowContext {
-            app,
             dispatcher,
             theme_store,
             runtime,
             event_tx,
             monitor,
         } = ctx;
-        let window = gtk4::ApplicationWindow::builder()
-            .application(app)
-            .decorated(false)
-            .build();
+        let window = gtk4::Window::builder().decorated(false).build();
 
         // Make the GTK ApplicationWindow background transparent so the
         // layer-shell surface's overflow region passes through. Without
@@ -304,17 +300,13 @@ impl WidgetWindow {
         position: ViewPosition,
     ) -> Self {
         let WindowContext {
-            app,
             dispatcher,
             theme_store,
             runtime,
             event_tx,
             monitor,
         } = ctx;
-        let window = gtk4::ApplicationWindow::builder()
-            .application(app)
-            .decorated(false)
-            .build();
+        let window = gtk4::Window::builder().decorated(false).build();
 
         // Transparent background, mirroring `new`: a window-scoped CSS
         // provider so the layer-shell surface's overflow region passes
@@ -407,7 +399,7 @@ impl WidgetWindow {
 /// [`WidgetWindow::new_toast`].
 #[allow(clippy::too_many_arguments)]
 fn build_webview(
-    window: &gtk4::ApplicationWindow,
+    window: &gtk4::Window,
     view_name: &str,
     dispatcher: Arc<dyn IpcDispatcher>,
     theme_store: Arc<dyn ThemeStore>,
@@ -690,11 +682,7 @@ fn input_region_rects(
 /// `scale_factor()` greater than one; if on-device testing shows the region
 /// is mis-scaled, convert here at the single marked point. This is left at
 /// scale 1 for now per the plan (HiDPI verification is a later manual step).
-fn apply_input_region(
-    window: &gtk4::ApplicationWindow,
-    bar_height: i32,
-    extra: Option<WindowInputRegion>,
-) {
+fn apply_input_region(window: &gtk4::Window, bar_height: i32, extra: Option<WindowInputRegion>) {
     let Some(surface) = gtk4::prelude::NativeExt::surface(window) else {
         return;
     };
