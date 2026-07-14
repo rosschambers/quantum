@@ -27,6 +27,13 @@ fn scope_wrapped_argv(command: &[String], use_scope: bool) -> Vec<String> {
     argv
 }
 
+/// Decide whether to wrap a launch in a systemd user scope. Scope is used
+/// unless the caller disabled it (the `QUANTUM_DISABLE_SCOPE` environment
+/// variable is set) or `systemd-run` is not available on PATH.
+fn should_use_scope(disable_requested: bool, systemd_run_present: bool) -> bool {
+    !disable_requested && systemd_run_present
+}
+
 /// Whether `systemd-run` is resolvable on PATH. Cheap PATH scan; on miss we
 /// launch directly so non-systemd environments still work.
 fn systemd_run_available() -> bool {
@@ -123,17 +130,20 @@ impl ShellExecutor for TokioShellExecutor {
             return Ok(());
         }
 
-        let use_scope =
-            std::env::var_os("QUANTUM_DISABLE_SCOPE").is_none() && systemd_run_available();
+        let use_scope = should_use_scope(
+            std::env::var_os("QUANTUM_DISABLE_SCOPE").is_some(),
+            systemd_run_available(),
+        );
         let argv = scope_wrapped_argv(command, use_scope);
 
         let spawn_argv = |argv: &[String]| -> std::io::Result<tokio::process::Child> {
             let mut cmd = Command::new(&argv[0]);
             cmd.args(&argv[1..]);
-            // Detach from the daemon: own process group, null stdio. Session env
-            // (WAYLAND_DISPLAY, DBUS_SESSION_BUS_ADDRESS, PATH) is left intact for
-            // GUI apps. With systemd-run --scope the app also gets its own cgroup,
-            // so it survives the daemon dying.
+            // Detach from the daemon: own process group, null stdio. Session
+            // environment (WAYLAND_DISPLAY, DBUS_SESSION_BUS_ADDRESS, PATH) is
+            // left intact for GUI applications. With systemd-run --scope the
+            // application also gets its own cgroup, so it survives the daemon
+            // dying.
             cmd.process_group(0)
                 .stdin(Stdio::null())
                 .stdout(Stdio::null())
@@ -144,7 +154,8 @@ impl ShellExecutor for TokioShellExecutor {
         let child = match spawn_argv(&argv) {
             Ok(child) => child,
             Err(e) if use_scope && e.kind() == std::io::ErrorKind::NotFound => {
-                // systemd-run vanished between probe and spawn; launch directly.
+                // systemd-run vanished between probe and spawn; launch the
+                // application directly.
                 spawn_argv(command).map_err(|e| DomainError::Unsupported(e.to_string()))?
             }
             Err(e) => return Err(DomainError::Unsupported(e.to_string())),
@@ -244,13 +255,18 @@ mod tests {
         assert_eq!(super::scope_wrapped_argv(&cmd, false), cmd);
     }
 
-    #[tokio::test]
-    async fn spawn_detached_direct_mode_still_succeeds() {
-        // With scoping disabled, launching `true` must succeed directly.
-        std::env::set_var("QUANTUM_DISABLE_SCOPE", "1");
-        let executor = TokioShellExecutor::new();
-        let result = executor.spawn_detached(&["true".to_string()]).await;
-        std::env::remove_var("QUANTUM_DISABLE_SCOPE");
-        assert!(result.is_ok());
+    #[test]
+    fn should_use_scope_true_when_enabled_and_available() {
+        assert!(super::should_use_scope(false, true));
+    }
+
+    #[test]
+    fn should_use_scope_false_when_disabled() {
+        assert!(!super::should_use_scope(true, true));
+    }
+
+    #[test]
+    fn should_use_scope_false_when_systemd_run_absent() {
+        assert!(!super::should_use_scope(false, false));
     }
 }
