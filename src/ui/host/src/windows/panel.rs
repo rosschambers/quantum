@@ -15,7 +15,7 @@ use webkit6::{prelude::*, WebView};
 /// `theme_store` is owned by the quantum:// scheme handler registered on
 /// the GTK default context — so neither is stored on the struct.
 pub struct PanelWindow {
-    window: gtk4::ApplicationWindow,
+    window: gtk4::Window,
     webview: WebView,
     visible: bool,
     layer_shell: bool,
@@ -86,7 +86,6 @@ impl PanelWindow {
         // subscriber below so a `theme.reloaded` event can push freshly
         // resolved tokens into this already-open WebView.
         let WindowContext {
-            app,
             dispatcher,
             theme_store,
             runtime,
@@ -108,7 +107,7 @@ impl PanelWindow {
         // `init_layer_shell` actually ran.
         let layer_shell = should_use_layer_shell(is_fullscreen_overlay);
 
-        let mut builder = gtk4::ApplicationWindow::builder().application(app);
+        let mut builder = gtk4::Window::builder();
 
         if is_fullscreen_overlay {
             // Do NOT force a default size here. When all four edges are
