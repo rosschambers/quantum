@@ -7,6 +7,26 @@ use quantum_domain::{DomainError, ShellExecutor, ShellOutput};
 
 use crate::error::ProvidersError;
 
+/// Wrap a launch argv in a transient systemd user scope so the spawned
+/// application lands in its own cgroup, independent of `quantum.service`.
+/// When `use_scope` is false (systemd-run unavailable), the argv is returned
+/// unchanged for a direct spawn.
+fn scope_wrapped_argv(command: &[String], use_scope: bool) -> Vec<String> {
+    if !use_scope {
+        return command.to_vec();
+    }
+    let mut argv = vec![
+        "systemd-run".to_string(),
+        "--user".to_string(),
+        "--scope".to_string(),
+        "--quiet".to_string(),
+        "--collect".to_string(),
+        "--".to_string(),
+    ];
+    argv.extend_from_slice(command);
+    argv
+}
+
 /// Tokio-based shell executor for running commands with timeouts.
 pub struct TokioShellExecutor;
 
@@ -183,5 +203,29 @@ mod tests {
         let executor = TokioShellExecutor::new();
         let result = executor.run_with_timeout(&[], 5000).await;
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn scope_wrapped_argv_prefixes_systemd_run_when_enabled() {
+        let cmd = vec!["firefox".to_string(), "--new-window".to_string()];
+        assert_eq!(
+            super::scope_wrapped_argv(&cmd, true),
+            vec![
+                "systemd-run",
+                "--user",
+                "--scope",
+                "--quiet",
+                "--collect",
+                "--",
+                "firefox",
+                "--new-window",
+            ]
+        );
+    }
+
+    #[test]
+    fn scope_wrapped_argv_passes_through_when_disabled() {
+        let cmd = vec!["firefox".to_string()];
+        assert_eq!(super::scope_wrapped_argv(&cmd, false), cmd);
     }
 }
