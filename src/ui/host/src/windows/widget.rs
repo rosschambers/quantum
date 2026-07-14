@@ -98,7 +98,7 @@ impl WidgetWindow {
         } = ctx;
         let window = gtk4::Window::builder().decorated(false).build();
 
-        // Make the GTK ApplicationWindow background transparent so the
+        // Make the GTK window background transparent so the
         // layer-shell surface's overflow region passes through. Without
         // this, GTK paints its theme's default opaque background
         // (typically white) behind the WebView regardless of the

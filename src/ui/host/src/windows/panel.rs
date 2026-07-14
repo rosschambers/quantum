@@ -397,8 +397,8 @@ impl crate::registry::WindowOps for PanelWindow {
         }
     }
 
-    /// Tear the panel down: remove it from the `GtkApplication` and dispose
-    /// the widget tree so the embedded `WebView` is finalized and its
+    /// Tear the panel down: dispose the widget tree and destroy the
+    /// underlying surface so the embedded `WebView` is finalized and its
     /// `WebKitWebProcess` terminates.
     fn destroy(&mut self) {
         if self.is_destroyed {

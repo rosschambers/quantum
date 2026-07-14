@@ -192,10 +192,10 @@ pub trait WindowOps {
     fn show(&mut self);
     fn hide(&mut self);
     fn toggle(&mut self);
-    /// Tear the window down for good: remove it from the `GtkApplication`
-    /// and dispose the widget tree so the embedded `WebView` is finalized
-    /// and its `WebKitWebProcess` terminates. Merely hiding a window leaves
-    /// the application holding a strong reference, so the renderer process
+    /// Tear the window down for good: dispose the widget tree and destroy
+    /// the underlying surface so the embedded `WebView` is finalized and its
+    /// `WebKitWebProcess` terminates. Merely hiding a window keeps the whole
+    /// widget tree (and its live renderer) resident, so the renderer process
     /// leaks. Every removal path must call this before dropping the handle.
     fn destroy(&mut self);
     /// Resize the window to the given pixel height. The bar uses this
