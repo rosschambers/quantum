@@ -169,11 +169,14 @@
     height: 100px;
     margin-left: -50px;
     margin-top: -50px;
-    border: 4px solid #7aa2f7;
+    border: 4px solid var(--color-accent, #7aa2f7);
     border-radius: 50%;
+    /* Glow derived from the theme accent so the flash matches the active
+       theme; color-mix adds the alpha the box-shadow needs. Falls back to the
+       original blue when the token is absent. */
     box-shadow:
-      0 0 10px rgba(122, 162, 247, 0.5),
-      0 0 24px rgba(122, 162, 247, 0.28);
+      0 0 10px color-mix(in srgb, var(--color-accent, #7aa2f7) 50%, transparent),
+      0 0 24px color-mix(in srgb, var(--color-accent, #7aa2f7) 28%, transparent);
     box-sizing: border-box;
   }
 </style>
