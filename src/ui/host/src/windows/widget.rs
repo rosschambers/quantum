@@ -221,7 +221,6 @@ impl WidgetWindow {
             window.set_anchor(Edge::Bottom, true);
             window.set_anchor(Edge::Left, true);
             window.set_anchor(Edge::Right, true);
-            window.set_exclusive_zone(0);
 
             if click_through {
                 // Click-through fill-output surface (a passive overlay host):
@@ -233,6 +232,15 @@ impl WidgetWindow {
                 // steal focus.
                 window.set_layer(Layer::Overlay);
                 window.set_keyboard_mode(KeyboardMode::None);
+                // Exclusive zone -1 (not 0): span the ENTIRE output, including
+                // the strip another surface's exclusive zone reserves (the top
+                // bar). With 0 the compositor shrinks this surface to the usable
+                // area below the bar, so the webview origin sits bar-height below
+                // the true screen top and the cursor ripples — placed from
+                // compositor-global `cursorpos` — render that many pixels too
+                // low. -1 keeps the surface full-output so viewport (0,0) maps to
+                // the monitor's real top-left.
+                window.set_exclusive_zone(-1);
 
                 // Install the empty input region on `realize`, when the
                 // GdkSurface first exists but before it is presented, so the
@@ -273,6 +281,7 @@ impl WidgetWindow {
                 // while a focusable element is focused and releases it
                 // otherwise, so it does not lock the user out the way Exclusive
                 // would.
+                window.set_exclusive_zone(0);
                 window.set_layer(Layer::Bottom);
                 window.set_keyboard_mode(KeyboardMode::OnDemand);
             }
