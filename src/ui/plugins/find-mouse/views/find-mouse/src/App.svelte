@@ -71,7 +71,10 @@
           duration: DURATION,
           delay: rings[index].delayMs,
           easing: "cubic-bezier(.15,.6,.3,1)",
-          fill: "backwards",
+          // "both": hold the first keyframe during the stagger delay AND the
+          // last (fully faded) keyframe after finishing, so a ring never snaps
+          // back to its base solid style before the view hides.
+          fill: "both",
         },
       );
     }
