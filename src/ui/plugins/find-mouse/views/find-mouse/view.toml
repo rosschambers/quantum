@@ -1,0 +1,4 @@
+kind = "widget"
+per_monitor = true
+fill_output = true
+click_through = true
