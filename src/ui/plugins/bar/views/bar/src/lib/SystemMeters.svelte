@@ -12,13 +12,21 @@
     let stats: SystemStats | null = $state(null);
     let metersElement: HTMLDivElement | undefined = $state(undefined);
 
-    // Right-click the meters to open the task manager panel. The panel is a
-    // single shared window (not per-monitor), so it opens by its plain
-    // canonical name with no `@<connector>` suffix.
+    // Right-click opens the quick-actions menu (Open Task Manager); left-click
+    // enters Hyprland's window-kill picker directly. Both are wired via
+    // addEventListener so the meters strip stays a non-interactive element for
+    // accessibility, matching how every other bar indicator wires its menu.
+    // The panel is a single shared window (not per-monitor), so it opens by its
+    // plain canonical name with no `@<connector>` suffix.
     $effect(() => {
         const node = metersElement;
         if (!node) return;
-        return wireBarMenu(node, client, buildMenuItems);
+        const teardownMenu = wireBarMenu(node, client, buildMenuItems);
+        node.addEventListener('click', pickWindowToKill);
+        return () => {
+            node.removeEventListener('click', pickWindowToKill);
+            teardownMenu();
+        };
     });
 
     function buildMenuItems(): MenuItem[] {
@@ -29,6 +37,23 @@
         client
             .call('view.toggle', { name: 'plugin/task-manager/task-manager' })
             .catch((error) => console.error('view.toggle task-manager failed:', error));
+    }
+
+    /**
+     * Enter Hyprland's click-to-kill window picker (`hyprctl kill`): the pointer
+     * turns into a crosshair and the next window clicked is force-killed. This is
+     * the same invokable "pick window to kill" command the kill-window button
+     * exposes as a menu item; here it is bound directly to the process
+     * indicator's left-click. Invoked through the `shell` provider over IPC so
+     * the view never shells out itself. Errors are logged, never thrown.
+     */
+    function pickWindowToKill(): void {
+        client
+            .call('action.invoke', {
+                provider: 'shell',
+                action: { kind: 'shell', data: { command: ['hyprctl', 'kill'], terminal: false } },
+            })
+            .catch((error) => console.error('hyprctl kill picker failed:', error));
     }
 
     /**

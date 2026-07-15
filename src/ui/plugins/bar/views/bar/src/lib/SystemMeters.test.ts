@@ -207,6 +207,26 @@ describe('SystemMeters', () => {
         expect(menuItem('Open Task Manager')).toBeTruthy();
     });
 
+    it('left-click invokes the hyprctl kill window picker directly without opening the menu', async () => {
+        const { client } = mockClient();
+        const { container } = render(SystemMeters, { props: { client } });
+        await tick();
+
+        client.call.mockClear();
+        await fireEvent.click(container.querySelector('.meters') as HTMLElement);
+        await tick();
+
+        expect(client.call).toHaveBeenCalledWith('action.invoke', {
+            provider: 'shell',
+            action: {
+                kind: 'shell',
+                data: { command: ['hyprctl', 'kill'], terminal: false },
+            },
+        });
+        // Left-click triggers the picker directly, it must not open the menu.
+        expect(contextMenu()).toBeNull();
+    });
+
     it('toggles the task manager panel from the menu without a monitor suffix', async () => {
         const { client } = mockClient();
         const { container } = render(SystemMeters, { props: { client } });
