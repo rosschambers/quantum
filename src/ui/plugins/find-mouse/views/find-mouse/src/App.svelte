@@ -11,6 +11,7 @@
   // Baked visual parameters from the approved sonar-ripple design.
   const DURATION = 700;
   const RING_COUNT = 3;
+  const VIEW = "plugin/find-mouse/find-mouse";
 
   const client = createClient();
 
@@ -20,17 +21,29 @@
   let hasPosition = $state(false);
 
   // References to the ring elements, populated via bind:this so each can be
-  // driven directly with the Web Animations API (matching the prototype).
+  // driven directly with the Web Animations API.
   const ringElements: HTMLDivElement[] = [];
-
   const rings = computeRingSpecs(RING_COUNT, DURATION);
 
-  $effect(() => {
-    let cancelled = false;
-    const timers: ReturnType<typeof setTimeout>[] = [];
+  // Guards against re-entrant flashes if the window's visibility toggles
+  // faster than a single flash completes.
+  let flashing = false;
 
-    // Each incoming position updates the origin so the ripples follow the
-    // cursor for the brief life of the flash.
+  // Run one complete flash: start the gated cursor poll, follow the pointer
+  // for the ripple's lifetime, then stop polling and hide the window. The
+  // window is a reused (never-destroyed) layer-shell surface, so the Svelte
+  // component mounts only once; every subsequent `view.show` re-runs this via
+  // the Page Visibility API rather than a fresh mount.
+  function startFlash(): void {
+    if (flashing) return;
+    flashing = true;
+    hasPosition = false;
+    let gotPosition = false;
+
+    client.call(CURSOR_WATCH, {}).catch((error: unknown) => {
+      console.error("cursor.watch failed", error);
+    });
+
     const off = client.subscribe(CURSOR_EVENT_CHANNEL, (payload) => {
       const position = payload as CursorPosition;
       if (
@@ -38,30 +51,28 @@
         typeof position.x === "number" &&
         typeof position.y === "number"
       ) {
+        gotPosition = true;
         hasPosition = true;
         origin = { x: position.x, y: position.y };
       }
     });
 
-    client.call(CURSOR_WATCH, {}).catch((error: unknown) => {
-      console.error("cursor.watch failed", error);
-    });
-
-    // Fallback: if no position has arrived shortly after mount, center the
-    // ripples in the viewport so the flash is never invisible.
+    // Fallback: if no position has arrived shortly after the flash starts,
+    // center the ripples so the flash is never invisible.
     const fallbackTimer = setTimeout(() => {
-      if (!hasPosition) {
+      if (!gotPosition) {
         origin = { x: window.innerWidth / 2, y: window.innerHeight / 2 };
         hasPosition = true;
       }
     }, 150);
-    timers.push(fallbackTimer);
 
-    // Drive each ring's expansion via the Web Animations API, staggered by the
-    // computed ring specs to produce the outward sonar cadence.
+    // Drive each ring's expansion, staggered by the computed ring specs.
+    // Cancel any residual animation from a previous flash first so a rapid
+    // re-show restarts cleanly.
     for (let index = 0; index < ringElements.length; index += 1) {
       const element = ringElements[index];
       if (!element) continue;
+      for (const animation of element.getAnimations()) animation.cancel();
       element.animate(
         [
           { transform: "scale(0.15)", opacity: 0.9 },
@@ -73,34 +84,42 @@
           easing: "cubic-bezier(.15,.6,.3,1)",
           // "both": hold the first keyframe during the stagger delay AND the
           // last (fully faded) keyframe after finishing, so a ring never snaps
-          // back to its base solid style before the view hides.
+          // back to its base solid style before the window hides.
           fill: "both",
         },
       );
     }
 
     // After the flash completes, stop streaming positions and hide this view.
-    const hideTimer = setTimeout(() => {
-      void (async () => {
+    // Hiding unmaps the surface; the next `view.show` re-maps it and fires a
+    // visibilitychange that starts the next flash.
+    setTimeout(
+      () => {
+        clearTimeout(fallbackTimer);
         off();
-        try {
-          await client.call(CURSOR_UNWATCH, {});
-          await client.call("view.hide", {
-            name: "plugin/find-mouse/find-mouse",
-          });
-        } catch (error: unknown) {
-          console.error("find-mouse teardown failed", error);
-        } finally {
-          if (!cancelled) client.close();
-        }
-      })();
-    }, DURATION + 120);
-    timers.push(hideTimer);
+        client.call(CURSOR_UNWATCH, {}).catch(() => {});
+        client.call("view.hide", { name: VIEW }).catch(() => {});
+        hasPosition = false;
+        flashing = false;
+      },
+      DURATION + 120,
+    );
+  }
+
+  $effect(() => {
+    // The component mounts once, while the window is first shown, so flash
+    // immediately. Thereafter each show re-maps the surface and the webview
+    // reports itself visible again; re-arm on that transition.
+    startFlash();
+
+    const onVisibility = () => {
+      if (document.visibilityState === "visible") startFlash();
+    };
+    document.addEventListener("visibilitychange", onVisibility);
 
     return () => {
-      cancelled = true;
-      for (const timer of timers) clearTimeout(timer);
-      off();
+      document.removeEventListener("visibilitychange", onVisibility);
+      client.close();
     };
   });
 </script>
