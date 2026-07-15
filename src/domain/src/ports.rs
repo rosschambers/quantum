@@ -1,3 +1,4 @@
+use crate::cursor::CursorPosition;
 use crate::files::{ApplicationInfo, FileOperation, FilePreferences, FilesError, Pin};
 use crate::processes::{KillSignal, ProcessSnapshot, ProcessesError};
 use crate::timer::{CivilNow, Timer, TimerError, TimerStoreData};
@@ -289,6 +290,14 @@ pub trait ApplicationCatalog: Send + Sync {
 /// the registration. Synchronous: registering a watch does not yield.
 pub trait ProcessMonitor: Send + Sync {
     fn watch(&self) -> BoxStream<'static, ProcessSnapshot>;
+    fn unwatch(&self);
+}
+
+/// Streams the pointer position while at least one subscriber listens.
+/// Mirrors `ProcessMonitor`: `watch` hands out a stream that resumes the
+/// underlying poll; dropping it lets the poll idle. `unwatch` is a no-op.
+pub trait CursorMonitor: Send + Sync {
+    fn watch(&self) -> BoxStream<'static, CursorPosition>;
     fn unwatch(&self);
 }
 

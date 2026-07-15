@@ -2,6 +2,7 @@
 
 pub mod action;
 pub mod bar_state;
+pub mod cursor;
 pub mod error;
 pub mod event_bus;
 pub mod files;
@@ -28,6 +29,7 @@ pub use bar_state::{
     PowerProfileState, PowerState, SavedNetwork, SystemPowerState, SystemStats, WifiBand,
     WifiConnectionDetails, WifiNetwork, WifiSecurity, WifiState,
 };
+pub use cursor::CursorPosition;
 pub use error::DomainError;
 pub use event_bus::EventEnvelope;
 pub use files::{
@@ -38,11 +40,11 @@ pub use ids::ProviderId;
 pub use match_result::{IconRef, Match};
 pub use notifications::{Notification, NotificationEvent, NotificationUrgency};
 pub use ports::{
-    ActionOutcome, ApplicationCatalog, Clock, DirectoryWatcher, EventBus, FileOpener,
-    FileSystemPort, HyprlandClient, NotificationEmitter, PinsPort, PluginCatalog, PreferencesPort,
-    ProcessKiller, ProcessMonitor, ProviderRegistry, ProviderSource, RecursiveSizer, ShellExecutor,
-    ShellOutput, SizeUpdate, ThemeStore, TimerBroadcast, TimerNotifier, TimerStore, WindowHost,
-    WindowInputRegion,
+    ActionOutcome, ApplicationCatalog, Clock, CursorMonitor, DirectoryWatcher, EventBus,
+    FileOpener, FileSystemPort, HyprlandClient, NotificationEmitter, PinsPort, PluginCatalog,
+    PreferencesPort, ProcessKiller, ProcessMonitor, ProviderRegistry, ProviderSource,
+    RecursiveSizer, ShellExecutor, ShellOutput, SizeUpdate, ThemeStore, TimerBroadcast,
+    TimerNotifier, TimerStore, WindowHost, WindowInputRegion,
 };
 pub use processes::{
     build_forest, collect_subtree_pids, GlobalStats, KillSignal, ProcessNode, ProcessSnapshot,
