@@ -200,6 +200,12 @@ export {
   type KillSignal,
 } from './processes';
 export {
+  CURSOR_EVENT_CHANNEL,
+  CURSOR_WATCH,
+  CURSOR_UNWATCH,
+  type CursorPosition,
+} from './cursor';
+export {
   type IconRef,
   type SystemTrayMenuNode,
   type SystemTrayItem,
