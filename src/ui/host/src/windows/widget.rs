@@ -77,12 +77,21 @@ impl WidgetWindow {
     /// anchors all four edges so it fills the entire monitor (used by the
     /// timers widget for free placement and dragging); `position` is then
     /// ignored. `fill_output` has no effect on the top-anchored bar path.
+    ///
+    /// `click_through` only applies to the `fill_output` path. When true, the
+    /// fill-output surface is hoisted to [`Layer::Overlay`] (above application
+    /// windows) with an empty pointer input region, so it renders on top yet
+    /// passes every pointer event straight through to whatever is beneath it;
+    /// keyboard input is disabled ([`KeyboardMode::None`]). When false, the
+    /// fill-output surface keeps its interactive [`Layer::Bottom`] placement.
+    /// `click_through` has no effect on the bar or background-layer paths.
     pub(crate) fn new(
         ctx: WindowContext,
         view_name: String,
         anchor: ViewAnchor,
         position: ViewPosition,
         fill_output: bool,
+        click_through: bool,
         height: Option<u32>,
     ) -> Self {
         // The theme store backs the quantum:// scheme handler registered on
@@ -208,25 +217,65 @@ impl WidgetWindow {
             // four edges so the transparent surface covers the whole monitor.
             // The Svelte view positions its content absolutely within this
             // full-screen area. `position` is ignored.
-            //
-            // Uses the Bottom layer (not Background): it still sits behind
-            // normal application windows, but wlroots routes pointer and
-            // keyboard input to Bottom-layer surfaces, whereas Background-layer
-            // surfaces are treated as non-interactive wallpaper and do not
-            // receive button clicks. The interactive per-timer controls (edit /
-            // dismiss) and the edit form need that input.
-            window.set_layer(Layer::Bottom);
             window.set_anchor(Edge::Top, true);
             window.set_anchor(Edge::Bottom, true);
             window.set_anchor(Edge::Left, true);
             window.set_anchor(Edge::Right, true);
-            // On-demand keyboard so interactive content on the fill-output
-            // surface (the per-timer edit form's text fields) can receive
-            // keystrokes when focused. On-demand only grabs the keyboard while a
-            // focusable element is focused and releases it otherwise, so it does
-            // not lock the user out the way Exclusive would.
-            window.set_keyboard_mode(KeyboardMode::OnDemand);
             window.set_exclusive_zone(0);
+
+            if click_through {
+                // Click-through fill-output surface (a passive overlay host):
+                // the Overlay layer paints it ABOVE application windows, and an
+                // empty pointer input region (installed on realize below) means
+                // it captures no clicks — every pointer event passes straight
+                // through to whatever is underneath. Keyboard input is disabled
+                // because a passthrough overlay is display-only and must never
+                // steal focus.
+                window.set_layer(Layer::Overlay);
+                window.set_keyboard_mode(KeyboardMode::None);
+
+                // Install the empty input region on `realize`, when the
+                // GdkSurface first exists but before it is presented, so the
+                // full-screen surface never captures a pointer event for even
+                // one frame; re-apply on surface-width changes (monitor
+                // geometry / hotplug) so a compositor-side reset cannot restore
+                // the default (full) input region. This mirrors the bar's
+                // input-region timing. `window` is captured WEAK in both
+                // closures (the realize handler is owned by the window and the
+                // width handler by its surface) so a strong capture cannot form
+                // a `window -> surface -> handler -> window` reference cycle.
+                window.connect_realize(glib::clone!(
+                    #[weak]
+                    window,
+                    move |win| {
+                        apply_empty_input_region(win);
+                        if let Some(surface) = gtk4::prelude::NativeExt::surface(win) {
+                            surface.connect_width_notify(glib::clone!(
+                                #[weak]
+                                window,
+                                move |_| apply_empty_input_region(&window)
+                            ));
+                        }
+                    }
+                ));
+            } else {
+                // Interactive fill-output surface (the timers scatter): the
+                // Bottom layer (not Background) still sits behind normal
+                // application windows, but wlroots routes pointer and keyboard
+                // input to Bottom-layer surfaces, whereas Background-layer
+                // surfaces are treated as non-interactive wallpaper and do not
+                // receive button clicks. The interactive per-timer controls
+                // (edit / dismiss) and the edit form need that input.
+                //
+                // On-demand keyboard so interactive content on the fill-output
+                // surface (the per-timer edit form's text fields) can receive
+                // keystrokes when focused. On-demand only grabs the keyboard
+                // while a focusable element is focused and releases it
+                // otherwise, so it does not lock the user out the way Exclusive
+                // would.
+                window.set_layer(Layer::Bottom);
+                window.set_keyboard_mode(KeyboardMode::OnDemand);
+            }
         } else {
             // Other widgets (clock, etc.): background layer, anchored
             // per the descriptor's `position`, mirroring `new_toast`.
@@ -689,6 +738,20 @@ fn apply_input_region(window: &gtk4::Window, bar_height: i32, extra: Option<Wind
             .map(|(x, y, width, height)| gtk4::cairo::RectangleInt::new(x, y, width, height))
             .collect();
     let region = gtk4::cairo::Region::create_rectangles(&rectangles);
+    gtk4::prelude::SurfaceExt::set_input_region(&surface, &region);
+}
+
+/// Install an EMPTY pointer input region on `window`'s surface so it receives
+/// no pointer events and every click passes straight through to whatever is
+/// beneath it. Used by the click-through fill-output overlay path. A no-op if
+/// the `GdkSurface` does not yet exist (the caller re-runs once it is
+/// realized). A cairo region built with zero rectangles is empty, which
+/// Wayland interprets as "this surface accepts no pointer input".
+fn apply_empty_input_region(window: &gtk4::Window) {
+    let Some(surface) = gtk4::prelude::NativeExt::surface(window) else {
+        return;
+    };
+    let region = gtk4::cairo::Region::create();
     gtk4::prelude::SurfaceExt::set_input_region(&surface, &region);
 }
 

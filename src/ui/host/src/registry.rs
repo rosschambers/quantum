@@ -48,6 +48,7 @@ pub(crate) struct PanelParams {
 pub(crate) struct WidgetParams {
     pub anchor: ViewAnchor,
     pub fill_output: bool,
+    pub click_through: bool,
     pub height: Option<u32>,
 }
 
@@ -82,6 +83,7 @@ pub(crate) fn widget_params(descriptor: &ViewDescriptor) -> WidgetParams {
     WidgetParams {
         anchor: descriptor.anchor,
         fill_output: descriptor.fill_output,
+        click_through: descriptor.click_through,
         height: descriptor.height,
     }
 }
@@ -333,6 +335,7 @@ impl ManagedWindowConstructor {
                     params.anchor,
                     descriptor.position,
                     params.fill_output,
+                    params.click_through,
                     params.height,
                 ))
             }
@@ -381,6 +384,9 @@ impl ManagedWindowConstructor {
                 // Fallback widgets (the clock) keep their historical top-right
                 // placement: Center maps to top-right in the background branch.
                 ViewPosition::Center,
+                false,
+                // Fallback widgets are never fill-output, so click-through does
+                // not apply.
                 false,
                 None,
             )))
@@ -707,6 +713,7 @@ mod tests {
             WidgetParams {
                 anchor: ViewAnchor::Top,
                 fill_output: false,
+                click_through: false,
                 height: Some(32),
             }
         );
@@ -722,6 +729,7 @@ mod tests {
             WidgetParams {
                 anchor: ViewAnchor::None,
                 fill_output: false,
+                click_through: false,
                 height: None,
             }
         );
@@ -739,6 +747,26 @@ mod tests {
             WidgetParams {
                 anchor: ViewAnchor::None,
                 fill_output: true,
+                click_through: false,
+                height: None,
+            }
+        );
+    }
+
+    #[test]
+    fn widget_params_passes_click_through_through() {
+        let descriptor = ViewDescriptor {
+            kind: ViewKind::Widget,
+            fill_output: true,
+            click_through: true,
+            ..ViewDescriptor::default()
+        };
+        assert_eq!(
+            widget_params(&descriptor),
+            WidgetParams {
+                anchor: ViewAnchor::None,
+                fill_output: true,
+                click_through: true,
                 height: None,
             }
         );
