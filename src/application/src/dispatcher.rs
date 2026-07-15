@@ -1,3 +1,4 @@
+use crate::use_cases::CursorService;
 use crate::{
     ApplicationError, CreateTimerSpec, EditChanges, FilesService, LaunchActionUseCase,
     ListProvidersUseCase, OpenViewUseCase, ProcessesService, QueryProviderUseCase,
@@ -24,6 +25,7 @@ pub struct Dispatcher {
     timer_service: Arc<TimerService>,
     files_service: Arc<FilesService>,
     processes_service: Arc<ProcessesService>,
+    cursor_service: Arc<CursorService>,
     shell_capture: Arc<ShellCaptureUseCase>,
 }
 
@@ -84,6 +86,7 @@ impl Dispatcher {
         timer_service: Arc<TimerService>,
         files_service: Arc<FilesService>,
         processes_service: Arc<ProcessesService>,
+        cursor_service: Arc<CursorService>,
         shell_capture: Arc<ShellCaptureUseCase>,
     ) -> Self {
         Self {
@@ -100,6 +103,7 @@ impl Dispatcher {
             timer_service,
             files_service,
             processes_service,
+            cursor_service,
             shell_capture,
         }
     }
@@ -148,6 +152,8 @@ impl Dispatcher {
             "processes.watch" => self.handle_processes_watch(params).await,
             "processes.unwatch" => self.handle_processes_unwatch(params).await,
             "processes.kill" => self.handle_processes_kill(params).await,
+            "cursor.watch" => self.handle_cursor_watch(params).await,
+            "cursor.unwatch" => self.handle_cursor_unwatch(params).await,
             "system.status" => self.handle_system_status(params).await,
             "shell.run_capture" => self.handle_shell_run_capture(params).await,
             _ => Err(ApplicationError::Domain(DomainError::Unsupported(
@@ -489,6 +495,16 @@ impl Dispatcher {
         Ok(json!({}))
     }
 
+    async fn handle_cursor_watch(&self, _params: Option<&RawValue>) -> Result<Value> {
+        self.cursor_service.watch();
+        Ok(json!({}))
+    }
+
+    async fn handle_cursor_unwatch(&self, _params: Option<&RawValue>) -> Result<Value> {
+        self.cursor_service.unwatch();
+        Ok(json!({}))
+    }
+
     async fn handle_shell_run_capture(&self, params: Option<&RawValue>) -> Result<Value> {
         let params: ShellRunCaptureParams = parse_params(params, "shell.run_capture")?;
         if params.command.trim().is_empty() {
@@ -509,13 +525,13 @@ mod tests {
     use futures::stream::{self, BoxStream, StreamExt};
     use quantum_domain::{
         Action, ActionOutcome, ApplicationCatalog, ApplicationInfo, CivilNow, Clock, ContentKind,
-        DirectoryWatcher, DomainError, DriveInfo, EventBus, FileEntry, FileEntryKind, FileOpener,
-        FileOperation, FilePreferences, FileSystemPort, FilesError, KillSignal, Match, MatchScore,
-        NotificationEmitter, PermissionClass, Pin, PinsPort, PreferencesPort, ProcessKiller,
-        ProcessMonitor, ProcessSnapshot, ProcessesError, ProviderId, ProviderRegistry,
-        ProviderSource, Query, RecursiveSizer, ShellExecutor, ShellOutput, SizeUpdate, ThemeStore,
-        Timer, TimerBroadcast, TimerError, TimerNotifier, TimerStore, TimerStoreData, Weekday,
-        WindowHost,
+        CursorMonitor, CursorPosition, DirectoryWatcher, DomainError, DriveInfo, EventBus,
+        FileEntry, FileEntryKind, FileOpener, FileOperation, FilePreferences, FileSystemPort,
+        FilesError, KillSignal, Match, MatchScore, NotificationEmitter, PermissionClass, Pin,
+        PinsPort, PreferencesPort, ProcessKiller, ProcessMonitor, ProcessSnapshot, ProcessesError,
+        ProviderId, ProviderRegistry, ProviderSource, Query, RecursiveSizer, ShellExecutor,
+        ShellOutput, SizeUpdate, ThemeStore, Timer, TimerBroadcast, TimerError, TimerNotifier,
+        TimerStore, TimerStoreData, Weekday, WindowHost,
     };
     use std::collections::HashMap;
     use std::sync::atomic::{AtomicUsize, Ordering};
@@ -943,6 +959,26 @@ mod tests {
         ))
     }
 
+    /// Cursor-monitor fake for the dispatcher routing tests: hands out an empty
+    /// stream so no forwarding task lingers, mirroring the inert process monitor.
+    struct CursorInertMonitor;
+
+    impl CursorMonitor for CursorInertMonitor {
+        fn watch(&self) -> BoxStream<'static, CursorPosition> {
+            stream::empty().boxed()
+        }
+        fn unwatch(&self) {}
+    }
+
+    /// Assemble a default `CursorService` over the inert cursor monitor, for the
+    /// dispatcher tests that do not inspect the cursor ports.
+    fn build_cursor_service() -> Arc<CursorService> {
+        Arc::new(CursorService::new(
+            Arc::new(CursorInertMonitor),
+            Arc::new(FakeEventBus),
+        ))
+    }
+
     fn build_dispatcher() -> Arc<Dispatcher> {
         build_dispatcher_with_processes(build_processes_service())
     }
@@ -1007,6 +1043,7 @@ mod tests {
             timer_service,
             build_files_service(),
             processes_service,
+            build_cursor_service(),
             shell_capture,
         ))
     }

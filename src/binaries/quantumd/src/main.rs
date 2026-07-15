@@ -12,6 +12,7 @@ use serde_json::Value;
 use tracing::info;
 use tracing_subscriber::EnvFilter;
 
+use quantum_application::use_cases::CursorService;
 use quantum_application::{
     ApplicationError, Dispatcher as AppDispatcher, FilesService, LaunchActionUseCase,
     ListProvidersUseCase, OpenViewUseCase, ProcessesService, QueryProviderUseCase,
@@ -19,6 +20,7 @@ use quantum_application::{
     SetThemeUseCase, ShellCaptureUseCase, SubscribeProviderUseCase, TimerService,
 };
 use quantum_config::{Config, ConfigStore};
+use quantum_cursor::TokioCursorMonitor;
 use quantum_domain::{DomainError, EventBus, ProviderId, ProviderSource};
 use quantum_files::pins::default_store_path as pins_default_store_path;
 use quantum_files::{
@@ -980,6 +982,22 @@ async fn setup_daemon(
         event_bus.clone(),
     ));
 
+    // Cursor-flash service. Mirrors the processes wiring, minus the sampler and
+    // killer: the Tokio cursor monitor is wrapped as its domain port and handed
+    // the shared Hyprland client, falling back to the null client when Hyprland
+    // is unavailable. Like the processes subsystem, it needs no pre-subscription:
+    // the monitor idles until the first `cursor.watch`.
+    let cursor_hyprland: Arc<dyn quantum_domain::HyprlandClient> = match &hypr_client_opt {
+        Some(client) => client.clone(),
+        None => Arc::new(NullHyprlandClient),
+    };
+    let cursor_monitor =
+        TokioCursorMonitor::new(tokio::runtime::Handle::current(), cursor_hyprland);
+    let cursor_service = Arc::new(CursorService::new(
+        Arc::new(cursor_monitor) as Arc<dyn quantum_domain::CursorMonitor>,
+        event_bus.clone(),
+    ));
+
     // Shell command-capture use case: runs a launcher `$` command through the
     // shared shell executor and surfaces its output both inline (the returned
     // result) and as a notification through the notifications provider.
@@ -1004,6 +1022,7 @@ async fn setup_daemon(
         timer_service.clone(),
         files_service,
         processes_service,
+        cursor_service,
         shell_capture_use_case,
     ));
     let _ipc_dispatcher = Arc::new(AppDispatcherAdapter::new(dispatcher));

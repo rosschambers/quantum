@@ -1930,6 +1930,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "quantum-cursor"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "futures",
+ "quantum-domain",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tokio-stream",
+ "tracing",
+]
+
+[[package]]
 name = "quantum-dbus"
 version = "0.1.0"
 dependencies = [
@@ -2165,6 +2179,7 @@ dependencies = [
  "include_dir",
  "quantum-application",
  "quantum-config",
+ "quantum-cursor",
  "quantum-domain",
  "quantum-files",
  "quantum-hyprland",

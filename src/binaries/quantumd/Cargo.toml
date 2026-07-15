@@ -17,6 +17,7 @@ quantum-hyprland = { path = "../../infrastructure/hyprland" }
 quantum-plugins = { path = "../../infrastructure/plugins" }
 quantum-files = { path = "../../infrastructure/files" }
 quantum-processes = { path = "../../infrastructure/processes" }
+quantum-cursor = { path = "../../infrastructure/cursor" }
 tokio.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
