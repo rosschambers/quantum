@@ -12,6 +12,7 @@ members = [
     "src/infrastructure/plugins",
     "src/infrastructure/files",
     "src/infrastructure/processes",
+    "src/infrastructure/cursor",
     "src/ui/host",
     "src/binaries/quantumd",
     "src/binaries/quantumctl",
