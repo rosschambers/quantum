@@ -1,3 +1,4 @@
+pub mod cursor_service;
 pub mod files_service;
 pub mod launch_action;
 pub mod list_providers;
@@ -12,6 +13,7 @@ pub mod set_theme;
 pub mod subscribe_provider;
 pub mod timer_service;
 
+pub use cursor_service::CursorService;
 pub use files_service::{FilesService, Places, PreviewKind, PreviewPayload};
 pub use launch_action::LaunchActionUseCase;
 pub use list_providers::ListProvidersUseCase;
