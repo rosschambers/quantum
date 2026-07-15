@@ -1,12 +1,12 @@
 <script lang="ts">
     /**
-     * Bar button that opens a window-kill menu on left-click. The menu offers
-     * killing the active window and gracefully closing any open window by
-     * address, plus a deliberate "Pick window to kill" entry that enters
-     * Hyprland's `hyprctl kill` click-picker. Left-click no longer runs the
-     * picker directly: force-killing a quantum-drawn surface would take down
-     * the whole daemon (bar, widgets, file explorer are one process), so the
-     * raw picker is only reachable as a conscious menu choice.
+     * Bar button for killing windows. Left-click enters Hyprland's `hyprctl
+     * kill` click-picker directly (crosshair; next clicked window is
+     * force-killed). Right-click opens a menu offering killing the active
+     * window, gracefully closing any open window by address, and the picker as
+     * a menu entry. The raw picker can target a quantum-drawn surface (bar,
+     * widgets, file explorer share one process), which would take the daemon
+     * down; binding it to left-click is the owner's deliberate choice.
      */
     import type { Client, MenuItem } from '@quantum/client';
     import Icon from './Icon.svelte';
@@ -102,13 +102,29 @@
         return items;
     }
 
-    // Left-click: open the kill menu (list open windows to close, kill the
-    // active window, or deliberately enter the picker). Wiring the menu to the
-    // 'click' trigger replaces the old force-kill left-click action.
+    /**
+     * Left-click enters Hyprland's click-to-kill picker (`hyprctl kill`)
+     * directly: the pointer becomes a crosshair and the next window clicked is
+     * force-killed. This is the raw, unfiltered picker, so it can target any
+     * surface including quantum's own (which would take the daemon down) — that
+     * is the owner's deliberate choice for a fast one-click kill.
+     */
+    function pickWindowToKill(): void {
+        runShell(['hyprctl', 'kill']);
+    }
+
+    // Right-click opens the kill menu (kill the active window, close a specific
+    // open window, or enter the picker as a menu choice); left-click runs the
+    // picker directly.
     $effect(() => {
         const node = buttonElement;
         if (!node) return;
-        return wireBarMenu(node, client, buildKillMenu, 'click');
+        const teardownMenu = wireBarMenu(node, client, buildKillMenu, 'contextmenu');
+        node.addEventListener('click', pickWindowToKill);
+        return () => {
+            node.removeEventListener('click', pickWindowToKill);
+            teardownMenu();
+        };
     });
 </script>
 

@@ -63,29 +63,40 @@ describe('KillWindowButton', () => {
 		expect(btn).not.toBeNull();
 	});
 
-	it('left-click opens the menu and does not run hyprctl kill', async () => {
+	it('left-click runs the hyprctl kill picker directly without opening the menu', async () => {
 		const { client } = mockClientWithWindows([]);
 		const { container } = render(KillWindowButton, { props: { client } });
 		const btn = container.querySelector('.bar-button') as HTMLButtonElement | null;
 		expect(btn).not.toBeNull();
 
+		client.call.mockClear();
 		await fireEvent.click(btn!);
-		await waitForMenu();
+		await tick();
 
-		// The menu opens on left-click instead of force-killing.
-		expect(menuItem('Kill active window')).toBeTruthy();
-
-		// No left-click path may invoke the raw `hyprctl kill` picker.
-		const killCalls = client.call.mock.calls.filter(
-			(args: unknown[]) =>
-				args[0] === 'action.invoke' &&
-				JSON.stringify((args[1] as { action?: { data?: { command?: string[] } } })?.action?.data?.command) ===
-					JSON.stringify(['hyprctl', 'kill']),
-		);
-		expect(killCalls).toHaveLength(0);
+		expect(client.call).toHaveBeenCalledWith('action.invoke', {
+			provider: 'shell',
+			action: {
+				kind: 'shell',
+				data: { command: ['hyprctl', 'kill'], terminal: false },
+			},
+		});
+		// Left-click runs the picker directly; it must not open the menu.
+		expect(document.querySelector('[data-quantum-context-menu]')).toBeNull();
 	});
 
-	it('left-click lists open windows and closes the selected one by address', async () => {
+	it('right-click opens the kill menu', async () => {
+		const { client } = mockClientWithWindows([]);
+		const { container } = render(KillWindowButton, { props: { client } });
+		const btn = container.querySelector('.bar-button') as HTMLButtonElement | null;
+		expect(btn).not.toBeNull();
+
+		await fireEvent.contextMenu(btn!);
+		await waitForMenu();
+
+		expect(menuItem('Kill active window')).toBeTruthy();
+	});
+
+	it('right-click lists open windows and closes the selected one by address', async () => {
 		const windows: WindowListEntry[] = [
 			{
 				address: '0xabc',
@@ -100,7 +111,7 @@ describe('KillWindowButton', () => {
 		const btn = container.querySelector('.bar-button') as HTMLButtonElement;
 		flushSync();
 
-		await fireEvent.click(btn);
+		await fireEvent.contextMenu(btn);
 		await waitForMenu();
 
 		const windowEntry = menuItem('firefox');
@@ -128,7 +139,7 @@ describe('KillWindowButton', () => {
 		const btn = container.querySelector('.bar-button') as HTMLButtonElement;
 		flushSync();
 
-		await fireEvent.click(btn);
+		await fireEvent.contextMenu(btn);
 		await waitForMenu();
 
 		const killActive = menuItem('Kill active window');
@@ -152,7 +163,7 @@ describe('KillWindowButton', () => {
 		const btn = container.querySelector('.bar-button') as HTMLButtonElement;
 		flushSync();
 
-		await fireEvent.click(btn);
+		await fireEvent.contextMenu(btn);
 		await waitForMenu();
 
 		expect(menuItem('Kill active window')).toBeTruthy();
@@ -165,7 +176,7 @@ describe('KillWindowButton', () => {
 		const btn = container.querySelector('.bar-button') as HTMLButtonElement;
 		flushSync();
 
-		await fireEvent.click(btn);
+		await fireEvent.contextMenu(btn);
 		await waitForMenu();
 
 		const pick = menuItem('Pick window to kill');
@@ -205,7 +216,7 @@ describe('KillWindowButton', () => {
 		const btn = container.querySelector('.bar-button') as HTMLButtonElement;
 		flushSync();
 
-		await fireEvent.click(btn);
+		await fireEvent.contextMenu(btn);
 		await waitForMenu();
 
 		// The normal application is offered as a target.
@@ -229,7 +240,7 @@ describe('KillWindowButton', () => {
 		const btn = container.querySelector('.bar-button') as HTMLButtonElement;
 		flushSync();
 
-		await fireEvent.click(btn);
+		await fireEvent.contextMenu(btn);
 		await waitForMenu();
 		expect(menuItem('firefox')).toBeTruthy();
 
