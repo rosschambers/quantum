@@ -2,3 +2,8 @@ kind = "widget"
 per_monitor = true
 fill_output = true
 click_through = true
+# One-shot flash: destroy the window and renderer on hide so the next
+# `view.show` reconstructs it cold and the Svelte mount effect re-runs the whole
+# subscribe/animate/hide lifecycle. Without this, a parked (reused) webview
+# would only animate on its first show.
+destroy_on_dismiss = true
