@@ -72,6 +72,12 @@ pub struct ViewDescriptor {
     /// reused, giving instant reopen.
     #[serde(default)]
     pub destroy_on_dismiss: bool,
+    /// When true, a `fill_output` view is hosted on the overlay layer (above
+    /// application windows) with an empty input region, so it renders on top of
+    /// everything yet passes all pointer events straight through. Used by the
+    /// find-mouse cursor flash. Ignored for views that are not `fill_output`.
+    #[serde(default)]
+    pub click_through: bool,
 }
 
 impl Default for ViewDescriptor {
@@ -87,6 +93,7 @@ impl Default for ViewDescriptor {
             single_instance: None,
             fill_output: false,
             destroy_on_dismiss: false,
+            click_through: false,
         }
     }
 }
@@ -122,6 +129,7 @@ mod tests {
         assert_eq!(descriptor.width, None);
         assert_eq!(descriptor.single_instance, None);
         assert!(!descriptor.fill_output);
+        assert!(!descriptor.click_through);
     }
 
     #[test]
@@ -192,6 +200,7 @@ mod tests {
             single_instance: Some(true),
             fill_output: true,
             destroy_on_dismiss: true,
+            click_through: true,
         };
         let json = serde_json::to_string(&descriptor).unwrap();
         let restored: ViewDescriptor = serde_json::from_str(&json).unwrap();

@@ -23,6 +23,7 @@ pub fn parse_view_toml(text: &str) -> Result<ViewDescriptor, PluginsError> {
         single_instance: Option<bool>,
         fill_output: Option<bool>,
         destroy_on_dismiss: Option<bool>,
+        click_through: Option<bool>,
     }
 
     let raw: RawView =
@@ -81,6 +82,7 @@ pub fn parse_view_toml(text: &str) -> Result<ViewDescriptor, PluginsError> {
         destroy_on_dismiss: raw
             .destroy_on_dismiss
             .unwrap_or(defaults.destroy_on_dismiss),
+        click_through: raw.click_through.unwrap_or(defaults.click_through),
     })
 }
 
@@ -126,8 +128,22 @@ single_instance = false
                 single_instance: Some(false),
                 fill_output: false,
                 destroy_on_dismiss: false,
+                click_through: false,
             }
         );
+    }
+
+    #[test]
+    fn click_through_true_parses() {
+        let descriptor = parse_view_toml("click_through = true\n").expect("valid click_through");
+        assert!(descriptor.click_through);
+    }
+
+    #[test]
+    fn click_through_defaults_to_false_when_missing() {
+        let descriptor =
+            parse_view_toml("kind = \"widget\"\n").expect("missing click_through is valid");
+        assert!(!descriptor.click_through);
     }
 
     #[test]
