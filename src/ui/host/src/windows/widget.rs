@@ -37,8 +37,14 @@ pub fn monitor_name(monitor: &gdk::Monitor) -> Option<String> {
 /// A widget window - positioned on-screen as a background-layer widget.
 pub struct WidgetWindow {
     window: gtk4::Window,
-    #[allow(dead_code)]
     webview: WebView,
+    /// True when this widget's WebView owns its render process. Widgets share
+    /// the process today (both constructors use `new_webview(true)`), so this
+    /// is always false and teardown never terminates — terminating a shared
+    /// (`related-view`) process would kill it for every warm sibling. The flag
+    /// exists so a future isolated widget reclaims its process without a code
+    /// change, and keeps the destroy/Drop paths identical to PanelWindow.
+    owns_render_process: bool,
     /// Whether this widget anchors as a top bar (Layer::Top, anchored
     /// top/left/right, reserving an exclusive zone) and may grow at runtime
     /// via `set_height`. Derived from `anchor == ViewAnchor::Top`. Non-anchored
@@ -341,6 +347,8 @@ impl WidgetWindow {
             bar_height: if top_anchored { bar_height } else { 0 },
             input_region,
             is_destroyed: false,
+            // Widgets share the render process (new_webview(true) below).
+            owns_render_process: false,
         }
     }
 
@@ -443,6 +451,8 @@ impl WidgetWindow {
             bar_height: 0,
             input_region: Rc::new(Cell::new(None)),
             is_destroyed: false,
+            // Toasts share the render process (new_webview(true) below).
+            owns_render_process: false,
         }
     }
 }
@@ -656,13 +666,16 @@ impl crate::registry::WindowOps for WidgetWindow {
             return;
         }
         self.is_destroyed = true;
-        // Terminate the render process before destroying the window: destroying
-        // the GTK window alone unparents the WebView but leaves an isolated
-        // WebKitWebProcess resident (see the same note in panel.rs). Widgets are
-        // warm/shared today so this path is rarely hit, but keeping the two
-        // destroy paths identical prevents a future isolated widget from
-        // leaking its process.
-        webkit6::prelude::WebViewExt::terminate_web_process(&self.webview);
+        // Terminate the render process before destroying the window ONLY when
+        // this widget owns its process: destroying the GTK window alone leaves
+        // an isolated WebKitWebProcess resident (see the note in panel.rs), but
+        // terminating a shared (`related-view`) process would kill it for every
+        // warm sibling. Widgets share today (owns_render_process is false), so
+        // this never fires; the guard keeps the path safe if a future widget is
+        // isolated.
+        if self.owns_render_process {
+            webkit6::prelude::WebViewExt::terminate_web_process(&self.webview);
+        }
         gtk4::prelude::GtkWindowExt::destroy(&self.window);
     }
 
@@ -709,6 +722,11 @@ impl Drop for WidgetWindow {
     /// already-freed layer-shell surface.
     fn drop(&mut self) {
         if !self.is_destroyed {
+            // Symmetric with destroy(): terminate only a process this widget
+            // owns, never a shared (`related-view`) one warm siblings depend on.
+            if self.owns_render_process {
+                webkit6::prelude::WebViewExt::terminate_web_process(&self.webview);
+            }
             gtk4::prelude::GtkWindowExt::destroy(&self.window);
         }
     }

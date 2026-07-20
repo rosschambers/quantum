@@ -29,6 +29,15 @@ pub struct PanelWindow {
     /// second teardown is skipped. Calling gtk_window_destroy after the
     /// surface is gone aborts with the gdk_surface_get_display assertion.
     is_destroyed: bool,
+    /// True when this window's WebView has its OWN render process (the
+    /// inverse of `share_process`). Only then may teardown call
+    /// `terminate_web_process`: terminating a view that shares the process via
+    /// `related-view` kills the SHARED process for every warm view (bar, clock,
+    /// timers, toast), blanking them until reload. Transient
+    /// `destroy_on_dismiss` views own their process (since B1) and are the only
+    /// ones torn down, so gating on this keeps termination safe on every path
+    /// (dismiss, eviction, Drop).
+    owns_render_process: bool,
 }
 
 /// Decide whether this panel surface uses layer-shell: an overlay always does
@@ -355,6 +364,7 @@ impl PanelWindow {
             layer_shell,
             fullscreen_overlay: is_fullscreen_overlay,
             is_destroyed: false,
+            owns_render_process: !share_process,
         }
     }
 }
@@ -413,8 +423,12 @@ impl crate::registry::WindowOps for PanelWindow {
         // stacking up hundreds of resident processes over a session. Terminate
         // the render process explicitly so it exits and its memory returns to
         // the OS. This host has no unsaved page state, so a forceful terminate
-        // (versus the graceful, possibly-async try_close) is correct.
-        webkit6::prelude::WebViewExt::terminate_web_process(&self.webview);
+        // (versus the graceful, possibly-async try_close) is correct. Only
+        // terminate when this view OWNS its process: terminating a shared
+        // (`related-view`) process would kill it for every warm sibling.
+        if self.owns_render_process {
+            webkit6::prelude::WebViewExt::terminate_web_process(&self.webview);
+        }
         gtk4::prelude::GtkWindowExt::destroy(&self.window);
     }
 }
@@ -426,7 +440,11 @@ impl Drop for PanelWindow {
     /// already-freed layer-shell surface.
     fn drop(&mut self) {
         if !self.is_destroyed {
-            webkit6::prelude::WebViewExt::terminate_web_process(&self.webview);
+            // Only terminate a process this view owns — never a shared
+            // (`related-view`) process, which warm siblings depend on.
+            if self.owns_render_process {
+                webkit6::prelude::WebViewExt::terminate_web_process(&self.webview);
+            }
             gtk4::prelude::GtkWindowExt::destroy(&self.window);
         }
     }
