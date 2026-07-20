@@ -1,0 +1,6 @@
+[build]
+# Debug builds of this large workspace generate a ~225 MB binary per build, and
+# Cargo's incremental cache in target/debug/incremental grew to over 50 GB
+# because it is never automatically pruned. Disabling incremental compilation
+# trades slightly slower rebuilds for bounded disk usage.
+incremental = false
