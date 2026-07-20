@@ -113,6 +113,47 @@
         }, DRIVE_REFRESH_DEBOUNCE_MS);
     }
 
+    // Buffered `size` events awaiting a batched flush, and the pending flush
+    // timer. Sizing a large tree fires a burst of `size` events in the same
+    // tick; applying each one immediately re-sorts the size-sorted list per
+    // event, visibly reshuffling rows one-by-one. Instead the events are
+    // buffered and applied together on a next-tick flush, so the size sort runs
+    // once per batch. Plain (non-reactive) scratch, like the drive-refresh timer.
+    let pendingSizeEvents: Array<{ path: string; bytes: number; complete: boolean }> = [];
+    let sizeFlushTimer: ReturnType<typeof setTimeout> | undefined;
+
+    // Coalesce the burst of `size` events that arrive in the same tick into one
+    // flush. A 0ms/next-macrotask debounce keeps it fast (flushes on the next
+    // tick) while still batching everything queued synchronously before it runs.
+    function scheduleSizeFlush(): void {
+        clearTimeout(sizeFlushTimer);
+        sizeFlushTimer = setTimeout(flushSizeEvents, 0);
+    }
+
+    // Apply every buffered `size` event in one synchronous pass so the size sort
+    // in `visibleEntries()` re-runs once for the whole batch rather than per
+    // event. Order-preserving: multiple events for the same path apply in
+    // arrival order (last wins), matching the previous per-event semantics.
+    function flushSizeEvents(): void {
+        const events = pendingSizeEvents;
+        pendingSizeEvents = [];
+        for (const pane of panes) {
+            for (const ev of events) {
+                const entry = pane.entries.find((candidate) => candidate.path === ev.path);
+                if (entry !== undefined) {
+                    entry.recursive_size = ev.bytes;
+                    // A partial subtotal keeps the path in the sizing set (still
+                    // calculating); a complete event clears it (final number).
+                    if (ev.complete) {
+                        pane.setSizeComplete(ev.path);
+                    } else {
+                        pane.addSizing(ev.path);
+                    }
+                }
+            }
+        }
+    }
+
     const active = $derived(panes[activePaneIndex]);
     const otherIndex = $derived(activePaneIndex === 0 ? 1 : 0);
     const activeVisible = $derived(active.visibleEntries());
@@ -295,19 +336,11 @@
             // a move); refresh the sidebar drives after the burst settles.
             scheduleDriveRefresh();
         } else if (event.event === 'size') {
-            for (const pane of panes) {
-                const entry = pane.entries.find((candidate) => candidate.path === event.path);
-                if (entry !== undefined) {
-                    entry.recursive_size = event.bytes;
-                    // A partial subtotal keeps the path in the sizing set (still
-                    // calculating); a complete event clears it (final number).
-                    if (event.complete) {
-                        pane.setSizeComplete(event.path);
-                    } else {
-                        pane.addSizing(event.path);
-                    }
-                }
-            }
+            // Buffer and schedule a batched flush instead of applying the size
+            // immediately; a burst of events in one tick then re-sorts the
+            // size-sorted list once, not once per event. See flushSizeEvents.
+            pendingSizeEvents.push({ path: event.path, bytes: event.bytes, complete: event.complete });
+            scheduleSizeFlush();
         } else if (event.event === 'operation_complete') {
             // Intentionally silent for toasts: successful operations are already
             // toasted by `runOperation`'s onDone, so echoing the event would

@@ -476,3 +476,81 @@ describe('App recursive-size requests and completion tracking', () => {
         expect(docsSizeText()).toBe('12.1 KB');
     });
 });
+
+describe('App size-event batching', () => {
+    it('buffers size events and applies them together on the debounced flush', async () => {
+        // Two directories, each with an unknown recursive size (renders as the
+        // on-disk "10 B") and each still in the sizing set from the initial
+        // markSizing. Their `size` events must NOT apply one-by-one; they are
+        // buffered and applied together so the size sort runs once per batch.
+        const entries = [
+            makeEntry({ name: 'alpha', path: `${HOME}/alpha`, kind: 'directory' }),
+            makeEntry({ name: 'beta', path: `${HOME}/beta`, kind: 'directory' }),
+        ];
+        const ipc = createFakeIpc(entries);
+        let handler: ((event: FilesEvent) => void) | null = null;
+        ipc.subscribeFilesEvents = vi.fn((callback) => {
+            handler = callback;
+            return () => {};
+        });
+        const { container } = render(App, { props: { ipc } });
+
+        // Let startup settle with real timers: the handler registers and the
+        // initial listing renders both rows in the active pane.
+        await vi.waitFor(() => expect(handler).not.toBeNull());
+
+        function sizeText(path: string): string | null {
+            const active = container.querySelector('.pane:not(.inactive-pane)');
+            const row = active?.querySelector(`.frow[data-path="${path}"]`);
+            return row?.querySelector('.szval')?.textContent?.trim() ?? null;
+        }
+        function hasCalculatingDot(path: string): boolean {
+            const active = container.querySelector('.pane:not(.inactive-pane)');
+            const row = active?.querySelector(`.frow[data-path="${path}"]`);
+            return row?.querySelector('.size-calculating') !== null;
+        }
+
+        // Both rows render with the on-disk fallback size and a calculating dot
+        // (they are in the sizing set awaiting their recursive total).
+        await vi.waitFor(() => {
+            expect(sizeText(`${HOME}/alpha`)).toBe('10 B');
+            expect(sizeText(`${HOME}/beta`)).toBe('10 B');
+            expect(hasCalculatingDot(`${HOME}/alpha`)).toBe(true);
+            expect(hasCalculatingDot(`${HOME}/beta`)).toBe(true);
+        });
+
+        // Switch to fake timers so the flush's setTimeout is deterministic. The
+        // buffer flush runs on a macrotask (setTimeout); Svelte commits DOM
+        // updates on a microtask. Awaiting a microtask (Promise.resolve) below
+        // lets Svelte render any ALREADY-applied state WITHOUT running the
+        // macrotask flush — so if the events were applied synchronously the DOM
+        // would already show the new sizes here, failing the assertion.
+        vi.useFakeTimers();
+        try {
+            const notify = handler as unknown as (event: FilesEvent) => void;
+            notify({ event: 'size', path: `${HOME}/alpha`, bytes: 12345, complete: true });
+            notify({ event: 'size', path: `${HOME}/beta`, bytes: 2048, complete: true });
+
+            // Flush microtasks (Svelte's render commit) but NOT the macrotask
+            // buffer flush. The events are buffered, not applied synchronously:
+            // the rendered sizes are unchanged and the calculating dots remain.
+            await Promise.resolve();
+            await Promise.resolve();
+            expect(sizeText(`${HOME}/alpha`)).toBe('10 B');
+            expect(sizeText(`${HOME}/beta`)).toBe('10 B');
+            expect(hasCalculatingDot(`${HOME}/alpha`)).toBe(true);
+            expect(hasCalculatingDot(`${HOME}/beta`)).toBe(true);
+
+            // Advancing past the debounce runs the flush once, applying BOTH
+            // buffered events together and clearing their sizing dots.
+            await vi.advanceTimersByTimeAsync(0);
+
+            expect(sizeText(`${HOME}/alpha`)).toBe('12.1 KB');
+            expect(sizeText(`${HOME}/beta`)).toBe('2 KB');
+            expect(hasCalculatingDot(`${HOME}/alpha`)).toBe(false);
+            expect(hasCalculatingDot(`${HOME}/beta`)).toBe(false);
+        } finally {
+            vi.useRealTimers();
+        }
+    });
+});
