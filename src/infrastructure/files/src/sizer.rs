@@ -65,10 +65,8 @@ struct CacheEntry {
 /// modification time, and the cache never holds more than its capacity: an
 /// over-capacity insert first evicts the least recently used entry.
 ///
-/// Task 2 wires this into the sizer walk; until then it is constructed nowhere
-/// in production code, hence the `dead_code` allowance.
-// TODO(Task 2): remove `#[allow(dead_code)]` once the sizer walk uses this cache.
-#[allow(dead_code)]
+/// The sizer walk consults this cache before walking each child directory and
+/// repopulates it whenever a child is walked to completion.
 struct SizeCache {
     entries: std::collections::HashMap<String, CacheEntry>,
     /// A monotonic counter bumped on every get-hit and insert; the current
@@ -84,7 +82,6 @@ impl Default for SizeCache {
     }
 }
 
-#[allow(dead_code)]
 impl SizeCache {
     /// Construct an empty cache that retains at most `capacity` entries. The
     /// public [`Default`] impl uses [`MAX_CACHE_ENTRIES`]; tests use a small
@@ -149,16 +146,20 @@ impl SizeCache {
 
 /// A [`RecursiveSizer`] that walks directory trees on a blocking thread and
 /// streams throttled progress, honouring a per-path cancellation flag.
-#[derive(Debug, Default)]
+#[derive(Default)]
 pub struct BackgroundSizer {
     cancellations: Arc<Mutex<HashMap<String, Arc<AtomicBool>>>>,
+    /// Recursive directory sizes already computed, reused when a child's mtime
+    /// is unchanged so an unchanged folder is served instantly without a walk.
+    cache: Arc<Mutex<SizeCache>>,
 }
 
 impl BackgroundSizer {
-    /// Construct a sizer with an empty cancellation registry.
+    /// Construct a sizer with an empty cancellation registry and size cache.
     pub fn new() -> Self {
         Self {
             cancellations: Arc::new(Mutex::new(HashMap::new())),
+            cache: Arc::new(Mutex::new(SizeCache::default())),
         }
     }
 }
@@ -167,7 +168,12 @@ impl BackgroundSizer {
 /// directory, emitting updates keyed by the child's path. Regular files and
 /// symlinks directly in `dir` are ignored. Stops early on cancellation or when
 /// the consumer drops the stream.
-fn walk_and_emit(dir: &str, cancel: &AtomicBool, updates: &UpdateSender<SizeUpdate>) {
+fn walk_and_emit(
+    dir: &str,
+    cancel: &AtomicBool,
+    updates: &UpdateSender<SizeUpdate>,
+    cache: &Mutex<SizeCache>,
+) {
     if cancel.load(Ordering::Relaxed) {
         return;
     }
@@ -194,28 +200,71 @@ fn walk_and_emit(dir: &str, cancel: &AtomicBool, updates: &UpdateSender<SizeUpda
             continue;
         }
         let key = child_path.to_string_lossy().to_string();
-        if !size_child(&child_path, &key, cancel, updates) {
-            return;
+
+        // The child's own directory mtime validates any cached size. A failed
+        // `modified()` read (unsupported filesystem, permissions) degrades to a
+        // cache miss: the child is walked and never cached.
+        let mtime = metadata.modified().ok();
+
+        // A cache hit serves the recorded size instantly, without a walk. A
+        // poisoned lock is treated as a miss rather than panicking.
+        let cached = mtime.and_then(|current_mtime| {
+            cache
+                .lock()
+                .ok()
+                .and_then(|mut cache| cache.get(&key, current_mtime))
+        });
+        if let Some(bytes) = cached {
+            if cancel.load(Ordering::Relaxed) {
+                return;
+            }
+            let hit = SizeUpdate {
+                path: key.clone(),
+                bytes,
+                complete: true,
+            };
+            if updates.send(hit).is_err() {
+                return;
+            }
+            continue;
+        }
+
+        match size_child(&child_path, &key, cancel, updates) {
+            // A completed walk emitted its final update; record it so an
+            // unchanged repeat is served from cache. Only cache when the mtime
+            // read succeeded, so a cached entry always has a validator.
+            Some(total) => {
+                if let Some(current_mtime) = mtime {
+                    if let Ok(mut cache) = cache.lock() {
+                        cache.insert(key.clone(), current_mtime, total);
+                    }
+                }
+            }
+            // Cancelled or the consumer dropped the stream: stop the whole walk
+            // and cache nothing.
+            None => return,
         }
     }
 }
 
 /// Recursively sum every regular file beneath `root`, emitting throttled
-/// progress and a final completion keyed by `key`. Returns `false` when the
-/// walk was cancelled or the consumer dropped the stream, so the caller stops.
+/// progress and a final completion keyed by `key`. Returns `Some(total)` when
+/// the walk completed and emitted its final update, so the caller can cache the
+/// size; returns `None` when the walk was cancelled or the consumer dropped the
+/// stream, so the caller stops and caches nothing.
 fn size_child(
     root: &std::path::Path,
     key: &str,
     cancel: &AtomicBool,
     updates: &UpdateSender<SizeUpdate>,
-) -> bool {
+) -> Option<u64> {
     let mut total: u64 = 0;
     let mut last_emit = Instant::now();
     let mut pending = vec![root.to_path_buf()];
 
     while let Some(directory) = pending.pop() {
         if cancel.load(Ordering::Relaxed) {
-            return false;
+            return None;
         }
         let entries = match std::fs::read_dir(&directory) {
             Ok(entries) => entries,
@@ -223,7 +272,7 @@ fn size_child(
         };
         for entry in entries {
             if cancel.load(Ordering::Relaxed) {
-                return false;
+                return None;
             }
             let entry = match entry {
                 Ok(entry) => entry,
@@ -251,7 +300,7 @@ fn size_child(
                         complete: false,
                     };
                     if updates.send(progress).is_err() {
-                        return false;
+                        return None;
                     }
                     last_emit = Instant::now();
                 }
@@ -260,15 +309,20 @@ fn size_child(
     }
 
     if cancel.load(Ordering::Relaxed) {
-        return false;
+        return None;
     }
-    updates
+    let sent = updates
         .send(SizeUpdate {
             path: key.to_string(),
             bytes: total,
             complete: true,
         })
-        .is_ok()
+        .is_ok();
+    if sent {
+        Some(total)
+    } else {
+        None
+    }
 }
 
 /// Forward every update from the blocking walk onto the returned stream, then
@@ -314,8 +368,9 @@ impl RecursiveSizer for BackgroundSizer {
         let (update_sender, update_receiver) = tokio::sync::mpsc::unbounded_channel::<SizeUpdate>();
         let walk_path = path.to_string();
         let walk_flag = cancel_flag.clone();
+        let walk_cache = self.cache.clone();
         tokio::task::spawn_blocking(move || {
-            walk_and_emit(&walk_path, &walk_flag, &update_sender);
+            walk_and_emit(&walk_path, &walk_flag, &update_sender, &walk_cache);
         });
 
         let (emitter, receiver) = futures::channel::mpsc::unbounded::<SizeUpdate>();
@@ -460,6 +515,157 @@ mod tests {
         assert!(
             updates.iter().all(|u| !u.complete),
             "cancelled: no completion, got {updates:?}"
+        );
+    }
+
+    /// Find the final (`complete`) size emitted for `key`, if any.
+    fn final_bytes_for(updates: &[SizeUpdate], key: &str) -> Option<u64> {
+        updates
+            .iter()
+            .find(|u| u.path == key && u.complete)
+            .map(|u| u.bytes)
+    }
+
+    /// Sizing the same unchanged tree twice serves the child's size from the
+    /// cache on the second pass: after a first full walk records `a`'s size, we
+    /// grow a file NESTED beneath `a` (so `a`'s OWN directory mtime does not
+    /// change), then size again. The second pass reports `a`'s ORIGINAL bytes,
+    /// proving it was served from cache rather than re-walked. The test asserts
+    /// its own precondition — that `a`'s mtime is unchanged by the nested edit —
+    /// so a filesystem that behaves otherwise fails loudly rather than silently.
+    #[tokio::test]
+    async fn second_compute_of_unchanged_tree_serves_cache() {
+        let directory = tempfile::tempdir().expect("create temporary directory");
+        let root = directory.path();
+
+        let a = root.join("a");
+        std::fs::create_dir(&a).expect("create a");
+        let nested = a.join("nested");
+        std::fs::create_dir(&nested).expect("create a/nested");
+        let nested_file = nested.join("f");
+        std::fs::write(&nested_file, vec![0u8; 1000]).expect("write a/nested/f");
+
+        let a_key = a.to_str().expect("valid unicode").to_string();
+        let path = root.to_str().expect("valid unicode").to_string();
+
+        let a_mtime_before = std::fs::metadata(&a)
+            .expect("a metadata")
+            .modified()
+            .expect("a mtime");
+
+        let sizer = BackgroundSizer::new();
+        let first: Vec<SizeUpdate> = sizer.compute(&path).collect().await;
+        let original_bytes = final_bytes_for(&first, &a_key).expect("a sized on first pass");
+        assert_eq!(original_bytes, 1000, "a is the sum of its nested file");
+
+        // Grow the file nested beneath `a`. This changes the nested file's size
+        // but must NOT change `a`'s own directory mtime, because `a`'s direct
+        // entries are unchanged.
+        std::fs::write(&nested_file, vec![0u8; 5000]).expect("grow a/nested/f");
+
+        let a_mtime_after = std::fs::metadata(&a)
+            .expect("a metadata")
+            .modified()
+            .expect("a mtime");
+        assert_eq!(
+            a_mtime_before, a_mtime_after,
+            "precondition: editing a nested file leaves a's own mtime unchanged"
+        );
+
+        let second: Vec<SizeUpdate> = sizer.compute(&path).collect().await;
+        let cached_bytes = final_bytes_for(&second, &a_key).expect("a reported on second pass");
+        assert_eq!(
+            cached_bytes, original_bytes,
+            "unchanged a served the stale cached size, not re-walked"
+        );
+    }
+
+    /// Changing a child's OWN directory mtime invalidates its cache entry: after
+    /// a first walk caches `a`, we add a NEW file directly inside `a` (which
+    /// bumps `a`'s mtime), then size again. The second pass re-walks and reports
+    /// the larger size including the new file.
+    #[tokio::test]
+    async fn changed_child_mtime_invalidates() {
+        let directory = tempfile::tempdir().expect("create temporary directory");
+        let root = directory.path();
+
+        let a = root.join("a");
+        std::fs::create_dir(&a).expect("create a");
+        std::fs::write(a.join("f1"), vec![0u8; 1000]).expect("write a/f1");
+
+        let a_key = a.to_str().expect("valid unicode").to_string();
+        let path = root.to_str().expect("valid unicode").to_string();
+
+        let sizer = BackgroundSizer::new();
+        let first: Vec<SizeUpdate> = sizer.compute(&path).collect().await;
+        assert_eq!(final_bytes_for(&first, &a_key), Some(1000));
+
+        // A new file directly in `a` changes a's own directory mtime.
+        std::fs::write(a.join("f2"), vec![0u8; 2000]).expect("write a/f2");
+
+        let second: Vec<SizeUpdate> = sizer.compute(&path).collect().await;
+        assert_eq!(
+            final_bytes_for(&second, &a_key),
+            Some(3000),
+            "a was re-walked because its mtime changed"
+        );
+    }
+
+    /// A child never sized before is walked and reported normally (the cache
+    /// starts empty, so the first sizing is always a miss).
+    #[tokio::test]
+    async fn new_child_not_in_cache_is_walked() {
+        let directory = tempfile::tempdir().expect("create temporary directory");
+        let root = directory.path();
+
+        let a = root.join("a");
+        std::fs::create_dir(&a).expect("create a");
+        std::fs::write(a.join("f1"), vec![0u8; 1234]).expect("write a/f1");
+
+        let a_key = a.to_str().expect("valid unicode").to_string();
+        let path = root.to_str().expect("valid unicode").to_string();
+
+        let sizer = BackgroundSizer::new();
+        let updates: Vec<SizeUpdate> = sizer.compute(&path).collect().await;
+        assert_eq!(
+            final_bytes_for(&updates, &a_key),
+            Some(1234),
+            "a never-seen child is walked and reported"
+        );
+    }
+
+    /// A cancelled walk must not populate the cache: after cancelling a first
+    /// sizing before it completes, a second sizing of the same tree must walk
+    /// the child (and emit a completion), proving nothing was cached from the
+    /// aborted walk.
+    #[tokio::test]
+    async fn cancelled_walk_does_not_cache() {
+        let directory = tempfile::tempdir().expect("create temporary directory");
+        let root = directory.path();
+        for c in 0..20 {
+            let child = root.join(format!("child-{c}"));
+            std::fs::create_dir(&child).expect("create child");
+            for f in 0..50 {
+                std::fs::write(child.join(format!("f-{f}.bin")), vec![0u8; 64]).expect("write");
+            }
+        }
+        let path = root.to_str().expect("valid unicode").to_string();
+
+        let sizer = BackgroundSizer::new();
+        let stream = sizer.compute(&path);
+        sizer.cancel(&path);
+        let first: Vec<SizeUpdate> = stream.collect().await;
+        assert!(
+            first.iter().all(|u| !u.complete),
+            "cancelled first pass yields no completion"
+        );
+
+        // A fresh sizing must actually walk the children (not serve them from a
+        // cache the cancelled walk was forbidden to populate).
+        let second: Vec<SizeUpdate> = sizer.compute(&path).collect().await;
+        assert!(
+            second.iter().any(|u| u.complete),
+            "second pass walks the tree, so completions appear"
         );
     }
 }
