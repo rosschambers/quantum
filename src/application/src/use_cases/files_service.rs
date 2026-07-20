@@ -25,6 +25,7 @@ use quantum_domain::{
 };
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use tokio::task::JoinHandle;
 
@@ -72,6 +73,11 @@ pub struct Places {
 struct Subscription {
     count: usize,
     handle: JoinHandle<()>,
+    /// Which walk armed this handle. The forwarding task removes its own handle
+    /// on stream end only when the stored generation still matches the one it
+    /// was spawned with, so a newer `sizes()` for the same path is never
+    /// clobbered. Watch subscriptions do not self-remove and always use `0`.
+    generation: u64,
 }
 
 /// Orchestrates the file-explorer subsystem. Holds the injected ports plus the
@@ -93,8 +99,12 @@ pub struct FilesService {
     watch_handles: Mutex<HashMap<String, Subscription>>,
     /// Reference-counted per-path recursive-size subscriptions. Keyed by the
     /// path being sized; the computation runs once and is cancelled only when
-    /// the last subscriber calls `cancel_sizes`.
-    size_handles: Mutex<HashMap<String, Subscription>>,
+    /// the last subscriber calls `cancel_sizes`. Shared with each forwarding
+    /// task (hence `Arc`) so a completed walk can remove its own handle.
+    size_handles: Arc<Mutex<HashMap<String, Subscription>>>,
+    /// Monotonic source of walk generations, stamped onto each new size
+    /// subscription so a completing walk only removes the handle it created.
+    size_generation: AtomicU64,
 }
 
 impl FilesService {
@@ -119,7 +129,8 @@ impl FilesService {
             applications,
             event_bus,
             watch_handles: Mutex::new(HashMap::new()),
-            size_handles: Mutex::new(HashMap::new()),
+            size_handles: Arc::new(Mutex::new(HashMap::new())),
+            size_generation: AtomicU64::new(0),
         }
     }
 
@@ -269,7 +280,14 @@ impl FilesService {
                     .await;
             }
         });
-        handles.insert(path.to_string(), Subscription { count: 1, handle });
+        handles.insert(
+            path.to_string(),
+            Subscription {
+                count: 1,
+                handle,
+                generation: 0,
+            },
+        );
         Ok(())
     }
 
@@ -309,6 +327,9 @@ impl FilesService {
         }
         let stream = self.sizer.compute(path);
         let event_bus = self.event_bus.clone();
+        let generation = self.size_generation.fetch_add(1, Ordering::Relaxed);
+        let task_handles = self.size_handles.clone();
+        let path_owned = path.to_string();
         let handle = tokio::spawn(async move {
             let mut stream = stream;
             while let Some(update) = stream.next().await {
@@ -322,8 +343,27 @@ impl FilesService {
                     .publish(FILES_EVENT_CHANNEL, &payload.to_string())
                     .await;
             }
+            // The walk finished (or the consumer dropped). Remove our own handle
+            // so a later `sizes()` for this path starts a fresh walk instead of
+            // finding a dead handle. Guard by generation so we never remove a
+            // newer walk's handle. No await inside, so holding the lock is safe.
+            if let Ok(mut map) = task_handles.lock() {
+                if map
+                    .get(&path_owned)
+                    .is_some_and(|subscription| subscription.generation == generation)
+                {
+                    map.remove(&path_owned);
+                }
+            }
         });
-        handles.insert(path.to_string(), Subscription { count: 1, handle });
+        handles.insert(
+            path.to_string(),
+            Subscription {
+                count: 1,
+                handle,
+                generation,
+            },
+        );
     }
 
     /// Cancel the recursive-size computation for `path`. Decrements the
@@ -1084,6 +1124,63 @@ mod tests {
         tokio::time::sleep(std::time::Duration::from_millis(100)).await;
         let events = event_bus.events.lock().await;
         assert_eq!(events.len(), 1, "no forwarding after cancel: {events:?}");
+    }
+
+    #[tokio::test]
+    async fn sizes_restarts_walk_after_completion() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        let compute_calls = Arc::new(AtomicUsize::new(0));
+        let cancel_calls = Arc::new(AtomicUsize::new(0));
+        let sender_slot = Arc::new(Mutex::new(None));
+        let sizer = CountingSizer {
+            compute_calls: compute_calls.clone(),
+            cancel_calls: cancel_calls.clone(),
+            sender: sender_slot.clone(),
+        };
+        let event_bus = Arc::new(FakeEventBus::new());
+        let service = FilesService::new(
+            Arc::new(FakeFileSystem::default()),
+            Arc::new(FakeWatcher { changes: vec![] }),
+            Arc::new(FakeOpener),
+            Arc::new(sizer),
+            Arc::new(FakePins { pins: vec![] }),
+            Arc::new(FakePreferences::new()),
+            Arc::new(FakeApplications {
+                applications: vec![],
+            }),
+            event_bus.clone(),
+        );
+
+        // First walk starts and computes once.
+        service.sizes("/dir");
+        assert_eq!(compute_calls.load(Ordering::SeqCst), 1);
+
+        // Forward one final update, then drop the sender so the receiver stream
+        // ends. An unbounded receiver stream completes once every sender drops,
+        // which drives the forwarding task's loop to exit and run its post-loop
+        // handle removal.
+        sender_slot
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .as_ref()
+            .expect("compute started")
+            .unbounded_send(SizeUpdate {
+                path: "/dir/child".to_string(),
+                bytes: 100,
+                complete: true,
+            })
+            .expect("send update");
+        *sender_slot
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner()) = None;
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+
+        // The completed walk removed its own handle, so a fresh request must
+        // start a brand-new walk rather than sharing the dead one. Without the
+        // fix this stays at 1 and folder sizes are stuck.
+        service.sizes("/dir");
+        assert_eq!(compute_calls.load(Ordering::SeqCst), 2);
     }
 
     #[tokio::test]
