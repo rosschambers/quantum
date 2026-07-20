@@ -336,3 +336,127 @@ describe('App context menu and properties modal', () => {
         });
     });
 });
+
+describe('App recursive-size requests and completion tracking', () => {
+    /** Count how many times `ipc.sizes` was called for a specific path. */
+    function sizesCallsFor(ipc: FilesIpc, path: string): number {
+        return (ipc.sizes as ReturnType<typeof vi.fn>).mock.calls.filter(
+            (call) => call[0] === path,
+        ).length;
+    }
+
+    it('requests recursive sizes for a pane path on the initial load', async () => {
+        const ipc = createFakeIpc([makeEntry({ name: 'alpha', path: `${HOME}/alpha` })]);
+        render(App, { props: { ipc } });
+
+        // After the panes re-seed to Home and list, sizes must have been asked
+        // for the Home path at least once (both panes share it).
+        await vi.waitFor(() => {
+            expect(sizesCallsFor(ipc, HOME)).toBeGreaterThanOrEqual(1);
+        });
+    });
+
+    it('re-requests recursive sizes for the pane path after a changed reload (Defect A)', async () => {
+        const ipc = createFakeIpc([
+            makeEntry({ name: 'docs', path: `${HOME}/docs`, kind: 'directory' }),
+        ]);
+        let handler: ((event: FilesEvent) => void) | null = null;
+        ipc.subscribeFilesEvents = vi.fn((callback) => {
+            handler = callback;
+            return () => {};
+        });
+        render(App, { props: { ipc } });
+
+        // Settle: the event handler is registered and the initial size request
+        // for Home has already fired.
+        await vi.waitFor(() => expect(handler).not.toBeNull());
+        await vi.waitFor(() => {
+            expect(sizesCallsFor(ipc, HOME)).toBeGreaterThanOrEqual(1);
+        });
+        const before = sizesCallsFor(ipc, HOME);
+
+        // A `changed` event on the current pane's path reloads it AND must
+        // re-request its sizes; the count for Home must strictly increase.
+        const notify = handler as unknown as (event: FilesEvent) => void;
+        notify({ event: 'changed', path: HOME });
+
+        await vi.waitFor(() => {
+            expect(sizesCallsFor(ipc, HOME)).toBeGreaterThan(before);
+        });
+    });
+
+    it('preserves a known child recursive size across a changed reload', async () => {
+        // The directory row already has a recursive size of 12345 bytes,
+        // rendered as "12.1 KB". A reload replaces the entries with fresh
+        // objects whose recursive_size is null, so without preservation the
+        // size text would blank out. It must survive the reload.
+        // The real daemon returns FRESH entry objects on every `list`, with
+        // recursive_size null until sizing re-computes it. Model that here so
+        // the test actually exercises preservation: the first list carries the
+        // known size, every later list nulls it out.
+        const ipc = createFakeIpc([]);
+        // The daemon nulls recursive_size on a fresh list until sizing recomputes
+        // it. `sizeCleared` flips to model the post-`changed` reload: initial
+        // loads carry the known size, the reload returns null.
+        let sizeCleared = false;
+        ipc.list = vi.fn((path: string) => {
+            if (path !== HOME) {
+                return Promise.resolve([]);
+            }
+            return Promise.resolve([
+                makeEntry({
+                    name: 'docs',
+                    path: `${HOME}/docs`,
+                    kind: 'directory',
+                    recursive_size: sizeCleared ? null : 12345,
+                }),
+            ]);
+        });
+        let handler: ((event: FilesEvent) => void) | null = null;
+        ipc.subscribeFilesEvents = vi.fn((callback) => {
+            handler = callback;
+            return () => {};
+        });
+        const { container } = render(App, { props: { ipc } });
+
+        await vi.waitFor(() => expect(handler).not.toBeNull());
+        await vi.waitFor(() => {
+            expect(ipc.list).toHaveBeenCalledWith(HOME);
+        });
+
+        function docsSizeText(): string | null {
+            const active = container.querySelector('.pane:not(.inactive-pane)');
+            const row = active?.querySelector(`.frow[data-path="${HOME}/docs"]`);
+            return row?.querySelector('.szval')?.textContent ?? null;
+        }
+
+        await vi.waitFor(() => {
+            expect(docsSizeText()).toBe('12.1 KB');
+        });
+
+        function homeListCalls(): number {
+            return (ipc.list as ReturnType<typeof vi.fn>).mock.calls.filter(
+                (call) => call[0] === HOME,
+            ).length;
+        }
+        const listsBefore = homeListCalls();
+
+        // From now on a fresh list nulls the recursive size; only the App's
+        // preservation of the previously-known value can keep it visible.
+        sizeCleared = true;
+        const notify = handler as unknown as (event: FilesEvent) => void;
+        notify({ event: 'changed', path: HOME });
+
+        // Wait until the reload has actually re-listed Home and the new
+        // null-sized entries have been applied to the pane.
+        await vi.waitFor(() => {
+            expect(homeListCalls()).toBeGreaterThan(listsBefore);
+        });
+        // Give the reassigned entries a chance to render.
+        await new Promise((resolve) => setTimeout(resolve, 0));
+
+        // After the reload the known recursive size is re-applied, so the size
+        // text stays "12.1 KB" rather than falling back to the on-disk "10 B".
+        expect(docsSizeText()).toBe('12.1 KB');
+    });
+});

@@ -191,6 +191,29 @@
         }
     }
 
+    /**
+     * Seed a pane's sizing state and (re-)request recursive sizes for its
+     * current listing. Kept out of the generic `loadPane` so loading stays a
+     * plain list. Optionally re-applies a snapshot of previously-known
+     * recursive sizes onto the freshly-listed entries so a reload does not
+     * flash the visible number to blank while sizing recomputes.
+     */
+    function requestSizes(pane: PaneState, knownSizes?: Map<string, number>): void {
+        if (knownSizes !== undefined) {
+            for (const entry of pane.entries) {
+                const known = knownSizes.get(entry.path);
+                if (known !== undefined) {
+                    entry.recursive_size = known;
+                }
+            }
+        }
+        const directoryPaths = pane.entries
+            .filter((entry) => entry.kind === 'directory')
+            .map((entry) => entry.path);
+        pane.markSizing(directoryPaths);
+        void ipc.sizes(pane.path).catch(() => {});
+    }
+
     /** Re-fetch pins and drives (after a pin/unpin mutation or at startup). */
     async function refreshPlaces(): Promise<void> {
         try {
@@ -248,7 +271,19 @@
         if (event.event === 'changed') {
             for (const pane of panes) {
                 if (pane.path === event.path) {
-                    void loadPane(pane);
+                    // Snapshot the known recursive sizes BEFORE the reload;
+                    // loadPane replaces entries with fresh objects whose
+                    // recursive_size is null, which would blank the visible
+                    // number until sizing recomputes it.
+                    const knownSizes = new Map<string, number>();
+                    for (const entry of pane.entries) {
+                        if (entry.recursive_size !== null) {
+                            knownSizes.set(entry.path, entry.recursive_size);
+                        }
+                    }
+                    void loadPane(pane).then(() => {
+                        requestSizes(pane, knownSizes);
+                    });
                 }
             }
             // A change to any watched directory can alter free space (a delete,
@@ -259,6 +294,13 @@
                 const entry = pane.entries.find((candidate) => candidate.path === event.path);
                 if (entry !== undefined) {
                     entry.recursive_size = event.bytes;
+                    // A partial subtotal keeps the path in the sizing set (still
+                    // calculating); a complete event clears it (final number).
+                    if (event.complete) {
+                        pane.setSizeComplete(event.path);
+                    } else {
+                        pane.addSizing(event.path);
+                    }
                 }
             }
         } else if (event.event === 'operation_complete') {
@@ -279,13 +321,17 @@
             const pane = panes[index];
             const path = pane.path;
             void ipc.watch(path).catch(() => {});
-            void ipc.sizes(path).catch(() => {});
-            void loadPane(pane);
+            // Seed the sizing set and request sizes only AFTER the listing
+            // resolves: the child directory paths are not known until then.
+            void loadPane(pane).then(() => {
+                requestSizes(pane);
+            });
             cursors[index] = 0;
             anchors[index] = 0;
             return () => {
                 void ipc.unwatch(path).catch(() => {});
                 void ipc.cancelSizes(path).catch(() => {});
+                pane.clearSizing();
             };
         });
     }
