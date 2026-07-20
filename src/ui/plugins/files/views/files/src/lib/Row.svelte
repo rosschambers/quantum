@@ -282,11 +282,11 @@
     }
     .size-calculating {
         display: inline-block;
-        width: 8px;
-        height: 8px;
+        width: 5px;
+        height: 5px;
         border-radius: 50%;
         background: var(--color-accent);
-        margin-right: 6px;
+        margin-right: 5px;
         vertical-align: middle;
     }
     .sz .minibar {
