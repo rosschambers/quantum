@@ -582,13 +582,15 @@ impl<C: WindowConstructor> WindowRegistry<C> {
                     .is_some_and(|built| *built != requested)
                 {
                     if let Some(mut old) = self.windows.remove(&key) {
-                        // Hide, never destroy: destroying a layer-shell window
-                        // segfaults (see hide_window). The evicted window is
-                        // orphaned hidden on its old monitor and a fresh one is
-                        // built below on the requested monitor. Monitor eviction
-                        // is rare (hotplug), so an orphaned hidden surface is an
-                        // acceptable leak versus a crash.
-                        old.hide();
+                        // The evicted window is removed from the map, so it can
+                        // never be reused; destroy it to reclaim its renderer
+                        // rather than orphaning a hidden surface. Destroy is safe
+                        // on a plain gtk4::Window, and a fresh window is
+                        // reconstructed below on the requested monitor. Destroy
+                        // must NOT be preceded by a hide: hiding a layer-shell
+                        // overlay releases its Wayland surface and a later destroy
+                        // aborts, so we go straight to destroy.
+                        old.destroy();
                     }
                 }
                 let window = match self.windows.entry(key.clone()) {
@@ -1281,12 +1283,15 @@ mod tests {
     }
 
     #[test]
-    fn monitor_eviction_hides_old_and_reconstructs() {
+    fn monitor_eviction_destroys_old_and_reconstructs() {
         // Opening a single-instance overlay on one monitor and then another
         // evicts the surface pinned to the old monitor and reconstructs it on
-        // the new one. The evicted window must be HIDDEN, not destroyed:
-        // destroying a layer-shell surface segfaults. The orphaned hidden
-        // surface is an accepted rare leak (monitor hotplug) versus a crash.
+        // the new one. The evicted window has already been removed from the
+        // map, so it can never be reused; destroying it reclaims its renderer.
+        // Destroy is safe on a plain gtk4::Window and must NOT be preceded by a
+        // hide (hiding a layer-shell overlay releases its Wayland surface and a
+        // later destroy would abort), so the evicted window is destroyed
+        // without hiding first.
         let count = Rc::new(Cell::new(0));
         let shown = Rc::new(Cell::new(false));
         let destroyed = Rc::new(Cell::new(0));
@@ -1310,10 +1315,10 @@ mod tests {
         );
         assert_eq!(
             destroyed.get(),
-            0,
-            "eviction must never destroy the old window"
+            1,
+            "eviction destroys the old window to reclaim its renderer"
         );
-        assert!(hidden.get() >= 1, "eviction hides the old window");
+        assert_eq!(hidden.get(), 0, "eviction destroys WITHOUT hiding first");
     }
 
     #[test]
