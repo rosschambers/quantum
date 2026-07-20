@@ -31,6 +31,14 @@
         dragSources?: () => string[];
         /** Move dropped sources into this row's directory (directory rows only). */
         onMove?: (sources: string[], destination: string) => void;
+        /**
+         * True while this row's recursive size is still being calculated,
+         * rendering a small dot before the size text. FileList only passes
+         * true for directory rows; this component does not re-check the kind
+         * and trusts the caller, so a file with `calculating` true would still
+         * render a dot — the caller simply never does that.
+         */
+        calculating?: boolean;
     }
 
     const {
@@ -42,6 +50,7 @@
         onContextMenu,
         dragSources,
         onMove,
+        calculating = false,
     }: Props = $props();
 
     // Content-kind to icon glyph. Directories and symlinks take precedence over
@@ -192,7 +201,13 @@
         {/if}
     </span>
     <span class="sz">
-        <span class="szval">{displaySize}</span>
+        <span class="szval">
+            {#if calculating}<span
+                    class="size-calculating"
+                    title="Calculating"
+                    aria-label="Calculating"
+                ></span>{/if}{displaySize}
+        </span>
         <span class="minibar"><i style="width: {barWidth}%"></i></span>
     </span>
     <span class="mt">{modified}</span>
@@ -264,6 +279,15 @@
         align-items: flex-end;
         justify-content: center;
         gap: 2px;
+    }
+    .size-calculating {
+        display: inline-block;
+        width: 8px;
+        height: 8px;
+        border-radius: 50%;
+        background: var(--color-accent);
+        margin-right: 6px;
+        vertical-align: middle;
     }
     .sz .minibar {
         width: 64px;

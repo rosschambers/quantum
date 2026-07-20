@@ -159,6 +159,44 @@ describe('Row rendering', () => {
     });
 });
 
+describe('Row calculating indicator', () => {
+    it('renders a calculating dot before the size for a directory when calculating', () => {
+        const { container } = renderRow(
+            entry({ name: 'Documents', kind: 'directory' }),
+            { calculating: true },
+        );
+        const dot = container.querySelector('.size-calculating') as HTMLElement;
+        expect(dot).not.toBeNull();
+        expect(dot.getAttribute('title')).toBe('Calculating');
+
+        // The dot must precede the size text within the size-value cell: the
+        // dot node comes before the '0 B' text node in DOM order.
+        const value = container.querySelector('.szval') as HTMLElement;
+        expect(value).not.toBeNull();
+        expect(value.textContent).toContain('0 B');
+        const sizeText = [...value.childNodes].find(
+            (node) => node.nodeType === Node.TEXT_NODE && node.textContent?.trim() !== '',
+        );
+        expect(sizeText).not.toBeUndefined();
+        expect(
+            dot.compareDocumentPosition(sizeText!) & Node.DOCUMENT_POSITION_FOLLOWING,
+        ).toBeTruthy();
+    });
+
+    it('renders no calculating dot when calculating is false', () => {
+        const { container } = renderRow(
+            entry({ name: 'Documents', kind: 'directory' }),
+            { calculating: false },
+        );
+        expect(container.querySelector('.size-calculating')).toBeNull();
+    });
+
+    it('renders no calculating dot when the calculating prop is omitted', () => {
+        const { container } = renderRow(entry({ name: 'Documents', kind: 'directory' }));
+        expect(container.querySelector('.size-calculating')).toBeNull();
+    });
+});
+
 describe('Row drag source', () => {
     afterEach(() => endDrag());
 
