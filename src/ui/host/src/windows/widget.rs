@@ -656,6 +656,13 @@ impl crate::registry::WindowOps for WidgetWindow {
             return;
         }
         self.is_destroyed = true;
+        // Terminate the render process before destroying the window: destroying
+        // the GTK window alone unparents the WebView but leaves an isolated
+        // WebKitWebProcess resident (see the same note in panel.rs). Widgets are
+        // warm/shared today so this path is rarely hit, but keeping the two
+        // destroy paths identical prevents a future isolated widget from
+        // leaking its process.
+        webkit6::prelude::WebViewExt::terminate_web_process(&self.webview);
         gtk4::prelude::GtkWindowExt::destroy(&self.window);
     }
 

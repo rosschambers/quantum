@@ -405,6 +405,16 @@ impl crate::registry::WindowOps for PanelWindow {
             return;
         }
         self.is_destroyed = true;
+        // Destroying the GTK window unparents the WebView but does NOT
+        // terminate its render process: for a view on its own render process
+        // (every destroy_on_dismiss view since B1) WebKit keeps the
+        // WebKitWebProcess alive, so the renderer memory the destroy was meant
+        // to reclaim leaks — and a fresh process is spawned on the next open,
+        // stacking up hundreds of resident processes over a session. Terminate
+        // the render process explicitly so it exits and its memory returns to
+        // the OS. This host has no unsaved page state, so a forceful terminate
+        // (versus the graceful, possibly-async try_close) is correct.
+        webkit6::prelude::WebViewExt::terminate_web_process(&self.webview);
         gtk4::prelude::GtkWindowExt::destroy(&self.window);
     }
 }
@@ -416,6 +426,7 @@ impl Drop for PanelWindow {
     /// already-freed layer-shell surface.
     fn drop(&mut self) {
         if !self.is_destroyed {
+            webkit6::prelude::WebViewExt::terminate_web_process(&self.webview);
             gtk4::prelude::GtkWindowExt::destroy(&self.window);
         }
     }
