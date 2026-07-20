@@ -43,6 +43,110 @@ use tokio::sync::mpsc::{UnboundedReceiver as UpdateReceiver, UnboundedSender as 
 /// The minimum wall-clock gap between successive progress emissions.
 const PROGRESS_INTERVAL: Duration = Duration::from_millis(100);
 
+/// The upper bound on how many directory sizes the [`SizeCache`] retains before
+/// it starts evicting the least recently used entry.
+const MAX_CACHE_ENTRIES: usize = 4096;
+
+/// A single cached directory size together with the modification time it was
+/// computed against and the access counter value of its most recent use.
+struct CacheEntry {
+    /// The directory's modification time when its size was recorded; a later
+    /// lookup with a different mtime is treated as a miss.
+    mtime: std::time::SystemTime,
+    /// The recursively summed size in bytes.
+    bytes: u64,
+    /// The [`SizeCache::counter`] value at this entry's most recent access,
+    /// used to pick the least recently used entry for eviction.
+    last_access: u64,
+}
+
+/// A bounded, least-recently-used in-memory cache of recursive directory sizes
+/// keyed by directory path. Entries are validated against the directory's
+/// modification time, and the cache never holds more than its capacity: an
+/// over-capacity insert first evicts the least recently used entry.
+///
+/// Task 2 wires this into the sizer walk; until then it is constructed nowhere
+/// in production code, hence the `dead_code` allowance.
+// TODO(Task 2): remove `#[allow(dead_code)]` once the sizer walk uses this cache.
+#[allow(dead_code)]
+struct SizeCache {
+    entries: std::collections::HashMap<String, CacheEntry>,
+    /// A monotonic counter bumped on every get-hit and insert; the current
+    /// value stamps an entry's `last_access` to order entries by recency.
+    counter: u64,
+    /// The maximum number of entries retained before eviction begins.
+    capacity: usize,
+}
+
+impl Default for SizeCache {
+    fn default() -> Self {
+        Self::with_capacity(MAX_CACHE_ENTRIES)
+    }
+}
+
+#[allow(dead_code)]
+impl SizeCache {
+    /// Construct an empty cache that retains at most `capacity` entries. The
+    /// public [`Default`] impl uses [`MAX_CACHE_ENTRIES`]; tests use a small
+    /// capacity to exercise eviction cheaply.
+    fn with_capacity(capacity: usize) -> Self {
+        Self {
+            entries: std::collections::HashMap::new(),
+            counter: 0,
+            capacity,
+        }
+    }
+
+    /// Return the cached size for `path` only when an entry exists AND its
+    /// recorded modification time equals `current_mtime`. On such a hit the
+    /// access counter is bumped and the entry's `last_access` updated so it
+    /// counts as most recently used; a missing entry or an mtime mismatch
+    /// returns `None`. A stale entry is left in place for a later insert to
+    /// overwrite rather than being removed here.
+    fn get(&mut self, path: &str, current_mtime: std::time::SystemTime) -> Option<u64> {
+        let entry = self.entries.get_mut(path)?;
+        if entry.mtime != current_mtime {
+            return None;
+        }
+        self.counter += 1;
+        entry.last_access = self.counter;
+        Some(entry.bytes)
+    }
+
+    /// Record `bytes` as the size of `path` at modification time `mtime`. An
+    /// existing entry for `path` is overwritten with a fresh `last_access`.
+    /// Inserting a NEW key that would exceed the capacity first evicts the entry
+    /// with the smallest `last_access` (the least recently used).
+    fn insert(&mut self, path: String, mtime: std::time::SystemTime, bytes: u64) {
+        self.counter += 1;
+        let is_new_key = !self.entries.contains_key(&path);
+        if is_new_key && self.entries.len() >= self.capacity {
+            self.evict_least_recently_used();
+        }
+        self.entries.insert(
+            path,
+            CacheEntry {
+                mtime,
+                bytes,
+                last_access: self.counter,
+            },
+        );
+    }
+
+    /// Remove the entry with the smallest `last_access`. The scan is linear in
+    /// the number of entries but only runs on an over-capacity insert.
+    fn evict_least_recently_used(&mut self) {
+        let victim = self
+            .entries
+            .iter()
+            .min_by_key(|(_, entry)| entry.last_access)
+            .map(|(path, _)| path.clone());
+        if let Some(path) = victim {
+            self.entries.remove(&path);
+        }
+    }
+}
+
 /// A [`RecursiveSizer`] that walks directory trees on a blocking thread and
 /// streams throttled progress, honouring a per-path cancellation flag.
 #[derive(Debug, Default)]
@@ -357,5 +461,110 @@ mod tests {
             updates.iter().all(|u| !u.complete),
             "cancelled: no completion, got {updates:?}"
         );
+    }
+}
+
+#[cfg(test)]
+mod size_cache_tests {
+    use super::{SizeCache, MAX_CACHE_ENTRIES};
+    use std::time::{Duration, SystemTime};
+
+    /// Fabricate a distinct `SystemTime` from a whole-second offset so tests do
+    /// not depend on any real clock.
+    fn mtime_at(seconds: u64) -> SystemTime {
+        SystemTime::UNIX_EPOCH + Duration::from_secs(seconds)
+    }
+
+    /// A get against an empty cache misses.
+    #[test]
+    fn get_on_empty_cache_returns_none() {
+        let mut cache = SizeCache::default();
+        assert_eq!(cache.get("/some/path", mtime_at(1)), None);
+    }
+
+    /// Inserting then getting with the SAME mtime returns the stored size.
+    #[test]
+    fn get_after_insert_with_matching_mtime_returns_bytes() {
+        let mut cache = SizeCache::default();
+        cache.insert("/a".to_string(), mtime_at(10), 4096);
+        assert_eq!(cache.get("/a", mtime_at(10)), Some(4096));
+    }
+
+    /// A get with an mtime that differs from the stored one misses, because the
+    /// directory changed since the size was recorded.
+    #[test]
+    fn get_with_different_mtime_returns_none() {
+        let mut cache = SizeCache::default();
+        cache.insert("/a".to_string(), mtime_at(10), 4096);
+        assert_eq!(cache.get("/a", mtime_at(11)), None);
+    }
+
+    /// Inserting a new key beyond capacity evicts the least-recently-used entry.
+    /// With capacity two, inserting A then B then C evicts A (the oldest touch),
+    /// leaving B and C present.
+    #[test]
+    fn insert_past_capacity_evicts_least_recently_used() {
+        let mut cache = SizeCache::with_capacity(2);
+        cache.insert("/a".to_string(), mtime_at(1), 100);
+        cache.insert("/b".to_string(), mtime_at(2), 200);
+        cache.insert("/c".to_string(), mtime_at(3), 300);
+
+        assert_eq!(cache.get("/a", mtime_at(1)), None, "a was evicted");
+        assert_eq!(cache.get("/b", mtime_at(2)), Some(200), "b survives");
+        assert_eq!(cache.get("/c", mtime_at(3)), Some(300), "c survives");
+    }
+
+    /// A get updates recency, so it, not raw insertion order, decides the
+    /// eviction victim. With capacity two, insert A then B, then get A (making B
+    /// the least recently used), then insert C: B is evicted and A survives.
+    #[test]
+    fn get_updates_recency_so_it_changes_the_eviction_victim() {
+        let mut cache = SizeCache::with_capacity(2);
+        cache.insert("/a".to_string(), mtime_at(1), 100);
+        cache.insert("/b".to_string(), mtime_at(2), 200);
+
+        // Touch A so B becomes the least recently used entry.
+        assert_eq!(cache.get("/a", mtime_at(1)), Some(100));
+
+        cache.insert("/c".to_string(), mtime_at(3), 300);
+
+        assert_eq!(cache.get("/b", mtime_at(2)), None, "b was evicted, not a");
+        assert_eq!(
+            cache.get("/a", mtime_at(1)),
+            Some(100),
+            "a survives via recency"
+        );
+        assert_eq!(cache.get("/c", mtime_at(3)), Some(300), "c survives");
+    }
+
+    /// The default constructor uses the module-wide capacity constant: filling
+    /// exactly `MAX_CACHE_ENTRIES` keeps every key, and one more distinct key
+    /// evicts the least recently used (here the first-inserted, untouched key).
+    #[test]
+    fn default_uses_max_cache_entries_capacity() {
+        let mut cache = SizeCache::default();
+        for index in 0..MAX_CACHE_ENTRIES {
+            cache.insert(
+                format!("/path/{index}"),
+                mtime_at(index as u64),
+                index as u64,
+            );
+        }
+        // At exactly capacity, the last-inserted key is present and nothing was
+        // evicted (checking without touching /path/0's recency).
+        let last = MAX_CACHE_ENTRIES - 1;
+        assert_eq!(
+            cache.get(&format!("/path/{last}"), mtime_at(last as u64)),
+            Some(last as u64)
+        );
+
+        // One more distinct key tips over capacity and evicts the oldest,
+        // least-recently-used entry, which is the never-accessed /path/0.
+        cache.insert(
+            "/path/overflow".to_string(),
+            mtime_at(MAX_CACHE_ENTRIES as u64),
+            999,
+        );
+        assert_eq!(cache.get("/path/0", mtime_at(0)), None, "oldest evicted");
     }
 }
