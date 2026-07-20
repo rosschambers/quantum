@@ -47,6 +47,12 @@ const PROGRESS_INTERVAL: Duration = Duration::from_millis(100);
 /// it starts evicting the least recently used entry.
 const MAX_CACHE_ENTRIES: usize = 4096;
 
+/// How many child directories the walk sizes concurrently. A bounded pool keeps
+/// a single giant child from blocking its siblings — small folders return
+/// immediately on a free worker while a huge one grinds on its own — without
+/// spawning an unbounded thread per child.
+const SIZER_WORKERS: usize = 4;
+
 /// A single cached directory size together with the modification time it was
 /// computed against and the access counter value of its most recent use.
 struct CacheEntry {
@@ -217,6 +223,11 @@ fn walk_and_emit(
         return;
     }
     let children = collect_child_directories(dir);
+
+    // Phase one: serve cache HITS inline (serial, order-preserving). Each hit
+    // emits its single completion immediately; children with no valid cached
+    // size are collected as MISSES to be walked concurrently in phase two.
+    let mut miss: Vec<(std::path::PathBuf, String, Option<std::time::SystemTime>)> = Vec::new();
     for (child_path, key, mtime) in children {
         if cancel.load(Ordering::Relaxed) {
             return;
@@ -245,22 +256,59 @@ fn walk_and_emit(
             continue;
         }
 
-        match size_child(&child_path, &key, cancel, updates) {
-            // A completed walk emitted its final update; record it so an
-            // unchanged repeat is served from cache. Only cache when the mtime
-            // read succeeded, so a cached entry always has a validator.
-            Some(total) => {
-                if let Some(current_mtime) = mtime {
-                    if let Ok(mut cache) = cache.lock() {
-                        cache.insert(key.clone(), current_mtime, total);
+        miss.push((child_path, key, mtime));
+    }
+
+    if miss.is_empty() {
+        return;
+    }
+    if cancel.load(Ordering::Relaxed) {
+        return;
+    }
+
+    // Phase two: walk the miss children on a bounded pool of workers so a giant
+    // child no longer blocks its siblings. A shared atomic cursor hands each
+    // worker the next child index; workers stop as soon as the cursor runs past
+    // the end or the walk is cancelled. `thread::scope` JOINS every worker
+    // before returning, so `walk_and_emit` only returns once every child is
+    // done — the bridge relies on the blocking sender being dropped only then
+    // to end the stream.
+    let next = std::sync::atomic::AtomicUsize::new(0);
+    let miss = &miss;
+    let worker_count = SIZER_WORKERS.min(miss.len());
+    std::thread::scope(|scope| {
+        for _ in 0..worker_count {
+            scope.spawn(|| {
+                loop {
+                    let index = next.fetch_add(1, Ordering::Relaxed);
+                    if index >= miss.len() {
+                        break;
+                    }
+                    if cancel.load(Ordering::Relaxed) {
+                        break;
+                    }
+                    let (child_path, key, mtime) = &miss[index];
+                    match size_child(child_path, key, cancel, updates) {
+                        // A completed walk emitted its final update; record it so
+                        // an unchanged repeat is served from cache. Only cache
+                        // when the mtime read succeeded, so a cached entry always
+                        // has a validator. The lock is held only briefly for the
+                        // insert, never across the walk itself.
+                        Some(total) => {
+                            if let Some(current_mtime) = mtime {
+                                if let Ok(mut cache) = cache.lock() {
+                                    cache.insert(key.clone(), *current_mtime, total);
+                                }
+                            }
+                        }
+                        // Cancelled or the consumer dropped the stream: the whole
+                        // walk is ending, so this worker stops without caching.
+                        None => break,
                     }
                 }
-            }
-            // Cancelled or the consumer dropped the stream: stop the whole walk
-            // and cache nothing.
-            None => return,
+            });
         }
-    }
+    });
 }
 
 /// Recursively sum every regular file beneath `root`, emitting throttled
@@ -554,6 +602,108 @@ mod tests {
         assert!(
             children.iter().all(|(_, _, mtime)| mtime.is_some()),
             "each real child dir carries a readable modification time"
+        );
+    }
+
+    /// The parallel sizer must not let a large child block a small sibling.
+    ///
+    /// The bug: a serial walk sizes children in enumeration order, so a giant
+    /// child that is enumerated first fully blocks every sibling behind it.
+    /// `read_dir` order is not sorted and not portable, so this test does not
+    /// assume which child comes first — it DISCOVERS the enumeration order via
+    /// [`collect_child_directories`], then makes the FIRST-enumerated child the
+    /// huge, slow one (thousands of nested files) and the LAST-enumerated child
+    /// the tiny one (a single file). On a serial walk the tiny child cannot
+    /// complete until the huge child ahead of it finishes, so its completion
+    /// lands last; the worker pool sizes them concurrently, so the tiny child
+    /// finishes near-instantly and its completion appears in the stream BEFORE
+    /// the huge child's. We assert exactly that order, which fails on the serial
+    /// implementation regardless of filesystem enumeration order.
+    #[tokio::test]
+    async fn parallel_small_child_completes_before_large_when_large_is_enumerated_first() {
+        let directory = tempfile::tempdir().expect("create temporary directory");
+        let root = directory.path();
+
+        // Create two empty child directories, then learn the real enumeration
+        // order this filesystem returns before deciding which to fill huge.
+        let first_name = root.join("child-one");
+        let second_name = root.join("child-two");
+        std::fs::create_dir(&first_name).expect("create child-one");
+        std::fs::create_dir(&second_name).expect("create child-two");
+
+        let path = root.to_str().expect("valid unicode");
+        let enumerated = collect_child_directories(path);
+        assert_eq!(
+            enumerated.len(),
+            2,
+            "exactly the two child directories are enumerated"
+        );
+        // The child the serial walk reaches FIRST becomes the slow giant; the
+        // one it reaches LAST becomes the instant tiny child. This guarantees a
+        // serial walk blocks the tiny child behind the giant, no matter which
+        // physical directory `read_dir` happened to return first.
+        let large = enumerated[0].0.clone();
+        let small = enumerated[1].0.clone();
+
+        // Fill the first-enumerated child with many nested files so its walk
+        // clearly lags (target tens to a couple hundred milliseconds).
+        for bucket in 0..80 {
+            let nested = large.join(format!("bucket-{bucket}"));
+            std::fs::create_dir(&nested).expect("create large bucket");
+            for file in 0..250 {
+                std::fs::write(nested.join(format!("f-{file}.bin")), vec![0u8; 64])
+                    .expect("write large file");
+            }
+        }
+        // The last-enumerated child holds a single tiny file: near-instant walk.
+        std::fs::write(small.join("only.bin"), vec![0u8; 8]).expect("write small file");
+
+        let large_key = large.to_str().expect("valid unicode");
+        let small_key = small.to_str().expect("valid unicode");
+
+        let sizer = BackgroundSizer::new();
+        let updates: Vec<SizeUpdate> = sizer.compute(path).collect().await;
+
+        let large_complete_index = updates
+            .iter()
+            .position(|u| u.path == large_key && u.complete)
+            .expect("large child completes");
+        let small_complete_index = updates
+            .iter()
+            .position(|u| u.path == small_key && u.complete)
+            .expect("small child completes");
+
+        assert!(
+            small_complete_index < large_complete_index,
+            "the tiny child must complete before the giant child that is \
+             enumerated ahead of it; got small at {small_complete_index}, \
+             large at {large_complete_index}: {updates:?}"
+        );
+    }
+
+    /// Cancelling the parallel walk immediately after `compute` (mirroring
+    /// `cancelled_walk_never_yields_completion`) stops every worker promptly:
+    /// no completion updates are emitted from any child.
+    #[tokio::test]
+    async fn parallel_walk_cancellation_stops_promptly() {
+        let directory = tempfile::tempdir().expect("tree");
+        let root = directory.path();
+        for child_index in 0..20 {
+            let child = root.join(format!("child-{child_index}"));
+            std::fs::create_dir(&child).expect("create child");
+            for file_index in 0..50 {
+                std::fs::write(child.join(format!("f-{file_index}.bin")), vec![0u8; 64])
+                    .expect("write");
+            }
+        }
+        let path = root.to_str().expect("valid unicode").to_string();
+        let sizer = BackgroundSizer::new();
+        let stream = sizer.compute(&path);
+        sizer.cancel(&path);
+        let updates: Vec<SizeUpdate> = stream.collect().await;
+        assert!(
+            updates.iter().all(|u| !u.complete),
+            "cancelled parallel walk emits no completion, got {updates:?}"
         );
     }
 
