@@ -27,14 +27,13 @@ const DEFAULT_PANEL_HEIGHT: i32 = 320;
 /// Resolved panel construction parameters derived from a [`ViewDescriptor`].
 /// `overlay` selects fullscreen-overlay treatment versus a fixed-size centered
 /// panel; `width`/`height` size the centered panel (and are ignored by the
-/// overlay path, which spans the whole output). `share_process` is always true:
-/// every panel and overlay joins the shared render process. Isolating
-/// `destroy_on_dismiss` views to free a renderer on dismiss would only pay off
-/// if dismissal actually tore the window down, but overlays are never destroyed
-/// (destroying a layer-shell window segfaults — see the comment in
-/// `WindowRegistry::handle`); they are hidden and reused, so their renderer
-/// stays resident regardless. Sharing keeps every such resident renderer in the
-/// one shared process instead of one process per overlay type.
+/// overlay path, which spans the whole output). `share_process` splits by
+/// lifetime: `destroy_on_dismiss` views get their OWN render process (it is
+/// `false`), so tearing the window down on dismiss returns its renderer memory
+/// to the OS instead of pinning it in the one shared process forever; warm,
+/// always-resident views (the launcher and other views kept alive across
+/// dismissals) stay shared (it is `true`), folding their resident renderers
+/// into the single shared process rather than paying one process per type.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct PanelParams {
     pub overlay: bool,
@@ -68,11 +67,10 @@ pub(crate) fn panel_params(descriptor: &ViewDescriptor) -> PanelParams {
             .height
             .map(|h| h as i32)
             .unwrap_or(DEFAULT_PANEL_HEIGHT),
-        // Every panel and overlay shares the render process. Overlays are never
-        // destroyed on dismiss (destroying a layer-shell window segfaults), so
-        // an isolated overlay renderer would stay resident forever; sharing
-        // folds them all into the one shared process instead.
-        share_process: true,
+        // Transient (destroy_on_dismiss) views get their own render process so
+        // destroying them on dismiss returns renderer memory to the OS; warm,
+        // always-resident views stay in the one shared process.
+        share_process: !descriptor.destroy_on_dismiss,
     }
 }
 
@@ -687,17 +685,16 @@ mod tests {
     }
 
     #[test]
-    fn panel_params_shares_process_for_transient_panel_too() {
-        // A destroy_on_dismiss panel (files) or overlay ALSO shares the render
-        // process: overlays are never destroyed on dismiss (destroying a
-        // layer-shell window segfaults), so an isolated renderer would stay
-        // resident regardless. Sharing folds it into the one shared process.
+    fn panel_params_isolates_process_for_transient_panel() {
+        // A destroy_on_dismiss panel or overlay gets its OWN render process so
+        // that destroying it on dismiss returns its renderer memory to the OS.
+        // Sharing would pin that memory in the one shared process forever.
         let descriptor = ViewDescriptor {
             kind: ViewKind::Panel,
             destroy_on_dismiss: true,
             ..ViewDescriptor::default()
         };
-        assert!(panel_params(&descriptor).share_process);
+        assert!(!panel_params(&descriptor).share_process);
     }
 
     #[test]
