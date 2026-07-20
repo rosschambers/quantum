@@ -922,6 +922,7 @@
             entries={pane.visibleEntries()}
             selection={pane.selection}
             maxSize={maxEntrySize(pane.entries)}
+            sizing={pane.sizing}
             path={pane.path}
             onMove={handleMove}
             onSelect={(path, event) => handleSelect(index, path, event)}

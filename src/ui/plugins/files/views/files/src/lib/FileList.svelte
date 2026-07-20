@@ -23,6 +23,8 @@
         selection: Set<string>;
         /** The largest sibling size, forwarded to each row's mini usage bar. */
         maxSize: number;
+        /** Directory paths whose recursive size is still being calculated. */
+        sizing?: Set<string>;
         /**
          * This pane's current directory. The list background is a drop target
          * that moves a drag (typically from the other pane) into this path.
@@ -46,6 +48,7 @@
         entries,
         selection,
         maxSize,
+        sizing = new Set<string>(),
         path,
         onMove,
         viewportHeight,
@@ -175,6 +178,7 @@
                     {entry}
                     {maxSize}
                     {onMove}
+                    calculating={entry.kind === 'directory' && sizing.has(entry.path)}
                     selected={selection.has(entry.path)}
                     dragSources={currentSelectionPaths}
                     onSelect={(event) => onSelect(entry.path, event)}
