@@ -356,6 +356,13 @@ describe('App recursive-size requests and completion tracking', () => {
         });
     });
 
+    /** Count how many times `ipc.cancelSizes` was called for a specific path. */
+    function cancelSizesCallsFor(ipc: FilesIpc, path: string): number {
+        return (ipc.cancelSizes as ReturnType<typeof vi.fn>).mock.calls.filter(
+            (call) => call[0] === path,
+        ).length;
+    }
+
     it('re-requests recursive sizes for the pane path after a changed reload (Defect A)', async () => {
         const ipc = createFakeIpc([
             makeEntry({ name: 'docs', path: `${HOME}/docs`, kind: 'directory' }),
@@ -374,6 +381,7 @@ describe('App recursive-size requests and completion tracking', () => {
             expect(sizesCallsFor(ipc, HOME)).toBeGreaterThanOrEqual(1);
         });
         const before = sizesCallsFor(ipc, HOME);
+        const cancelsBefore = cancelSizesCallsFor(ipc, HOME);
 
         // A `changed` event on the current pane's path reloads it AND must
         // re-request its sizes; the count for Home must strictly increase.
@@ -382,6 +390,14 @@ describe('App recursive-size requests and completion tracking', () => {
 
         await vi.waitFor(() => {
             expect(sizesCallsFor(ipc, HOME)).toBeGreaterThan(before);
+        });
+        // The re-request must be preceded by a matching cancel for the same
+        // path so the backend reference count stays balanced: the navigation
+        // effect already left one sizes() outstanding for Home, so a second
+        // sizes() from the reload without a paired cancelSizes() would inflate
+        // the count and leave a walk running for a folder the user has left.
+        await vi.waitFor(() => {
+            expect(cancelSizesCallsFor(ipc, HOME)).toBeGreaterThan(cancelsBefore);
         });
     });
 

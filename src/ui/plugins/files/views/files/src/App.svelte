@@ -282,6 +282,11 @@
                         }
                     }
                     void loadPane(pane).then(() => {
+                        // Re-request sizes for the reloaded listing. Cancel the
+                        // prior request first so the backend reference count
+                        // stays balanced (this pane already had a sizes()
+                        // outstanding for this path from the navigation effect).
+                        void ipc.cancelSizes(pane.path).catch(() => {});
                         requestSizes(pane, knownSizes);
                     });
                 }
