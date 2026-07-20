@@ -25,6 +25,11 @@ export class PaneState {
     entries = $state<FileEntry[]>([]);
     /** The set of selected entry paths. Reassigned on change to stay reactive. */
     selection = $state<Set<string>>(new Set());
+    /**
+     * The set of directory paths whose recursive size is still being computed.
+     * Reassigned on change to stay reactive.
+     */
+    sizing = $state<Set<string>>(new Set());
     /** The local filter substring applied to entry names. */
     filter = $state('');
     /** Whether the pane is showing recursive search results rather than a listing. */
@@ -190,5 +195,32 @@ export class PaneState {
     /** Select every currently visible entry. */
     selectAll(): void {
         this.selection = new Set(this.visibleEntries().map((entry) => entry.path));
+    }
+
+    /** Replace the sizing set with exactly the given directory paths. */
+    markSizing(paths: string[]): void {
+        this.sizing = new Set(paths);
+    }
+
+    /** Mark a directory's recursive size as computed by removing its path. */
+    setSizeComplete(path: string): void {
+        const next = new Set(this.sizing);
+        next.delete(path);
+        this.sizing = next;
+    }
+
+    /**
+     * Add a directory path to the sizing set. Used when a progress event
+     * arrives for a path not yet tracked.
+     */
+    addSizing(path: string): void {
+        const next = new Set(this.sizing);
+        next.add(path);
+        this.sizing = next;
+    }
+
+    /** Empty the sizing set. */
+    clearSizing(): void {
+        this.sizing = new Set();
     }
 }

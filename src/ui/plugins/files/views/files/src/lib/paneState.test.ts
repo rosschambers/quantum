@@ -329,3 +329,52 @@ describe('PaneState selection', () => {
         expect([...pane.selection].sort()).toEqual(['/a', '/b', '/c']);
     });
 });
+
+describe('PaneState sizing', () => {
+    it('starts with an empty sizing set', () => {
+        const pane = new PaneState('/a');
+        expect(pane.sizing.size).toBe(0);
+    });
+
+    it('markSizing replaces the sizing set with the given paths', () => {
+        const pane = new PaneState('/a');
+        pane.markSizing(['/a', '/b']);
+        expect([...pane.sizing].sort()).toEqual(['/a', '/b']);
+    });
+
+    it('markSizing replaces rather than merges an existing set', () => {
+        const pane = new PaneState('/a');
+        pane.markSizing(['/a', '/b']);
+        pane.markSizing(['/c']);
+        expect([...pane.sizing]).toEqual(['/c']);
+    });
+
+    it('setSizeComplete removes a single path', () => {
+        const pane = new PaneState('/a');
+        pane.markSizing(['/a', '/b']);
+        pane.setSizeComplete('/a');
+        expect([...pane.sizing]).toEqual(['/b']);
+    });
+
+    it('addSizing adds a path not yet tracked', () => {
+        const pane = new PaneState('/a');
+        pane.markSizing(['/a']);
+        pane.addSizing('/c');
+        expect([...pane.sizing].sort()).toEqual(['/a', '/c']);
+    });
+
+    it('clearSizing empties the sizing set', () => {
+        const pane = new PaneState('/a');
+        pane.markSizing(['/a', '/b']);
+        pane.clearSizing();
+        expect(pane.sizing.size).toBe(0);
+    });
+
+    it('mutations reassign a new Set reference for reactivity', () => {
+        const pane = new PaneState('/a');
+        pane.markSizing(['/a', '/b']);
+        const before = pane.sizing;
+        pane.setSizeComplete('/a');
+        expect(pane.sizing).not.toBe(before);
+    });
+});
