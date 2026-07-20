@@ -244,6 +244,40 @@ broken CI before; do not reintroduce them:
   to a writable JSON store at `$XDG_STATE_HOME/quantum/files.json` (atomic
   temp-file plus rename, the timer-store pattern). The UI performs no filesystem
   input/output — it only speaks `files.*` IPC through `@quantum/client`.
+- **Recursive folder sizing — parallel walk, mtime cache, self-removing
+  handles.** `files.sizes(path)` sizes each immediate CHILD directory of `path`
+  and streams `{event:"size", path:<child>, bytes, complete}` updates; the `files`
+  view shows the running number, a `--color-accent` "Calculating" dot before it
+  until `complete`, and re-requests sizes after a `changed` reload. Four
+  invariants a future change MUST preserve (each was a real bug fixed 2026-07-20 —
+  see `docs/plans/2026-07-20-*sizer*` / `*size*`):
+  - **`BackgroundSizer` walks cache-miss children CONCURRENTLY** on a bounded pool
+    of `SIZER_WORKERS = 4` threads (`std::thread::scope`, stdlib, no crate). A huge
+    child (a 253 GB Steam library) must not block its siblings — they size in
+    parallel. `thread::scope` joins all workers before `walk_and_emit` returns, so
+    the stream ends correctly. Cache HITS are served inline/serial (cheap).
+  - **`FilesService.sizes` removes a walk's handle when the walk COMPLETES**, not
+    just on `cancel_sizes` reaching count 0. Each walk gets a `generation`; the
+    forwarding task removes its own `size_handles` entry on stream end only if the
+    generation still matches. Without this, re-opening a folder found a dead
+    ref-counted handle and started no new walk (folders stuck at their shallow
+    ~4 KB inode size). `size_handles` is `Arc<Mutex<..>>` so the task can self-remove.
+  - **The sizer caches child sizes** in a bounded LRU (`SizeCache`, cap
+    `MAX_CACHE_ENTRIES = 4096`) keyed by child path + directory mtime; an
+    mtime-match serves instantly with no walk. A COMPLETED walk populates the
+    cache; a cancelled one does not. Invalidation is mtime-only, so a deep
+    in-place edit (no add/remove at the child's top level) is NOT detected until
+    the child's direct contents change — an accepted limitation.
+  - **Symlinks are never followed** (a symlinked directory has `is_dir() == false`
+    under `symlink_metadata`, so it is skipped). Folders whose real content lives
+    behind symlinks (e.g. `~/.steam` → `~/.local/share/Steam`) therefore size only
+    their tiny real content. This is deliberate (avoids cycles + double-counting),
+    matching most file managers; do not "fix" it without cycle detection.
+  Frontend note: `size` events are buffered and applied on a next-tick flush
+  (`scheduleSizeFlush`), so the size-sorted list sorts once per batch rather than
+  once per event — this smooths cached re-entry. A COLD walk's sizes still arrive
+  seconds apart (one folder finishes at a time), so a size-sorted cold walk still
+  reshuffles as they land; that is accepted, not a bug.
 - **Processes subsystem (task manager).** Process sampling, correlation, and
   signalling live in the `quantum-processes` infrastructure crate: a procfs
   sampler that reads `/proc` for per-process and global statistics, a Hyprland
