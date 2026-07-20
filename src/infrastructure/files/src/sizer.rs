@@ -164,27 +164,21 @@ impl BackgroundSizer {
     }
 }
 
-/// Enumerate `dir`'s immediate children and recursively size each child
-/// directory, emitting updates keyed by the child's path. Regular files and
-/// symlinks directly in `dir` are ignored. Stops early on cancellation or when
-/// the consumer drops the stream.
-fn walk_and_emit(
+/// Enumerate the immediate CHILD DIRECTORIES of `dir`, returning each one's
+/// path, its storage key (the path as a lossy string), and its directory
+/// modification time (None if unreadable). Files and symlinks are excluded:
+/// `symlink_metadata` reports a symlinked directory with `is_dir() == false`,
+/// so symlinks are skipped, matching the walk's no-follow policy. Pure
+/// enumeration — no walking, no emitting.
+fn collect_child_directories(
     dir: &str,
-    cancel: &AtomicBool,
-    updates: &UpdateSender<SizeUpdate>,
-    cache: &Mutex<SizeCache>,
-) {
-    if cancel.load(Ordering::Relaxed) {
-        return;
-    }
+) -> Vec<(std::path::PathBuf, String, Option<std::time::SystemTime>)> {
     let entries = match std::fs::read_dir(dir) {
         Ok(entries) => entries,
-        Err(_) => return,
+        Err(_) => return Vec::new(),
     };
+    let mut children = Vec::new();
     for entry in entries {
-        if cancel.load(Ordering::Relaxed) {
-            return;
-        }
         let entry = match entry {
             Ok(entry) => entry,
             Err(_) => continue,
@@ -200,11 +194,33 @@ fn walk_and_emit(
             continue;
         }
         let key = child_path.to_string_lossy().to_string();
-
         // The child's own directory mtime validates any cached size. A failed
         // `modified()` read (unsupported filesystem, permissions) degrades to a
         // cache miss: the child is walked and never cached.
         let mtime = metadata.modified().ok();
+        children.push((child_path, key, mtime));
+    }
+    children
+}
+
+/// Enumerate `dir`'s immediate children and recursively size each child
+/// directory, emitting updates keyed by the child's path. Regular files and
+/// symlinks directly in `dir` are ignored. Stops early on cancellation or when
+/// the consumer drops the stream.
+fn walk_and_emit(
+    dir: &str,
+    cancel: &AtomicBool,
+    updates: &UpdateSender<SizeUpdate>,
+    cache: &Mutex<SizeCache>,
+) {
+    if cancel.load(Ordering::Relaxed) {
+        return;
+    }
+    let children = collect_child_directories(dir);
+    for (child_path, key, mtime) in children {
+        if cancel.load(Ordering::Relaxed) {
+            return;
+        }
 
         // A cache hit serves the recorded size instantly, without a walk. A
         // poisoned lock is treated as a miss rather than panicking.
@@ -493,6 +509,52 @@ mod tests {
             .find(|u| u.path == child_key && u.complete)
             .expect("child complete");
         assert_eq!(child_final.bytes, 500, "symlink target excluded");
+    }
+
+    /// The child-directory enumeration returns exactly the immediate real child
+    /// directories: a loose file and a symlink (even one pointing at a
+    /// directory) are excluded, matching the walk's no-follow policy. Each
+    /// returned real directory carries a readable modification time.
+    #[test]
+    fn collect_child_directories_returns_only_real_child_dirs() {
+        use std::os::unix::fs::symlink;
+
+        let directory = tempfile::tempdir().expect("create temporary directory");
+        let root = directory.path();
+
+        let a = root.join("a");
+        std::fs::create_dir(&a).expect("create a");
+        let b = root.join("b");
+        std::fs::create_dir(&b).expect("create b");
+        std::fs::write(root.join("f.txt"), vec![0u8; 10]).expect("write f.txt");
+        symlink(&a, root.join("link")).expect("symlink link -> a");
+
+        let path = root.to_str().expect("valid unicode");
+        let children = collect_child_directories(path);
+
+        let keys: Vec<&str> = children.iter().map(|(_, key, _)| key.as_str()).collect();
+        let a_key = a.to_str().expect("valid unicode");
+        let b_key = b.to_str().expect("valid unicode");
+
+        assert_eq!(
+            children.len(),
+            2,
+            "only the two real child dirs, got {keys:?}"
+        );
+        assert!(keys.contains(&a_key), "a is enumerated, got {keys:?}");
+        assert!(keys.contains(&b_key), "b is enumerated, got {keys:?}");
+        assert!(
+            !keys.iter().any(|key| key.ends_with("f.txt")),
+            "the loose file is excluded, got {keys:?}"
+        );
+        assert!(
+            !keys.iter().any(|key| key.ends_with("link")),
+            "the symlink is excluded, got {keys:?}"
+        );
+        assert!(
+            children.iter().all(|(_, _, mtime)| mtime.is_some()),
+            "each real child dir carries a readable modification time"
+        );
     }
 
     /// A cancelled walk yields no completion items, across all child walks.
