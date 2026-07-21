@@ -49,7 +49,7 @@
         </div>
         <div class="divider" aria-hidden="true"></div>
         <div class="group">
-            <BarClock />
+            <BarClock {client} />
         </div>
         <div class="divider" aria-hidden="true"></div>
         <div class="group">
