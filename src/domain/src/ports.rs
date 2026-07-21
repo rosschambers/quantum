@@ -1,3 +1,4 @@
+use crate::clipboard::{ClipboardData, ClipboardEntry, ClipboardError};
 use crate::cursor::CursorPosition;
 use crate::files::{ApplicationInfo, FileOperation, FilePreferences, FilesError, Pin};
 use crate::processes::{KillSignal, ProcessSnapshot, ProcessesError};
@@ -318,6 +319,28 @@ pub trait ClipboardWriter: Send + Sync {
     async fn write_bytes(&self, mime: &str, bytes: &[u8]) -> Result<(), DomainError>;
 }
 
+/// Persistence for the clipboard-history subsystem. `load` returns the full
+/// ordered set of entries; `append` adds one entry (with its blob bytes, for
+/// blob-backed kinds); `remove` drops one entry by id; `clear` empties the
+/// history. All methods return a typed [`ClipboardError`] so no host error type
+/// leaks across the boundary.
+#[async_trait]
+pub trait ClipboardStore: Send + Sync {
+    async fn load(&self) -> Result<ClipboardData, ClipboardError>;
+    /// Append `entry` to the history. For blob-backed kinds (image, binary) the
+    /// caller passes the payload bytes in `blob`; the store writes the blob
+    /// before persisting the JSON row so a crash between the two leaves an
+    /// orphan blob (garbage-collected on the next load) rather than a row that
+    /// references missing bytes.
+    async fn append(
+        &self,
+        entry: ClipboardEntry,
+        blob: Option<Vec<u8>>,
+    ) -> Result<(), ClipboardError>;
+    async fn remove(&self, id: &str) -> Result<(), ClipboardError>;
+    async fn clear(&self) -> Result<(), ClipboardError>;
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -483,6 +506,22 @@ mod clipboard_writer_tests {
     #[test]
     fn clipboard_writer_port_is_object_safe() {
         let _: Option<Arc<dyn ClipboardWriter>> = None;
+    }
+}
+
+#[cfg(test)]
+mod clipboard_store_tests {
+    use super::*;
+
+    // Compile-time proof that the clipboard-store port is object-safe and can
+    // be used behind `Arc<dyn Trait>`. If the trait stopped being object-safe,
+    // this would fail to compile.
+    #[allow(dead_code)]
+    fn assert_object_safe(_store: Arc<dyn ClipboardStore>) {}
+
+    #[test]
+    fn clipboard_store_port_is_object_safe() {
+        let _: Option<Arc<dyn ClipboardStore>> = None;
     }
 }
 
