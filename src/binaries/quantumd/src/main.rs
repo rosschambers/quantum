@@ -35,13 +35,14 @@ use quantum_processes::{
     LibcProcessKiller, ProcessSampleSource, ProcfsSampler, TokioProcessMonitor,
 };
 use quantum_providers::{
-    BluezProvider, DeclarativeShellProvider, DesktopAppsProvider, HyprlandActiveWindowProvider,
-    HyprlandWindowsProvider, InMemoryProviderRegistry, JsonTimerStore, LogindBrightnessProvider,
-    MprisProvider, NetworkManagerProvider, NotificationTimerNotifier, NotificationsProvider,
-    PluginScriptProvider, PowerProfilesDaemonProvider, ProcStatsProvider,
-    ProviderNotificationEmitter, ProvidersError, PulseAudioProvider, ShellCommandProvider,
-    SoundPlayer, SystemClock, SystemPowerProvider, SystemTrayProvider, TimerProvider,
-    TokioShellExecutor, UpowerBatteryProvider, WifiProvider,
+    BluezProvider, CalcProvider, DeclarativeShellProvider, DesktopAppsProvider,
+    HyprlandActiveWindowProvider, HyprlandWindowsProvider, InMemoryProviderRegistry,
+    JsonTimerStore, LogindBrightnessProvider, MprisProvider, NetworkManagerProvider,
+    NotificationTimerNotifier, NotificationsProvider, PluginScriptProvider,
+    PowerProfilesDaemonProvider, ProcStatsProvider, ProviderNotificationEmitter, ProvidersError,
+    PulseAudioProvider, ShellCommandProvider, SoundPlayer, SystemClock, SystemPowerProvider,
+    SystemTrayProvider, TimerProvider, TokioShellExecutor, UpowerBatteryProvider, WifiProvider,
+    WlClipboardWriter,
 };
 use quantum_theme::ThemeStore;
 use quantum_ui::{DummyWindowHost, IpcDispatcher as UiIpcDispatcher};
@@ -593,6 +594,20 @@ async fn setup_daemon(
         )
         .await;
     info!("Registered ShellCommandProvider");
+
+    // Shared clipboard writer, used by the calc provider (and future
+    // clipboard-copying providers). A config-driven copy program comes later;
+    // `None` selects the wl-copy default.
+    let clipboard_writer: Arc<dyn quantum_domain::ClipboardWriter> =
+        Arc::new(WlClipboardWriter::new(None));
+
+    // Calc provider (arithmetic and unit conversion, copies results).
+    let calc = Arc::new(CalcProvider::new(clipboard_writer.clone()));
+    let calc_id = calc.id().clone();
+    registry
+        .register(calc_id, calc as Arc<dyn quantum_domain::ProviderSource>)
+        .await;
+    info!("Registered CalcProvider");
 
     // Hyprland provider (optional)
     let mut hypr_client_opt: Option<Arc<HyprlandSocketClient>> = None;
