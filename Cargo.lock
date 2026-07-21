@@ -2199,6 +2199,7 @@ dependencies = [
  "quantum-ui",
  "serde",
  "serde_json",
+ "shell-words",
  "tempfile",
  "thiserror",
  "tokio",

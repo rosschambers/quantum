@@ -596,11 +596,18 @@ async fn setup_daemon(
         .await;
     info!("Registered ShellCommandProvider");
 
-    // Shared clipboard writer, used by the calc provider (and future
-    // clipboard-copying providers). A config-driven copy program comes later;
-    // `None` selects the wl-copy default.
+    // Shared clipboard writer, used by the calc, emoji, and clipboard providers.
+    // The copy program is taken from `[commands] clipboard_copy` when set (a
+    // shell-style string), else `WlClipboardWriter` defaults to `wl-copy`.
+    let clipboard_copy_argv = config
+        .commands
+        .as_ref()
+        .and_then(|commands| commands.clipboard_copy.as_deref())
+        .filter(|raw| !raw.trim().is_empty())
+        .and_then(|raw| shell_words::split(raw).ok())
+        .filter(|argv| !argv.is_empty());
     let clipboard_writer: Arc<dyn quantum_domain::ClipboardWriter> =
-        Arc::new(WlClipboardWriter::new(None));
+        Arc::new(WlClipboardWriter::new(clipboard_copy_argv));
 
     // Calc provider (arithmetic and unit conversion, copies results).
     let calc = Arc::new(CalcProvider::new(clipboard_writer.clone()));
@@ -637,8 +644,13 @@ async fn setup_daemon(
     info!("Registered ClipboardProvider");
 
     // Start the clipboard watcher over the same store. The base watch argv is
-    // resolved from an optional config override, else probed on PATH.
-    let clipboard_watcher_argv = resolve_clipboard_watcher(None, |name| {
+    // resolved from the `[commands] clipboard_watcher` override when set, else
+    // probed on PATH.
+    let clipboard_watcher_config = config
+        .commands
+        .as_ref()
+        .and_then(|commands| commands.clipboard_watcher.as_deref());
+    let clipboard_watcher_argv = resolve_clipboard_watcher(clipboard_watcher_config, |name| {
         std::env::var_os("PATH").and_then(|paths| {
             std::env::split_paths(&paths)
                 .map(|dir| dir.join(name))

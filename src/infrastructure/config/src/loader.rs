@@ -47,6 +47,23 @@ pub struct Config {
     pub widget: Vec<WidgetConfig>,
     #[serde(default)]
     pub system_power: Option<SystemPowerConfig>,
+    #[serde(default)]
+    pub commands: Option<CommandsConfig>,
+}
+
+/// Configuration for external commands the daemon shells out to.
+///
+/// Each value is a shell-style command line; tokens are split on whitespace
+/// honouring quoting. When unset the daemon probes the standard tool on PATH.
+/// `clipboard_watcher` overrides the `wl-paste --watch` clipboard watcher;
+/// `clipboard_copy` overrides the `wl-copy` writer used to place entries back
+/// on the clipboard.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct CommandsConfig {
+    #[serde(default)]
+    pub clipboard_watcher: Option<String>,
+    #[serde(default)]
+    pub clipboard_copy: Option<String>,
 }
 
 /// Configuration for the `system_power` provider.
@@ -98,6 +115,7 @@ impl ConfigStore {
                 provider: Vec::new(),
                 widget: Vec::new(),
                 system_power: None,
+                commands: None,
             }
         };
 
@@ -171,6 +189,7 @@ invalid syntax
                 provider: Vec::new(),
                 widget: Vec::new(),
                 system_power: None,
+                commands: None,
             }),
         };
 
@@ -188,6 +207,7 @@ invalid syntax
                 provider: Vec::new(),
                 widget: Vec::new(),
                 system_power: None,
+                commands: None,
             }),
         };
 
@@ -228,5 +248,28 @@ invalid syntax
         let toml = "";
         let config: Config = toml::from_str(toml).unwrap();
         assert!(config.system_power.is_none());
+    }
+
+    #[test]
+    fn parses_commands_section() {
+        let toml = r#"
+            [commands]
+            clipboard_watcher = "wl-paste --watch"
+            clipboard_copy = "wl-copy"
+        "#;
+        let config: Config = toml::from_str(toml).unwrap();
+        let commands = config.commands.expect("commands present");
+        assert_eq!(
+            commands.clipboard_watcher.as_deref(),
+            Some("wl-paste --watch")
+        );
+        assert_eq!(commands.clipboard_copy.as_deref(), Some("wl-copy"));
+    }
+
+    #[test]
+    fn config_without_commands_section_parses() {
+        let toml = "";
+        let config: Config = toml::from_str(toml).unwrap();
+        assert!(config.commands.is_none());
     }
 }
