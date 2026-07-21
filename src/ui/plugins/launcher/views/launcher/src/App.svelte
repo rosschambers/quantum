@@ -8,6 +8,7 @@
   import Results from './lib/Results.svelte';
   import CommandOutput from './lib/CommandOutput.svelte';
   import { parseCommandQuery } from './lib/commandQuery';
+  import { providersForQuery } from './lib/prefixMode';
   import type { Match } from './lib/types';
 
   interface ThemeReloadedPayload {
@@ -43,21 +44,13 @@
       clearTimeout(lastSearchTimeout);
     }
 
-    // An empty query fetches the default (usage-ranked) apps. Pin it to the
-    // desktop-apps provider so other providers (shell-command, window
-    // switcher) don't fire on empty input. A command query (prefixed with `>`
-    // to run detached or `!` to run in a terminal) is pinned to the shell
-    // provider so the command is the sole, top result. Any other non-empty
-    // query fans out to all providers.
-    const trimmed = text.trim();
-    let providers: string[];
-    if (!trimmed) {
-      providers = ['desktop-apps'];
-    } else if (trimmed.startsWith('>') || trimmed.startsWith('!')) {
-      providers = ['shell'];
-    } else {
-      providers = [];
-    }
+    // Prefix dispatch decides which providers the query is pinned to: an empty
+    // query fetches the default (usage-ranked) apps, the punctuation prefixes
+    // (`=` calc, `:` emoji, `;` clipboard, `>`/`!` shell) route to a single
+    // provider so that mode's result is the sole, top answer, and any other
+    // query fans out to all providers. The `$` capture path is separate and
+    // handled on Enter, not here.
+    const providers = providersForQuery(text);
 
     isLoading = true;
     lastSearchTimeout = window.setTimeout(async () => {
@@ -247,9 +240,9 @@
 
     {#if !searchText.trim()}
       <!-- An empty input shows a one-line legend of the command prefixes so
-           the `>`, `!`, and `$` modes are discoverable; it hides the moment
-           the user types anything. -->
-      <div class="prefix-legend">&gt; launch &nbsp;·&nbsp; ! terminal &nbsp;·&nbsp; $ run &amp; show</div>
+           the `>`, `!`, `$`, `=`, `:`, and `;` modes are discoverable; it hides
+           the moment the user types anything. -->
+      <div class="prefix-legend">&gt; launch &nbsp;·&nbsp; ! terminal &nbsp;·&nbsp; $ run &amp; show &nbsp;·&nbsp; = calc &nbsp;·&nbsp; : emoji &nbsp;·&nbsp; ; clipboard</div>
     {/if}
 
     <div class="results-container">
