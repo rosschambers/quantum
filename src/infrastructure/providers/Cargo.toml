@@ -33,6 +33,7 @@ tempfile = "3"
 chrono = "0.4"
 png = "0.17"
 base64 = "0.22"
+evalexpr = "=13.1.0"
 
 [dev-dependencies]
 tempfile = "3"
