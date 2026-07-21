@@ -11,6 +11,16 @@ pub enum IconRef {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MenuAction {
+    pub label: String,
+    #[serde(default)]
+    pub icon: Option<String>,
+    #[serde(default)]
+    pub danger: bool,
+    pub action: Action,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Match {
     pub id: String,
     pub provider: ProviderId,
@@ -21,6 +31,8 @@ pub struct Match {
     pub icon: Option<IconRef>,
     pub score: MatchScore,
     pub action: Action,
+    #[serde(default)]
+    pub actions: Vec<MenuAction>,
 }
 
 #[cfg(test)]
@@ -72,11 +84,34 @@ mod tests {
             action: Action::Launch {
                 desktop_id: "firefox.desktop".to_string(),
             },
+            actions: vec![],
         };
         let s = serde_json::to_string(&m).unwrap();
         let back: Match = serde_json::from_str(&s).unwrap();
         assert_eq!(back.id, "firefox-1");
         assert_eq!(back.title, "Firefox");
         assert_eq!(back.score, MatchScore::new(0.95));
+    }
+
+    #[test]
+    fn match_without_actions_deserializes_empty() {
+        let json = r#"{"id":"a","provider":"apps","title":"X","score":1.0,"action":{"kind":"launch","data":{"desktop_id":"x.desktop"}}}"#;
+        let m: Match = serde_json::from_str(json).unwrap();
+        assert!(m.actions.is_empty());
+    }
+
+    #[test]
+    fn menu_action_roundtrip() {
+        let ma = MenuAction {
+            label: "Copy result".to_string(),
+            icon: None,
+            danger: false,
+            action: Action::Copy {
+                text: "16".to_string(),
+            },
+        };
+        let s = serde_json::to_string(&ma).unwrap();
+        let back: MenuAction = serde_json::from_str(&s).unwrap();
+        assert_eq!(back.label, "Copy result");
     }
 }

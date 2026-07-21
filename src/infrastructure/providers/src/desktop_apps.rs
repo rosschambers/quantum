@@ -263,6 +263,7 @@ impl DesktopAppsProvider {
             action: Action::Launch {
                 desktop_id: app.id.clone(),
             },
+            actions: vec![],
         }
     }
 

@@ -308,6 +308,16 @@ pub trait ProcessKiller: Send + Sync {
     async fn kill_subtree(&self, pid: i32, signal: KillSignal) -> Result<(), ProcessesError>;
 }
 
+/// Writes content to the system clipboard. `write_text` copies a plain-text
+/// string; `write_bytes` copies an arbitrary payload under an explicit MIME
+/// type. Both return a typed [`DomainError`] so no host error type leaks across
+/// the boundary.
+#[async_trait]
+pub trait ClipboardWriter: Send + Sync {
+    async fn write_text(&self, text: &str) -> Result<(), DomainError>;
+    async fn write_bytes(&self, mime: &str, bytes: &[u8]) -> Result<(), DomainError>;
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -457,6 +467,22 @@ mod process_port_tests {
     fn process_ports_are_object_safe() {
         let _: Option<Arc<dyn ProcessMonitor>> = None;
         let _: Option<Arc<dyn ProcessKiller>> = None;
+    }
+}
+
+#[cfg(test)]
+mod clipboard_writer_tests {
+    use super::*;
+
+    // Compile-time proof that the clipboard-writer port is object-safe and can
+    // be used behind `Arc<dyn Trait>`. If the trait stopped being object-safe,
+    // this would fail to compile.
+    #[allow(dead_code)]
+    fn assert_object_safe(_writer: Arc<dyn ClipboardWriter>) {}
+
+    #[test]
+    fn clipboard_writer_port_is_object_safe() {
+        let _: Option<Arc<dyn ClipboardWriter>> = None;
     }
 }
 

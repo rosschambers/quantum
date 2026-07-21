@@ -418,6 +418,7 @@ impl ProviderSource for NotificationsProvider {
                     kind: "notifications".to_string(),
                     payload: serde_json::json!({ "command": "dismiss", "id": n.id }),
                 },
+                actions: vec![],
             })
             .collect())
     }

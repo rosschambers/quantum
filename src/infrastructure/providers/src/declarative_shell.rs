@@ -101,6 +101,7 @@ impl ProviderSource for DeclarativeShellProvider {
                         command: vec!["true".to_string()],
                         terminal: false,
                     }),
+                    actions: vec![],
                 });
             }
         }

@@ -80,6 +80,7 @@ impl ProviderSource for ShellCommandProvider {
                 command: vec!["sh".to_string(), "-c".to_string(), command.to_string()],
                 terminal,
             },
+            actions: vec![],
         }])
     }
 

@@ -172,6 +172,7 @@ mod tests {
             action: Action::Launch {
                 desktop_id: "test".to_string(),
             },
+            actions: vec![],
         }
     }
 

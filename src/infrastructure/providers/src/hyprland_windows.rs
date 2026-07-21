@@ -332,6 +332,7 @@ impl ProviderSource for HyprlandWindowsProvider {
                         kind: "hyprland_focus".to_string(),
                         payload: json!({ "address": window.address }),
                     },
+                    actions: vec![],
                 });
             }
         }

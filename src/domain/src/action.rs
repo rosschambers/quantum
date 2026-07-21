@@ -14,6 +14,9 @@ pub enum Action {
     Focus {
         window_address: String,
     },
+    Copy {
+        text: String,
+    },
     Custom {
         kind: String,
         payload: serde_json::Value,
@@ -64,6 +67,20 @@ mod tests {
         match back {
             Action::Focus { window_address } => assert_eq!(window_address, "0x12345678"),
             _ => panic!("Expected Focus variant"),
+        }
+    }
+
+    #[test]
+    fn serde_roundtrip_copy() {
+        let action = Action::Copy {
+            text: "hello".to_string(),
+        };
+        let s = serde_json::to_string(&action).unwrap();
+        assert_eq!(s, r#"{"kind":"copy","data":{"text":"hello"}}"#);
+        let back: Action = serde_json::from_str(&s).unwrap();
+        match back {
+            Action::Copy { text } => assert_eq!(text, "hello"),
+            _ => panic!("Expected Copy variant"),
         }
     }
 
