@@ -5,8 +5,12 @@ import App from './App.svelte';
 
 let mockCall: ReturnType<typeof vi.fn>;
 
-vi.mock('@quantum/client', () => {
+vi.mock('@quantum/client', async () => {
+  // Keep the real openContextMenu runtime so the secondary-actions panel
+  // renders a genuine menu we can assert against; only the client is stubbed.
+  const actual = await vi.importActual<typeof import('@quantum/client')>('@quantum/client');
   return {
+    ...actual,
     createClient: () => ({
       call: mockCall,
       subscribe: vi.fn(() => () => {}),
@@ -502,5 +506,145 @@ describe('App.svelte', () => {
     window.dispatchEvent(new Event('focus'));
 
     expect(document.activeElement).toBe(input);
+  });
+
+  // The secondary-actions panel: a provider-supplied MenuAction[] surfaced via
+  // Ctrl+K / Tab / right-click on the highlighted result.
+  const matchWithActions = {
+    id: '1',
+    provider: 'clipboard',
+    title: 'Clipboard entry',
+    score: 0.9,
+    action: { kind: 'copy', data: { text: 'hello' } },
+    actions: [
+      { label: 'Paste', action: { kind: 'launch', data: { id: 'paste' } } },
+      { label: 'Delete', danger: true, action: { kind: 'custom', data: { kind: 'clipboard', payload: { op: 'delete' } } } },
+    ],
+  };
+
+  function mockSearchWithActions() {
+    mockCall.mockImplementation((method: string) => {
+      if (method === 'search') {
+        return Promise.resolve({ matches: [matchWithActions] });
+      }
+      return Promise.resolve({});
+    });
+  }
+
+  function queryMenuButtonLabels(): string[] {
+    const menu = document.querySelector('[data-quantum-context-menu]');
+    if (!menu) {
+      return [];
+    }
+    return Array.from(menu.querySelectorAll('button')).map((button) => button.textContent ?? '');
+  }
+
+  it('opens the secondary-actions menu with the provider labels on Ctrl+K', async () => {
+    mockSearchWithActions();
+
+    render(App);
+    const input = screen.getByPlaceholderText('Search...') as HTMLInputElement;
+
+    await fireEvent.input(input, { target: { value: 'clip' } });
+    await waitFor(() => expect(screen.getByText('Clipboard entry')).toBeDefined());
+
+    await fireEvent.keyDown(input, { key: 'k', ctrlKey: true });
+
+    await waitFor(() => {
+      expect(queryMenuButtonLabels()).toEqual(['Paste', 'Delete']);
+    });
+  });
+
+  it('opens the secondary-actions menu on Tab as well', async () => {
+    mockSearchWithActions();
+
+    render(App);
+    const input = screen.getByPlaceholderText('Search...') as HTMLInputElement;
+
+    await fireEvent.input(input, { target: { value: 'clip' } });
+    await waitFor(() => expect(screen.getByText('Clipboard entry')).toBeDefined());
+
+    await fireEvent.keyDown(input, { key: 'Tab' });
+
+    await waitFor(() => {
+      expect(queryMenuButtonLabels()).toEqual(['Paste', 'Delete']);
+    });
+  });
+
+  it('invokes action.invoke with the chosen action when a menu item is selected', async () => {
+    mockSearchWithActions();
+
+    render(App);
+    const input = screen.getByPlaceholderText('Search...') as HTMLInputElement;
+
+    await fireEvent.input(input, { target: { value: 'clip' } });
+    await waitFor(() => expect(screen.getByText('Clipboard entry')).toBeDefined());
+
+    await fireEvent.keyDown(input, { key: 'k', ctrlKey: true });
+    await waitFor(() => expect(queryMenuButtonLabels()).toEqual(['Paste', 'Delete']));
+
+    // Selecting "Delete" invokes its action against the match's provider.
+    const deleteButton = Array.from(
+      document.querySelectorAll('[data-quantum-context-menu] button')
+    ).find((button) => button.textContent === 'Delete') as HTMLButtonElement;
+    await fireEvent.click(deleteButton);
+
+    await waitFor(() => {
+      expect(mockCall).toHaveBeenCalledWith('action.invoke', {
+        provider: 'clipboard',
+        action: { kind: 'custom', data: { kind: 'clipboard', payload: { op: 'delete' } } },
+      });
+    });
+  });
+
+  it('falls back to Open / Copy name when the match has no provider actions', async () => {
+    const plain = {
+      id: '1',
+      provider: 'apps',
+      title: 'Firefox',
+      score: 0.9,
+      action: { kind: 'launch', data: { desktop_id: 'firefox' } },
+    };
+    mockCall.mockImplementation((method: string) => {
+      if (method === 'search') {
+        return Promise.resolve({ matches: [plain] });
+      }
+      return Promise.resolve({});
+    });
+
+    render(App);
+    const input = screen.getByPlaceholderText('Search...') as HTMLInputElement;
+
+    await fireEvent.input(input, { target: { value: 'fire' } });
+    await waitFor(() => expect(screen.getByText('Firefox')).toBeDefined());
+
+    await fireEvent.keyDown(input, { key: 'k', ctrlKey: true });
+
+    await waitFor(() => {
+      expect(queryMenuButtonLabels()).toEqual(['Open', 'Copy name']);
+    });
+  });
+
+  it('keeps the launcher open when Escape dismisses the actions menu', async () => {
+    mockSearchWithActions();
+
+    render(App);
+    const input = screen.getByPlaceholderText('Search...') as HTMLInputElement;
+
+    await fireEvent.input(input, { target: { value: 'clip' } });
+    await waitFor(() => expect(screen.getByText('Clipboard entry')).toBeDefined());
+
+    await fireEvent.keyDown(input, { key: 'k', ctrlKey: true });
+    await waitFor(() => expect(queryMenuButtonLabels()).toEqual(['Paste', 'Delete']));
+
+    mockCall.mockClear();
+    mockSearchWithActions();
+
+    // Escape closes the menu (openContextMenu handles it) but must NOT also
+    // trigger the launcher's own hide.
+    await fireEvent.keyDown(input, { key: 'Escape' });
+
+    await waitFor(() => expect(document.querySelector('[data-quantum-context-menu]')).toBeNull());
+    expect(mockCall).not.toHaveBeenCalledWith('view.hide', { name: 'launcher' });
   });
 });
