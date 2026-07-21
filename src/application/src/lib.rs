@@ -9,11 +9,11 @@ pub use dispatcher::Dispatcher;
 pub use error::{ApplicationError, Result};
 pub use shell_capture::{CaptureSink, ShellCaptureUseCase};
 pub use use_cases::{
-    CreateTimerSpec, EditChanges, FilesService, LaunchActionUseCase, ListProvidersUseCase,
-    OpenViewUseCase, Places, PreviewKind, PreviewPayload, ProcessesService, QueryProviderUseCase,
-    ReloadPluginsUseCase, ReloadThemeUseCase, ScheduleActionUseCase, ScheduleId,
-    ScheduledJobSummary, SearchResponse, SearchUseCase, SetThemeUseCase, SubscribeProviderUseCase,
-    TimerService, TimerStart,
+    ClipboardService, CreateTimerSpec, EditChanges, FilesService, LaunchActionUseCase,
+    ListProvidersUseCase, OpenViewUseCase, Places, PreviewKind, PreviewPayload, ProcessesService,
+    QueryProviderUseCase, ReloadPluginsUseCase, ReloadThemeUseCase, ScheduleActionUseCase,
+    ScheduleId, ScheduledJobSummary, SearchResponse, SearchUseCase, SetThemeUseCase,
+    SubscribeProviderUseCase, TimerService, TimerStart,
 };
 
 pub fn version() -> &'static str {

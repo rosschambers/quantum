@@ -1,9 +1,9 @@
 use crate::use_cases::CursorService;
 use crate::{
-    ApplicationError, CreateTimerSpec, EditChanges, FilesService, LaunchActionUseCase,
-    ListProvidersUseCase, OpenViewUseCase, ProcessesService, QueryProviderUseCase,
-    ReloadPluginsUseCase, ReloadThemeUseCase, Result, ScheduleActionUseCase, SearchUseCase,
-    SetThemeUseCase, ShellCaptureUseCase, SubscribeProviderUseCase, TimerService,
+    ApplicationError, ClipboardService, CreateTimerSpec, EditChanges, FilesService,
+    LaunchActionUseCase, ListProvidersUseCase, OpenViewUseCase, ProcessesService,
+    QueryProviderUseCase, ReloadPluginsUseCase, ReloadThemeUseCase, Result, ScheduleActionUseCase,
+    SearchUseCase, SetThemeUseCase, ShellCaptureUseCase, SubscribeProviderUseCase, TimerService,
 };
 use quantum_domain::{DomainError, WindowMode};
 use serde::de::DeserializeOwned;
@@ -27,6 +27,7 @@ pub struct Dispatcher {
     processes_service: Arc<ProcessesService>,
     cursor_service: Arc<CursorService>,
     shell_capture: Arc<ShellCaptureUseCase>,
+    clipboard_service: Arc<ClipboardService>,
 }
 
 /// Params for the three `view.*` handlers (`view.toggle`, `view.show`,
@@ -88,6 +89,7 @@ impl Dispatcher {
         processes_service: Arc<ProcessesService>,
         cursor_service: Arc<CursorService>,
         shell_capture: Arc<ShellCaptureUseCase>,
+        clipboard_service: Arc<ClipboardService>,
     ) -> Self {
         Self {
             search,
@@ -105,6 +107,7 @@ impl Dispatcher {
             processes_service,
             cursor_service,
             shell_capture,
+            clipboard_service,
         }
     }
 
@@ -154,6 +157,7 @@ impl Dispatcher {
             "processes.kill" => self.handle_processes_kill(params).await,
             "cursor.watch" => self.handle_cursor_watch(params).await,
             "cursor.unwatch" => self.handle_cursor_unwatch(params).await,
+            "clipboard.clear" => self.handle_clipboard_clear(params).await,
             "system.status" => self.handle_system_status(params).await,
             "shell.run_capture" => self.handle_shell_run_capture(params).await,
             _ => Err(ApplicationError::Domain(DomainError::Unsupported(
@@ -505,6 +509,14 @@ impl Dispatcher {
         Ok(json!({}))
     }
 
+    async fn handle_clipboard_clear(&self, _params: Option<&RawValue>) -> Result<Value> {
+        self.clipboard_service
+            .clear()
+            .await
+            .map_err(|error| ApplicationError::Unknown(error.to_string()))?;
+        Ok(json!({}))
+    }
+
     async fn handle_shell_run_capture(&self, params: Option<&RawValue>) -> Result<Value> {
         let params: ShellRunCaptureParams = parse_params(params, "shell.run_capture")?;
         if params.command.trim().is_empty() {
@@ -524,11 +536,12 @@ mod tests {
     use async_trait::async_trait;
     use futures::stream::{self, BoxStream, StreamExt};
     use quantum_domain::{
-        Action, ActionOutcome, ApplicationCatalog, ApplicationInfo, CivilNow, Clock, ContentKind,
-        CursorMonitor, CursorPosition, DirectoryWatcher, DomainError, DriveInfo, EventBus,
-        FileEntry, FileEntryKind, FileOpener, FileOperation, FilePreferences, FileSystemPort,
-        FilesError, KillSignal, Match, MatchScore, NotificationEmitter, PermissionClass, Pin,
-        PinsPort, PreferencesPort, ProcessKiller, ProcessMonitor, ProcessSnapshot, ProcessesError,
+        Action, ActionOutcome, ApplicationCatalog, ApplicationInfo, CivilNow, ClipboardData,
+        ClipboardEntry, ClipboardError, ClipboardStore, Clock, ContentKind, CursorMonitor,
+        CursorPosition, DirectoryWatcher, DomainError, DriveInfo, EventBus, FileEntry,
+        FileEntryKind, FileOpener, FileOperation, FilePreferences, FileSystemPort, FilesError,
+        KillSignal, Match, MatchScore, NotificationEmitter, PermissionClass, Pin, PinsPort,
+        PreferencesPort, ProcessKiller, ProcessMonitor, ProcessSnapshot, ProcessesError,
         ProviderId, ProviderRegistry, ProviderSource, Query, RecursiveSizer, ShellExecutor,
         ShellOutput, SizeUpdate, ThemeStore, Timer, TimerBroadcast, TimerError, TimerNotifier,
         TimerStore, TimerStoreData, Weekday, WindowHost,
@@ -705,6 +718,30 @@ mod tests {
     #[async_trait]
     impl TimerNotifier for FakeTimerNotifier {
         async fn notify_complete(&self, _timer: &Timer) {}
+    }
+
+    /// Inert clipboard store for the dispatcher routing tests: every operation
+    /// succeeds and reports an empty history.
+    struct FakeClipboardStore;
+
+    #[async_trait]
+    impl ClipboardStore for FakeClipboardStore {
+        async fn load(&self) -> std::result::Result<ClipboardData, ClipboardError> {
+            Ok(ClipboardData::default())
+        }
+        async fn append(
+            &self,
+            _entry: ClipboardEntry,
+            _blob: Option<Vec<u8>>,
+        ) -> std::result::Result<(), ClipboardError> {
+            Ok(())
+        }
+        async fn remove(&self, _id: &str) -> std::result::Result<(), ClipboardError> {
+            Ok(())
+        }
+        async fn clear(&self) -> std::result::Result<(), ClipboardError> {
+            Ok(())
+        }
     }
 
     struct FakeTimerBroadcast;
@@ -1030,6 +1067,7 @@ mod tests {
             Arc::new(NoopNotificationEmitter),
             10_000,
         ));
+        let clipboard_service = Arc::new(ClipboardService::new(Arc::new(FakeClipboardStore)));
         Arc::new(Dispatcher::new(
             search,
             launch_action,
@@ -1046,6 +1084,7 @@ mod tests {
             processes_service,
             build_cursor_service(),
             shell_capture,
+            clipboard_service,
         ))
     }
 
@@ -1411,6 +1450,13 @@ mod tests {
             .await;
 
         assert!(matches!(resp, Err(ApplicationError::Unknown(_))));
+    }
+
+    #[tokio::test]
+    async fn dispatches_clipboard_clear() {
+        let dispatcher = build_dispatcher();
+        let resp = dispatcher.dispatch("clipboard.clear", None).await;
+        assert!(resp.is_ok());
     }
 
     #[tokio::test]

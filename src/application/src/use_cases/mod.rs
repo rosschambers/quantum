@@ -1,3 +1,4 @@
+pub mod clipboard_service;
 pub mod cursor_service;
 pub mod files_service;
 pub mod launch_action;
@@ -13,6 +14,7 @@ pub mod set_theme;
 pub mod subscribe_provider;
 pub mod timer_service;
 
+pub use clipboard_service::ClipboardService;
 pub use cursor_service::CursorService;
 pub use files_service::{FilesService, Places, PreviewKind, PreviewPayload};
 pub use launch_action::LaunchActionUseCase;

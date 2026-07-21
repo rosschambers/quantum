@@ -54,6 +54,12 @@ impl FileClipboardStore {
         }
     }
 
+    /// The directory this store writes blob files to. The clipboard watcher
+    /// needs it to fill each blob-backed entry's `blob_path`.
+    pub fn blob_directory(&self) -> &Path {
+        &self.blob_dir
+    }
+
     /// Resolve the default persistence paths:
     /// `$XDG_STATE_HOME/quantum/clipboard.json` and
     /// `$XDG_STATE_HOME/quantum/clipboard/`, falling back to

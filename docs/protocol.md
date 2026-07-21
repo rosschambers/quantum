@@ -56,8 +56,16 @@ request/response section below.
 | `timer.dismiss`      | `{ id }`                                          | `{}`                        | Yes        |
 | `timer.dismiss_all`  | none                                             | `{ dismissed }`             | Yes        |
 | `system.status`      | `{}`                                             | `{ version, providers_count }` | Yes |
+| `clipboard.clear`    | none                                             | `{}`                        | No         |
 
 Any method not in this table returns `Unsupported` (`-32004`).
+
+The `clipboard.clear` method empties the entire clipboard history, deleting every
+stored entry and its on-disk blob. Clipboard history itself is read through the
+`clipboard` provider (the `;` launcher prefix): searching lists recent entries,
+selecting one re-copies it, and per-entry menu actions delete a single entry or
+clear the whole history. Only the outright clear is exposed as a dedicated IPC
+method.
 
 ---
 

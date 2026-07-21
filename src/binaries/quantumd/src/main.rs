@@ -14,10 +14,10 @@ use tracing_subscriber::EnvFilter;
 
 use quantum_application::use_cases::CursorService;
 use quantum_application::{
-    ApplicationError, Dispatcher as AppDispatcher, FilesService, LaunchActionUseCase,
-    ListProvidersUseCase, OpenViewUseCase, ProcessesService, QueryProviderUseCase,
-    ReloadPluginsUseCase, ReloadThemeUseCase, ScheduleActionUseCase, SearchUseCase,
-    SetThemeUseCase, ShellCaptureUseCase, SubscribeProviderUseCase, TimerService,
+    ApplicationError, ClipboardService, Dispatcher as AppDispatcher, FilesService,
+    LaunchActionUseCase, ListProvidersUseCase, OpenViewUseCase, ProcessesService,
+    QueryProviderUseCase, ReloadPluginsUseCase, ReloadThemeUseCase, ScheduleActionUseCase,
+    SearchUseCase, SetThemeUseCase, ShellCaptureUseCase, SubscribeProviderUseCase, TimerService,
 };
 use quantum_config::{Config, ConfigStore};
 use quantum_cursor::TokioCursorMonitor;
@@ -35,7 +35,8 @@ use quantum_processes::{
     LibcProcessKiller, ProcessSampleSource, ProcfsSampler, TokioProcessMonitor,
 };
 use quantum_providers::{
-    BluezProvider, CalcProvider, DeclarativeShellProvider, DesktopAppsProvider, EmojiProvider,
+    resolve_clipboard_watcher, BluezProvider, CalcProvider, ClipboardProvider, ClipboardWatcher,
+    DeclarativeShellProvider, DesktopAppsProvider, EmojiProvider, FileClipboardStore,
     HyprlandActiveWindowProvider, HyprlandWindowsProvider, InMemoryProviderRegistry,
     JsonTimerStore, LogindBrightnessProvider, MprisProvider, NetworkManagerProvider,
     NotificationTimerNotifier, NotificationsProvider, PluginScriptProvider,
@@ -617,6 +618,43 @@ async fn setup_daemon(
         .await;
     info!("Registered EmojiProvider");
 
+    // Clipboard history: a single file-backed store shared between the provider
+    // (search and recopy), the `clipboard.clear` service, and the background
+    // watcher that records new selections.
+    let clipboard_store: Arc<FileClipboardStore> = Arc::new(FileClipboardStore::new());
+    let clipboard_store_port: Arc<dyn quantum_domain::ClipboardStore> = clipboard_store.clone();
+    let clipboard = Arc::new(ClipboardProvider::new(
+        clipboard_store_port.clone(),
+        clipboard_writer.clone(),
+    ));
+    let clipboard_id = clipboard.id().clone();
+    registry
+        .register(
+            clipboard_id,
+            clipboard as Arc<dyn quantum_domain::ProviderSource>,
+        )
+        .await;
+    info!("Registered ClipboardProvider");
+
+    // Start the clipboard watcher over the same store. The base watch argv is
+    // resolved from an optional config override, else probed on PATH.
+    let clipboard_watcher_argv = resolve_clipboard_watcher(None, |name| {
+        std::env::var_os("PATH").and_then(|paths| {
+            std::env::split_paths(&paths)
+                .map(|dir| dir.join(name))
+                .find(|candidate| candidate.is_file())
+        })
+    });
+    ClipboardWatcher::new(
+        clipboard_watcher_argv,
+        clipboard_store_port.clone(),
+        clipboard_store.blob_directory().to_path_buf(),
+    )
+    .start();
+
+    // Clipboard service backs the `clipboard.clear` IPC method.
+    let clipboard_service = Arc::new(ClipboardService::new(clipboard_store_port.clone()));
+
     // Hyprland provider (optional)
     let mut hypr_client_opt: Option<Arc<HyprlandSocketClient>> = None;
     match HyprlandSocketClient::new() {
@@ -1047,6 +1085,7 @@ async fn setup_daemon(
         processes_service,
         cursor_service,
         shell_capture_use_case,
+        clipboard_service,
     ));
     let _ipc_dispatcher = Arc::new(AppDispatcherAdapter::new(dispatcher));
 
