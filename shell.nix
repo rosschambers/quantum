@@ -12,6 +12,10 @@ pkgs.mkShell {
     rustfmt
     clippy
     mold
+    # The clipboard subsystem shells out to wl-copy / wl-paste (the wlr-data-control
+    # tools). Pin them here so the dependency is reproducible in the dev/CI shell
+    # rather than relying on whatever is in the user profile.
+    wl-clipboard
   ];
 
   buildInputs = with pkgs; [
