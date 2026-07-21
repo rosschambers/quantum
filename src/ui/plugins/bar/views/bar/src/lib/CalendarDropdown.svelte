@@ -12,9 +12,14 @@
 
     // `now` is the fixed reference for today-highlighting. The displayed month
     // is tracked separately as a year plus zero-based month so prev/next/wheel
-    // can move through months without mutating `now`.
+    // can move through months without mutating `now`. `initialDate` is a
+    // one-time seed: the calendar is created fresh each time it opens, so it
+    // deliberately does not re-derive when the prop reference changes.
+    // svelte-ignore state_referenced_locally
     const now = initialDate;
+    // svelte-ignore state_referenced_locally
     let viewYear = $state(initialDate.getFullYear());
+    // svelte-ignore state_referenced_locally
     let viewMonth0 = $state(initialDate.getMonth());
 
     const weekdayHeaders = ['Su', 'Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa'];
