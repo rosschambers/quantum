@@ -49,8 +49,10 @@ The `providers` crate holds the provider implementations, including
 `NotificationsProvider`, `PulseAudioProvider`, `UpowerBatteryProvider`,
 `BluezProvider`, `LogindBrightnessProvider`, `NetworkManagerProvider`,
 `WifiProvider`, `PowerProfilesDaemonProvider`, `SystemPowerProvider`,
-`ProcStatsProvider`, `PluginScriptProvider`, and `TimerProvider`, plus the
-`TokioShellExecutor` and `InMemoryProviderRegistry` (see
+`ProcStatsProvider`, `PluginScriptProvider`, `TimerProvider`, `CalcProvider`,
+`EmojiProvider`, and `ClipboardProvider`, plus the `WlClipboardWriter`,
+`FileClipboardStore`, and `ClipboardWatcher` that back the clipboard subsystem,
+the `TokioShellExecutor`, and `InMemoryProviderRegistry` (see
 `src/infrastructure/providers/src/lib.rs`).
 
 **Dependencies:** `domain` (path), and sibling infrastructure crates may

@@ -7,7 +7,8 @@ A Wayland/Hyprland native launcher and widget host built with Rust and Svelte.
 Quantum is a daemon that provides a modern launcher interface for Linux desktop environments. It features:
 
 - **Native Hyprland integration** — Direct IPC for window focusing and management
-- **Search across multiple providers** — Applications, shell commands, custom scripts
+- **Search across multiple providers** — Applications, open windows, shell commands, custom scripts
+- **Launcher power-ups** — Inline calculator and unit conversion (`=`), emoji picker (`:`), and clipboard history with image thumbnails (`;`), plus a Ctrl+K secondary-actions panel
 - **Themeable views** — Svelte 5 frontends served via custom `quantum://` URI scheme
 - **IPC-driven** — Control via `quantumctl` CLI or programmatically
 

@@ -300,6 +300,37 @@ broken CI before; do not reintroduce them:
   `task-manager` panel plugin (a `kind = "panel"` view like the file explorer),
   opened from the bar `SystemMeters` right-click "Open Task Manager" menu item
   and the `SUPER+ESCAPE` Hyprland keybind.
+- **Launcher power-up providers (calc, emoji, clipboard).** Three query
+  providers back the launcher's prefix modes (parsed in the launcher view's
+  `prefixMode.ts`; the prefix pins the provider like `>`/`!` pin `shell`):
+  `=` (or bare math) → `calc` (`evalexpr`-backed arithmetic plus offline unit
+  conversion, no currency), `:` → `emoji` (a bundled `emoji_data.json` via
+  `include_str!`), `;` → `clipboard`. All three emit a domain `Action::Copy
+  { text }` (routed through the shared `ClipboardWriter` port, backed by
+  `WlClipboardWriter` shelling to `wl-copy`) so a selected result copies without
+  launching. Each result may also carry provider-declared secondary actions in
+  `Match.actions` (`Vec<MenuAction>`), which the launcher renders in a Ctrl+K /
+  Tab / right-click menu via `openContextMenu`.
+- **Clipboard subsystem.** A stateful subsystem like timers/files. The
+  `ClipboardStore` domain port is implemented by `FileClipboardStore`
+  (`quantum-providers`): metadata in `$XDG_STATE_HOME/quantum/clipboard.json`
+  (atomic temp+rename, the timer-store pattern), raw bytes as blobs in
+  `$XDG_STATE_HOME/quantum/clipboard/<id>.bin`. Four invariants a future change
+  MUST preserve: (1) **blob written BEFORE the JSON row** so a crash leaves at
+  worst an orphan blob, never a dangling row; (2) `load` **GCs orphan blobs** and
+  drops rows whose blob is missing; (3) entry-count AND total-blob-byte **caps**
+  evict oldest, and an oversized single entry is skipped; (4) image entries store
+  a small inline PNG thumbnail data URI (reusing the file explorer's decode/
+  resize path) so the launcher list renders with no per-row blob decode. The
+  `ClipboardWatcher` shells to `wl-paste --watch` (command overridable via
+  `[commands] clipboard_watcher`, else probed on PATH — the `lock_command`
+  resolver pattern), classifies each change by MIME (`image/*`→image,
+  `text/uri-list`→file, other `text/*`→text, else binary), and appends. The
+  `clipboard` provider (`;` search, newest-first) recopies text via `write_text`
+  and image/binary via `write_bytes` reading the blob; secondary actions delete
+  or clear. `clipboard.clear` IPC routes through `ClipboardService` in
+  `application` (holding the domain port — application never imports
+  infrastructure). `wl-clipboard` is pinned in `shell.nix`.
 - **Notifications: toast vs center.** A toast is the *transient* popup (it
   always auto-dismisses); the notification itself lives in the *center* until
   dismissed. `timeout_ms == 0` means "never expire" — it persists in the center
