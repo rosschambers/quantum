@@ -306,19 +306,29 @@ impl ClipboardStore for FileClipboardStore {
             self.delete_blob(entry.id());
         }
         // Also sweep any stray blobs that were not referenced by a row.
-        if let Ok(reader) = std::fs::read_dir(&self.blob_dir) {
-            for entry in reader.flatten() {
-                let path = entry.path();
-                if blob_id_from_path(&path).is_some() {
-                    if let Err(error) = std::fs::remove_file(&path) {
-                        tracing::warn!(
-                            path = %path.display(),
-                            %error,
-                            "failed to delete clipboard blob during clear"
-                        );
+        match std::fs::read_dir(&self.blob_dir) {
+            Ok(reader) => {
+                for entry in reader.flatten() {
+                    let path = entry.path();
+                    if blob_id_from_path(&path).is_some() {
+                        if let Err(error) = std::fs::remove_file(&path) {
+                            tracing::warn!(
+                                path = %path.display(),
+                                %error,
+                                "failed to delete clipboard blob during clear"
+                            );
+                        }
                     }
                 }
             }
+            Err(error) if error.kind() != std::io::ErrorKind::NotFound => {
+                tracing::warn!(
+                    path = %self.blob_dir.display(),
+                    %error,
+                    "failed to read clipboard blob directory during clear"
+                );
+            }
+            Err(_) => {}
         }
         self.write_json(&ClipboardData::default())
     }
