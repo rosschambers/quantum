@@ -1,0 +1,211 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Quantum clock calendar dropdown — playground</title>
+<style>
+  /* Sycamore theme tokens (src/ui/themes/sycamore/tokens.toml) */
+  :root {
+    --color-bg: #292520;
+    --color-bg-alt: #3b3630;
+    --color-border: #4a443e;
+    --color-fg: #e8e4d8;
+    --color-fg-alt: #d8d4c8;
+    --color-accent: #a6e3a1;
+    --color-muted: #8a8578;
+    --color-error: #af4e3c;
+    --color-surface: #3b3630;
+    --color-surface-hover: #4a443e;
+    --color-bar-bg: #292520;
+    --color-shadow: rgba(10, 8, 6, 0.6);
+    --color-divider: rgba(232, 228, 216, 0.25);
+    --font-sans: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; min-height: 100vh;
+    font-family: var(--font-sans); color: var(--color-fg);
+    background: radial-gradient(1200px 800px at 30% 20%, #34302a, #211d19 70%), #1b1815;
+  }
+  .explainer {
+    max-width: 620px; margin: 90px auto 0; text-align: center;
+    color: var(--color-muted); font-size: 13px; line-height: 1.5;
+  }
+  .explainer b { color: var(--color-fg-alt); }
+
+  /* ---- Bar (top strip, matches the real Layer::Top bar) ---- */
+  .bar {
+    position: fixed; top: 0; left: 0; right: 0; height: 34px;
+    background: var(--color-bar-bg);
+    border-bottom: 1px solid var(--color-border);
+    display: flex; align-items: center; justify-content: center;
+    z-index: 10;
+  }
+  .bar .left { position: absolute; left: 14px; color: var(--color-muted); font-size: 13px; display: flex; gap: 14px; }
+  .bar .ws { display: flex; gap: 6px; }
+  .bar .ws span { width: 8px; height: 8px; border-radius: 50%; background: var(--color-border); }
+  .bar .ws span.active { background: var(--color-accent); }
+  .bar .right { position: absolute; right: 14px; color: var(--color-muted); font-size: 13px; }
+
+  .clock {
+    font-size: 13px; color: var(--color-fg);
+    padding: 4px 12px; border-radius: 7px; cursor: pointer;
+    display: flex; align-items: center; gap: 8px; user-select: none;
+  }
+  .clock:hover { background: var(--color-surface); }
+  .clock.open { background: var(--color-surface-hover); }
+
+  /* ---- Calendar dropdown ---- */
+  .cal {
+    position: fixed; top: 40px; left: 50%; transform: translateX(-50%) translateY(-6px);
+    width: 300px;
+    background: var(--color-bg-alt);
+    border: 1px solid var(--color-border);
+    border-radius: 12px;
+    box-shadow: 0 14px 40px var(--color-shadow);
+    padding: 14px;
+    opacity: 0; pointer-events: none; transition: opacity .12s, transform .12s;
+    z-index: 20;
+  }
+  .cal.open { opacity: 1; pointer-events: auto; transform: translateX(-50%) translateY(0); }
+
+  .cal .head {
+    display: flex; align-items: center; justify-content: space-between;
+    margin-bottom: 10px;
+  }
+  .cal .month { font-size: 15px; font-weight: 600; color: var(--color-fg); }
+  .cal .nav { display: flex; gap: 4px; }
+  .cal .nav button, .cal .today-btn {
+    background: transparent; border: 1px solid var(--color-border);
+    color: var(--color-fg-alt); border-radius: 6px; cursor: pointer;
+    width: 26px; height: 26px; font-size: 14px; line-height: 1;
+    display: flex; align-items: center; justify-content: center;
+  }
+  .cal .today-btn { width: auto; padding: 0 10px; font-size: 12px; }
+  .cal .nav button:hover, .cal .today-btn:hover { background: var(--color-surface-hover); }
+
+  .cal .grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 2px; }
+  .cal .dow {
+    text-align: center; font-size: 11px; color: var(--color-muted);
+    padding: 4px 0; text-transform: uppercase; letter-spacing: .04em;
+  }
+  .cal .day {
+    text-align: center; font-size: 13px; color: var(--color-fg-alt);
+    padding: 7px 0; border-radius: 7px; cursor: default;
+  }
+  .cal .day.other { color: var(--color-border); }
+  .cal .day.today {
+    background: var(--color-accent); color: #1b1815; font-weight: 700;
+  }
+  .cal .day.selectable:hover:not(.today) { background: var(--color-surface); }
+  .cal .foot {
+    margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--color-border);
+    display: flex; justify-content: space-between; align-items: center;
+    font-size: 12px; color: var(--color-muted);
+  }
+</style>
+</head>
+<body>
+  <div class="bar">
+    <div class="left">
+      <div class="ws"><span class="active"></span><span></span><span></span></div>
+      <span>quantum — main.rs</span>
+    </div>
+    <div class="clock" id="clock"></div>
+    <div class="right">CPU 4% · 5.9G</div>
+  </div>
+
+  <div class="cal" id="cal">
+    <div class="head">
+      <div class="month" id="monthLabel"></div>
+      <div class="nav">
+        <button id="prev" title="Previous month">‹</button>
+        <button class="today-btn" id="today">Today</button>
+        <button id="next" title="Next month">›</button>
+      </div>
+    </div>
+    <div class="grid" id="grid"></div>
+    <div class="foot"><span id="fullDate"></span><span>Scroll to change month</span></div>
+  </div>
+
+  <div class="explainer">
+    <b>Clock calendar dropdown prototype.</b> Click the clock in the bar to open
+    the month grid (today highlighted). Use <b>‹ ›</b> or <b>scroll</b> over the
+    calendar to change month, <b>Today</b> to jump back, click-outside or the
+    clock again to dismiss. Display-only — pure client-side date math, no daemon
+    state, no calendar events (v1).
+  </div>
+
+<script>
+  const clock = document.getElementById('clock');
+  const cal = document.getElementById('cal');
+  const grid = document.getElementById('grid');
+  const monthLabel = document.getElementById('monthLabel');
+  const fullDate = document.getElementById('fullDate');
+  const MONTHS = ['January','February','March','April','May','June','July','August','September','October','November','December'];
+  const DOW = ['Su','Mo','Tu','We','Th','Fr','Sa'];
+
+  const now = new Date();
+  let view = new Date(now.getFullYear(), now.getMonth(), 1);
+
+  function tickClock() {
+    const d = new Date();
+    const time = d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    const date = d.toLocaleDateString([], { weekday: 'short', month: 'short', day: 'numeric' });
+    clock.innerHTML = '<span>' + date + '</span><span style="color:var(--color-fg)">' + time + '</span>';
+  }
+  setInterval(tickClock, 1000); tickClock();
+
+  function sameDay(a, b) {
+    return a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate();
+  }
+
+  function renderCal() {
+    monthLabel.textContent = MONTHS[view.getMonth()] + ' ' + view.getFullYear();
+    fullDate.textContent = now.toLocaleDateString([], { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' });
+
+    const first = new Date(view.getFullYear(), view.getMonth(), 1);
+    const startDow = first.getDay();
+    const daysInMonth = new Date(view.getFullYear(), view.getMonth() + 1, 0).getDate();
+    const prevDays = new Date(view.getFullYear(), view.getMonth(), 0).getDate();
+
+    let cells = DOW.map(d => '<div class="dow">' + d + '</div>').join('');
+    // leading days from previous month
+    for (let i = startDow - 1; i >= 0; i--) {
+      cells += '<div class="day other">' + (prevDays - i) + '</div>';
+    }
+    for (let d = 1; d <= daysInMonth; d++) {
+      const cellDate = new Date(view.getFullYear(), view.getMonth(), d);
+      const isToday = sameDay(cellDate, now);
+      cells += '<div class="day selectable ' + (isToday ? 'today' : '') + '">' + d + '</div>';
+    }
+    // trailing to fill the last week row
+    const totalSoFar = startDow + daysInMonth;
+    const trailing = (7 - (totalSoFar % 7)) % 7;
+    for (let d = 1; d <= trailing; d++) cells += '<div class="day other">' + d + '</div>';
+
+    grid.innerHTML = cells;
+  }
+
+  function open() { cal.classList.add('open'); clock.classList.add('open'); renderCal(); }
+  function close() { cal.classList.remove('open'); clock.classList.remove('open'); }
+  function toggle() { cal.classList.contains('open') ? close() : open(); }
+
+  clock.addEventListener('click', (e) => { e.stopPropagation(); toggle(); });
+  document.getElementById('prev').addEventListener('click', () => { view.setMonth(view.getMonth() - 1); renderCal(); });
+  document.getElementById('next').addEventListener('click', () => { view.setMonth(view.getMonth() + 1); renderCal(); });
+  document.getElementById('today').addEventListener('click', () => { view = new Date(now.getFullYear(), now.getMonth(), 1); renderCal(); });
+  cal.addEventListener('click', (e) => e.stopPropagation());
+  cal.addEventListener('wheel', (e) => {
+    e.preventDefault();
+    view.setMonth(view.getMonth() + (e.deltaY > 0 ? 1 : -1));
+    renderCal();
+  }, { passive: false });
+  document.addEventListener('click', close);
+  document.addEventListener('keydown', (e) => { if (e.key === 'Escape') close(); });
+
+  renderCal();
+</script>
+</body>
+</html>

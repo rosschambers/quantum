@@ -1,0 +1,514 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Quantum launcher power-ups — playground</title>
+<style>
+  /* Sycamore theme tokens (src/ui/themes/sycamore/tokens.toml) */
+  :root {
+    --color-bg: #292520;
+    --color-bg-alt: #3b3630;
+    --color-border: #4a443e;
+    --color-fg: #e8e4d8;
+    --color-fg-alt: #d8d4c8;
+    --color-accent: #a6e3a1;
+    --color-muted: #8a8578;
+    --color-error: #af4e3c;
+    --color-surface: #3b3630;
+    --color-surface-hover: #4a443e;
+    --color-shadow: rgba(10, 8, 6, 0.6);
+    --color-divider: rgba(232, 228, 216, 0.25);
+    --color-warning: #c96342;
+    --radius-lg: 16px;
+    --font-sans: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    min-height: 100vh;
+    font-family: var(--font-sans);
+    color: var(--color-fg);
+    /* A faux desktop wallpaper so the launcher floats like the real overlay. */
+    background:
+      radial-gradient(1200px 800px at 30% 20%, #34302a, #211d19 70%),
+      #1b1815;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 18px;
+    padding: 40px 16px;
+  }
+  .explainer {
+    max-width: 640px;
+    color: var(--color-muted);
+    font-size: 13px;
+    line-height: 1.5;
+    text-align: center;
+  }
+  .explainer b { color: var(--color-fg-alt); }
+  .explainer code {
+    background: var(--color-bg-alt);
+    border: 1px solid var(--color-border);
+    border-radius: 5px;
+    padding: 1px 5px;
+    color: var(--color-accent);
+    font-size: 12px;
+  }
+
+  /* ---- Launcher card (mirrors the real overlay house style) ---- */
+  .card {
+    width: min(640px, 94vw);
+    background: var(--color-bg-alt);
+    border: 1px solid var(--color-border);
+    border-radius: 12px;
+    box-shadow: 0 14px 40px var(--color-shadow);
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+  }
+  .search-container { padding: 14px 16px; }
+  .search-input {
+    width: 100%;
+    background: var(--color-bg);
+    border: 1px solid var(--color-border);
+    border-radius: 10px;
+    color: var(--color-fg);
+    font-size: 18px;
+    padding: 12px 14px;
+    outline: none;
+    font-family: var(--font-sans);
+  }
+  .search-input:focus { border-color: var(--color-accent); }
+  .search-input::placeholder { color: var(--color-muted); }
+
+  .prefix-legend {
+    padding: 0 18px 10px;
+    color: var(--color-muted);
+    font-size: 12px;
+    letter-spacing: 0.02em;
+  }
+  .prefix-legend .k { color: var(--color-accent); font-weight: 600; }
+
+  .results {
+    border-top: 1px solid var(--color-border);
+    max-height: 52vh;
+    overflow-y: auto;
+    padding: 6px;
+  }
+  .mode-tag {
+    display: inline-block;
+    margin: 8px 10px 2px;
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--color-muted);
+  }
+
+  .row {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 9px 12px;
+    border-radius: 9px;
+    cursor: pointer;
+    position: relative;
+  }
+  .row.selected { background: var(--color-surface-hover); }
+  .row:hover { background: var(--color-surface); }
+
+  .row .icon {
+    width: 34px; height: 34px;
+    flex: 0 0 34px;
+    display: flex; align-items: center; justify-content: center;
+    border-radius: 7px;
+    background: var(--color-bg);
+    border: 1px solid var(--color-border);
+    overflow: hidden;
+  }
+  .row .icon svg { width: 20px; height: 20px; color: var(--color-fg-alt); }
+  .row .icon.emoji { font-size: 20px; background: transparent; border: none; }
+  .row .icon img { width: 100%; height: 100%; object-fit: cover; }
+
+  .row .text { min-width: 0; flex: 1; }
+  .row .title {
+    font-size: 15px; color: var(--color-fg);
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  .row .title.mono { font-family: ui-monospace, "Cascadia Code", monospace; }
+  .row .subtitle {
+    font-size: 12px; color: var(--color-muted);
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  .row .hint {
+    font-size: 11px; color: var(--color-muted);
+    border: 1px solid var(--color-border);
+    border-radius: 5px; padding: 2px 6px;
+    opacity: 0; transition: opacity .1s;
+  }
+  .row.selected .hint { opacity: 1; }
+  .row .hint .k { color: var(--color-accent); }
+
+  .empty { padding: 22px; text-align: center; color: var(--color-muted); font-size: 14px; }
+
+  /* ---- Ctrl+K secondary-actions panel ---- */
+  .backdrop2 {
+    position: fixed; inset: 0;
+    background: rgba(0,0,0,0.35);
+    display: none;
+    align-items: center; justify-content: center;
+    z-index: 50;
+  }
+  .backdrop2.open { display: flex; }
+  .actions {
+    width: min(340px, 88vw);
+    background: var(--color-bg-alt);
+    border: 1px solid var(--color-border);
+    border-radius: 10px;
+    box-shadow: 0 14px 40px var(--color-shadow);
+    overflow: hidden;
+  }
+  .actions .head {
+    padding: 10px 14px;
+    font-size: 12px; color: var(--color-muted);
+    border-bottom: 1px solid var(--color-border);
+    display: flex; align-items: center; gap: 8px;
+  }
+  .actions .head .what { color: var(--color-fg-alt); }
+  .actions .filter {
+    width: 100%; border: none; border-bottom: 1px solid var(--color-border);
+    background: var(--color-bg); color: var(--color-fg);
+    padding: 9px 14px; font-size: 13px; outline: none;
+    font-family: var(--font-sans);
+  }
+  .actions .list { padding: 6px; max-height: 320px; overflow-y: auto; }
+  .actions .item {
+    display: flex; align-items: center; gap: 10px;
+    padding: 9px 12px; border-radius: 7px; cursor: pointer; font-size: 14px;
+  }
+  .actions .item.sel { background: var(--color-surface-hover); }
+  .actions .item .glyph { width: 18px; text-align: center; color: var(--color-muted); }
+  .actions .item.danger { color: var(--color-error); }
+  .actions .item.danger .glyph { color: var(--color-error); }
+
+  .toast {
+    position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%);
+    background: var(--color-bg-alt); border: 1px solid var(--color-border);
+    color: var(--color-fg); padding: 9px 16px; border-radius: 8px;
+    font-size: 13px; box-shadow: 0 8px 24px var(--color-shadow);
+    opacity: 0; pointer-events: none; transition: opacity .18s;
+  }
+  .toast.show { opacity: 1; }
+</style>
+</head>
+<body>
+  <div class="explainer">
+    <b>Launcher power-ups prototype.</b> Type to switch modes:
+    <code>=</code> calc/units · <code>:</code> emoji · <code>;</code> clipboard ·
+    plain text = apps/windows. Bare math like <code>2+2</code> also works.
+    Select a row and press <code>Ctrl+K</code> (or right-click) for its
+    secondary actions. Arrow keys move, Enter copies/opens.
+  </div>
+
+  <div class="card" id="card">
+    <div class="search-container">
+      <input class="search-input" id="search" placeholder="Search apps, or = : ; for tools…" autocomplete="off" />
+    </div>
+    <div class="prefix-legend" id="legend"></div>
+    <div class="results" id="results"></div>
+  </div>
+
+  <div class="backdrop2" id="backdrop2">
+    <div class="actions" id="actions">
+      <div class="head"><span>Actions for</span><span class="what" id="actionsWhat"></span></div>
+      <input class="filter" id="actionsFilter" placeholder="Filter actions…" autocomplete="off" />
+      <div class="list" id="actionsList"></div>
+    </div>
+  </div>
+
+  <div class="toast" id="toast"></div>
+
+<script>
+// ---- Icons (inline SVG, currentColor — mirrors quantum's per-plugin Icon set) ----
+const ICON = {
+  app: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></svg>',
+  window: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 9h18"/></svg>',
+  calc: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="4" y="3" width="16" height="18" rx="2"/><path d="M8 7h8M8 12h2M8 16h2M14 12h2M14 16h2"/></svg>',
+  clip: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="8" y="4" width="8" height="4" rx="1"/><rect x="5" y="6" width="14" height="15" rx="2"/></svg>',
+  document: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M6 2h8l4 4v16H6z"/><path d="M14 2v4h4"/></svg>',
+  archive: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="4" width="18" height="4"/><path d="M5 8v12h14V8M10 12h4"/></svg>',
+};
+
+// A tiny inline sample thumbnail (a checker gradient) standing in for a real
+// screenshot preview served as a base64 data URI from the daemon.
+const SAMPLE_THUMB = 'data:image/svg+xml;utf8,' + encodeURIComponent(
+  '<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64"><defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#a6e3a1"/><stop offset="1" stop-color="#c96342"/></linearGradient></defs><rect width="64" height="64" fill="url(#g)"/><circle cx="44" cy="20" r="10" fill="#fff" opacity="0.7"/></svg>'
+);
+
+// ---- Fake data sources (stand-ins for the Rust providers) ----
+const APPS = [
+  { title: 'Firefox', subtitle: 'Web browser' },
+  { title: 'Files', subtitle: 'File manager' },
+  { title: 'Ghostty', subtitle: 'Terminal emulator' },
+  { title: 'Steam', subtitle: 'Games' },
+  { title: 'Blender', subtitle: '3D modelling' },
+];
+const WINDOWS = [
+  { title: 'design.md — opencode', subtitle: 'Window · workspace 2' },
+  { title: 'quantum — main.rs', subtitle: 'Window · workspace 1' },
+];
+const EMOJI = [
+  { glyph: '🤷', name: 'shrug', kw: 'dunno idk person' },
+  { glyph: '☕', name: 'coffee', kw: 'hot beverage cafe' },
+  { glyph: '🔥', name: 'fire', kw: 'flame lit hot burn' },
+  { glyph: '✅', name: 'check mark', kw: 'done yes ok tick' },
+  { glyph: '🎉', name: 'party popper', kw: 'celebrate tada' },
+  { glyph: '🚀', name: 'rocket', kw: 'ship launch space fast' },
+];
+// Clipboard history: newest first, mixed kinds.
+const CLIPBOARD = [
+  { kind: 'text', preview: 'https://github.com/rosschambers/quantum', full: 'https://github.com/rosschambers/quantum', age: 'just now' },
+  { kind: 'image', preview: 'Screenshot 1440×900 PNG', thumb: SAMPLE_THUMB, age: '2 min ago' },
+  { kind: 'text', preview: 'cargo build --bin quantumd', full: 'cargo build --bin quantumd', age: '8 min ago' },
+  { kind: 'file', preview: 'report.pdf', mime: 'application/pdf', icon: 'document', age: '20 min ago' },
+  { kind: 'file', preview: 'assets.zip', mime: 'application/zip', icon: 'archive', age: '1 hour ago' },
+  { kind: 'text', preview: 'The quick brown fox jumps over the lazy dog and keeps going well past the visible width of the row', full: '…', age: '2 hours ago' },
+];
+
+// ---- Simple calculator + unit conversion (stand-in for the calc provider) ----
+const UNITS = {
+  length: { m: 1, cm: 0.01, mm: 0.001, km: 1000, ft: 0.3048, in: 0.0254, mi: 1609.344, yd: 0.9144 },
+  mass: { g: 1, kg: 1000, mg: 0.001, lb: 453.592, oz: 28.3495 },
+  data: { b: 1, kb: 1000, mb: 1e6, gb: 1e9, tb: 1e12 },
+};
+function convert(text) {
+  const m = text.match(/^\s*([-\d.]+)\s*([a-zA-Z°]+)\s+to\s+([a-zA-Z°]+)\s*$/);
+  if (!m) return null;
+  const val = parseFloat(m[1]); const from = m[2].toLowerCase(); const to = m[3].toLowerCase();
+  // temperature special-case
+  const T = { f: 'f', '°f': 'f', c: 'c', '°c': 'c', k: 'k' };
+  if (T[from] && T[to]) {
+    let c;
+    if (T[from] === 'f') c = (val - 32) * 5/9; else if (T[from] === 'k') c = val - 273.15; else c = val;
+    let out; if (T[to] === 'f') out = c * 9/5 + 32; else if (T[to] === 'k') out = c + 273.15; else out = c;
+    const sym = { f: '°F', c: '°C', k: 'K' }[T[to]];
+    return { result: round(out) + ' ' + sym, expr: text.trim() };
+  }
+  for (const fam of Object.values(UNITS)) {
+    if (fam[from] != null && fam[to] != null) {
+      return { result: round(val * fam[from] / fam[to]) + ' ' + to, expr: text.trim() };
+    }
+  }
+  return null;
+}
+function round(n) { return Math.round(n * 10000) / 10000; }
+function calc(text) {
+  const conv = convert(text);
+  if (conv) return conv;
+  const expr = text.replace(/^=/, '').trim();
+  if (!/^[-+/*%^().\d\s,sqrtinolgabcde]+$/i.test(expr)) return null;
+  if (!/[-+/*%^]/.test(expr) && !/sqrt|sin|cos|log|abs|round/.test(expr)) return null;
+  try {
+    const js = expr
+      .replace(/\^/g, '**')
+      .replace(/sqrt/g, 'Math.sqrt').replace(/sin/g, 'Math.sin').replace(/cos/g, 'Math.cos')
+      .replace(/log/g, 'Math.log').replace(/abs/g, 'Math.abs').replace(/round/g, 'Math.round');
+    if (/[a-zA-Z_$]/.test(js.replace(/Math\.\w+/g, ''))) return null;
+    // eslint-disable-next-line no-new-func
+    const r = Function('"use strict";return (' + js + ')')();
+    if (typeof r !== 'number' || !isFinite(r)) return null;
+    return { result: String(round(r)), expr: expr };
+  } catch { return null; }
+}
+
+// ---- State + render ----
+const search = document.getElementById('search');
+const results = document.getElementById('results');
+const legend = document.getElementById('legend');
+let rows = [];         // {kind, provider, icon, iconType, title, mono, subtitle, actions}
+let sel = 0;
+
+legend.innerHTML = '<span class="k">=</span> calc/units &nbsp;·&nbsp; <span class="k">:</span> emoji &nbsp;·&nbsp; <span class="k">;</span> clipboard &nbsp;·&nbsp; <span class="k">&gt;</span> launch &nbsp;·&nbsp; <span class="k">!</span> terminal';
+
+const APP_ACTIONS = [
+  { label: 'Launch', glyph: '▸' },
+  { label: 'Launch in terminal', glyph: '»' },
+  { label: 'Copy name', glyph: '⧉' },
+  { label: 'Copy .desktop path', glyph: '⧉' },
+];
+const WINDOW_ACTIONS = [
+  { label: 'Focus', glyph: '▸' },
+  { label: 'Close window', glyph: '✕', danger: true },
+  { label: 'Copy title', glyph: '⧉' },
+];
+const CALC_ACTIONS = [{ label: 'Copy result', glyph: '⧉' }, { label: 'Copy expression', glyph: '⧉' }];
+const EMOJI_ACTIONS = [{ label: 'Copy glyph', glyph: '⧉' }, { label: 'Copy name', glyph: '⧉' }];
+const CLIP_ACTIONS = [
+  { label: 'Copy', glyph: '⧉' },
+  { label: 'Delete entry', glyph: '✕', danger: true },
+  { label: 'Clear history', glyph: '🗑', danger: true },
+];
+
+function build(text) {
+  const t = text.trim();
+  rows = [];
+
+  // Mode detection by prefix, else bare-math, else app/window fan-out.
+  if (t.startsWith(':')) {
+    const q = t.slice(1).toLowerCase();
+    const hits = EMOJI.filter(e => !q || e.name.includes(q) || e.kw.includes(q));
+    if (hits.length) rows.push({ mode: 'Emoji' });
+    hits.forEach(e => rows.push({
+      provider: 'emoji', iconType: 'emoji', iconGlyph: e.glyph,
+      title: e.name, subtitle: 'Copy ' + e.glyph, actions: EMOJI_ACTIONS,
+    }));
+  } else if (t.startsWith(';')) {
+    const q = t.slice(1).toLowerCase();
+    const hits = CLIPBOARD.filter(c => !q || (c.full || c.preview).toLowerCase().includes(q));
+    if (hits.length) rows.push({ mode: 'Clipboard history' });
+    hits.forEach(c => {
+      if (c.kind === 'image') {
+        rows.push({ provider: 'clipboard', iconType: 'img', thumb: c.thumb, title: c.preview, subtitle: c.age, actions: CLIP_ACTIONS });
+      } else if (c.kind === 'file') {
+        rows.push({ provider: 'clipboard', iconType: 'svg', icon: c.icon, title: c.preview, subtitle: c.mime + ' · ' + c.age, actions: CLIP_ACTIONS });
+      } else {
+        rows.push({ provider: 'clipboard', iconType: 'svg', icon: 'clip', title: c.preview, subtitle: c.age, actions: CLIP_ACTIONS });
+      }
+    });
+  } else {
+    const c = (t.startsWith('=') || (/^[-\d.(]/.test(t) && /[-+/*%^]/.test(t)) || /\bto\b/.test(t)) ? calc(t) : null;
+    if (c) {
+      rows.push({ mode: 'Calculator' });
+      rows.push({ provider: 'calc', iconType: 'svg', icon: 'calc', title: c.result, mono: true, subtitle: c.expr, actions: CALC_ACTIONS });
+    }
+    if (!t) {
+      rows.push({ mode: 'Applications' });
+      APPS.forEach(a => rows.push({ provider: 'apps', iconType: 'svg', icon: 'app', title: a.title, subtitle: a.subtitle, actions: APP_ACTIONS }));
+    } else if (!c) {
+      const aq = t.toLowerCase();
+      const apps = APPS.filter(a => a.title.toLowerCase().includes(aq));
+      const wins = WINDOWS.filter(w => w.title.toLowerCase().includes(aq));
+      if (apps.length) { rows.push({ mode: 'Applications' }); apps.forEach(a => rows.push({ provider: 'apps', iconType: 'svg', icon: 'app', title: a.title, subtitle: a.subtitle, actions: APP_ACTIONS })); }
+      if (wins.length) { rows.push({ mode: 'Open windows' }); wins.forEach(w => rows.push({ provider: 'window', iconType: 'svg', icon: 'window', title: w.title, subtitle: w.subtitle, actions: WINDOW_ACTIONS })); }
+    }
+  }
+  sel = firstSelectable();
+  render();
+}
+
+function firstSelectable() { return rows.findIndex(r => !r.mode); }
+function selectableIndices() { return rows.map((r, i) => r.mode ? -1 : i).filter(i => i >= 0); }
+
+function render() {
+  legend.style.display = search.value.trim() ? 'none' : 'block';
+  if (!rows.length) {
+    results.innerHTML = '<div class="empty">No results</div>';
+    return;
+  }
+  results.innerHTML = rows.map((r, i) => {
+    if (r.mode) return '<div class="mode-tag">' + r.mode + '</div>';
+    let iconHtml;
+    if (r.iconType === 'emoji') iconHtml = '<div class="icon emoji">' + r.iconGlyph + '</div>';
+    else if (r.iconType === 'img') iconHtml = '<div class="icon"><img src="' + r.thumb + '" alt=""></div>';
+    else iconHtml = '<div class="icon">' + (ICON[r.icon] || ICON.app) + '</div>';
+    return (
+      '<div class="row ' + (i === sel ? 'selected' : '') + '" data-i="' + i + '">' +
+        iconHtml +
+        '<div class="text">' +
+          '<div class="title ' + (r.mono ? 'mono' : '') + '">' + escapeHtml(r.title) + '</div>' +
+          (r.subtitle ? '<div class="subtitle">' + escapeHtml(r.subtitle) + '</div>' : '') +
+        '</div>' +
+        '<span class="hint"><span class="k">Ctrl+K</span> actions</span>' +
+      '</div>'
+    );
+  }).join('');
+  [...results.querySelectorAll('.row')].forEach(el => {
+    const i = +el.dataset.i;
+    el.addEventListener('click', () => { sel = i; render(); primary(); });
+    el.addEventListener('contextmenu', (e) => { e.preventDefault(); sel = i; render(); openActions(); });
+  });
+}
+
+function escapeHtml(s) { return s.replace(/[&<>"]/g, c => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;' }[c])); }
+
+function primary() {
+  const r = rows[sel]; if (!r || r.mode) return;
+  if (r.provider === 'calc' || r.provider === 'emoji' || r.provider === 'clipboard') toast('Copied to clipboard');
+  else toast('Opened ' + r.title);
+}
+
+// ---- Ctrl+K actions panel ----
+const backdrop2 = document.getElementById('backdrop2');
+const actionsList = document.getElementById('actionsList');
+const actionsWhat = document.getElementById('actionsWhat');
+const actionsFilter = document.getElementById('actionsFilter');
+let actionItems = [], actionSel = 0;
+
+function openActions() {
+  const r = rows[sel]; if (!r || r.mode) return;
+  actionsWhat.textContent = r.title;
+  actionItems = r.actions.slice();
+  actionSel = 0;
+  actionsFilter.value = '';
+  renderActions();
+  backdrop2.classList.add('open');
+  actionsFilter.focus();
+}
+function renderActions() {
+  const q = actionsFilter.value.toLowerCase();
+  const items = actionItems.filter(a => a.label.toLowerCase().includes(q));
+  if (actionSel >= items.length) actionSel = Math.max(0, items.length - 1);
+  actionsList.innerHTML = items.map((a, i) =>
+    '<div class="item ' + (i === actionSel ? 'sel' : '') + (a.danger ? ' danger' : '') + '" data-i="' + i + '">' +
+      '<span class="glyph">' + a.glyph + '</span>' + escapeHtml(a.label) +
+    '</div>'
+  ).join('') || '<div class="empty">No actions</div>';
+  actionsList._items = items;
+  [...actionsList.querySelectorAll('.item')].forEach(el => {
+    el.addEventListener('click', () => { actionSel = +el.dataset.i; chooseAction(); });
+  });
+}
+function chooseAction() {
+  const a = (actionsList._items || [])[actionSel];
+  closeActions();
+  if (a) toast(a.label);
+}
+function closeActions() { backdrop2.classList.remove('open'); search.focus(); }
+
+actionsFilter.addEventListener('input', () => { actionSel = 0; renderActions(); });
+actionsFilter.addEventListener('keydown', (e) => {
+  const n = (actionsList._items || []).length;
+  if (e.key === 'ArrowDown') { e.preventDefault(); actionSel = Math.min(actionSel + 1, n - 1); renderActions(); }
+  else if (e.key === 'ArrowUp') { e.preventDefault(); actionSel = Math.max(actionSel - 1, 0); renderActions(); }
+  else if (e.key === 'Enter') { e.preventDefault(); chooseAction(); }
+  else if (e.key === 'Escape') { e.preventDefault(); closeActions(); }
+});
+backdrop2.addEventListener('click', (e) => { if (e.target === backdrop2) closeActions(); });
+
+// ---- Main input handling ----
+search.addEventListener('input', () => build(search.value));
+search.addEventListener('keydown', (e) => {
+  const sels = selectableIndices();
+  const pos = sels.indexOf(sel);
+  if (e.key === 'ArrowDown') { e.preventDefault(); if (pos < sels.length - 1) { sel = sels[pos + 1]; render(); } }
+  else if (e.key === 'ArrowUp') { e.preventDefault(); if (pos > 0) { sel = sels[pos - 1]; render(); } }
+  else if (e.key === 'Enter') { e.preventDefault(); primary(); }
+  else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k') { e.preventDefault(); openActions(); }
+  else if (e.key === 'Tab') { e.preventDefault(); openActions(); }
+});
+
+// ---- Toast ----
+const toastEl = document.getElementById('toast');
+let toastTimer;
+function toast(msg) {
+  toastEl.textContent = msg;
+  toastEl.classList.add('show');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => toastEl.classList.remove('show'), 1400);
+}
+
+build('');
+search.focus();
+</script>
+</body>
+</html>
