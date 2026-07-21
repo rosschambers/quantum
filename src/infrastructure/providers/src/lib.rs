@@ -13,6 +13,7 @@ pub mod bluetooth;
 pub mod bluetooth_agent;
 pub mod brightness;
 pub mod calc;
+pub mod clipboard_capture;
 pub mod clipboard_store;
 pub mod clipboard_writer;
 pub mod declarative_shell;

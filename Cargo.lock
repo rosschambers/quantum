@@ -2098,6 +2098,7 @@ dependencies = [
  "freedesktop-icons",
  "futures",
  "humantime-serde",
+ "image",
  "libc",
  "nucleo-matcher",
  "png 0.17.16",
