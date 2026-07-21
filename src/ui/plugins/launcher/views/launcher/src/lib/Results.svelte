@@ -1,6 +1,6 @@
 <script lang="ts">
   import type { Match } from './types';
-  import { resolveIcon } from './icon';
+  import { resolveIcon, isThumbnailIcon } from './icon';
 
   interface Props {
     items: Match[];
@@ -32,7 +32,17 @@
       oncontextmenu={onContext ? (event) => onContext(event, item) : undefined}
     >
       {#if resolveIcon(item.icon)}
-        <img class="icon" src={resolveIcon(item.icon)} alt="" loading="lazy" onerror={() => (item.icon = undefined)} />
+        <!-- A data_uri icon (a clipboard image preview or mime thumbnail) gets
+             the `thumbnail` class so it cover-crops to a square tile; a path or
+             string app glyph keeps the contained rendering. -->
+        <img
+          class="icon"
+          class:thumbnail={isThumbnailIcon(item.icon)}
+          src={resolveIcon(item.icon)}
+          alt=""
+          loading="lazy"
+          onerror={() => (item.icon = undefined)}
+        />
       {:else}
         <div class="icon"></div>
       {/if}

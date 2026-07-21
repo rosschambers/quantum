@@ -143,6 +143,17 @@ input::placeholder {
   object-fit: contain;
 }
 
+/* A clipboard image preview or mime thumbnail: a slightly larger square tile
+   that cover-crops the embedded image (photos and screenshots read better
+   filling the tile than letter-boxed), with a subtle rounded frame. */
+.match-item img.icon.thumbnail {
+  width: 34px;
+  height: 34px;
+  object-fit: cover;
+  border-radius: var(--radius-sm, 3px);
+  border: 1px solid var(--color-border, #313244);
+}
+
 /* Empty-state placeholder (no icon resolved): an invisible box that only
    reserves the icon slot so the row still aligns. A filled square here read as
    a jarring "broken icon"; the title keeps its fixed indent regardless, so an
@@ -156,6 +167,9 @@ input::placeholder {
   font-weight: 500;
   margin: 0;
   padding-left: calc(1.5rem + var(--space-2, 0.5rem));
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .match-item .subtitle {
@@ -164,6 +178,9 @@ input::placeholder {
   color: var(--color-muted, #6c7086);
   margin: var(--space-1, 0.25rem) 0 0 var(--space-2, 0.5rem);
   padding-left: calc(1.5rem + var(--space-2, 0.5rem));
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .match-item.highlighted .title {

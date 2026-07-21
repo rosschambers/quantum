@@ -28,3 +28,15 @@ export function resolveIcon(icon: string | IconRef | undefined): string | undefi
   }
   return undefined;
 }
+
+/**
+ * Whether an icon is an inline image thumbnail rather than an application glyph.
+ *
+ * A `data_uri` icon carries an embedded raster image (a clipboard image entry's
+ * preview, or a mime-type thumbnail) that should cover-crop to a square tile,
+ * unlike a `path` or `name` app icon which is a glyph shown contained. The
+ * launcher uses this to pick the thumbnail styling for such rows.
+ */
+export function isThumbnailIcon(icon: string | IconRef | undefined): boolean {
+  return typeof icon === 'object' && icon !== null && icon.kind === 'data_uri';
+}
