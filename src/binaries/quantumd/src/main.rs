@@ -35,7 +35,7 @@ use quantum_processes::{
     LibcProcessKiller, ProcessSampleSource, ProcfsSampler, TokioProcessMonitor,
 };
 use quantum_providers::{
-    BluezProvider, CalcProvider, DeclarativeShellProvider, DesktopAppsProvider,
+    BluezProvider, CalcProvider, DeclarativeShellProvider, DesktopAppsProvider, EmojiProvider,
     HyprlandActiveWindowProvider, HyprlandWindowsProvider, InMemoryProviderRegistry,
     JsonTimerStore, LogindBrightnessProvider, MprisProvider, NetworkManagerProvider,
     NotificationTimerNotifier, NotificationsProvider, PluginScriptProvider,
@@ -608,6 +608,14 @@ async fn setup_daemon(
         .register(calc_id, calc as Arc<dyn quantum_domain::ProviderSource>)
         .await;
     info!("Registered CalcProvider");
+
+    // Emoji provider (colon-prefixed picker, copies chosen glyphs).
+    let emoji = Arc::new(EmojiProvider::new(clipboard_writer.clone()));
+    let emoji_id = emoji.id().clone();
+    registry
+        .register(emoji_id, emoji as Arc<dyn quantum_domain::ProviderSource>)
+        .await;
+    info!("Registered EmojiProvider");
 
     // Hyprland provider (optional)
     let mut hypr_client_opt: Option<Arc<HyprlandSocketClient>> = None;
