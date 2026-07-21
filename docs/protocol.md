@@ -144,6 +144,12 @@ Searches across registered providers for matches.
   data: { window_address: string }  // Hyprland window address hex
 }
 
+// Copy text to the clipboard (calc, emoji, and clipboard-history results)
+{
+  kind: "copy",
+  data: { text: string }
+}
+
 // Custom action (plugin-defined)
 {
   kind: string,

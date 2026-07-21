@@ -3,6 +3,33 @@
 Future additions to the bar / quantum. Not yet designed. Brainstorm each
 before building (see the brainstorming skill).
 
+## Shipped 2026-07-21 — launcher power-ups + clock calendar
+
+Design + plan: `docs/plans/2026-07-21-launcher-powerups-and-calendar-design.md`
+and `docs/plans/2026-07-21-launcher-powerups-and-calendar.md`. Delivered: a
+`calc` provider (`=` prefix and bare math, plus unit conversion), an `emoji`
+provider (`:` prefix), a clipboard-history subsystem (`;` prefix, text + image
+thumbnails + binary icons, blob-plus-JSON store, configurable `wl-paste`
+watcher), a launcher secondary-actions panel (Ctrl+K / Tab / right-click,
+driven by provider-declared `Match.actions`), and the clock calendar dropdown.
+
+## Follow-up — make more shell-outs configurable
+
+The clipboard work added a `[commands]` config section (following the
+`lock_command` template) for `clipboard_watcher` and `clipboard_copy`. An audit
+found other hardcoded shell-outs that could join the same section: `pactl`
+(audio, 10 sites), `nmcli` (wifi), `xdg-open` + terminal + `gio`/`tar`/`unzip`
+(files), the timer sound player (`canberra-gtk-play`/`paplay`), and `hyprctl`
+(active-window seed). The terminal override is already threaded in code
+(`ProcessFileOpener` accepts `terminal_override`) but hardwired to `None` at
+`main.rs` — the lowest-effort win.
+
+## Clipboard follow-up (phases 2/3, deferred)
+
+Per-MIME glyphs for `text/uri-list` file copies, byte-budget eviction
+refinements, a full-size `quantum://clip/<id>` preview view, and binary
+paste-back via a persistent `wl-copy` offer.
+
 ## System tray (StatusNotifierItem)
 
 An SNI host so third-party apps (Discord, Steam, nm-applet, and similar) can
@@ -19,7 +46,8 @@ Quick wins, each a small provider plus a bar indicator:
 - Microphone mute toggle (audio provider already exists — add a mic source).
 - Idle inhibitor / caffeine toggle.
 - Network throughput (up/down bytes per second from the network provider).
-- Calendar popup when clicking the bar clock.
+- ~~Calendar popup when clicking the bar clock.~~ Done (2026-07-21): the bar clock
+  opens a client-side month calendar dropdown (`CalendarDropdown.svelte`).
 
 ## Quick-settings / control-center panel
 
