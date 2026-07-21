@@ -36,3 +36,7 @@ base64 = "0.22"
 
 [dev-dependencies]
 tempfile = "3"
+# The proc_stats tests use tokio's time controls (`advance`, `start_paused`),
+# which live behind the `test-util` feature. Enable it for tests only so the
+# crate's test binary compiles.
+tokio = { version = "1", features = ["test-util"] }
