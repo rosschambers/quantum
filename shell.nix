@@ -12,6 +12,11 @@ pkgs.mkShell {
     rustfmt
     clippy
     mold
+    # `util-linux` provides `ionice`, used by the build-throttle cargo shell
+    # function in the shellHook below. Pin it here so the shell's `ionice`
+    # comes from its own closure rather than `/run/current-system` (which is
+    # absent on non-NixOS builders such as CI).
+    util-linux
     # The clipboard subsystem shells out to wl-copy / wl-paste (the wlr-data-control
     # tools). Pin them here so the dependency is reproducible in the dev/CI shell
     # rather than relying on whatever is in the user profile.
@@ -54,6 +59,19 @@ pkgs.mkShell {
     # not source shell.nix still link with the default linker and do not require
     # mold to be installed.
     export CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUSTFLAGS="-C link-arg=-fuse-ld=mold"
+
+    # Throttle heavy builds so a full quantumd compile does not saturate all
+    # cores and starve interactive work (VS Code, agents) on a swap-less host.
+    # Cap parallel compile jobs to leave headroom, and run every cargo call at
+    # low CPU (nice 15) and idle IO (ionice class 3) priority. Neither setting
+    # participates in the gtk/webkit `-sys` build-script fingerprints, so warm
+    # rebuilds stay warm. The real cargo path is resolved once at shell entry
+    # (before the function shadows the name) so the function never recurses, and
+    # `nice`/`ionice` receive a real executable rather than a shell builtin.
+    export CARGO_BUILD_JOBS=10
+    QUANTUM_REAL_CARGO="$(command -v cargo)"
+    export QUANTUM_REAL_CARGO
+    cargo() { nice -n 15 ionice -c 3 "$QUANTUM_REAL_CARGO" "$@"; }
 
     echo "quantum host shell ready"
     echo "  rustc:           $(rustc --version)"
