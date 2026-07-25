@@ -13,7 +13,7 @@
 // responds by opening a second `openContextMenu` populated from
 // `files.applications`.
 
-import type { ApplicationInfo, FileEntry, FileOperation, MenuItem } from '@quantum/client';
+import type { ApplicationInfo, FileEntry, FileOperation, MenuItem, PinnedAction } from '@quantum/client';
 import type { ClipboardOperation } from './clipboard.svelte';
 import { pathBaseName } from './path';
 import { SHORTCUT_KEYS } from './shortcuts';
@@ -58,6 +58,10 @@ export interface EntryMenuContext {
     onCopyPath: (path: string) => void;
     /** Open the properties modal for the entry. */
     onProperties: (entry: FileEntry) => void;
+    /** User-pinned "open with" actions, prepended above Open when non-empty. */
+    pinnedActions: PinnedAction[];
+    /** Open a path with a pinned application, identified by its desktop id. */
+    onOpenWithPinned: (desktopId: string, path: string) => void;
 }
 
 /** Everything the background (empty-space) menu needs. */
@@ -76,6 +80,10 @@ export interface BackgroundMenuContext {
     onPin: (target: PinTarget) => void;
     /** Open the properties modal for the directory. */
     onProperties: (target: PinTarget) => void;
+    /** User-pinned "open with" actions, prepended above New folder when non-empty. */
+    pinnedActions: PinnedAction[];
+    /** Open a path with a pinned application, identified by its desktop id. */
+    onOpenWithPinned: (desktopId: string, path: string) => void;
 }
 
 /** Join a directory and a leaf name into an absolute path without a double slash at the root. */
@@ -85,6 +93,23 @@ function joinPath(directory: string, name: string): string {
 
 /** A separator menu item. */
 const separator: MenuItem = { separator: true };
+
+/** Build the leading pinned "open with" items for a target path, or [] when none. */
+function pinnedItems(
+    pinnedActions: PinnedAction[],
+    targetPath: string,
+    onOpenWithPinned: (desktopId: string, path: string) => void,
+): MenuItem[] {
+    if (!pinnedActions || pinnedActions.length === 0) {
+        return [];
+    }
+    const items: MenuItem[] = pinnedActions.map((action) => ({
+        label: action.label,
+        onSelect: () => onOpenWithPinned(action.desktop_id, targetPath),
+    }));
+    items.push(separator);
+    return items;
+}
 
 /**
  * Build the entry (row) context menu. The operation target is the whole
@@ -100,6 +125,7 @@ export function buildEntryMenu(ctx: EntryMenuContext): MenuItem[] {
     const terminalDirectory = entry.kind === 'directory' ? entry.path : ctx.path;
 
     const items: MenuItem[] = [
+        ...pinnedItems(ctx.pinnedActions, entry.path, ctx.onOpenWithPinned),
         { label: 'Open', onSelect: () => ctx.onOpen(entry) },
         { label: 'Open with...', onSelect: () => ctx.onOpenWithPicker(entry) },
         { label: 'Open terminal here', onSelect: () => ctx.onOpenTerminal(terminalDirectory) },
@@ -168,6 +194,7 @@ export function buildEntryMenu(ctx: EntryMenuContext): MenuItem[] {
 export function buildBackgroundMenu(ctx: BackgroundMenuContext): MenuItem[] {
     const target: PinTarget = { path: ctx.path, name: pathBaseName(ctx.path) };
     return [
+        ...pinnedItems(ctx.pinnedActions, ctx.path, ctx.onOpenWithPinned),
         { label: 'New folder', shortcut: SHORTCUT_KEYS.newFolder, onSelect: () => ctx.onNewFolder(ctx.path) },
         { label: 'New file', onSelect: () => ctx.onNewFile(ctx.path) },
         separator,

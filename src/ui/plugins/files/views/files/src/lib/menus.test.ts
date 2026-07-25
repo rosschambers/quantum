@@ -55,6 +55,8 @@ function entryContext(overrides: Partial<EntryMenuContext> = {}): EntryMenuConte
         onUnpin: overrides.onUnpin ?? vi.fn(),
         onCopyPath: overrides.onCopyPath ?? vi.fn(),
         onProperties: overrides.onProperties ?? vi.fn(),
+        pinnedActions: overrides.pinnedActions ?? [],
+        onOpenWithPinned: overrides.onOpenWithPinned ?? vi.fn(),
     };
 }
 
@@ -321,6 +323,8 @@ function backgroundContext(overrides: Partial<BackgroundMenuContext> = {}): Back
         onOpenTerminal: overrides.onOpenTerminal ?? vi.fn(),
         onPin: overrides.onPin ?? vi.fn(),
         onProperties: overrides.onProperties ?? vi.fn(),
+        pinnedActions: overrides.pinnedActions ?? [],
+        onOpenWithPinned: overrides.onOpenWithPinned ?? vi.fn(),
     };
 }
 
@@ -373,5 +377,57 @@ describe('buildBackgroundMenu', () => {
         const items = buildBackgroundMenu(backgroundContext({ path: '/home/user/photos', onProperties }));
         item(items, 'Properties')?.onSelect?.();
         expect(onProperties).toHaveBeenCalledWith({ path: '/home/user/photos', name: 'photos' });
+    });
+});
+
+describe('pinned actions', () => {
+    const pins = [
+        { desktop_id: 'firefox.desktop', label: 'Open with Firefox' },
+        { desktop_id: 'code.desktop', label: 'Open with Visual Studio Code' },
+    ];
+
+    it('prepends pinned items above Open on the entry menu', () => {
+        const target = entry({ name: 'notes.txt', path: '/home/user/notes.txt' });
+        const items = buildEntryMenu(entryContext({ entry: target, pinnedActions: pins }));
+        expect(labels(items).slice(0, 3)).toEqual([
+            'Open with Firefox',
+            'Open with Visual Studio Code',
+            'Open',
+        ]);
+    });
+
+    it('entry pinned item opens the entry path with the desktop id', () => {
+        const onOpenWithPinned = vi.fn();
+        const target = entry({ name: 'notes.txt', path: '/home/user/notes.txt' });
+        const items = buildEntryMenu(
+            entryContext({ entry: target, pinnedActions: pins, onOpenWithPinned }),
+        );
+        item(items, 'Open with Firefox')?.onSelect?.();
+        expect(onOpenWithPinned).toHaveBeenCalledWith('firefox.desktop', '/home/user/notes.txt');
+    });
+
+    it('leaves the entry menu unchanged when no pins', () => {
+        const items = buildEntryMenu(entryContext({ pinnedActions: [] }));
+        expect(labels(items)[0]).toBe('Open');
+    });
+
+    it('prepends pinned items above New folder on the background menu', () => {
+        const items = buildBackgroundMenu(
+            backgroundContext({ path: '/home/user/project', pinnedActions: pins }),
+        );
+        expect(labels(items).slice(0, 3)).toEqual([
+            'Open with Firefox',
+            'Open with Visual Studio Code',
+            'New folder',
+        ]);
+    });
+
+    it('background pinned item opens the current directory', () => {
+        const onOpenWithPinned = vi.fn();
+        const items = buildBackgroundMenu(
+            backgroundContext({ path: '/home/user/project', pinnedActions: pins, onOpenWithPinned }),
+        );
+        item(items, 'Open with Visual Studio Code')?.onSelect?.();
+        expect(onOpenWithPinned).toHaveBeenCalledWith('code.desktop', '/home/user/project');
     });
 });
