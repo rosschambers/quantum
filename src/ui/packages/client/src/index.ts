@@ -184,6 +184,7 @@ export {
   type FileOperation,
   type Places,
   type FilePreferences,
+  type PinnedAction,
   type PreviewKind,
   type PreviewPayload,
   type FilesEvent,

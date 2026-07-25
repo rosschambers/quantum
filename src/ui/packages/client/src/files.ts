@@ -89,9 +89,16 @@ export interface Places {
   drives: DriveInfo[];
 }
 
+/** A user-pinned "open with" action. Mirrors the Rust `PinnedAction` struct. */
+export interface PinnedAction {
+  desktop_id: string;
+  label: string;
+}
+
 /** Persisted file-explorer preferences. Wire fields are snake_case to match the Rust DTO. */
 export interface FilePreferences {
   show_hidden: boolean;
+  pinned_actions: PinnedAction[];
 }
 
 /** The kind of preview a path resolves to. Mirrors the Rust `PreviewKind` enum. */
