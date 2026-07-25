@@ -122,8 +122,19 @@ mod tests {
     fn roundtrip_save_then_load() {
         let dir = tempfile::tempdir().unwrap();
         let store = PreferencesStore::new(dir.path().join("files-preferences.json"));
-        store.save(&FilePreferences { show_hidden: false }).unwrap();
-        assert_eq!(store.load(), FilePreferences { show_hidden: false });
+        store
+            .save(&FilePreferences {
+                show_hidden: false,
+                pinned_actions: Vec::new(),
+            })
+            .unwrap();
+        assert_eq!(
+            store.load(),
+            FilePreferences {
+                show_hidden: false,
+                pinned_actions: Vec::new(),
+            }
+        );
     }
 
     #[test]

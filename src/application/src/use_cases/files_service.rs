@@ -829,13 +829,19 @@ mod tests {
         assert!(service.get_preferences().await.show_hidden);
 
         service
-            .set_preferences(FilePreferences { show_hidden: false })
+            .set_preferences(FilePreferences {
+                show_hidden: false,
+                pinned_actions: Vec::new(),
+            })
             .await
             .expect("set preferences");
 
         assert_eq!(
             service.get_preferences().await,
-            FilePreferences { show_hidden: false }
+            FilePreferences {
+                show_hidden: false,
+                pinned_actions: Vec::new(),
+            }
         );
     }
 

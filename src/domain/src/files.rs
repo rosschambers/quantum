@@ -140,6 +140,15 @@ pub struct Pin {
     pub path: String,
 }
 
+/// A user-pinned "open with" action shown at the top of the file explorer's
+/// right-click menus. `desktop_id` is the `.desktop` identifier passed to
+/// `files.open_with`; `label` is the menu text the user chooses.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PinnedAction {
+    pub desktop_id: String,
+    pub label: String,
+}
+
 /// Persisted per-user preferences for the file explorer. Currently a single
 /// flag controlling whether dotfiles (names beginning with ".") are shown.
 /// `show_hidden` defaults to `true`, matching the explorer's original
@@ -149,6 +158,8 @@ pub struct Pin {
 pub struct FilePreferences {
     #[serde(default = "default_show_hidden")]
     pub show_hidden: bool,
+    #[serde(default)]
+    pub pinned_actions: Vec<PinnedAction>,
 }
 
 /// The default for [`FilePreferences::show_hidden`]: dotfiles are shown.
@@ -158,7 +169,10 @@ fn default_show_hidden() -> bool {
 
 impl Default for FilePreferences {
     fn default() -> Self {
-        Self { show_hidden: true }
+        Self {
+            show_hidden: true,
+            pinned_actions: Vec::new(),
+        }
     }
 }
 
@@ -300,6 +314,39 @@ mod tests {
         let preferences: FilePreferences =
             serde_json::from_str("{}").expect("deserialize empty object");
         assert!(preferences.show_hidden);
+    }
+
+    #[test]
+    fn file_preferences_defaults_pinned_actions_to_empty() {
+        let preferences: FilePreferences =
+            serde_json::from_str(r#"{"show_hidden": true}"#).expect("deserialize");
+        assert!(preferences.pinned_actions.is_empty());
+        assert!(preferences.show_hidden);
+    }
+
+    #[test]
+    fn file_preferences_roundtrips_pinned_actions() {
+        let preferences = FilePreferences {
+            show_hidden: false,
+            pinned_actions: vec![PinnedAction {
+                desktop_id: "firefox.desktop".to_string(),
+                label: "Open with Firefox".to_string(),
+            }],
+        };
+        let json = serde_json::to_string(&preferences).expect("serialize");
+        let parsed: FilePreferences = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(parsed, preferences);
+    }
+
+    #[test]
+    fn pinned_action_serializes_snake_case() {
+        let action = PinnedAction {
+            desktop_id: "code.desktop".to_string(),
+            label: "Open with Visual Studio Code".to_string(),
+        };
+        let value = serde_json::to_value(&action).expect("serialize");
+        assert_eq!(value["desktop_id"], "code.desktop");
+        assert_eq!(value["label"], "Open with Visual Studio Code");
     }
 
     #[test]

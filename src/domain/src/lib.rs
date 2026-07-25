@@ -37,6 +37,7 @@ pub use event_bus::EventEnvelope;
 pub use files::{
     classify_permissions, content_kind_for_name, ApplicationInfo, ContentKind, DriveInfo,
     FileEntry, FileEntryKind, FileOperation, FilePreferences, FilesError, PermissionClass, Pin,
+    PinnedAction,
 };
 pub use ids::ProviderId;
 pub use match_result::{IconRef, Match, MenuAction};
