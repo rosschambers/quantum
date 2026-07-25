@@ -90,6 +90,18 @@ Commit per task in the implementation plan. Small commits beat big ones.
 > or change a Rust DTO that crosses IPC, hand-update the matching TypeScript
 > type and re-export it from `index.ts`.
 
+> **Direct `pnpm` commands run from the pnpm workspace root `src/ui`, NOT the
+> repo root.** `pnpm-workspace.yaml` lives at `src/ui/`, so a bare
+> `./scripts/devsh.sh pnpm --filter <pkg> ...` from the repo root fails with
+> `ERR_PNPM_NO_PKG_MANIFEST` (there is no `package.json` at the repo root). Run
+> `./scripts/devsh.sh bash -c "cd src/ui && pnpm --filter <pkg> ..."`, or from a
+> view directory directly (`cd src/ui/plugins/<plugin>/views/<view> && pnpm test`
+> / `pnpm exec vitest run <pattern>`). The `just frontend-*` recipes run from the
+> repo root as normal. Package names for `--filter`: the client is
+> `@quantum/client`; the file-explorer view is `default-panel-files` (from its
+> `package.json` `name`), not its path. Build `@quantum/client` before any view
+> that imports it (topological — never `pnpm -r --parallel`).
+
 ## Build Environment
 
 - **All builds, tests, lint, and format checks run via `./scripts/devsh.sh
@@ -244,6 +256,23 @@ broken CI before; do not reintroduce them:
   to a writable JSON store at `$XDG_STATE_HOME/quantum/files.json` (atomic
   temp-file plus rename, the timer-store pattern). The UI performs no filesystem
   input/output — it only speaks `files.*` IPC through `@quantum/client`.
+  **SVG previews are inlined, not rasterized.** `files.preview` routes every
+  `ContentKind::Image` through `read_image_preview`, which uses the `image` crate
+  (`image::open`). That crate decodes only raster formats (png/jpeg/gif/webp), so
+  an SVG returned `Unsupported` and the preview pane stayed blank. `read_image_
+  preview_blocking` (`src/infrastructure/files/src/filesystem.rs`) now detects the
+  `.svg` extension and inlines the markup verbatim as an `image/svg+xml;base64`
+  data URI (capped at 1 MiB) — WebKit renders it natively, and `PreviewPane`
+  already drops any `PreviewKind::Image` payload into `<img src>`. Key on the
+  EXTENSION, not "is this valid XML", so a plain `.txt` still correctly fails.
+  **`FilePreferences` (the `files.get_preferences`/`set_preferences` JSON store)
+  carries `pinned_actions: Vec<PinnedAction { desktop_id, label }>`** — user-
+  configured "Open with <app>" items rendered at the TOP of the file, folder, and
+  background right-click menus, dispatched through the existing `files.open_with`
+  (which `gio launch <desktop> <path>`es a file OR directory). Config-file-only:
+  there is no in-app UI to add them; the user hand-edits `files.json`. When
+  writing preferences the frontend must send the WHOLE object (`show_hidden` AND
+  `pinned_actions`) — a partial `{ show_hidden }` write clobbers the pinned list.
 - **Recursive folder sizing — parallel walk, mtime cache, self-removing
   handles.** `files.sizes(path)` sizes each immediate CHILD directory of `path`
   and streams `{event:"size", path:<child>, bytes, complete}` updates; the `files`
