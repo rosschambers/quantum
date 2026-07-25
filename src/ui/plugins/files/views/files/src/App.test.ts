@@ -58,7 +58,7 @@ function createFakeIpc(entries: FileEntry[]): FilesIpc {
         unwatch: vi.fn(() => Promise.resolve()),
         sizes: vi.fn(() => Promise.resolve()),
         cancelSizes: vi.fn(() => Promise.resolve()),
-        getPreferences: vi.fn(() => Promise.resolve({ show_hidden: true })),
+        getPreferences: vi.fn(() => Promise.resolve({ show_hidden: true, pinned_actions: [] })),
         setPreferences: vi.fn(() => Promise.resolve()),
         subscribeFilesEvents: vi.fn(() => () => {}),
         close: vi.fn(() => {}),
@@ -267,12 +267,42 @@ describe('App hidden-files preference', () => {
             makeEntry({ name: 'visible', path: `${HOME}/visible` }),
         ];
         const ipc = createFakeIpc(entries);
-        ipc.getPreferences = vi.fn(() => Promise.resolve({ show_hidden: false }));
+        ipc.getPreferences = vi.fn(() => Promise.resolve({ show_hidden: false, pinned_actions: [] }));
         const { container } = render(App, { props: { ipc } });
 
         await vi.waitFor(() => {
             expect(container.querySelector(`.pane [data-path="${HOME}/visible"]`)).not.toBeNull();
             expect(container.querySelector(`.pane [data-path="${HOME}/.hidden"]`)).toBeNull();
+        });
+    });
+});
+
+describe('App pinned actions', () => {
+    it('writes the complete preferences object, preserving pinned_actions, when toggling hidden', async () => {
+        const ipc = createFakeIpc([makeEntry({ name: 'alpha', path: `${HOME}/alpha` })]);
+        ipc.getPreferences = vi.fn(() =>
+            Promise.resolve({
+                show_hidden: true,
+                pinned_actions: [{ desktop_id: 'firefox.desktop', label: 'Open with Firefox' }],
+            }),
+        );
+        render(App, { props: { ipc } });
+
+        // Wait for the app to mount and load the home directory, which also means
+        // the getPreferences result (including pinned_actions) has been applied.
+        await vi.waitFor(() => {
+            expect(ipc.list).toHaveBeenCalledWith(HOME);
+        });
+
+        await fireEvent.keyDown(window, { key: 'h', ctrlKey: true });
+
+        await vi.waitFor(() => {
+            expect(ipc.setPreferences).toHaveBeenCalledWith(
+                expect.objectContaining({
+                    show_hidden: false,
+                    pinned_actions: [{ desktop_id: 'firefox.desktop', label: 'Open with Firefox' }],
+                }),
+            );
         });
     });
 });

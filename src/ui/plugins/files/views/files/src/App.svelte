@@ -23,6 +23,7 @@
         FileOperation,
         FilesEvent,
         Pin,
+        PinnedAction,
     } from '@quantum/client';
     import { openContextMenu, closeContextMenu } from '@quantum/client';
     import { createFilesIpc, type FilesIpc } from './lib/ipc';
@@ -82,6 +83,7 @@
     let dualPane = $state(true);
     let pins = $state<Pin[]>([]);
     let drives = $state<DriveInfo[]>([]);
+    let pinnedActions = $state<PinnedAction[]>([]);
 
     // Per-pane keyboard cursor and selection anchor, indexed by pane.
     let cursors = $state<number[]>([0, 0]);
@@ -295,6 +297,7 @@
             .then((preferences) => {
                 panes[0].showHidden = preferences.show_hidden;
                 panes[1].showHidden = preferences.show_hidden;
+                pinnedActions = preferences.pinned_actions ?? [];
             })
             .catch(() => {
                 // Keep the default showHidden of both panes.
@@ -614,8 +617,16 @@
         panes[1].showHidden = next;
         clampCursor(0);
         clampCursor(1);
-        void ipc.setPreferences({ show_hidden: next }).catch(() => {
+        void ipc.setPreferences({ show_hidden: next, pinned_actions: pinnedActions }).catch(() => {
             pushToast('Failed to save hidden-files preference', 'error');
+        });
+    }
+
+    /** Open a path with a pinned "open with" action, toasting on failure. */
+    function onOpenWithPinned(desktopId: string, path: string): void {
+        void ipc.openWith(path, desktopId).catch(() => {
+            const label = pinnedActions.find((a) => a.desktop_id === desktopId)?.label ?? desktopId;
+            pushToast(`Failed to open with ${label}`, 'error');
         });
     }
 
@@ -783,6 +794,8 @@
                 path: pane.path,
                 isPinned: (path) => pins.some((pin) => pin.path === path),
                 applications: cachedApplications,
+                pinnedActions,
+                onOpenWithPinned,
                 onOpen: (opened) => openEntry(index, opened),
                 onOpenWithPicker: (target) => void openApplicationPicker(target),
                 onOpenTerminal: (directory) => void ipc.openTerminal(directory),
@@ -816,6 +829,8 @@
             event,
             buildBackgroundMenu({
                 path: pane.path,
+                pinnedActions,
+                onOpenWithPinned,
                 onNewFolder: (directory) =>
                     openPrompt('New folder', 'New Folder', (name) =>
                         runOp({ kind: 'new_folder', parent: directory, name }),

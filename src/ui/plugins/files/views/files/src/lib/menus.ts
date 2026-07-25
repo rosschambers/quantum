@@ -100,7 +100,7 @@ function pinnedItems(
     targetPath: string,
     onOpenWithPinned: (desktopId: string, path: string) => void,
 ): MenuItem[] {
-    if (!pinnedActions || pinnedActions.length === 0) {
+    if (pinnedActions.length === 0) {
         return [];
     }
     const items: MenuItem[] = pinnedActions.map((action) => ({
