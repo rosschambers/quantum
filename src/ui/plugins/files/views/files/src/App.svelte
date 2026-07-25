@@ -625,7 +625,8 @@
     /** Open a path with a pinned "open with" action, toasting on failure. */
     function onOpenWithPinned(desktopId: string, path: string): void {
         void ipc.openWith(path, desktopId).catch(() => {
-            const label = pinnedActions.find((a) => a.desktop_id === desktopId)?.label ?? desktopId;
+            const label =
+                pinnedActions.find((action) => action.desktop_id === desktopId)?.label ?? desktopId;
             pushToast(`Failed to open with ${label}`, 'error');
         });
     }
