@@ -186,6 +186,15 @@ fn read_image_preview_blocking(path: PathBuf, max_dimension: u32) -> Result<Stri
     if !path.exists() {
         return Err(FilesError::NotFound(path_string));
     }
+
+    // SVG is vector XML, not a raster format, so the `image` crate cannot decode
+    // it. The webview renders SVG natively, so inline the markup verbatim as an
+    // `image/svg+xml` data URI instead of rasterizing. Keyed on the extension
+    // (not "is this valid XML") so a plain text file is still unsupported.
+    if has_svg_extension(&path) {
+        return read_svg_preview_blocking(&path, &path_string);
+    }
+
     let image = image::open(&path)
         .map_err(|error| FilesError::Unsupported(format!("{path_string}: {error}")))?;
 
@@ -208,6 +217,36 @@ fn read_image_preview_blocking(path: PathBuf, max_dimension: u32) -> Result<Stri
         .map_err(|error| FilesError::Unsupported(format!("{path_string}: {error}")))?;
     let encoded = base64::engine::general_purpose::STANDARD.encode(buffer.get_ref());
     Ok(format!("data:image/png;base64,{encoded}"))
+}
+
+/// The largest SVG, in bytes, that is inlined as a preview data URI. SVG source
+/// is small in practice; this cap only guards against a pathological multi-
+/// megabyte file being inlined into the webview.
+const SVG_PREVIEW_MAX_BYTES: u64 = 1024 * 1024;
+
+/// Whether a path's extension is `svg`, case-insensitively.
+fn has_svg_extension(path: &Path) -> bool {
+    path.extension()
+        .and_then(|extension| extension.to_str())
+        .is_some_and(|extension| extension.eq_ignore_ascii_case("svg"))
+}
+
+/// Read an SVG file and inline its markup verbatim as an `image/svg+xml` data
+/// URI. Unlike the raster path there is no decode or re-encode: the webview
+/// renders the SVG. A file larger than [`SVG_PREVIEW_MAX_BYTES`] yields
+/// [`FilesError::Unsupported`] rather than inlining an unbounded blob.
+fn read_svg_preview_blocking(path: &Path, path_string: &str) -> Result<String, FilesError> {
+    use base64::Engine as _;
+
+    let metadata = std::fs::metadata(path).map_err(|error| map_io_error(path_string, &error))?;
+    if metadata.len() > SVG_PREVIEW_MAX_BYTES {
+        return Err(FilesError::Unsupported(format!(
+            "{path_string}: SVG is larger than {SVG_PREVIEW_MAX_BYTES} bytes"
+        )));
+    }
+    let bytes = std::fs::read(path).map_err(|error| map_io_error(path_string, &error))?;
+    let encoded = base64::engine::general_purpose::STANDARD.encode(&bytes);
+    Ok(format!("data:image/svg+xml;base64,{encoded}"))
 }
 
 /// Walk `root` recursively without following symlinks, collecting up to `limit`
@@ -747,6 +786,35 @@ mod tests {
         let (width, height) = decoded.dimensions();
         assert!(width <= 512, "width {width} should be clamped to 512");
         assert!(height <= 256, "height {height} should be clamped to 256");
+    }
+
+    #[tokio::test]
+    async fn read_image_preview_svg_inlines_markup_as_svg_data_uri() {
+        use base64::Engine;
+
+        let dir = tempfile::tempdir().expect("create tempdir");
+        let path = dir.path().join("diagram.svg");
+        let markup =
+            b"<svg xmlns=\"http://www.w3.org/2000/svg\"><rect width=\"10\" height=\"10\"/></svg>";
+        fs::write(&path, markup).expect("write svg file");
+
+        let filesystem = LocalFileSystem::new();
+        let preview = filesystem
+            .read_image_preview(&path.to_string_lossy(), 512)
+            .await
+            .expect("read svg preview");
+
+        assert!(
+            preview.starts_with("data:image/svg+xml;base64,"),
+            "got {preview:.40}"
+        );
+        let payload = preview
+            .strip_prefix("data:image/svg+xml;base64,")
+            .expect("data uri prefix");
+        let bytes = base64::engine::general_purpose::STANDARD
+            .decode(payload)
+            .expect("decode base64 payload");
+        assert_eq!(bytes, markup, "the SVG markup should be inlined verbatim");
     }
 
     #[tokio::test]
