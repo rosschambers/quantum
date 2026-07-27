@@ -89,19 +89,59 @@
         client.call('view.hide', { name: VIEW_NAME }).catch(() => {});
     }
 
+    // Surface a notification as a toast: track it, render it newest-on-top, and
+    // arm its auto-dismiss.
+    function popToast(notification: PendingNotification): void {
+        seen.add(notification.id);
+        // Newest on top.
+        visible = [notification, ...visible];
+        armTimer(notification.id, visibleDurationMs(notification));
+    }
+
+    // The store delivers each envelope as a list callback immediately followed
+    // by a change callback. We stash the latest list here so the change handler
+    // can process both together: the change `type` decides whether a snapshot is
+    // a live event (pop the new notification) or a catch-up seed (see below).
+    let latestList: PendingNotification[] = [];
+
     $effect(() => {
         const off = createNotificationStore(client).subscribe(
             (list) => {
-                for (const notification of list) {
-                    if (seen.has(notification.id)) continue;
-                    seen.add(notification.id);
-                    // Newest on top.
-                    visible = [notification, ...visible];
-                    armTimer(notification.id, visibleDurationMs(notification));
-                }
+                latestList = list;
             },
             (change) => {
-                if (change?.type === 'toasts_cleared') clearAllToasts();
+                if (change?.type === 'toasts_cleared') {
+                    clearAllToasts();
+                    return;
+                }
+                if (change === null) {
+                    // Catch-up snapshot. The window may have just been rebuilt
+                    // (a monitor change destroys and reconstructs the single-
+                    // instance toast surface), so `seen` is empty and this
+                    // snapshot carries the FULL pending set of every active
+                    // notification. The daemon shows the toast in reaction to a
+                    // single `created` event, so only the newest pending
+                    // notification (highest id) is the one that triggered the
+                    // show; older ones are backlog (already surfaced or timed
+                    // out) and must not re-pop. Seed `seen` with every id so the
+                    // backlog is suppressed, and pop only the newest unseen one.
+                    let newest: PendingNotification | undefined;
+                    for (const notification of latestList) {
+                        if (seen.has(notification.id)) continue;
+                        if (newest === undefined || notification.id > newest.id) {
+                            newest = notification;
+                        }
+                    }
+                    for (const notification of latestList) seen.add(notification.id);
+                    if (newest !== undefined) popToast(newest);
+                    return;
+                }
+                // Live event (created/updated/dismissed): the snapshot adds at
+                // most one brand-new notification. Pop any id not yet seen.
+                for (const notification of latestList) {
+                    if (seen.has(notification.id)) continue;
+                    popToast(notification);
+                }
             },
         );
         return () => {

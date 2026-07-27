@@ -14,11 +14,15 @@ let mockCallSpy = vi.fn();
 let storeSubscribers: Array<(list: PendingNotification[]) => void> = [];
 let changeSubscribers: Array<(change: { type: string } | null) => void> = [];
 
-function emit(list: PendingNotification[]): void {
-    for (const callback of storeSubscribers) callback(list);
+function emitChange(change: { type: string } | null): void {
+    for (const callback of changeSubscribers) callback(change);
 }
 
-function emitChange(change: { type: string } | null): void {
+// Emit a full envelope the way the real store does: the list callback fires
+// first, then the change callback, for the same delivery. `change` is null for
+// the initial catch-up snapshot and a descriptor for every live event.
+function emitEnvelope(list: PendingNotification[], change: { type: string } | null): void {
+    for (const callback of storeSubscribers) callback(list);
     for (const callback of changeSubscribers) callback(change);
 }
 
@@ -80,7 +84,9 @@ describe('NotificationToast App', () => {
     it('renders a toast card after the store emits one notification', async () => {
         const { container } = render(App);
         await tick();
-        emit([makeNotification({ id: 1, app_name: 'Spotify', summary: 'Now playing' })]);
+        emitEnvelope([makeNotification({ id: 1, app_name: 'Spotify', summary: 'Now playing' })], {
+            type: 'created',
+        });
         await tick();
         const cards = container.querySelectorAll('.toast');
         expect(cards).toHaveLength(1);
@@ -91,7 +97,7 @@ describe('NotificationToast App', () => {
     it('auto-dismisses after timeout_ms and hides the view when empty', async () => {
         const { container } = render(App);
         await tick();
-        emit([makeNotification({ id: 1, timeout_ms: 5000 })]);
+        emitEnvelope([makeNotification({ id: 1, timeout_ms: 5000 })], { type: 'created' });
         await tick();
         expect(container.querySelectorAll('.toast')).toHaveLength(1);
 
@@ -112,7 +118,7 @@ describe('NotificationToast App', () => {
         // but the transient toast popup still auto-dismisses on the default.
         const { container } = render(App);
         await tick();
-        emit([makeNotification({ id: 2, timeout_ms: 0 })]);
+        emitEnvelope([makeNotification({ id: 2, timeout_ms: 0 })], { type: 'created' });
         await tick();
         expect(container.querySelectorAll('.toast')).toHaveLength(1);
 
@@ -128,7 +134,7 @@ describe('NotificationToast App', () => {
     it('floors a very short timeout to the minimum visible duration', async () => {
         const { container } = render(App);
         await tick();
-        emit([makeNotification({ id: 3, timeout_ms: 800 })]);
+        emitEnvelope([makeNotification({ id: 3, timeout_ms: 800 })], { type: 'created' });
         await tick();
         expect(container.querySelectorAll('.toast')).toHaveLength(1);
 
@@ -146,7 +152,9 @@ describe('NotificationToast App', () => {
     it('auto-dismisses a critical notification (it persists in the center, not on screen)', async () => {
         const { container } = render(App);
         await tick();
-        emit([makeNotification({ id: 4, urgency: 'critical', timeout_ms: 5000 })]);
+        emitEnvelope([makeNotification({ id: 4, urgency: 'critical', timeout_ms: 5000 })], {
+            type: 'created',
+        });
         await tick();
         expect(container.querySelectorAll('.toast')).toHaveLength(1);
 
@@ -155,13 +163,73 @@ describe('NotificationToast App', () => {
         expect(container.querySelectorAll('.toast')).toHaveLength(0);
     });
 
+    it('only toasts the newest notification on a catch-up snapshot, not the whole backlog', async () => {
+        // A rebuilt toast window (monitor change destroys and reconstructs the
+        // single-instance surface) starts with an empty `seen` set and catches
+        // up via `provider.query`, which returns the FULL pending set of every
+        // active (undismissed) notification with a null change. Only the newest
+        // notification (highest id) triggered the show and may pop; the backlog
+        // of earlier notifications must NOT re-toast.
+        const { container } = render(App);
+        await tick();
+
+        emitEnvelope(
+            [
+                makeNotification({ id: 3, summary: 'Newest', timeout_ms: 5000 }),
+                makeNotification({ id: 2, summary: 'Middle', timeout_ms: 5000 }),
+                makeNotification({ id: 1, summary: 'Oldest', timeout_ms: 5000 }),
+            ],
+            null,
+        );
+        await tick();
+
+        expect(container.querySelectorAll('.toast')).toHaveLength(1);
+        expect(container.textContent).toContain('Newest');
+        expect(container.textContent).not.toContain('Middle');
+        expect(container.textContent).not.toContain('Oldest');
+    });
+
+    it('does not re-toast a catch-up backlog after a timed-out toast and a fresh notification', async () => {
+        // Reproduces the reported bug end to end. A notification times out (it
+        // stays in the center), then a new one arrives on a monitor that rebuilt
+        // the toast window: the fresh component's catch-up returns [B, A]. Only
+        // B must pop.
+        const { container } = render(App);
+        await tick();
+
+        // First notification pops as a live created event, then times out.
+        emitEnvelope([makeNotification({ id: 1, summary: 'One', timeout_ms: 5000 })], {
+            type: 'created',
+        });
+        await tick();
+        expect(container.querySelectorAll('.toast')).toHaveLength(1);
+        vi.advanceTimersByTime(5001);
+        await tick();
+        expect(container.querySelectorAll('.toast')).toHaveLength(0);
+
+        // The window is rebuilt for a new notification: a fresh component would
+        // catch up with the full pending set [B, A]. Model that catch-up here.
+        emitEnvelope(
+            [
+                makeNotification({ id: 2, summary: 'Two', timeout_ms: 5000 }),
+                makeNotification({ id: 1, summary: 'One', timeout_ms: 5000 }),
+            ],
+            null,
+        );
+        await tick();
+
+        expect(container.querySelectorAll('.toast')).toHaveLength(1);
+        expect(container.textContent).toContain('Two');
+        expect(container.textContent).not.toContain('One');
+    });
+
     it('clears all visible toasts on a toasts_cleared change', async () => {
         const { container } = render(App);
         await tick();
-        emit([
-            makeNotification({ id: 1, summary: 'One' }),
-            makeNotification({ id: 2, summary: 'Two' }),
-        ]);
+        emitEnvelope(
+            [makeNotification({ id: 1, summary: 'One' }), makeNotification({ id: 2, summary: 'Two' })],
+            { type: 'created' },
+        );
         await tick();
         expect(container.querySelectorAll('.toast')).toHaveLength(2);
 
@@ -181,7 +249,7 @@ describe('NotificationToast App', () => {
     it('pauses the auto-dismiss while hovered and resumes on mouse leave', async () => {
         const { container } = render(App);
         await tick();
-        emit([makeNotification({ id: 7, timeout_ms: 5000 })]);
+        emitEnvelope([makeNotification({ id: 7, timeout_ms: 5000 })], { type: 'created' });
         await tick();
         const toast = container.querySelector('.toast') as HTMLElement;
         expect(toast).not.toBeNull();
@@ -202,7 +270,7 @@ describe('NotificationToast App', () => {
     it('clicking a toast calls action.invoke with a dismiss envelope for that id', async () => {
         const { container } = render(App);
         await tick();
-        emit([makeNotification({ id: 9, app_name: 'Slack' })]);
+        emitEnvelope([makeNotification({ id: 9, app_name: 'Slack' })], { type: 'created' });
         await tick();
         const toast = container.querySelector('.toast') as HTMLElement;
         expect(toast).not.toBeNull();
@@ -223,7 +291,7 @@ describe('NotificationToast App', () => {
     it('clicking a toast removes it from the visible set', async () => {
         const { container } = render(App);
         await tick();
-        emit([makeNotification({ id: 9 })]);
+        emitEnvelope([makeNotification({ id: 9 })], { type: 'created' });
         await tick();
         const toast = container.querySelector('.toast') as HTMLElement;
         await fireEvent.click(toast);
@@ -267,7 +335,7 @@ describe('NotificationToast App', () => {
 
         // A card arrives before the debounce elapses.
         vi.advanceTimersByTime(300);
-        emit([makeNotification({ id: 42, timeout_ms: 5000 })]);
+        emitEnvelope([makeNotification({ id: 42, timeout_ms: 5000 })], { type: 'created' });
         await tick();
         expect(container.querySelectorAll('.toast')).toHaveLength(1);
 
