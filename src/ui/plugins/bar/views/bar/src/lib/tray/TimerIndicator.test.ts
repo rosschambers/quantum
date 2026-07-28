@@ -15,11 +15,18 @@ function menuItem(text: string): HTMLButtonElement | undefined {
 }
 
 /**
- * Minimal timer fixtures. The badge only reads `status`, so the other
- * fields are omitted and the snapshot is cast at the mock boundary.
+ * Minimal timer fixtures. The ring reads `status`, `id`, and
+ * `kind.end_unix`, so those fields are provided and the rest of the
+ * timer shape is cast at the mock boundary. `firesAtUnix` defaults to
+ * the far future so an active timer is not treated as fired; pass a past
+ * value (for example `1`) to simulate a fired timer.
  */
-function timer(status: 'active' | 'expired'): unknown {
-    return { id: Math.random().toString(16).slice(2), status };
+function timer(status: 'active' | 'expired', firesAtUnix = 4102444800): unknown {
+    return {
+        id: Math.random().toString(16).slice(2),
+        status,
+        kind: { type: 'one_shot', end_unix: firesAtUnix },
+    };
 }
 
 function snapshot(timers: unknown[]): unknown {
@@ -94,17 +101,18 @@ describe('TimerIndicator', () => {
         });
     });
 
-    it('shows no badge initially', async () => {
+    it('shows the stopwatch and no ring initially', async () => {
         const { client } = makeMockClient(snapshot([]));
         const { container } = render(TimerIndicator, {
             props: { client: client as never },
         });
         await tick();
 
-        expect(container.querySelector('.timer-badge')).toBeNull();
+        expect(container.querySelector('[data-testid="timer-ring"]')).toBeNull();
+        expect(container.querySelector('.icon-box svg')).not.toBeNull();
     });
 
-    it('counts only active timers from the initial timer.list snapshot', async () => {
+    it('shows the ring and no badge when active timers exist in the snapshot', async () => {
         const { client } = makeMockClient(
             snapshot([
                 timer('active'),
@@ -118,12 +126,11 @@ describe('TimerIndicator', () => {
         await tick();
         await tick();
 
-        const badge = container.querySelector('.timer-badge');
-        expect(badge).not.toBeNull();
-        expect(badge?.textContent).toBe('2');
+        expect(container.querySelector('[data-testid="timer-ring"]')).not.toBeNull();
+        expect(container.querySelector('.timer-badge')).toBeNull();
     });
 
-    it('updates the badge from a subsequent timer.event snapshot', async () => {
+    it('drops the ring and shows the stopwatch when a snapshot goes to zero active', async () => {
         const { client, emit } = makeMockClient(snapshot([timer('active')]));
         const { container } = render(TimerIndicator, {
             props: { client: client as never },
@@ -131,27 +138,29 @@ describe('TimerIndicator', () => {
         await tick();
         await tick();
 
+        expect(container.querySelector('[data-testid="timer-ring"]')).not.toBeNull();
+
         emit({
-            change: 'created',
-            ...snapshot([timer('active'), timer('active'), timer('active')]),
+            change: 'dismissed',
+            ...snapshot([timer('expired')]),
         });
         await tick();
 
-        const badge = container.querySelector('.timer-badge');
-        expect(badge).not.toBeNull();
-        expect(badge?.textContent).toBe('3');
+        expect(container.querySelector('[data-testid="timer-ring"]')).toBeNull();
+        expect(container.querySelector('.icon-box svg')).not.toBeNull();
     });
 
-    it('caps the badge at "9+" for more than nine active timers', async () => {
-        const many = Array.from({ length: 12 }, () => timer('active'));
-        const { client } = makeMockClient(snapshot(many));
+    it('marks the ring as fired when the soonest active timer has already elapsed', async () => {
+        const { client } = makeMockClient(snapshot([timer('active', 1)]));
         const { container } = render(TimerIndicator, {
             props: { client: client as never },
         });
         await tick();
         await tick();
 
-        expect(container.querySelector('.timer-badge')?.textContent).toBe('9+');
+        const ring = container.querySelector('[data-testid="timer-ring"]');
+        expect(ring).not.toBeNull();
+        expect(ring?.getAttribute('data-fired')).toBe('true');
     });
 
     it('opens a quick-actions menu on right-click', async () => {

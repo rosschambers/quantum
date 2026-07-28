@@ -1,22 +1,57 @@
 <script lang="ts">
-    import { createTimerStore, type Client } from '@quantum/client';
+    import { createTimerStore, type Client, type Timer } from '@quantum/client';
     import Icon from '../Icon.svelte';
     import BarButton from '../BarButton.svelte';
     import { wireBarMenu } from './barMenu';
+    import { soonestActive, remainingSeconds, RingTotals } from './soonest';
 
     interface Props {
         client: Client;
     }
 
     let { client }: Props = $props();
-    let count = $state(0);
     let buttonEl: HTMLButtonElement | undefined = $state(undefined);
+
+    let timers = $state<Timer[]>([]);
+    let nowUnix = $state(Math.floor(Date.now() / 1000));
+
+    // Drain denominators persist across renders, so the RingTotals instance
+    // must live at script level, not inside an effect.
+    const totals = new RingTotals();
+    // Plain (not reactive) bookkeeping of the ids seen in the last snapshot, so
+    // ids that leave the active set can be forgotten from the drain totals.
+    let knownIds = new Set<string>();
+
+    const SIZE = 18;
+    const R = 6.4;
+    const CIRC = 2 * Math.PI * R;
+
+    const soonest = $derived(soonestActive(timers, nowUnix));
+    const remaining = $derived(soonest ? remainingSeconds(soonest, nowUnix) : 0);
+    const fired = $derived(soonest !== null && remaining <= 0);
+    const dashoffset = $derived(
+        CIRC * (1 - (soonest ? totals.fraction(soonest.id, remaining) : 0)),
+    );
 
     $effect(() => {
         const off = createTimerStore(client).subscribe((data) => {
-            count = data.timers.filter((t) => t.status === 'active').length;
+            timers = data.timers;
+            const nextIds = new Set(data.timers.map((t) => t.id));
+            for (const id of knownIds) {
+                if (!nextIds.has(id)) totals.forget(id);
+            }
+            knownIds = nextIds;
         });
         return () => off?.();
+    });
+
+    // Tick the clock once a second so the derived remaining time and ring
+    // fraction advance while the bar is mounted.
+    $effect(() => {
+        const handle = setInterval(() => {
+            nowUnix = Math.floor(Date.now() / 1000);
+        }, 1000);
+        return () => clearInterval(handle);
     });
 
     // Right-click opens the quick-actions menu via the shared bar-menu helper,
@@ -29,10 +64,6 @@
             { label: 'Dismiss all', onSelect: dismissAll },
         ]);
     });
-
-    function badgeLabel(n: number): string {
-        return n > 9 ? '9+' : String(n);
-    }
 
     async function openCreate(): Promise<void> {
         // The bar widget is injected with a per-monitor `__quantum_monitor`
@@ -61,10 +92,29 @@
 
 <div class="timer-root">
     <BarButton ariaLabel="Timers" onclick={openCreate} bindRef={(el) => (buttonEl = el)}>
-        <span class="timer-icon">
-            <Icon name="timer" size={18} />
-            {#if count > 0}
-                <span class="timer-badge">{badgeLabel(count)}</span>
+        <span class="icon-box" style={`width:${SIZE}px;height:${SIZE}px`}>
+            {#if soonest === null}
+                <Icon name="timer" size={SIZE} />
+            {:else}
+                <svg
+                    data-testid="timer-ring"
+                    data-fired={fired}
+                    class="ring {fired ? 'fired' : ''}"
+                    width={SIZE}
+                    height={SIZE}
+                    viewBox="0 0 16 16"
+                    aria-hidden="true"
+                >
+                    <circle class="track" cx="8" cy="8" r={R} />
+                    <circle
+                        class="prog"
+                        cx="8"
+                        cy="8"
+                        r={R}
+                        stroke-dasharray={CIRC}
+                        stroke-dashoffset={dashoffset}
+                    />
+                </svg>
             {/if}
         </span>
     </BarButton>
@@ -75,28 +125,44 @@
         position: relative;
         display: inline-flex;
     }
-    .timer-icon {
+    .icon-box {
         position: relative;
         display: inline-flex;
         align-items: center;
         justify-content: center;
     }
-    .timer-badge {
-        position: absolute;
-        top: -6px;
-        right: -8px;
-        min-width: 14px;
-        height: 14px;
-        padding: 0 3px;
-        box-sizing: border-box;
-        display: inline-flex;
-        align-items: center;
-        justify-content: center;
-        border-radius: 7px;
-        background: var(--color-accent, #f38ba8);
-        color: var(--color-bg, #1e1e2e);
-        font-size: 10px;
-        line-height: 1;
-        font-weight: 600;
+    .ring {
+        transform: rotate(-90deg);
+    }
+    .ring circle {
+        fill: none;
+    }
+    .ring .track {
+        stroke: color-mix(in srgb, var(--color-fg-alt, #9fb0a2) 26%, transparent);
+        stroke-width: 2.4;
+    }
+    .ring .prog {
+        stroke: var(--color-accent, #8fc7a0);
+        stroke-width: 2.4;
+        stroke-linecap: round;
+        transition: stroke-dashoffset 0.3s linear;
+    }
+    .ring.fired .prog,
+    .ring.fired .track {
+        stroke: var(--color-error, #e07a6a);
+    }
+    .ring.fired {
+        animation: timer-pulse 1.05s ease-in-out infinite;
+    }
+    @keyframes timer-pulse {
+        0% {
+            box-shadow: 0 0 0 0 color-mix(in srgb, var(--color-error, #e07a6a) 55%, transparent);
+        }
+        50% {
+            box-shadow: 0 0 0 6px color-mix(in srgb, var(--color-error, #e07a6a) 0%, transparent);
+        }
+        100% {
+            box-shadow: 0 0 0 0 color-mix(in srgb, var(--color-error, #e07a6a) 0%, transparent);
+        }
     }
 </style>
