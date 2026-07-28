@@ -8,7 +8,9 @@ use quantum_domain::error::DomainError;
 use quantum_domain::match_result::{IconRef, Match};
 use quantum_domain::query::Query;
 use quantum_domain::score::MatchScore;
-use quantum_domain::{Action, ActionOutcome, ProviderId, ProviderSource};
+use quantum_domain::{Action, ActionOutcome, ProviderId, ProviderSource, SoundName};
+
+use crate::timer_notifier::SoundPlayer;
 
 #[derive(Debug, Clone)]
 pub struct DbusNotification {
@@ -34,12 +36,26 @@ pub struct NotificationsProvider {
     inner: Arc<NotificationsInner>,
 }
 
-#[derive(Debug)]
 struct NotificationsInner {
     store: RwLock<Vec<DbusNotification>>,
     tx: broadcast::Sender<NotificationEvent>,
     next_id: Mutex<u32>,
     conn: tokio::sync::OnceCell<zbus::Connection>,
+    player: SoundPlayer,
+}
+
+// Hand-written because `SoundPlayer` does not implement `Debug`; the player is a
+// fire-and-forget audio helper with no state worth printing, so it is omitted.
+impl std::fmt::Debug for NotificationsInner {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("NotificationsInner")
+            .field("store", &self.store)
+            .field("tx", &self.tx)
+            .field("next_id", &self.next_id)
+            .field("conn", &self.conn)
+            .finish_non_exhaustive()
+    }
 }
 
 use quantum_domain::NotificationEvent;
@@ -120,6 +136,13 @@ fn resolve_timeout_ms(expire_timeout: i32, urgency: &str) -> u64 {
     }
 }
 
+/// Whether a newly arrived external notification of the given urgency should
+/// play a sound. Low-urgency notifications are silent; everything else (normal
+/// and critical) plays.
+pub(crate) fn should_play_sound(urgency: &str) -> bool {
+    urgency != "low"
+}
+
 impl NotificationsInner {
     #[allow(clippy::too_many_arguments)]
     async fn apply_notify(
@@ -177,6 +200,9 @@ impl NotificationsInner {
             *next += 1;
             *next
         };
+        // Capture whether to play before `urgency` is moved into the stored
+        // notification below, avoiding a borrow-after-move.
+        let play = should_play_sound(&urgency);
         evict_to_make_room(&mut store);
         store.push(DbusNotification {
             app_name,
@@ -194,6 +220,9 @@ impl NotificationsInner {
             id,
             timeout_ms: event_timeout,
         });
+        if play {
+            self.player.play(SoundName::Chime);
+        }
         id
     }
 
@@ -229,6 +258,12 @@ impl Default for NotificationsProvider {
 
 impl NotificationsProvider {
     pub fn new() -> Self {
+        Self::with_player(SoundPlayer::detect())
+    }
+
+    /// Build the provider with an explicit sound player. Tests inject a disabled
+    /// player (`SoundPlayer::none()`) so no external audio process is spawned.
+    pub fn with_player(player: SoundPlayer) -> Self {
         let (tx, _) = broadcast::channel::<NotificationEvent>(64);
         Self {
             id: ProviderId::from("notifications"),
@@ -237,6 +272,7 @@ impl NotificationsProvider {
                 tx,
                 next_id: Mutex::new(0),
                 conn: tokio::sync::OnceCell::new(),
+                player,
             }),
         }
     }
@@ -641,6 +677,33 @@ impl NotificationServer {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn sound_plays_for_normal_and_critical_not_low() {
+        assert!(should_play_sound("normal"));
+        assert!(should_play_sound("critical"));
+        assert!(!should_play_sound("low"));
+    }
+
+    #[tokio::test]
+    async fn apply_notify_new_with_none_player_does_not_panic() {
+        let provider = NotificationsProvider::with_player(SoundPlayer::none());
+        let id = provider
+            .inner
+            .apply_notify(
+                "app".into(),
+                "".into(),
+                0,
+                "summary".into(),
+                "body".into(),
+                vec![],
+                -1,
+                "normal".into(),
+            )
+            .await;
+        assert!(id > 0);
+    }
+
     #[tokio::test]
     async fn creates_provider_and_gets_all() {
         let provider = NotificationsProvider::new();
