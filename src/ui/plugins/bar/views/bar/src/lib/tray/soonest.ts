@@ -19,3 +19,20 @@ export function soonestActive(timers: Timer[], nowUnix: number): Timer | null {
 export function remainingSeconds(timer: Timer, nowUnix: number): number {
   return Math.max(0, firesAtUnix(timer) - nowUnix);
 }
+
+/** Tracks each timer's max-seen remaining as its drain denominator. */
+export class RingTotals {
+  private totals = new Map<string, number>();
+
+  fraction(timerId: string, remaining: number): number {
+    if (remaining <= 0) return 0;
+    const previous = this.totals.get(timerId) ?? 0;
+    const total = Math.max(previous, remaining);
+    this.totals.set(timerId, total);
+    return Math.max(0, Math.min(1, remaining / total));
+  }
+
+  forget(timerId: string): void {
+    this.totals.delete(timerId);
+  }
+}

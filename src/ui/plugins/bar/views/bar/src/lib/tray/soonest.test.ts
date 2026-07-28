@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { firesAtUnix, soonestActive, remainingSeconds } from './soonest';
+import { firesAtUnix, soonestActive, remainingSeconds, RingTotals } from './soonest';
 import type { Timer } from '@quantum/client';
 
 function mk(id: string, status: 'active' | 'expired', fires: number): Timer {
@@ -30,5 +30,25 @@ describe('soonest', () => {
   it('remainingSeconds never negative', () => {
     expect(remainingSeconds(mk('a', 'active', 40), 100)).toBe(0);
     expect(remainingSeconds(mk('a', 'active', 140), 100)).toBe(40);
+  });
+});
+
+describe('RingTotals', () => {
+  it('first sighting is full, then drains', () => {
+    const totals = new RingTotals();
+    expect(totals.fraction('a', 300)).toBe(1);
+    expect(totals.fraction('a', 150)).toBeCloseTo(0.5, 5);
+    expect(totals.fraction('a', 0)).toBe(0);
+  });
+  it('a larger later remaining raises the total (re-armed timer)', () => {
+    const totals = new RingTotals();
+    totals.fraction('a', 100);
+    expect(totals.fraction('a', 400)).toBe(1);
+  });
+  it('forget resets', () => {
+    const totals = new RingTotals();
+    totals.fraction('a', 100);
+    totals.forget('a');
+    expect(totals.fraction('a', 50)).toBe(1);
   });
 });
