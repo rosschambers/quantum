@@ -23,6 +23,10 @@ describe('soonest', () => {
   it('soonestActive returns null when none active', () => {
     expect(soonestActive([mk('a', 'expired', 10)], 0)).toBeNull();
   });
+  it('soonestActive breaks ties in favor of the first in array order', () => {
+    const timers = [mk('first', 'active', 200), mk('second', 'active', 200)];
+    expect(soonestActive(timers, 0)?.id).toBe('first');
+  });
   it('remainingSeconds never negative', () => {
     expect(remainingSeconds(mk('a', 'active', 40), 100)).toBe(0);
     expect(remainingSeconds(mk('a', 'active', 140), 100)).toBe(40);
