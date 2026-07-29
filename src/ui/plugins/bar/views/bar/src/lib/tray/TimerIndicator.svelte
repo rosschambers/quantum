@@ -3,7 +3,7 @@
     import Icon from '../Icon.svelte';
     import BarButton from '../BarButton.svelte';
     import { wireBarMenu } from './barMenu';
-    import { soonestActive, remainingSeconds, RingTotals } from './soonest';
+    import { ringTarget, remainingSeconds, RingTotals } from './soonest';
 
     interface Props {
         client: Client;
@@ -26,11 +26,14 @@
     const R = 6.4;
     const CIRC = 2 * Math.PI * R;
 
-    const soonest = $derived(soonestActive(timers, nowUnix));
-    const remaining = $derived(soonest ? remainingSeconds(soonest, nowUnix) : 0);
-    const fired = $derived(soonest !== null && remaining <= 0);
+    // Fired-wins target: an expired timer still in the store takes priority over
+    // a still-counting active one, so a fired timer is never missed. `target` is
+    // null only when there are no timers at all.
+    const target = $derived(ringTarget(timers, nowUnix));
+    const remaining = $derived(target ? remainingSeconds(target.timer, nowUnix) : 0);
+    const fired = $derived(target?.fired ?? false);
     const dashoffset = $derived(
-        CIRC * (1 - (soonest ? totals.fraction(soonest.id, remaining) : 0)),
+        CIRC * (1 - (target ? totals.fraction(target.timer.id, remaining) : 0)),
     );
 
     $effect(() => {
@@ -93,7 +96,7 @@
 <div class="timer-root">
     <BarButton ariaLabel="Timers" onclick={openCreate} bindRef={(el) => (buttonEl = el)}>
         <span class="icon-box" style={`width:${SIZE}px;height:${SIZE}px`}>
-            {#if soonest === null}
+            {#if target === null}
                 <Icon name="timer" size={SIZE} />
             {:else}
                 <svg

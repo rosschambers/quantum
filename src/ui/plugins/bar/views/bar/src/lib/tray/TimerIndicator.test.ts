@@ -130,7 +130,7 @@ describe('TimerIndicator', () => {
         expect(container.querySelector('.timer-badge')).toBeNull();
     });
 
-    it('drops the ring and shows the stopwatch when a snapshot goes to zero active', async () => {
+    it('reverts to the stopwatch only when the store is empty', async () => {
         const { client, emit } = makeMockClient(snapshot([timer('active')]));
         const { container } = render(TimerIndicator, {
             props: { client: client as never },
@@ -142,7 +142,7 @@ describe('TimerIndicator', () => {
 
         emit({
             change: 'dismissed',
-            ...snapshot([timer('expired')]),
+            ...snapshot([]),
         });
         await tick();
 
@@ -150,8 +150,28 @@ describe('TimerIndicator', () => {
         expect(container.querySelector('.icon-box svg')).not.toBeNull();
     });
 
-    it('marks the ring as fired when the soonest active timer has already elapsed', async () => {
-        const { client } = makeMockClient(snapshot([timer('active', 1)]));
+    it('shows a fired ring for an expired timer still present in the store', async () => {
+        // A one-shot timer becomes `expired` the instant it fires and lingers in
+        // the store until dismissed or auto-removed. The fired ring must show
+        // during that whole window so a fired timer is not missed.
+        const { client } = makeMockClient(snapshot([timer('expired', 1)]));
+        const { container } = render(TimerIndicator, {
+            props: { client: client as never },
+        });
+        await tick();
+        await tick();
+
+        const ring = container.querySelector('[data-testid="timer-ring"]');
+        expect(ring).not.toBeNull();
+        expect(ring?.getAttribute('data-fired')).toBe('true');
+    });
+
+    it('shows the fired ring even while another timer is still counting', async () => {
+        // Fired-wins: a fired (expired) timer takes priority over a still-active
+        // countdown so it cannot be buried.
+        const { client } = makeMockClient(
+            snapshot([timer('active'), timer('expired', 1)]),
+        );
         const { container } = render(TimerIndicator, {
             props: { client: client as never },
         });

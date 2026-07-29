@@ -20,6 +20,37 @@ export function remainingSeconds(timer: Timer, nowUnix: number): number {
   return Math.max(0, firesAtUnix(timer) - nowUnix);
 }
 
+/** The soonest-firing timer among a subset, or null when the subset is empty. */
+function soonestOf(timers: Timer[]): Timer | null {
+  let best: Timer | null = null;
+  for (const timer of timers) {
+    if (best === null || firesAtUnix(timer) < firesAtUnix(best)) best = timer;
+  }
+  return best;
+}
+
+/** What the bar ring should show: a timer and whether it is in the fired state. */
+export interface RingTarget {
+  timer: Timer;
+  fired: boolean;
+}
+
+/**
+ * Choose the timer the bar ring represents, and whether it is fired.
+ *
+ * Fired-wins precedence: an expired timer still present in the store must not
+ * be missed, so it takes priority over any still-counting active timer. When
+ * no expired timer is present, the ring shows the soonest active timer's
+ * draining countdown. Returns null when there are no timers at all.
+ */
+export function ringTarget(timers: Timer[], nowUnix: number): RingTarget | null {
+  const expired = soonestOf(timers.filter((timer) => timer.status === 'expired'));
+  if (expired !== null) return { timer: expired, fired: true };
+  const active = soonestActive(timers, nowUnix);
+  if (active !== null) return { timer: active, fired: false };
+  return null;
+}
+
 /** Tracks each timer's max-seen remaining as its drain denominator. */
 export class RingTotals {
   private totals = new Map<string, number>();

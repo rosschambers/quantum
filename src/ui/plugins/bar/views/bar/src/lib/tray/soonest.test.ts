@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { firesAtUnix, soonestActive, remainingSeconds, RingTotals } from './soonest';
+import { firesAtUnix, soonestActive, remainingSeconds, ringTarget, RingTotals } from './soonest';
 import type { Timer } from '@quantum/client';
 
 function mk(id: string, status: 'active' | 'expired', fires: number): Timer {
@@ -30,6 +30,34 @@ describe('soonest', () => {
   it('remainingSeconds never negative', () => {
     expect(remainingSeconds(mk('a', 'active', 40), 100)).toBe(0);
     expect(remainingSeconds(mk('a', 'active', 140), 100)).toBe(40);
+  });
+});
+
+describe('ringTarget', () => {
+  it('returns null when there are no timers', () => {
+    expect(ringTarget([], 0)).toBeNull();
+  });
+  it('shows the soonest active timer, not fired, when only active timers exist', () => {
+    const result = ringTarget([mk('a', 'active', 300), mk('c', 'active', 120)], 0);
+    expect(result?.timer.id).toBe('c');
+    expect(result?.fired).toBe(false);
+  });
+  it('shows a fired ring for an expired timer even while another is still active', () => {
+    // fired-wins: a fired timer must not be missed, so it takes priority over a
+    // still-counting active timer.
+    const result = ringTarget([mk('active', 'active', 500), mk('done', 'expired', 10)], 100);
+    expect(result?.timer.id).toBe('done');
+    expect(result?.fired).toBe(true);
+  });
+  it('among several expired timers, targets the one that fired soonest', () => {
+    const result = ringTarget([mk('later', 'expired', 90), mk('earlier', 'expired', 30)], 100);
+    expect(result?.timer.id).toBe('earlier');
+    expect(result?.fired).toBe(true);
+  });
+  it('reverts to the active countdown once the expired timer is gone', () => {
+    const result = ringTarget([mk('a', 'active', 300)], 0);
+    expect(result?.timer.id).toBe('a');
+    expect(result?.fired).toBe(false);
   });
 });
 
