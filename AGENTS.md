@@ -236,6 +236,21 @@ broken CI before; do not reintroduce them:
   — the first writable store in the project (the file explorer's pins store is
   the second); `ConfigStore` remains read-only TOML. Re-armed on startup via
   `TimerService::load_and_arm`.
+  **A fired one-shot timer is `TimerStatus::Expired` immediately, and lingers.**
+  When a one-shot fires, `TimerService::fire` sets `status = TimerStatus::Expired`
+  (`src/application/src/use_cases/timer_service.rs`) and keeps it in the store
+  (schedule-removal after a delay, or until dismissed); only *recurring* timers
+  re-arm back to `Active`. So any UI that wants to show a "fired" state must key on
+  the `Expired` timer still present in the `timers` array, NOT on an `Active` timer
+  whose remaining time hit zero — that active-at-zero window is sub-second and you
+  will almost never see it. The bar timer ring learned this the hard way: its
+  `ringTarget()` (`src/ui/plugins/bar/views/bar/src/lib/tray/soonest.ts`) uses
+  **fired-wins precedence** — a present `Expired` timer takes priority over any
+  still-counting `Active` one, so a fired timer is never missed. The bar
+  `TimerIndicator` renders the soonest active timer as a **fixed-size draining
+  ring** (stopwatch icon when the store is empty, ring when non-empty, same box so
+  the bar button never resizes) and derives everything client-side from
+  `createTimerStore` (`timer.event`), ticking locally each second — no extra IPC.
 - **Files subsystem (file explorer).** The `files` plugin view is the first
   `kind = "panel"` view: a normal decorated, resizable xdg-toplevel (no
   layer-shell), titled from its canonical name via `panel_title` in
