@@ -688,6 +688,7 @@ impl<C: WindowConstructor> WindowRegistry<C> {
 mod tests {
     use super::*;
     use std::cell::Cell;
+    use std::cell::RefCell;
     use std::rc::Rc;
 
     #[test]
@@ -926,6 +927,9 @@ mod tests {
         input_region: Rc<Cell<Option<Option<quantum_domain::WindowInputRegion>>>>,
         destroyed: Rc<Cell<usize>>,
         hidden: Rc<Cell<usize>>,
+        /// Connector -> current monitor identity; tests mutate this to
+        /// simulate a monitor flap.
+        monitors: Rc<RefCell<HashMap<String, MonitorId>>>,
     }
 
     impl WindowConstructor for FakeCtor {
@@ -956,6 +960,10 @@ mod tests {
             } else {
                 None
             }
+        }
+
+        fn monitor_identity(&self, connector: &str) -> Option<MonitorId> {
+            self.monitors.borrow().get(connector).copied()
         }
     }
 
@@ -1009,6 +1017,7 @@ mod tests {
             input_region: Rc::new(Cell::new(None)),
             destroyed: Rc::new(Cell::new(0)),
             hidden: Rc::new(Cell::new(0)),
+            monitors: Rc::new(RefCell::new(HashMap::new())),
         }
     }
 
@@ -1024,6 +1033,7 @@ mod tests {
             input_region: input_region.clone(),
             destroyed: Rc::new(Cell::new(0)),
             hidden: Rc::new(Cell::new(0)),
+            monitors: Rc::new(RefCell::new(HashMap::new())),
         }
     }
 
@@ -1041,6 +1051,7 @@ mod tests {
             input_region: Rc::new(Cell::new(None)),
             destroyed: destroyed.clone(),
             hidden: Rc::new(Cell::new(0)),
+            monitors: Rc::new(RefCell::new(HashMap::new())),
         }
     }
 
@@ -1059,7 +1070,45 @@ mod tests {
             input_region: Rc::new(Cell::new(None)),
             destroyed: destroyed.clone(),
             hidden: hidden.clone(),
+            monitors: Rc::new(RefCell::new(HashMap::new())),
         }
+    }
+
+    /// A `FakeCtor` seeded with connector -> identity pairs, returning the shared
+    /// `monitors` map so a test can mutate it mid-scenario to simulate a flap.
+    fn fake_ctor_with_monitors(
+        count: &Rc<Cell<usize>>,
+        shown: &Rc<Cell<bool>>,
+        pairs: &[(&str, usize)],
+    ) -> (FakeCtor, Rc<RefCell<HashMap<String, MonitorId>>>) {
+        let monitors = Rc::new(RefCell::new(
+            pairs
+                .iter()
+                .map(|(connector, id)| ((*connector).to_string(), MonitorId(*id)))
+                .collect::<HashMap<String, MonitorId>>(),
+        ));
+        let ctor = FakeCtor {
+            construct_count: count.clone(),
+            shown: shown.clone(),
+            input_region: Rc::new(Cell::new(None)),
+            destroyed: Rc::new(Cell::new(0)),
+            hidden: Rc::new(Cell::new(0)),
+            monitors: monitors.clone(),
+        };
+        (ctor, monitors)
+    }
+
+    #[test]
+    fn fake_ctor_reports_and_updates_monitor_identity() {
+        let count = Rc::new(Cell::new(0));
+        let shown = Rc::new(Cell::new(false));
+        let (ctor, monitors) = fake_ctor_with_monitors(&count, &shown, &[("DP-1", 1)]);
+        assert_eq!(ctor.monitor_identity("DP-1"), Some(MonitorId(1)));
+        assert_eq!(ctor.monitor_identity("eDP-1"), None);
+
+        // Simulate a flap: DP-1's identity changes.
+        monitors.borrow_mut().insert("DP-1".into(), MonitorId(2));
+        assert_eq!(ctor.monitor_identity("DP-1"), Some(MonitorId(2)));
     }
 
     #[test]
