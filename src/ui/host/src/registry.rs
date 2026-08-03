@@ -470,6 +470,15 @@ pub struct WindowRegistry<C: WindowConstructor> {
     /// reused window is pinned to; an Open that asks for a different monitor
     /// uses it to decide the window must be rebuilt there.
     window_monitor: HashMap<String, Option<String>>,
+    /// The monitor identity each stored window was built against, keyed by the
+    /// same storage key as `windows`. A per-monitor (suffixed) key embeds its
+    /// connector in the key, so `window_monitor` above always matches for it;
+    /// this instead records the underlying `gdk::Monitor` object identity at
+    /// construction. When a monitor flaps (disconnect/reconnect) GDK recreates
+    /// its object and its `MonitorId` changes, leaving the hidden window bound
+    /// to a stale monitor. Comparing the current identity against this stored
+    /// one detects that flap so the window is rebuilt against the fresh object.
+    window_monitor_id: HashMap<String, Option<MonitorId>>,
     catalog: crate::ViewCatalog,
 }
 
@@ -482,6 +491,7 @@ impl<C: WindowConstructor> WindowRegistry<C> {
             constructor,
             windows: HashMap::new(),
             window_monitor: HashMap::new(),
+            window_monitor_id: HashMap::new(),
             catalog,
         }
     }
@@ -531,6 +541,7 @@ impl<C: WindowConstructor> WindowRegistry<C> {
             window.destroy();
         }
         self.window_monitor.remove(key);
+        self.window_monitor_id.remove(key);
     }
 
     /// Hide a stored window and KEEP it for reuse on the next open.
@@ -615,6 +626,37 @@ impl<C: WindowConstructor> WindowRegistry<C> {
                         old.destroy();
                     }
                 }
+                // A per-monitor view (bar) embeds its connector in the key, so
+                // the single-instance eviction above never fires for it, yet its
+                // stored window can still go stale: a monitor flap
+                // (disconnect/reconnect) makes GDK recreate the `gdk::Monitor`
+                // object, changing its identity while the hidden window keeps its
+                // binding to the old object. On reshow the compositor mis-places
+                // the surface onto the wrong output. Detect that here for a
+                // per-monitor (suffixed) key by comparing the connector's current
+                // monitor identity against the one the stored window was built
+                // against; if they differ, evict the stale window so the entry
+                // block below reconstructs it against the fresh monitor object.
+                // `requested.as_deref()` reuses the owned suffix string to avoid
+                // borrowing `view` while `key` is also borrowed here.
+                let current_id = requested
+                    .as_deref()
+                    .and_then(|connector| self.constructor.monitor_identity(connector));
+                if requested.is_some()
+                    && self.windows.contains_key(&key)
+                    && current_id != self.window_monitor_id.get(&key).copied().flatten()
+                {
+                    tracing::info!(
+                        "per-monitor view {view}: monitor object changed, rebuilding window"
+                    );
+                    if let Some(mut old) = self.windows.remove(&key) {
+                        // Destroy the stale-bound window rather than orphaning a
+                        // hidden surface; the entry block below reconstructs a
+                        // fresh one against the current monitor object. Destroy
+                        // must NOT be preceded by a hide (see destroy_window).
+                        old.destroy();
+                    }
+                }
                 let window = match self.windows.entry(key.clone()) {
                     std::collections::hash_map::Entry::Occupied(e) => e.into_mut(),
                     std::collections::hash_map::Entry::Vacant(v) => {
@@ -625,6 +667,7 @@ impl<C: WindowConstructor> WindowRegistry<C> {
                         v.insert(w)
                     }
                 };
+                self.window_monitor_id.insert(key.clone(), current_id);
                 self.window_monitor.insert(key, requested);
                 match mode {
                     WindowMode::Toggle => window.toggle(),
@@ -677,6 +720,7 @@ impl<C: WindowConstructor> WindowRegistry<C> {
                     }
                 } else {
                     self.window_monitor.remove(&key);
+                    self.window_monitor_id.remove(&key);
                     tracing::debug!("close request for unknown view: {view}");
                 }
             }
@@ -1109,6 +1153,89 @@ mod tests {
         // Simulate a flap: DP-1's identity changes.
         monitors.borrow_mut().insert("DP-1".into(), MonitorId(2));
         assert_eq!(ctor.monitor_identity("DP-1"), Some(MonitorId(2)));
+    }
+
+    #[test]
+    fn per_monitor_window_rebuilds_when_monitor_identity_changes() {
+        let count = Rc::new(Cell::new(0));
+        let shown = Rc::new(Cell::new(false));
+        let destroyed = Rc::new(Cell::new(0));
+        let monitors = Rc::new(RefCell::new(std::collections::HashMap::from([(
+            "DP-1".to_string(),
+            MonitorId(1),
+        )])));
+        let ctor = FakeCtor {
+            construct_count: count.clone(),
+            shown: shown.clone(),
+            input_region: Rc::new(Cell::new(None)),
+            destroyed: destroyed.clone(),
+            hidden: Rc::new(Cell::new(0)),
+            monitors: monitors.clone(),
+        };
+        let mut reg = WindowRegistry::new(ctor, first_party_catalog());
+
+        reg.handle(WindowRequest::Open {
+            view: "plugin/bar/bar@DP-1".into(),
+            mode: WindowMode::Show,
+        });
+        reg.handle(WindowRequest::Close {
+            view: "plugin/bar/bar@DP-1".into(),
+        });
+        assert_eq!(count.get(), 1, "constructed once");
+        assert_eq!(
+            destroyed.get(),
+            0,
+            "warm view hidden, not destroyed, on close"
+        );
+
+        // Simulate a flap: DP-1's monitor object identity changes.
+        monitors.borrow_mut().insert("DP-1".into(), MonitorId(2));
+
+        reg.handle(WindowRequest::Open {
+            view: "plugin/bar/bar@DP-1".into(),
+            mode: WindowMode::Show,
+        });
+        assert_eq!(
+            destroyed.get(),
+            1,
+            "stale-bound window destroyed on flap reopen"
+        );
+        assert_eq!(count.get(), 2, "reconstructed against the fresh monitor");
+        assert!(shown.get(), "rebuilt bar is shown");
+    }
+
+    #[test]
+    fn per_monitor_window_reused_when_monitor_identity_unchanged() {
+        let count = Rc::new(Cell::new(0));
+        let shown = Rc::new(Cell::new(false));
+        let destroyed = Rc::new(Cell::new(0));
+        let monitors = Rc::new(RefCell::new(std::collections::HashMap::from([(
+            "DP-1".to_string(),
+            MonitorId(1),
+        )])));
+        let ctor = FakeCtor {
+            construct_count: count.clone(),
+            shown: shown.clone(),
+            input_region: Rc::new(Cell::new(None)),
+            destroyed: destroyed.clone(),
+            hidden: Rc::new(Cell::new(0)),
+            monitors: monitors.clone(),
+        };
+        let mut reg = WindowRegistry::new(ctor, first_party_catalog());
+        reg.handle(WindowRequest::Open {
+            view: "plugin/bar/bar@DP-1".into(),
+            mode: WindowMode::Show,
+        });
+        reg.handle(WindowRequest::Close {
+            view: "plugin/bar/bar@DP-1".into(),
+        });
+        reg.handle(WindowRequest::Open {
+            view: "plugin/bar/bar@DP-1".into(),
+            mode: WindowMode::Show,
+        }); // same identity
+        assert_eq!(count.get(), 1, "warm window reused, not rebuilt");
+        assert_eq!(destroyed.get(), 0, "warm window not destroyed");
+        assert!(shown.get());
     }
 
     #[test]
