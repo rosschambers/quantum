@@ -210,12 +210,26 @@ pub trait WindowOps {
     fn set_input_region(&mut self, _region: Option<quantum_domain::WindowInputRegion>) {}
 }
 
+/// Stable identity of a connected monitor. Two values compare equal only
+/// while GDK keeps the same underlying `gdk::Monitor` object; a monitor
+/// flap (disconnect/reconnect) yields a new object and a new `MonitorId`,
+/// which is how the registry detects that a per-monitor window's binding
+/// went stale.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct MonitorId(usize);
+
 /// Abstraction for constructing windows, allowing test injection.
 /// Note: Not Send/Sync because GTK types are not thread-safe. This registry
 /// lives entirely on the GTK main thread and is never shared.
 pub trait WindowConstructor {
     type Window;
     fn construct(&mut self, view: &str) -> Option<Self::Window>;
+    /// Current identity of the monitor named `connector`, or `None` if no
+    /// connected monitor matches. Default `None` for constructors that do not
+    /// manage real monitors (test doubles override).
+    fn monitor_identity(&self, _connector: &str) -> Option<MonitorId> {
+        None
+    }
 }
 
 /// Enum of all managed window types.
@@ -309,6 +323,14 @@ impl WindowConstructor for ManagedWindowConstructor {
             }
             None => self.construct_fallback(&canonical, monitor),
         }
+    }
+
+    fn monitor_identity(&self, connector: &str) -> Option<MonitorId> {
+        use glib::translate::ToGlibPtr;
+        self.find_monitor(connector).map(|monitor| {
+            let pointer: *const gdk::ffi::GdkMonitor = monitor.to_glib_none().0;
+            MonitorId(pointer as usize)
+        })
     }
 }
 
@@ -837,6 +859,19 @@ mod tests {
                 height: None,
             }
         );
+    }
+
+    #[test]
+    fn window_constructor_monitor_identity_defaults_to_none() {
+        struct Stub;
+        impl WindowConstructor for Stub {
+            type Window = FakeWindow;
+            fn construct(&mut self, _view: &str) -> Option<FakeWindow> {
+                None
+            }
+        }
+        let stub = Stub;
+        assert_eq!(stub.monitor_identity("DP-1"), None);
     }
 
     struct FakeWindow {
