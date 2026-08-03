@@ -425,9 +425,31 @@ broken CI before; do not reintroduce them:
   connector-less monitors (`wire_connector_arrival`) and re-running its sync
   when the name arrives; `diff_emit` is idempotent so redundant fires are
   harmless. Preserve this pattern when touching monitor enumeration.
-  Verify hotplug with `RUST_LOG=info`: look for the `deferring bar spawn until
-  notify::connector` warning followed by `opening per-monitor view window:
-  plugin/bar/bar@<connector>` for the new output.
+   Verify hotplug with `RUST_LOG=info`: look for the `deferring bar spawn until
+   notify::connector` warning followed by `opening per-monitor view window:
+   plugin/bar/bar@<connector>` for the new output.
+- **A per-monitor bar must rebind to a FRESH `gdk::Monitor` when its monitor
+  flaps — a warm hidden window keeps a stale binding.** Separate from the
+  connector race above. The bar is a warm view (`destroy_on_dismiss == false`):
+  `Close` hides and keeps it (`WindowRegistry::hide_window`), and it pins its
+  layer-shell surface to a `gdk::Monitor` via `set_monitor()` at construction
+  (`windows/widget.rs`). When a monitor disconnects/reconnects (a **flap**,
+  common at plug-in — the multiplexer logs repeated open→close→reopen of
+  `bar@<connector>`), GDK destroys and recreates that monitor's object, but the
+  hidden warm window still holds `set_monitor(<old object>)`. On reshow the dead
+  binding makes the compositor place the surface on the FOCUSED output, not the
+  intended one → two bars on one monitor, none on the other, the orphan sized for
+  the missing monitor. The registry rebuilds single-instance views when the
+  requested monitor changes, but per-monitor views bypass that because the
+  connector STRING ("DP-1") is unchanged across a flap — only the OBJECT identity
+  changed. Fix (`registry.rs`): `WindowConstructor::monitor_identity(connector)`
+  returns a `MonitorId` (GObject pointer identity); the registry stores it per
+  window and, on Open of a suffixed per-monitor key whose window exists,
+  evicts+reconstructs when the current identity differs from the stored one.
+  Preserve this: any per-monitor warm window that pins a monitor must rebuild on
+  object-identity change, not string change. Verify by replugging a second output
+  and watching for `per-monitor view ...: monitor object changed, rebuilding
+  window`, then `hyprctl layers` showing exactly one bar per monitor.
 - All Vite views must set `base: './'` in `vite.config.ts` — the
   `quantum://` custom URI scheme breaks absolute URL normalization.
 - Widget URLs are `quantum://theme/<theme>/views/widgets/<name>/index.html`.
