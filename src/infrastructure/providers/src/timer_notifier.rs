@@ -1,5 +1,6 @@
 //! Delivers timer-completion notifications and optional completion sounds.
 
+use std::path::PathBuf;
 use std::process::Command;
 use std::sync::Arc;
 
@@ -18,6 +19,35 @@ fn binary_exists(name: &str) -> bool {
         .output()
         .map(|output| output.status.success())
         .unwrap_or(false)
+}
+
+/// Locate a freedesktop stereo sound-theme file (`<stem>.oga`) by searching the
+/// XDG data directories, returning the first existing candidate.
+///
+/// The `paplay` fallback needs an absolute file path (unlike `canberra-gtk-play`,
+/// which resolves theme events itself). Hardcoding `/usr/share` is wrong on
+/// distributions that install the sound theme elsewhere (notably NixOS, where it
+/// lives under a `/nix/store` path exported via `XDG_DATA_DIRS`), so search the
+/// data directories in preference order and only then fall back to the classic
+/// `/usr/share` location. `data_dirs` is the colon-separated `XDG_DATA_DIRS`
+/// value (or `None` when unset); passing it in keeps this function pure and
+/// testable.
+fn resolve_sound_file(stem: &str, data_dirs: Option<&str>) -> Option<PathBuf> {
+    let relative = format!("sounds/freedesktop/stereo/{stem}.oga");
+    let mut roots: Vec<PathBuf> = Vec::new();
+    if let Some(dirs) = data_dirs {
+        for dir in dirs.split(':').filter(|d| !d.is_empty()) {
+            roots.push(PathBuf::from(dir));
+        }
+    }
+    // Classic fallbacks for distributions that do not export the theme through
+    // XDG_DATA_DIRS.
+    roots.push(PathBuf::from("/usr/share"));
+    roots.push(PathBuf::from("/usr/local/share"));
+    roots
+        .into_iter()
+        .map(|root| root.join(&relative))
+        .find(|candidate| candidate.exists())
 }
 
 /// Fire-and-forget completion-sound player. Wraps an optional external player
@@ -81,11 +111,11 @@ impl SoundPlayer {
                     .spawn();
             }
             "paplay" => {
-                let path = format!(
-                    "/usr/share/sounds/freedesktop/stereo/{}.oga",
-                    Self::file_stem(sound)
-                );
-                let _ = Command::new("paplay").arg(path).spawn();
+                let data_dirs = std::env::var("XDG_DATA_DIRS").ok();
+                if let Some(path) = resolve_sound_file(Self::file_stem(sound), data_dirs.as_deref())
+                {
+                    let _ = Command::new("paplay").arg(path).spawn();
+                }
             }
             _ => {}
         }
@@ -185,5 +215,41 @@ mod tests {
         });
 
         notifier.notify_complete(&timer).await;
+    }
+
+    #[test]
+    fn resolve_sound_file_prefers_xdg_data_dirs_over_usr_share() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let theme = dir.path().join("sounds/freedesktop/stereo");
+        std::fs::create_dir_all(&theme).expect("create theme dir");
+        std::fs::write(theme.join("message.oga"), b"stub").expect("write stub sound");
+
+        let data_dirs = format!("{}:/nonexistent", dir.path().display());
+        let resolved =
+            resolve_sound_file("message", Some(&data_dirs)).expect("resolves from XDG_DATA_DIRS");
+
+        assert_eq!(resolved, theme.join("message.oga"));
+    }
+
+    #[test]
+    fn resolve_sound_file_returns_none_when_absent_everywhere() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let data_dirs = dir.path().display().to_string();
+
+        assert!(resolve_sound_file("message", Some(&data_dirs)).is_none());
+    }
+
+    #[test]
+    fn resolve_sound_file_skips_empty_data_dir_entries() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let theme = dir.path().join("sounds/freedesktop/stereo");
+        std::fs::create_dir_all(&theme).expect("create theme dir");
+        std::fs::write(theme.join("bell.oga"), b"stub").expect("write stub sound");
+
+        let data_dirs = format!("::{}:", dir.path().display());
+        let resolved =
+            resolve_sound_file("bell", Some(&data_dirs)).expect("resolves ignoring empty entries");
+
+        assert_eq!(resolved, theme.join("bell.oga"));
     }
 }
