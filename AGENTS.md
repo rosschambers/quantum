@@ -385,6 +385,27 @@ broken CI before; do not reintroduce them:
   (activate an action), `clear_toasts` (broadcasts `NotificationEvent::
   ToastsCleared` — display-only, store untouched; the bell sends it when opening
   the center). The store is capped (`MAX_NOTIFICATIONS`).
+- **Completion sounds (`SoundPlayer`) depend on runtime PATH and file
+  resolution — packaging owns half the fix.** `SoundPlayer::detect()`
+  (`src/infrastructure/providers/src/timer_notifier.rs`) probes PATH for
+  `canberra-gtk-play` (preferred) then `paplay`, and `play` is fire-and-forget
+  (`let _ = ...spawn()`) — every failure is swallowed, so a broken sound is
+  SILENT, never logged. Two ways it silently breaks, both hit on NixOS
+  2026-08-05 (the notification chime AND the timer sound were inaudible):
+  - **quantumd as a user service does NOT inherit the login shell's PATH.** If
+    `canberra-gtk-play` is only in a user profile (home-manager) and not on the
+    SERVICE's PATH, detection falls through to `paplay`. The daemon must be
+    packaged with the player on its own PATH — the NixOS module wraps `quantumd`
+    with `makeWrapper` to prepend `libcanberra-gtk3` (provides
+    `canberra-gtk-play`; base `libcanberra` does NOT) + `pulseaudio` (`paplay`)
+    and to add `sound-theme-freedesktop` to `XDG_DATA_DIRS`.
+  - **The `paplay` fallback needs an absolute `.oga` path.** It does NOT resolve
+    theme events itself (only `canberra-gtk-play` does). `resolve_sound_file`
+    searches `XDG_DATA_DIRS` (then `/usr/share`, `/usr/local/share`) — never
+    hardcode `/usr/share`, which does not exist on NixOS. When debugging "no
+    sound", check the SERVICE's PATH (`/proc/<pid>/environ`) and whether the
+    `.oga` file actually exists at the resolved path — not just that the code
+    ran.
 - **zbus deserialization: match the WIRE signature, and never swallow D-Bus
   errors silently.** `OwnedValue`/`Value` deserialize only a variant (`v`); a
   concrete struct out-argument must be deserialized as its concrete tuple type.
