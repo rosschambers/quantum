@@ -26,6 +26,15 @@
     const R = 6.4;
     const CIRC = 2 * Math.PI * R;
 
+    // Pre-compute color-mix() values once at module init so WebKit does not
+    // have to re-evaluate them on every style recalc.  The browser caches
+    // the resolved value after the first CSS-variable resolution, so this
+    // eliminates per-tick recomputation of the track stroke and the pulse
+    // animation box-shadow.
+    const TRACK_STROKE = 'color-mix(in srgb, var(--color-fg-alt, #9fb0a2) 26%, transparent)';
+    const ERROR_STROKE = 'color-mix(in srgb, var(--color-error, #e07a6a) 55%, transparent)';
+    const ERROR_FADE = 'color-mix(in srgb, var(--color-error, #e07a6a) 0%, transparent)';
+
     // Fired-wins target: an expired timer still in the store takes priority over
     // a still-counting active one, so a fired timer is never missed. `target` is
     // null only when there are no timers at all.
@@ -93,7 +102,7 @@
     }
 </script>
 
-<div class="timer-root">
+<div class="timer-root" style={`--timer-track-stroke: ${TRACK_STROKE}; --timer-error-stroke: ${ERROR_STROKE}; --timer-error-fade: ${ERROR_FADE};`}>
     <BarButton ariaLabel="Timers" onclick={openCreate} bindRef={(el) => (buttonEl = el)}>
         <span class="icon-box" style={`width:${SIZE}px;height:${SIZE}px`}>
             {#if target === null}
@@ -141,7 +150,7 @@
         fill: none;
     }
     .ring .track {
-        stroke: color-mix(in srgb, var(--color-fg-alt, #9fb0a2) 26%, transparent);
+        stroke: var(--timer-track-stroke);
         stroke-width: 2.4;
     }
     .ring .prog {
@@ -159,13 +168,13 @@
     }
     @keyframes timer-pulse {
         0% {
-            box-shadow: 0 0 0 0 color-mix(in srgb, var(--color-error, #e07a6a) 55%, transparent);
+            box-shadow: 0 0 0 0 var(--timer-error-stroke);
         }
         50% {
-            box-shadow: 0 0 0 6px color-mix(in srgb, var(--color-error, #e07a6a) 0%, transparent);
+            box-shadow: 0 0 0 6px var(--timer-error-fade);
         }
         100% {
-            box-shadow: 0 0 0 0 color-mix(in srgb, var(--color-error, #e07a6a) 0%, transparent);
+            box-shadow: 0 0 0 0 var(--timer-error-fade);
         }
     }
 </style>

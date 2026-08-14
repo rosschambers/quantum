@@ -60,8 +60,14 @@
         const mem = s.mem_total_bytes === 0
             ? 0
             : clampPercent((s.mem_used_bytes / s.mem_total_bytes) * 100);
-        cpuHistory = [...cpuHistory, cpu].slice(-HISTORY_LENGTH);
-        memHistory = [...memHistory, mem].slice(-HISTORY_LENGTH);
+        if (cpuHistory.length >= HISTORY_LENGTH) {
+            cpuHistory.shift();
+        }
+        cpuHistory.push(cpu);
+        if (memHistory.length >= HISTORY_LENGTH) {
+            memHistory.shift();
+        }
+        memHistory.push(mem);
     }
 
     function clampPercent(v: number): number {
@@ -91,13 +97,25 @@
      * linear interpolation across all three channels. Shared between
      * the active ring stroke and the sparkline stroke so the two read
      * as the same metric.
+     *
+     * Caches the last result so repeated calls with the same percentage
+     * return the same string reference instead of allocating a new one.
      */
+    let lastGradientPct: number | null = null;
+    let lastGradientColor: string | null = null;
+
     function gradientColor(pct: number | null): string {
+        if (lastGradientPct === pct && lastGradientColor !== null) {
+            return lastGradientColor;
+        }
         const p = pct === null ? 0 : pct;
         const r = Math.round(80 + (p / 100) * 175);
         const g = Math.round(180 - (p / 100) * 130);
         const b = Math.round(250 - (p / 100) * 200);
-        return `rgb(${r}, ${g}, ${b})`;
+        const result = `rgb(${r}, ${g}, ${b})`;
+        lastGradientPct = pct;
+        lastGradientColor = result;
+        return result;
     }
 
     // Ring geometry.
@@ -133,6 +151,10 @@
      * polyline. Returns an empty string when there are fewer than two
      * samples (no curve to draw).
      *
+     * Caches the last input reference and content so repeated calls with
+     * the same data return the cached path string instead of reallocating
+     * intermediate arrays.
+     *
      * Spline math:
      *   For each pair (p1, p2) we look at the surrounding points
      *   (p0, p1, p2, p3) and produce two cubic bezier control points:
@@ -141,8 +163,41 @@
      *   At the endpoints we duplicate p0=p1 or p3=p2 to avoid running
      *   off the array.
      */
+    let lastSmoothSamples: number[] | null = null;
+    let lastSmoothArgs: number[] | null = null;
+    let lastSmoothPath: string | null = null;
+
     function smoothPath(samples: number[], width: number, height: number): string {
-        if (samples.length < 2) return '';
+        // Same reference — Svelte $derived guarantees this when source
+        // array has not changed.
+        if (lastSmoothSamples === samples && lastSmoothPath !== null) {
+            return lastSmoothPath;
+        }
+        // Same content (different reference) — check length first for
+        // cheap early-exit, then compare elements.
+        if (
+            lastSmoothSamples !== null
+            && samples.length === lastSmoothSamples.length
+            && samples.length === lastSmoothArgs?.length
+            && width === lastSmoothArgs[0]
+            && height === lastSmoothArgs[1]
+        ) {
+            let same = true;
+            for (let i = 0; i < samples.length; i++) {
+                if (samples[i] !== lastSmoothSamples![i]) {
+                    same = false;
+                    break;
+                }
+            }
+            if (same) return lastSmoothPath!;
+        }
+
+        if (samples.length < 2) {
+            lastSmoothSamples = samples;
+            lastSmoothArgs = [width, height];
+            lastSmoothPath = '';
+            return '';
+        }
         const n = samples.length;
         const padTop = SPARK_PAD;
         const padBot = SPARK_PAD;
@@ -168,7 +223,11 @@
                 `C${cp1x.toFixed(2)},${cp1y.toFixed(2)} ${cp2x.toFixed(2)},${cp2y.toFixed(2)} ${p2[0].toFixed(2)},${p2[1].toFixed(2)}`,
             );
         }
-        return segments.join(' ');
+        const result = segments.join(' ');
+        lastSmoothSamples = samples;
+        lastSmoothArgs = [width, height];
+        lastSmoothPath = result;
+        return result;
     }
 
     const TRACK_COLOR = 'rgba(255, 255, 255, 0.12)';
