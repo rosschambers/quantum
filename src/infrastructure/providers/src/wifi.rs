@@ -861,7 +861,7 @@ fn connect_args<'a>(
     password: Option<&'a str>,
     hidden: bool,
 ) -> Vec<&'a str> {
-    let mut args: Vec<&str> = vec!["device", "wifi", "connect", "--", ssid];
+    let mut args: Vec<&str> = vec!["device", "wifi", "connect", ssid];
     if let Some(bssid) = bssid.filter(|value| !value.is_empty()) {
         args.push("bssid");
         args.push(bssid);
