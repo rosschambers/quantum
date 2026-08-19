@@ -15,13 +15,22 @@
     );
 </script>
 
-<span class="bars" aria-label={`Signal ${percent} percent`}>
-    {#each [1, 2, 3, 4] as bar (bar)}
-        <i class:on={bar <= litBars}></i>
-    {/each}
+<span class="signal" aria-label={`Signal ${percent} percent`}>
+    <span class="bars">
+        {#each [1, 2, 3, 4] as bar (bar)}
+            <i class:on={bar <= litBars}></i>
+        {/each}
+    </span>
+    <span class="pct" class:pct-green={percent > 70} class:pct-orange={percent > 40 && percent <= 70} class:pct-red={percent <= 40}>{percent}%</span>
 </span>
 
 <style>
+    .signal {
+        display: inline-flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 2px;
+    }
     .bars {
         display: inline-flex;
         align-items: flex-end;
@@ -48,5 +57,19 @@
     }
     .bars i:nth-child(4) {
         height: 14px;
+    }
+    .pct {
+        font-size: 9px;
+        font-weight: 600;
+        line-height: 1;
+    }
+    .pct-green {
+        color: #a6e3a1;
+    }
+    .pct-orange {
+        color: #f9e2af;
+    }
+    .pct-red {
+        color: #f38ba8;
     }
 </style>

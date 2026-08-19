@@ -52,15 +52,17 @@
                 {network.ssid}
             {/if}
         </span>
-        <span class="subline">
-            {#if network.active}
-                <span class="badge connected">connected</span>
-            {:else if network.saved}
-                <span class="badge saved">saved</span>
-            {/if}
-            <span class="badge">{BAND_LABEL[network.band]} GHz</span>
-            <span>{SECURITY_LABEL[network.security]}</span>
-        </span>
+           <span class="subline">
+                {#if network.active}
+                    <span class="badge connected">connected</span>
+                {:else if network.saved}
+                    <span class="badge saved">saved</span>
+                {/if}
+                {#if network.band !== 'unknown'}
+                    <span class="badge">{BAND_LABEL[network.band]} GHz</span>
+                {/if}
+                <span>{SECURITY_LABEL[network.security]}</span>
+            </span>
     </span>
     <span class="right">
         {#if status === 'connecting'}

@@ -88,7 +88,16 @@ pub(crate) fn parse_scan_list(raw: &str) -> Vec<WifiNetwork> {
         let bssid = f[1].clone();
         let signal_percent: u8 = f[2].parse().unwrap_or(0);
         let security = map_security(&f[3]);
-        let freq: u32 = f[4].parse().unwrap_or(0);
+        let freq_str = f[4].trim();
+        let freq: u32 = if freq_str.is_empty() {
+            0
+        } else {
+            freq_str
+                .split_whitespace()
+                .next()
+                .and_then(|s| s.parse::<u32>().ok())
+                .unwrap_or(0)
+        };
         let band = map_band(freq);
         let active = f[5].eq_ignore_ascii_case("yes") || f[6].trim() == "*";
 
@@ -1164,6 +1173,30 @@ CoffeeShopFree:AA\\:BB\\:CC\\:DD\\:EE\\:FF:55::2437:no:
         assert_eq!(open.security, WifiSecurity::Open);
         // Hidden network retained with empty SSID.
         assert!(nets.iter().any(|n| n.ssid.is_empty()));
+    }
+
+    #[test]
+    fn parse_scan_list_strips_mhz_suffix_from_frequency() {
+        // Real nmcli output appends " MHz" to the frequency field.
+        // The parser must strip it and still classify the band correctly.
+        let raw = "\
+Skynet:AA\\:BB\\:CC\\:DD\\:EE\\:FF:90:WPA2:5180 MHz:yes:*
+Cafe:11\\:22\\:33\\:44\\:55\\:66:50:Open:2412 MHz:no:";
+        let nets = parse_scan_list(raw);
+        assert_eq!(nets.len(), 2);
+        let skynet = nets.iter().find(|n| n.ssid == "Skynet").unwrap();
+        assert_eq!(skynet.band, WifiBand::Five);
+        let cafe = nets.iter().find(|n| n.ssid == "Cafe").unwrap();
+        assert_eq!(cafe.band, WifiBand::TwoFour);
+    }
+
+    #[test]
+    fn parse_scan_list_handles_empty_frequency_as_unknown() {
+        let raw = "\
+EmptyFreq:AA\\:BB\\:CC\\:DD\\:EE\\:FF:80:WPA2::yes:*";
+        let nets = parse_scan_list(raw);
+        assert_eq!(nets.len(), 1);
+        assert_eq!(nets[0].band, WifiBand::Unknown);
     }
 
     #[test]

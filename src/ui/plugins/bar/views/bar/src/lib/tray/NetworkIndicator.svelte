@@ -119,6 +119,11 @@
                 name={networkIcon(state.primary?.kind ?? null, state.primary !== null)}
                 size={18}
             />
+            {#if state.primary && state.primary.kind === 'wifi' && state.wifi_signal_percent !== null}
+                <span class="signal-text" class:signal-green={state.wifi_signal_percent > 70} class:signal-orange={state.wifi_signal_percent > 40 && state.wifi_signal_percent <= 70} class:signal-red={state.wifi_signal_percent <= 40}>
+                    {state.wifi_signal_percent}%
+                </span>
+            {/if}
         </span>
     </BarButton>
 {/if}
@@ -127,7 +132,22 @@
     .network-icon {
         display: inline-flex;
         align-items: center;
+        gap: 4px;
         line-height: 1;
+    }
+    .signal-text {
+        font-size: 10px;
+        font-weight: 600;
+        line-height: 1;
+    }
+    .signal-green {
+        color: #a6e3a1;
+    }
+    .signal-orange {
+        color: #f9e2af;
+    }
+    .signal-red {
+        color: #f38ba8;
     }
     /*
      * A primary connection with full connectivity shifts the icon to
