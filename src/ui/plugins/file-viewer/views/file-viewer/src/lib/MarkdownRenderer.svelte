@@ -1,6 +1,7 @@
 <script lang="ts">
     import { marked } from 'marked';
     import { highlightCode } from './highlighter';
+    import { slugify } from './types';
     import './markdown.css';
 
     interface Props {
@@ -19,6 +20,12 @@
 
             // Set up custom renderer for code blocks to enable syntax highlighting
             const renderer = new marked.Renderer();
+
+            renderer.heading = (token) => {
+                const id = slugify(token.text);
+                const level = token.depth;
+                return `<h${level} id="${id}" class="anchor-heading"><a class="anchor-link" href="#${id}">#</a>${token.text}</h${level}>`;
+            };
 
             renderer.codespan = (token) => {
                 return `<code class="inline-code">${token.text}</code>`;

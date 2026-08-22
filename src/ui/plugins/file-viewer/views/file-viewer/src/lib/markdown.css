@@ -1,5 +1,28 @@
 /* Markdown element styling using quantum theme tokens */
 
+/* Anchor links for headings */
+.markdown-renderer .anchor-heading {
+    position: relative;
+}
+
+.markdown-renderer .anchor-link {
+    position: absolute;
+    left: -24px;
+    color: var(--color-muted, #999);
+    text-decoration: none;
+    opacity: 0;
+    transition: opacity 150ms;
+    font-weight: normal;
+}
+
+.markdown-renderer .anchor-heading:hover .anchor-link {
+    opacity: 1;
+}
+
+.markdown-renderer .anchor-link:hover {
+    color: var(--color-accent, #007bff);
+}
+
 /* Headings */
 .markdown-renderer h1 {
     color: var(--color-fg, #000);
