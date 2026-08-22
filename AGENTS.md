@@ -580,6 +580,25 @@ broken CI before; do not reintroduce them:
   the destroy path against double-destroy / destroy-after-surface-gone
   (`src/ui/host/src/registry.rs`).
 
+- **`ManagedWindow` enum dispatch: every `WindowOps` trait method MUST be
+  forwarded.** `ManagedWindow` is an enum wrapping `PanelWindow` and
+  `WidgetWindow`. Default trait method implementations are no-ops. When adding a
+  new method to `WindowOps`, you must also add the dispatch match arm in
+  `impl WindowOps for ManagedWindow` (`registry.rs:422`). Forgetting this leaves
+  the method silently dead — the trait default runs, does nothing, and the inner
+  window's implementation is never called. This bit `inject_view_args` on
+  2026-08-21 and took multiple debugging cycles to identify.
+- **View arg passing: `window.__quantum_args`.** Views that accept arguments
+  (file-viewer, and any future view that takes open-time parameters) read
+  `(window as any).__quantum_args` in their Svelte `onMount`. The value is
+  injected by `inject_view_args()` (`src/ui/host/src/windows/mod.rs`) both
+  immediately and on `LoadEvent::Committed`. The canonical IPC call is
+  `view.show` with params `{ "name": "<view>", "args": { ... } }`. CLI:
+  `quantumctl show <view> --args '<json>'`.
+- **Panel views need `#app { height: 100% }` for flex scrolling.** The mount
+  point div must have explicit height for `overflow-y: auto` to work on flex
+  children with `min-height: 0`. Without it, content overflows without scrolling.
+
 ## Rules
 
 - No `unwrap`/`expect` outside tests and `main` setup.
