@@ -36,6 +36,8 @@ pub struct Dispatcher {
 #[derive(serde::Deserialize)]
 struct ViewParams {
     name: String,
+    #[serde(default)]
+    args: Option<Box<serde_json::value::RawValue>>,
 }
 
 /// Params for the many `files.*` handlers that take a single filesystem path
@@ -152,6 +154,7 @@ impl Dispatcher {
             "files.unwatch" => self.handle_files_unwatch(params).await,
             "files.sizes" => self.handle_files_sizes(params).await,
             "files.cancel_sizes" => self.handle_files_cancel_sizes(params).await,
+            "file-viewer.read" => self.handle_file_viewer_read(params).await,
             "processes.watch" => self.handle_processes_watch(params).await,
             "processes.unwatch" => self.handle_processes_unwatch(params).await,
             "processes.kill" => self.handle_processes_kill(params).await,
@@ -198,7 +201,10 @@ impl Dispatcher {
 
     async fn handle_view(&self, params: Option<&RawValue>, mode: WindowMode) -> Result<Value> {
         let params: ViewParams = parse_params(params, "view")?;
-        self.open_view.execute(params.name, mode).await?;
+        let args = params.args.map(|raw| {
+            serde_json::from_str::<serde_json::Value>(raw.get()).unwrap_or(serde_json::Value::Null)
+        });
+        self.open_view.execute(params.name, mode, args).await?;
         Ok(json!({}))
     }
 
@@ -478,6 +484,12 @@ impl Dispatcher {
         Ok(json!({}))
     }
 
+    async fn handle_file_viewer_read(&self, params: Option<&RawValue>) -> Result<Value> {
+        let p: PathParam = parse_params(params, "file-viewer.read")?;
+        let info = self.files_service.read_for_viewer(&p.path).await?;
+        to_json(info)
+    }
+
     async fn handle_processes_watch(&self, _params: Option<&RawValue>) -> Result<Value> {
         self.processes_service.watch();
         Ok(json!({}))
@@ -655,6 +667,7 @@ mod tests {
             &self,
             _view: &str,
             _mode: WindowMode,
+            _args: Option<serde_json::Value>,
         ) -> std::result::Result<(), DomainError> {
             Ok(())
         }
@@ -810,6 +823,21 @@ mod tests {
             _limit: usize,
         ) -> std::result::Result<Vec<FileEntry>, FilesError> {
             Ok(vec![files_sample_entry()])
+        }
+        async fn read_for_viewer(
+            &self,
+            _path: &str,
+        ) -> std::result::Result<quantum_domain::ViewerFileInfo, FilesError> {
+            Ok(quantum_domain::ViewerFileInfo {
+                content: String::new(),
+                file_type: quantum_domain::ViewerFileType::Text,
+                language: None,
+                filename: "test.txt".to_string(),
+                directory: "/tmp".to_string(),
+                mime_type: None,
+                size: 0,
+                uri: None,
+            })
         }
     }
 

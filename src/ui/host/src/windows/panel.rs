@@ -431,6 +431,10 @@ impl crate::registry::WindowOps for PanelWindow {
         }
         gtk4::prelude::GtkWindowExt::destroy(&self.window);
     }
+
+    fn inject_view_args(&mut self, args: Option<serde_json::Value>) {
+        crate::windows::inject_view_args(&self.webview, args);
+    }
 }
 
 impl Drop for PanelWindow {

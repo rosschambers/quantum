@@ -113,6 +113,7 @@ impl ViewMultiplexer {
             let _ = self.window_request_tx.send(WindowRequest::Open {
                 view: key.clone(),
                 mode: WindowMode::Show,
+                args: None,
             });
             self.active_views.insert(key);
         }
@@ -288,7 +289,7 @@ mod tests {
         let mut opens: Vec<String> = Vec::new();
         for message in drain(&mut rx) {
             match message {
-                WindowRequest::Open { view, mode } => {
+                WindowRequest::Open { view, mode, args } => {
                     assert!(matches!(mode, WindowMode::Show));
                     opens.push(view);
                 }
@@ -318,7 +319,7 @@ mod tests {
         let messages = drain(&mut rx);
         assert_eq!(messages.len(), 1);
         match &messages[0] {
-            WindowRequest::Open { view, mode } => {
+            WindowRequest::Open { view, mode, args } => {
                 assert_eq!(view, "plugin/bar/bar@HDMI-A-1");
                 assert!(matches!(mode, WindowMode::Show));
             }
@@ -366,7 +367,7 @@ mod tests {
         let mut opens: Vec<String> = Vec::new();
         for message in drain(&mut rx) {
             match message {
-                WindowRequest::Open { view, mode } => {
+                WindowRequest::Open { view, mode, args } => {
                     assert!(matches!(mode, WindowMode::Show));
                     opens.push(view);
                 }

@@ -8,8 +8,9 @@
 
 use async_trait::async_trait;
 use quantum_domain::{
-    classify_permissions, content_kind_for_name, DriveInfo, FileEntry, FileEntryKind,
-    FileOperation, FileSystemPort, FilesError,
+    classify_permissions, content_kind_for_name, is_likely_binary, language_for_extension,
+    viewer_file_type_for_extension, DriveInfo, FileEntry, FileEntryKind, FileOperation,
+    FileSystemPort, FilesError, ViewerFileInfo, ViewerFileType,
 };
 use std::io::Read;
 use std::os::unix::fs::MetadataExt;
@@ -408,6 +409,117 @@ fn mounts_blocking() -> Result<Vec<DriveInfo>, FilesError> {
     Ok(drives)
 }
 
+/// Maximum file size for text preview: 5 megabytes.
+const VIEWER_TEXT_MAX_BYTES: u64 = 5 * 1024 * 1024;
+
+/// Read a file for viewing, returning file type, content (for text), and metadata.
+/// Text types are read up to 5 megabytes; binary check is performed on text reads.
+/// Media types (image, video) return no content but include a file:// URI.
+fn read_for_viewer_blocking(path: &str) -> Result<ViewerFileInfo, FilesError> {
+    let path_buf = PathBuf::from(path);
+
+    // Canonicalize the path (expand ~ via home_dir, resolve symlinks, etc.)
+    let canonical_path = if path.starts_with('~') {
+        if let Some(home) = dirs::home_dir() {
+            let rest = path.strip_prefix("~/").unwrap_or(&path[1..]);
+            home.join(rest)
+        } else {
+            PathBuf::from(path)
+        }
+    } else {
+        std::fs::canonicalize(&path_buf).map_err(|error| map_io_error(path, &error))?
+    };
+
+    let canonical_path_str = canonical_path.to_string_lossy().to_string();
+
+    // Check if file exists
+    let metadata = std::fs::metadata(&canonical_path)
+        .map_err(|error| map_io_error(&canonical_path_str, &error))?;
+
+    if !metadata.is_file() {
+        return Err(FilesError::NotFound(format!(
+            "{canonical_path_str}: not a regular file"
+        )));
+    }
+
+    let size = metadata.len();
+    let filename = canonical_path
+        .file_name()
+        .map(|n| n.to_string_lossy().to_string())
+        .unwrap_or_else(|| canonical_path_str.clone());
+    let directory = canonical_path
+        .parent()
+        .map(|p| p.to_string_lossy().to_string())
+        .unwrap_or_else(|| "/".to_string());
+
+    // Determine file type from extension
+    let extension = canonical_path
+        .extension()
+        .and_then(|e| e.to_str())
+        .unwrap_or("");
+    let file_type = viewer_file_type_for_extension(extension);
+
+    match file_type {
+        ViewerFileType::Image | ViewerFileType::Video => {
+            // Media files: return URI, no content
+            let mime_type = mime_guess::from_ext(extension)
+                .first()
+                .map(|mt| mt.to_string());
+            Ok(ViewerFileInfo {
+                content: String::new(),
+                file_type,
+                language: None,
+                filename,
+                directory,
+                mime_type,
+                size,
+                uri: Some(format!("file://{canonical_path_str}")),
+            })
+        }
+        ViewerFileType::Markdown
+        | ViewerFileType::Json
+        | ViewerFileType::Code
+        | ViewerFileType::Text => {
+            // Text files: read content, check binary, enforce 5MB limit
+            if size > VIEWER_TEXT_MAX_BYTES {
+                return Err(FilesError::Io(format!(
+                    "{canonical_path_str}: file is larger than 5 megabytes"
+                )));
+            }
+
+            let mut file = std::fs::File::open(&canonical_path)
+                .map_err(|error| map_io_error(&canonical_path_str, &error))?;
+            let mut buffer = Vec::with_capacity(size as usize);
+            file.read_to_end(&mut buffer)
+                .map_err(|error| map_io_error(&canonical_path_str, &error))?;
+
+            if is_likely_binary(&buffer) {
+                return Err(FilesError::Io(format!(
+                    "{canonical_path_str}: file appears to be binary"
+                )));
+            }
+
+            let content = String::from_utf8_lossy(&buffer).to_string();
+            let language = if file_type == ViewerFileType::Code {
+                language_for_extension(extension)
+            } else {
+                None
+            };
+
+            Ok(ViewerFileInfo {
+                content,
+                file_type,
+                language,
+                filename,
+                directory,
+                mime_type: None,
+                size,
+                uri: None,
+            })
+        }
+    }
+}
+
 /// Run blocking filesystem work on Tokio's blocking pool, mapping a join
 /// failure to [`FilesError::Io`].
 async fn run_blocking<T, F>(work: F) -> Result<T, FilesError>
@@ -495,6 +607,11 @@ impl FileSystemPort for LocalFileSystem {
         let owned_root = PathBuf::from(root);
         let owned_query = query.to_string();
         run_blocking(move || search_blocking(owned_root, owned_query, limit)).await
+    }
+
+    async fn read_for_viewer(&self, path: &str) -> Result<ViewerFileInfo, FilesError> {
+        let owned_path = path.to_string();
+        run_blocking(move || read_for_viewer_blocking(&owned_path)).await
     }
 }
 
@@ -853,5 +970,114 @@ mod tests {
             .expect("root filesystem present");
         assert_eq!(root.label, "System");
         assert!(root.total_bytes > 0, "root total_bytes should be positive");
+    }
+
+    #[tokio::test]
+    async fn read_for_viewer_reads_small_text_file() {
+        let dir = tempfile::tempdir().expect("create tempdir");
+        let path = dir.path().join("test.md");
+        fs::write(&path, b"# Hello\n\nThis is markdown.").expect("write file");
+
+        let filesystem = LocalFileSystem::new();
+        let info = filesystem
+            .read_for_viewer(&path.to_string_lossy())
+            .await
+            .expect("read file for viewer");
+
+        assert_eq!(info.filename, "test.md");
+        assert_eq!(info.file_type, ViewerFileType::Markdown);
+        assert_eq!(info.content, "# Hello\n\nThis is markdown.");
+        assert_eq!(info.language, None);
+        assert!(info.size > 0);
+        assert_eq!(info.uri, None);
+        assert_eq!(info.mime_type, None);
+    }
+
+    #[tokio::test]
+    async fn read_for_viewer_detects_code_language() {
+        let dir = tempfile::tempdir().expect("create tempdir");
+        let path = dir.path().join("script.py");
+        fs::write(&path, b"print('hello')").expect("write file");
+
+        let filesystem = LocalFileSystem::new();
+        let info = filesystem
+            .read_for_viewer(&path.to_string_lossy())
+            .await
+            .expect("read file for viewer");
+
+        assert_eq!(info.filename, "script.py");
+        assert_eq!(info.file_type, ViewerFileType::Code);
+        assert_eq!(info.language, Some("python".to_string()));
+        assert_eq!(info.content, "print('hello')");
+    }
+
+    #[tokio::test]
+    async fn read_for_viewer_rejects_large_file() {
+        let dir = tempfile::tempdir().expect("create tempdir");
+        let path = dir.path().join("large.txt");
+        // Write 6MB of data (exceeds 5MB limit)
+        let large_data = vec![b'a'; 6 * 1024 * 1024];
+        fs::write(&path, &large_data).expect("write large file");
+
+        let filesystem = LocalFileSystem::new();
+        let error = filesystem
+            .read_for_viewer(&path.to_string_lossy())
+            .await
+            .expect_err("should reject file larger than 5MB");
+        assert!(matches!(error, FilesError::Io(_)), "got {error:?}");
+    }
+
+    #[tokio::test]
+    async fn read_for_viewer_rejects_binary_file() {
+        let dir = tempfile::tempdir().expect("create tempdir");
+        let path = dir.path().join("binary.bin");
+        fs::write(&path, b"text\x00with\x00nulls").expect("write binary file");
+
+        let filesystem = LocalFileSystem::new();
+        let error = filesystem
+            .read_for_viewer(&path.to_string_lossy())
+            .await
+            .expect_err("should reject binary file");
+        assert!(matches!(error, FilesError::Io(_)), "got {error:?}");
+    }
+
+    #[tokio::test]
+    async fn read_for_viewer_returns_image_with_uri() {
+        let dir = tempfile::tempdir().expect("create tempdir");
+        let path = dir.path().join("image.png");
+        // Write minimal PNG bytes
+        fs::write(
+            &path,
+            b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01\x08\x02\x00\x00\x00\x90wS\xde",
+        )
+        .expect("write png file");
+
+        let filesystem = LocalFileSystem::new();
+        let info = filesystem
+            .read_for_viewer(&path.to_string_lossy())
+            .await
+            .expect("read image for viewer");
+
+        assert_eq!(info.filename, "image.png");
+        assert_eq!(info.file_type, ViewerFileType::Image);
+        assert_eq!(info.content, "");
+        assert!(info
+            .uri
+            .as_ref()
+            .map_or(false, |u| u.starts_with("file://")));
+        assert!(info
+            .mime_type
+            .as_ref()
+            .map_or(false, |m| m.starts_with("image/")));
+    }
+
+    #[tokio::test]
+    async fn read_for_viewer_not_found() {
+        let filesystem = LocalFileSystem::new();
+        let error = filesystem
+            .read_for_viewer("/nonexistent/file/path.txt")
+            .await
+            .expect_err("should error on missing file");
+        assert!(matches!(error, FilesError::NotFound(_)), "got {error:?}");
     }
 }

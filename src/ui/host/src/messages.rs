@@ -5,6 +5,7 @@ pub enum WindowRequest {
     Open {
         view: String,
         mode: WindowMode,
+        args: Option<serde_json::Value>,
     },
     SetHeight {
         view: String,
@@ -34,6 +35,7 @@ mod tests {
         let req = WindowRequest::Open {
             view: "launcher".into(),
             mode: WindowMode::Toggle,
+            args: None,
         };
         let dbg = format!("{:?}", req);
         assert!(dbg.contains("launcher"));

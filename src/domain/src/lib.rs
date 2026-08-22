@@ -6,6 +6,7 @@ pub mod clipboard;
 pub mod cursor;
 pub mod error;
 pub mod event_bus;
+pub mod file_viewer;
 pub mod files;
 pub mod ids;
 pub mod match_result;
@@ -34,6 +35,10 @@ pub use clipboard::{ClipboardData, ClipboardEntry, ClipboardError};
 pub use cursor::CursorPosition;
 pub use error::DomainError;
 pub use event_bus::EventEnvelope;
+pub use file_viewer::{
+    is_likely_binary, language_for_extension, viewer_file_type_for_extension, ViewerFileInfo,
+    ViewerFileType,
+};
 pub use files::{
     classify_permissions, content_kind_for_name, ApplicationInfo, ContentKind, DriveInfo,
     FileEntry, FileEntryKind, FileOperation, FilePreferences, FilesError, PermissionClass, Pin,

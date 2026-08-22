@@ -24,11 +24,17 @@ impl GtkWindowHost {
 
 #[async_trait]
 impl WindowHost for GtkWindowHost {
-    async fn open(&self, view: &str, mode: WindowMode) -> Result<(), DomainError> {
+    async fn open(
+        &self,
+        view: &str,
+        mode: WindowMode,
+        args: Option<serde_json::Value>,
+    ) -> Result<(), DomainError> {
         self.tx
             .send(WindowRequest::Open {
                 view: view.to_string(),
                 mode,
+                args,
             })
             .map_err(|_| DomainError::Unsupported("window host receiver dropped".into()))
     }
@@ -74,7 +80,12 @@ impl Default for DummyWindowHost {
 
 #[async_trait]
 impl WindowHost for DummyWindowHost {
-    async fn open(&self, _view: &str, _mode: WindowMode) -> Result<(), DomainError> {
+    async fn open(
+        &self,
+        _view: &str,
+        _mode: WindowMode,
+        _args: Option<serde_json::Value>,
+    ) -> Result<(), DomainError> {
         Ok(())
     }
 
@@ -103,19 +114,22 @@ mod tests {
     #[tokio::test]
     async fn dummy_window_host_open() {
         let host = DummyWindowHost::new();
-        let result = host.open("launcher", WindowMode::Toggle).await;
+        let result = host.open("launcher", WindowMode::Toggle, None).await;
         assert!(result.is_ok());
     }
 
     #[tokio::test]
     async fn sends_open_request_on_channel() {
         let (host, mut rx) = GtkWindowHost::new();
-        host.open("launcher", WindowMode::Toggle).await.unwrap();
+        host.open("launcher", WindowMode::Toggle, None)
+            .await
+            .unwrap();
         let msg = rx.recv().await.expect("message");
         match msg {
-            WindowRequest::Open { view, mode } => {
+            WindowRequest::Open { view, mode, args } => {
                 assert_eq!(view, "launcher");
                 assert!(matches!(mode, WindowMode::Toggle));
+                assert!(args.is_none());
             }
             other => panic!("expected Open, got {other:?}"),
         }
@@ -177,7 +191,7 @@ mod tests {
     async fn open_fails_when_receiver_dropped() {
         let (host, rx) = GtkWindowHost::new();
         drop(rx);
-        let result = host.open("launcher", WindowMode::Show).await;
+        let result = host.open("launcher", WindowMode::Show, None).await;
         assert!(result.is_err());
     }
 
@@ -188,13 +202,15 @@ mod tests {
         tx.send(WindowRequest::Open {
             view: "widgets/bar@DP-1".to_string(),
             mode: WindowMode::Show,
+            args: None,
         })
         .expect("send via cloned sender");
         let msg = rx.recv().await.expect("message");
         match msg {
-            WindowRequest::Open { view, mode } => {
+            WindowRequest::Open { view, mode, args } => {
                 assert_eq!(view, "widgets/bar@DP-1");
                 assert!(matches!(mode, WindowMode::Show));
+                assert!(args.is_none());
             }
             other => panic!("expected Open, got {other:?}"),
         }

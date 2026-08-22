@@ -21,7 +21,7 @@ use futures::stream::StreamExt;
 use quantum_domain::{
     ApplicationCatalog, ApplicationInfo, ContentKind, DirectoryWatcher, DriveInfo, EventBus,
     FileEntry, FileOpener, FileOperation, FilePreferences, FileSystemPort, Pin, PinsPort,
-    PreferencesPort, RecursiveSizer,
+    PreferencesPort, RecursiveSizer, ViewerFileInfo,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -179,6 +179,12 @@ impl FilesService {
                 data: String::new(),
             }),
         }
+    }
+
+    /// Read a file for the file viewer. Returns file type, content (for text),
+    /// and metadata suitable for rendering in a preview panel.
+    pub async fn read_for_viewer(&self, path: &str) -> Result<ViewerFileInfo> {
+        Ok(self.filesystem.read_for_viewer(path).await?)
     }
 
     /// The explorer sidebar places: pinned locations plus mounted drives.
@@ -499,6 +505,22 @@ mod tests {
             _limit: usize,
         ) -> std::result::Result<Vec<FileEntry>, FilesError> {
             Ok(self.entries.clone())
+        }
+        async fn read_for_viewer(
+            &self,
+            _path: &str,
+        ) -> std::result::Result<ViewerFileInfo, FilesError> {
+            // Not tested in this module; a minimal stub is sufficient.
+            Ok(ViewerFileInfo {
+                content: String::new(),
+                file_type: quantum_domain::ViewerFileType::Text,
+                language: None,
+                filename: "test.txt".to_string(),
+                directory: "/tmp".to_string(),
+                mime_type: None,
+                size: 0,
+                uri: None,
+            })
         }
     }
 

@@ -84,6 +84,52 @@ pub(crate) fn resolve_view_uri(canonical_name: &str) -> String {
     format!("quantum://theme/default/views/{canonical_name}/index.html")
 }
 
+/// Inject view arguments into a WebView as `window.__quantum_args` on load.
+///
+/// When a view is opened with optional JSON arguments, expose them to the
+/// frontend as `window.__quantum_args` (set to `null` if no args were provided).
+/// Inject on `LoadEvent::Committed`: at that point the document object exists
+/// but no page script has run yet. The handler fires on every load, so the
+/// args persist across navigation and reloads.
+pub(crate) fn inject_view_args(webview: &webkit6::WebView, args: Option<serde_json::Value>) {
+    use webkit6::prelude::WebViewExt;
+    let json_string = match &args {
+        Some(value) => serde_json::to_string(value).unwrap_or_else(|_| "null".into()),
+        None => "null".into(),
+    };
+    let js = format!("window.__quantum_args = {};", json_string);
+
+    // Inject immediately in case the page is already loaded (the
+    // LoadEvent::Committed may have already fired before this function
+    // was called). A no-op if the document does not exist yet.
+    let webview_immediate = webview.clone();
+    let js_immediate = js.clone();
+    WebViewExt::evaluate_javascript(
+        &webview_immediate,
+        &js_immediate,
+        None,
+        None,
+        gtk4::gio::Cancellable::NONE,
+        |_| {},
+    );
+
+    // Also connect a handler for future loads/reloads so the args
+    // persist across navigation.
+    let webview_clone = webview.clone();
+    webview.connect_load_changed(move |_view, event| {
+        if event == webkit6::LoadEvent::Committed {
+            WebViewExt::evaluate_javascript(
+                &webview_clone,
+                &js,
+                None,
+                None,
+                gtk4::gio::Cancellable::NONE,
+                |_| {},
+            );
+        }
+    });
+}
+
 #[cfg(test)]
 mod tests {
     use super::resolve_view_uri;

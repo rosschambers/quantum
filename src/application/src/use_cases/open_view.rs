@@ -11,9 +11,14 @@ impl OpenViewUseCase {
         Self { window_host }
     }
 
-    pub async fn execute(&self, view_name: String, mode: WindowMode) -> Result<()> {
+    pub async fn execute(
+        &self,
+        view_name: String,
+        mode: WindowMode,
+        args: Option<serde_json::Value>,
+    ) -> Result<()> {
         self.window_host
-            .open(&view_name, mode)
+            .open(&view_name, mode, args)
             .await
             .map_err(crate::ApplicationError::Domain)
     }
@@ -62,7 +67,12 @@ mod tests {
 
     #[async_trait]
     impl WindowHost for FakeWindowHost {
-        async fn open(&self, view: &str, mode: WindowMode) -> std::result::Result<(), DomainError> {
+        async fn open(
+            &self,
+            view: &str,
+            mode: WindowMode,
+            _args: Option<serde_json::Value>,
+        ) -> std::result::Result<(), DomainError> {
             if self.should_fail {
                 Err(DomainError::ActionFailed {
                     reason: "open failed".to_string(),
@@ -107,7 +117,9 @@ mod tests {
         };
 
         let uc = OpenViewUseCase::new(Arc::new(host.clone()));
-        let result = uc.execute("launcher".to_string(), WindowMode::Show).await;
+        let result = uc
+            .execute("launcher".to_string(), WindowMode::Show, None)
+            .await;
 
         assert!(result.is_ok());
         let calls = host.calls.lock().unwrap();
@@ -147,7 +159,9 @@ mod tests {
         };
 
         let uc = OpenViewUseCase::new(Arc::new(host.clone()));
-        let result = uc.execute("launcher".to_string(), WindowMode::Hide).await;
+        let result = uc
+            .execute("launcher".to_string(), WindowMode::Hide, None)
+            .await;
 
         assert!(result.is_ok());
         let calls = host.calls.lock().unwrap();
@@ -165,7 +179,9 @@ mod tests {
         };
 
         let uc = OpenViewUseCase::new(Arc::new(host.clone()));
-        let result = uc.execute("launcher".to_string(), WindowMode::Toggle).await;
+        let result = uc
+            .execute("launcher".to_string(), WindowMode::Toggle, None)
+            .await;
 
         assert!(result.is_ok());
         let calls = host.calls.lock().unwrap();
@@ -183,7 +199,9 @@ mod tests {
         };
 
         let uc = OpenViewUseCase::new(Arc::new(host.clone()));
-        let result = uc.execute("launcher".to_string(), WindowMode::Show).await;
+        let result = uc
+            .execute("launcher".to_string(), WindowMode::Show, None)
+            .await;
 
         assert!(result.is_err());
     }

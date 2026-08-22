@@ -1,5 +1,6 @@
 use crate::clipboard::{ClipboardData, ClipboardEntry, ClipboardError};
 use crate::cursor::CursorPosition;
+use crate::file_viewer::ViewerFileInfo;
 use crate::files::{ApplicationInfo, FileOperation, FilePreferences, FilesError, Pin};
 use crate::processes::{KillSignal, ProcessSnapshot, ProcessesError};
 use crate::timer::{CivilNow, Timer, TimerError, TimerStoreData};
@@ -126,7 +127,12 @@ pub trait PluginCatalog: Send + Sync {
 /// Window host for managing windows.
 #[async_trait]
 pub trait WindowHost: Send + Sync {
-    async fn open(&self, view: &str, mode: crate::WindowMode) -> Result<(), DomainError>;
+    async fn open(
+        &self,
+        view: &str,
+        mode: crate::WindowMode,
+        args: Option<serde_json::Value>,
+    ) -> Result<(), DomainError>;
 
     /// Resize an already-open window to the given pixel height. Used by
     /// the bar to grow its surface when a popover opens so the popover
@@ -220,6 +226,7 @@ pub trait FileSystemPort: Send + Sync {
         query: &str,
         limit: usize,
     ) -> Result<Vec<FileEntry>, FilesError>;
+    async fn read_for_viewer(&self, path: &str) -> Result<ViewerFileInfo, FilesError>;
 }
 
 /// Watches a directory for changes and streams a marker string per change so

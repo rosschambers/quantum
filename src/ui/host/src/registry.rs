@@ -208,6 +208,9 @@ pub trait WindowOps {
     /// any open menu. `None` resets to the strip-only default. Default no-op
     /// for windows that do not manage an input region.
     fn set_input_region(&mut self, _region: Option<quantum_domain::WindowInputRegion>) {}
+    /// Inject view arguments as `window.__quantum_args` into the WebView.
+    /// Default no-op for windows that do not need view args.
+    fn inject_view_args(&mut self, _args: Option<serde_json::Value>) {}
 }
 
 /// Stable identity of a connected monitor. Two values compare equal only
@@ -458,6 +461,13 @@ impl WindowOps for ManagedWindow {
             ManagedWindow::Widget(w) => w.set_input_region(region),
         }
     }
+
+    fn inject_view_args(&mut self, args: Option<serde_json::Value>) {
+        match self {
+            ManagedWindow::Panel(w) => w.inject_view_args(args),
+            ManagedWindow::Widget(w) => w.inject_view_args(args),
+        }
+    }
 }
 
 /// Registry for managing all windows on the GTK main thread.
@@ -569,7 +579,7 @@ impl<C: WindowConstructor> WindowRegistry<C> {
         C::Window: WindowOps,
     {
         match req {
-            WindowRequest::Open { view, mode } => {
+            WindowRequest::Open { view, mode, args } => {
                 tracing::debug!("WindowRegistry::handle view={} mode={:?}", view, mode);
                 let key = canonical_view_key(&view, &self.catalog);
                 // Dismiss handling splits by the descriptor's
@@ -667,6 +677,7 @@ impl<C: WindowConstructor> WindowRegistry<C> {
                         v.insert(w)
                     }
                 };
+                window.inject_view_args(args);
                 self.window_monitor_id.insert(key.clone(), current_id);
                 self.window_monitor.insert(key, requested);
                 match mode {
@@ -1177,6 +1188,7 @@ mod tests {
         reg.handle(WindowRequest::Open {
             view: "plugin/bar/bar@DP-1".into(),
             mode: WindowMode::Show,
+            args: None,
         });
         reg.handle(WindowRequest::Close {
             view: "plugin/bar/bar@DP-1".into(),
@@ -1194,6 +1206,7 @@ mod tests {
         reg.handle(WindowRequest::Open {
             view: "plugin/bar/bar@DP-1".into(),
             mode: WindowMode::Show,
+            args: None,
         });
         assert_eq!(
             destroyed.get(),
@@ -1225,6 +1238,7 @@ mod tests {
         reg.handle(WindowRequest::Open {
             view: "plugin/bar/bar@DP-1".into(),
             mode: WindowMode::Show,
+            args: None,
         });
         reg.handle(WindowRequest::Close {
             view: "plugin/bar/bar@DP-1".into(),
@@ -1232,6 +1246,7 @@ mod tests {
         reg.handle(WindowRequest::Open {
             view: "plugin/bar/bar@DP-1".into(),
             mode: WindowMode::Show,
+            args: None,
         }); // same identity
         assert_eq!(count.get(), 1, "warm window reused, not rebuilt");
         assert_eq!(destroyed.get(), 0, "warm window not destroyed");
@@ -1275,6 +1290,7 @@ mod tests {
         reg.handle(WindowRequest::Open {
             view: "plugin/launcher/launcher".into(),
             mode: WindowMode::Show,
+            args: None,
         });
         assert_eq!(count.get(), 1);
         assert!(shown.get());
@@ -1288,10 +1304,12 @@ mod tests {
         reg.handle(WindowRequest::Open {
             view: "plugin/launcher/launcher".into(),
             mode: WindowMode::Show,
+            args: None,
         });
         reg.handle(WindowRequest::Open {
             view: "plugin/launcher/launcher".into(),
             mode: WindowMode::Toggle,
+            args: None,
         });
         assert_eq!(count.get(), 1);
         assert!(!shown.get()); // toggled off
@@ -1308,6 +1326,7 @@ mod tests {
         reg.handle(WindowRequest::Open {
             view: "launcher".into(),
             mode: WindowMode::Show,
+            args: None,
         });
         assert_eq!(count.get(), 1);
         assert!(shown.get(), "window is shown after open");
@@ -1322,6 +1341,7 @@ mod tests {
         reg.handle(WindowRequest::Open {
             view: "plugin/launcher/launcher".into(),
             mode: WindowMode::Show,
+            args: None,
         });
         assert_eq!(count.get(), 1, "reopen reuses the same-keyed window");
         assert!(shown.get(), "reopened window is shown");
@@ -1337,10 +1357,12 @@ mod tests {
         reg.handle(WindowRequest::Open {
             view: "plugin/power-menu/power-menu@DP-1".into(),
             mode: WindowMode::Show,
+            args: None,
         });
         reg.handle(WindowRequest::Open {
             view: "plugin/power-menu/power-menu@DP-1".into(),
             mode: WindowMode::Toggle,
+            args: None,
         });
         assert_eq!(count.get(), 1);
         assert!(!shown.get());
@@ -1359,10 +1381,12 @@ mod tests {
         reg.handle(WindowRequest::Open {
             view: "plugin/power-menu/power-menu@DP-1".into(),
             mode: WindowMode::Show,
+            args: None,
         });
         reg.handle(WindowRequest::Open {
             view: "plugin/power-menu/power-menu@DP-2".into(),
             mode: WindowMode::Show,
+            args: None,
         });
         assert_eq!(count.get(), 2);
         assert!(shown.get());
@@ -1400,6 +1424,7 @@ mod tests {
         reg.handle(WindowRequest::Open {
             view: "nope".into(),
             mode: WindowMode::Show,
+            args: None,
         });
         // If we reach here without panic, the test passes.
         assert_eq!(count.get(), 0, "no window built for unknown view");
@@ -1416,6 +1441,7 @@ mod tests {
         reg.handle(WindowRequest::Open {
             view: "plugin/launcher/launcher".into(),
             mode: WindowMode::Show,
+            args: None,
         });
         assert_eq!(count.get(), 1, "window was constructed");
         reg.handle(WindowRequest::Close {
@@ -1425,6 +1451,7 @@ mod tests {
         reg.handle(WindowRequest::Open {
             view: "plugin/launcher/launcher".into(),
             mode: WindowMode::Show,
+            args: None,
         });
         assert_eq!(
             count.get(),
@@ -1450,6 +1477,7 @@ mod tests {
         reg.handle(WindowRequest::Open {
             view: "plugin/launcher/launcher".into(),
             mode: WindowMode::Show,
+            args: None,
         });
         reg.handle(WindowRequest::Close {
             view: "plugin/launcher/launcher".into(),
@@ -1476,6 +1504,7 @@ mod tests {
         reg.handle(WindowRequest::Open {
             view: "plugin/power-menu/power-menu@DP-1".into(),
             mode: WindowMode::Show,
+            args: None,
         });
         assert_eq!(count.get(), 1, "window was constructed");
         reg.handle(WindowRequest::Close {
@@ -1488,6 +1517,7 @@ mod tests {
         reg.handle(WindowRequest::Open {
             view: "plugin/power-menu/power-menu@DP-1".into(),
             mode: WindowMode::Show,
+            args: None,
         });
         assert_eq!(count.get(), 2, "reopen reconstructs the destroyed window");
         assert!(shown.get(), "reopened flagged view is shown");
@@ -1514,10 +1544,12 @@ mod tests {
         reg.handle(WindowRequest::Open {
             view: "plugin/power-menu/power-menu@DP-1".into(),
             mode: WindowMode::Show,
+            args: None,
         });
         reg.handle(WindowRequest::Open {
             view: "plugin/power-menu/power-menu@DP-2".into(),
             mode: WindowMode::Show,
+            args: None,
         });
         assert_eq!(
             count.get(),
@@ -1551,12 +1583,14 @@ mod tests {
         reg.handle(WindowRequest::Open {
             view: "plugin/power-menu/power-menu@DP-1".into(),
             mode: WindowMode::Show,
+            args: None,
         });
         assert_eq!(count.get(), 1, "first open constructs the window");
         // Dismiss destroys the flagged window without hiding it first.
         reg.handle(WindowRequest::Open {
             view: "plugin/power-menu/power-menu@DP-1".into(),
             mode: WindowMode::Hide,
+            args: None,
         });
         assert_eq!(destroyed.get(), 1, "dismiss destroys the flagged overlay");
         assert_eq!(hidden.get(), 0, "dismiss destroys WITHOUT hiding first");
@@ -1565,6 +1599,7 @@ mod tests {
         reg.handle(WindowRequest::Open {
             view: "plugin/power-menu/power-menu@DP-1".into(),
             mode: WindowMode::Show,
+            args: None,
         });
         assert_eq!(count.get(), 2, "reopen reconstructs the destroyed window");
         assert!(shown.get(), "overlay is shown again after reopen");
@@ -1588,6 +1623,7 @@ mod tests {
         reg.handle(WindowRequest::Open {
             view: "plugin/power-menu/power-menu@DP-1".into(),
             mode: WindowMode::Toggle,
+            args: None,
         });
         assert_eq!(count.get(), 1);
         assert!(shown.get());
@@ -1595,6 +1631,7 @@ mod tests {
         reg.handle(WindowRequest::Open {
             view: "plugin/power-menu/power-menu@DP-1".into(),
             mode: WindowMode::Toggle,
+            args: None,
         });
         assert_eq!(
             destroyed.get(),
@@ -1607,6 +1644,7 @@ mod tests {
         reg.handle(WindowRequest::Open {
             view: "plugin/power-menu/power-menu@DP-1".into(),
             mode: WindowMode::Toggle,
+            args: None,
         });
         assert_eq!(count.get(), 2, "toggle-on reconstructs after destroy");
         assert!(shown.get());
@@ -1625,15 +1663,18 @@ mod tests {
         reg.handle(WindowRequest::Open {
             view: "plugin/launcher/launcher".into(),
             mode: WindowMode::Show,
+            args: None,
         });
         reg.handle(WindowRequest::Open {
             view: "plugin/launcher/launcher".into(),
             mode: WindowMode::Hide,
+            args: None,
         });
         assert_eq!(destroyed.get(), 0, "unflagged Hide must not destroy");
         reg.handle(WindowRequest::Open {
             view: "plugin/launcher/launcher".into(),
             mode: WindowMode::Show,
+            args: None,
         });
         assert_eq!(
             count.get(),
@@ -1658,16 +1699,19 @@ mod tests {
         reg.handle(WindowRequest::Open {
             view: "plugin/power-menu/power-menu@DP-1".into(),
             mode: WindowMode::Show,
+            args: None,
         });
         reg.handle(WindowRequest::Open {
             view: "plugin/power-menu/power-menu@DP-1".into(),
             mode: WindowMode::Hide,
+            args: None,
         });
         assert_eq!(destroyed.get(), 1, "hide destroys the flagged view");
         assert_eq!(hidden.get(), 0, "hide destroys WITHOUT hiding first");
         reg.handle(WindowRequest::Open {
             view: "plugin/power-menu/power-menu@DP-1".into(),
             mode: WindowMode::Show,
+            args: None,
         });
         assert_eq!(count.get(), 2, "flagged view is reconstructed after hide");
     }
@@ -1688,16 +1732,19 @@ mod tests {
         reg.handle(WindowRequest::Open {
             view: "plugin/launcher/launcher".into(),
             mode: WindowMode::Show,
+            args: None,
         });
         reg.handle(WindowRequest::Open {
             view: "plugin/launcher/launcher".into(),
             mode: WindowMode::Hide,
+            args: None,
         });
         assert_eq!(destroyed.get(), 0, "warm Hide must not destroy");
         assert_eq!(hidden.get(), 1, "warm Hide parks the window");
         reg.handle(WindowRequest::Open {
             view: "plugin/launcher/launcher".into(),
             mode: WindowMode::Show,
+            args: None,
         });
         assert_eq!(count.get(), 1, "warm view is reused, not reconstructed");
     }
@@ -1714,6 +1761,7 @@ mod tests {
         reg.handle(WindowRequest::Open {
             view: "plugin/bar/bar@DP-1".into(),
             mode: WindowMode::Show,
+            args: None,
         });
         let region = quantum_domain::WindowInputRegion {
             x: 0,
@@ -1836,6 +1884,7 @@ mod tests {
         reg.handle(WindowRequest::Open {
             view: "plugin/launcher/launcher@DP-1".into(),
             mode: WindowMode::Show,
+            args: None,
         });
         // Should have constructed exactly one window.
         assert_eq!(count.get(), 1);
@@ -1851,6 +1900,7 @@ mod tests {
         reg.handle(WindowRequest::Open {
             view: "plugin/launcher/launcher@eDP-1".into(),
             mode: WindowMode::Show,
+            args: None,
         });
         assert_eq!(count.get(), 2);
     }

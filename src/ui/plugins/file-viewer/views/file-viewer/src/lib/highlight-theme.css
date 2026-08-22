@@ -1,0 +1,123 @@
+/* highlight.js theme using sycamore palette */
+
+.hljs {
+	color: var(--color-fg-alt);
+	background: transparent;
+	display: block;
+	padding: 0;
+}
+
+/* Keywords */
+.hljs-keyword,
+.hljs-selector-tag,
+.hljs-literal,
+.hljs-section,
+.hljs-link {
+	color: #c792ea;
+}
+
+/* Strings */
+.hljs-string,
+.hljs-title,
+.hljs-name,
+.hljs-type,
+.hljs-attr,
+.hljs-quote {
+	color: #c3e88d;
+}
+
+/* Numbers */
+.hljs-number,
+.hljs-literal,
+.hljs-regexp {
+	color: #f78c6c;
+}
+
+/* Comments */
+.hljs-comment,
+.hljs-quote {
+	color: var(--color-muted);
+	font-style: italic;
+}
+
+/* Types and classes */
+.hljs-type,
+.hljs-class,
+.hljs-title.class_,
+.hljs-title.class {
+	color: #ffcb6b;
+}
+
+/* Functions and methods */
+.hljs-title.function_,
+.hljs-title.function {
+	color: #82aaff;
+}
+
+/* Operators */
+.hljs-operator,
+.hljs-symbol {
+	color: #89ddff;
+}
+
+/* Properties and attributes */
+.hljs-property,
+.hljs-attr,
+.hljs-variable {
+	color: #f07178;
+}
+
+/* Punctuation */
+.hljs-punctuation,
+.hljs-bullet,
+.hljs-code {
+	color: var(--color-muted);
+}
+
+/* Built-in functions and constants */
+.hljs-built_in,
+.hljs-builtin-name {
+	color: #82aaff;
+}
+
+/* Substrings, meta, and other token types */
+.hljs-meta,
+.hljs-meta-string {
+	color: #f78c6c;
+}
+
+/* Template literals and tags */
+.hljs-template-tag,
+.hljs-template-variable {
+	color: #c3e88d;
+}
+
+/* HTML/XML tags */
+.hljs-tag,
+.hljs-name {
+	color: #c792ea;
+}
+
+.hljs-attr {
+	color: #f07178;
+}
+
+/* Additions and deletions */
+.hljs-addition {
+	background-color: rgba(195, 232, 141, 0.1);
+	color: #c3e88d;
+}
+
+.hljs-deletion {
+	background-color: rgba(240, 113, 120, 0.1);
+	color: #f07178;
+}
+
+/* Emphasis */
+.hljs-emphasis {
+	font-style: italic;
+}
+
+.hljs-strong {
+	font-weight: 700;
+}

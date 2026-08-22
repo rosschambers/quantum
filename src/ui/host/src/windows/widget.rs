@@ -713,6 +713,10 @@ impl crate::registry::WindowOps for WidgetWindow {
         self.input_region.set(region);
         apply_input_region(&self.window, self.bar_height, region);
     }
+
+    fn inject_view_args(&mut self, args: Option<serde_json::Value>) {
+        crate::windows::inject_view_args(&self.webview, args);
+    }
 }
 
 impl Drop for WidgetWindow {

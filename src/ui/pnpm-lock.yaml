@@ -75,6 +75,40 @@ importers:
         specifier: ^2
         version: 2.1.9(@types/node@20.19.41)(@vitest/ui@2.1.9)(happy-dom@15.11.7)(jsdom@29.1.1)
 
+  plugins/file-viewer/views/file-viewer:
+    dependencies:
+      '@quantum/client':
+        specifier: workspace:*
+        version: link:../../../../packages/client
+      highlight.js:
+        specifier: ^11
+        version: 11.12.0
+      marked:
+        specifier: ^14
+        version: 14.1.4
+    devDependencies:
+      '@sveltejs/vite-plugin-svelte':
+        specifier: ^4.0.0-next.6
+        version: 4.0.4(svelte@5.55.9)(vite@5.4.21(@types/node@20.19.41))
+      '@testing-library/svelte':
+        specifier: ^4
+        version: 4.2.3(svelte@5.55.9)
+      jsdom:
+        specifier: ^29.1.1
+        version: 29.1.1
+      svelte:
+        specifier: ^5
+        version: 5.55.9
+      typescript:
+        specifier: ^5
+        version: 5.9.3
+      vite:
+        specifier: ^5
+        version: 5.4.21(@types/node@20.19.41)
+      vitest:
+        specifier: ^2
+        version: 2.1.9(@types/node@20.19.41)(@vitest/ui@2.1.9)(happy-dom@15.11.7)(jsdom@29.1.1)
+
   plugins/files/views/files:
     devDependencies:
       '@sveltejs/vite-plugin-svelte':
@@ -1104,6 +1138,10 @@ packages:
     resolution: {integrity: sha512-ej4AhfhfL2Q2zpMmLo7U1Uv9+PyhIZpgQLGT1F9miIGmiCJIoCgSmczFdrc97mWT4kVY72KA+WnnhJ5pghSvSg==}
     engines: {node: '>= 0.4'}
 
+  highlight.js@11.12.0:
+    resolution: {integrity: sha512-nbfWpyRMcMrPMmDwJB+dhX/eiaPKtc2RB+0QZskqJ3WjRA/FDS0e9hZrx8EC/lbEv8gXy98FcDbNa/dspAaJMg==}
+    engines: {node: '>=12.0.0'}
+
   html-encoding-sniffer@6.0.0:
     resolution: {integrity: sha512-CV9TW3Y3f8/wT0BRFc1/KAVQ3TUHiXmaAb6VW9vtiMFf7SLoMd1PdAc4W3KFOFETBJUb90KatHqlsZMWV+R9Gg==}
     engines: {node: ^20.19.0 || ^22.12.0 || >=24.0.0}
@@ -1213,6 +1251,11 @@ packages:
 
   magic-string@0.30.21:
     resolution: {integrity: sha512-vd2F4YUyEXKGcLHoq+TEyCjxueSeHnFxyyjNp80yg0XV4vUhnDer/lvvlqM/arB5bXQN5K2/3oinyCRyx8T2CQ==}
+
+  marked@14.1.4:
+    resolution: {integrity: sha512-vkVZ8ONmUdPnjCKc5uTRvmkRbx4EAi2OkTOXmfTDhZz3OFqMNBM1oTTWwTr4HY4uAEojhzPf+Fy8F1DWa3Sndg==}
+    engines: {node: '>= 18'}
+    hasBin: true
 
   math-intrinsics@1.1.0:
     resolution: {integrity: sha512-/IXtbwEk5HTPyEwyKX6hGkYXxM9nbj64B+ilVJnC/R6B0pH5G4V3b0pVbL7DBj4tkhBAppbQUlf6F6Xl9LHu1g==}
@@ -2138,6 +2181,8 @@ snapshots:
     dependencies:
       function-bind: 1.1.2
 
+  highlight.js@11.12.0: {}
+
   html-encoding-sniffer@6.0.0:
     dependencies:
       '@exodus/bytes': 1.15.1
@@ -2264,6 +2309,8 @@ snapshots:
   magic-string@0.30.21:
     dependencies:
       '@jridgewell/sourcemap-codec': 1.5.5
+
+  marked@14.1.4: {}
 
   math-intrinsics@1.1.0: {}
 

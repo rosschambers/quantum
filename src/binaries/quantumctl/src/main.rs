@@ -26,16 +26,25 @@ enum Commands {
     Toggle {
         /// View name
         view: String,
+        /// Optional JSON arguments to pass to the view
+        #[arg(long)]
+        args: Option<String>,
     },
     /// Show a view
     Show {
         /// View name
         view: String,
+        /// Optional JSON arguments to pass to the view
+        #[arg(long)]
+        args: Option<String>,
     },
     /// Hide a view
     Hide {
         /// View name
         view: String,
+        /// Optional JSON arguments to pass to the view
+        #[arg(long)]
+        args: Option<String>,
     },
     /// Search for items
     Search {
@@ -149,16 +158,34 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     });
 
     match cli.command {
-        Commands::Toggle { view } => {
-            let result = call_daemon(&socket_path, "view.toggle", json!({ "name": view })).await?;
+        Commands::Toggle { view, args } => {
+            let mut params = json!({ "name": view });
+            if let Some(args_string) = args {
+                let parsed: serde_json::Value = serde_json::from_str(&args_string)
+                    .map_err(|e| format!("--args must be valid JSON: {e}"))?;
+                params["args"] = parsed;
+            }
+            let result = call_daemon(&socket_path, "view.toggle", params).await?;
             print_response(&result, cli.json);
         }
-        Commands::Show { view } => {
-            let result = call_daemon(&socket_path, "view.show", json!({ "name": view })).await?;
+        Commands::Show { view, args } => {
+            let mut params = json!({ "name": view });
+            if let Some(args_string) = args {
+                let parsed: serde_json::Value = serde_json::from_str(&args_string)
+                    .map_err(|e| format!("--args must be valid JSON: {e}"))?;
+                params["args"] = parsed;
+            }
+            let result = call_daemon(&socket_path, "view.show", params).await?;
             print_response(&result, cli.json);
         }
-        Commands::Hide { view } => {
-            let result = call_daemon(&socket_path, "view.hide", json!({ "name": view })).await?;
+        Commands::Hide { view, args } => {
+            let mut params = json!({ "name": view });
+            if let Some(args_string) = args {
+                let parsed: serde_json::Value = serde_json::from_str(&args_string)
+                    .map_err(|e| format!("--args must be valid JSON: {e}"))?;
+                params["args"] = parsed;
+            }
+            let result = call_daemon(&socket_path, "view.hide", params).await?;
             print_response(&result, cli.json);
         }
         Commands::Search { query } => {
