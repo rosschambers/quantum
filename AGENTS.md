@@ -588,6 +588,16 @@ broken CI before; do not reintroduce them:
   the method silently dead — the trait default runs, does nothing, and the inner
   window's implementation is never called. This bit `inject_view_args` on
   2026-08-21 and took multiple debugging cycles to identify.
+- **File viewer (`plugin/file-viewer/file-viewer`).** A read-only file preview
+  panel for Markdown, JSON, code, images, and video. Open from the shell with
+  `qv <filepath>` (a wrapper around `quantumctl show plugin/file-viewer/file-viewer
+  --args '{"path":"<absolute-path>"}'`). Markdown gets a collapsible TOC sidebar
+  and rendered HTML; JSON gets brace/bracket folding and minified-file detection
+  with a format prompt; code gets indentation-based folding and highlight.js
+  syntax highlighting (15 languages). The viewer is a panel (`kind = "panel"`,
+  `destroy_on_dismiss = true`), so it is rebuilt fresh on each open. When an agent
+  wants to show the user a file for review (a plan, a config, a diff), open it
+  with `qv` rather than dumping text in chat.
 - **View arg passing: `window.__quantum_args`.** Views that accept arguments
   (file-viewer, and any future view that takes open-time parameters) read
   `(window as any).__quantum_args` in their Svelte `onMount`. The value is
