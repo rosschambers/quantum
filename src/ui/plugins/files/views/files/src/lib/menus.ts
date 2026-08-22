@@ -62,6 +62,8 @@ export interface EntryMenuContext {
     pinnedActions: PinnedAction[];
     /** Open a path with a pinned application, identified by its desktop id. */
     onOpenWithPinned: (desktopId: string, path: string) => void;
+    /** Open a file in the file-viewer panel for rich preview. */
+    onPreview: (entry: FileEntry) => void;
 }
 
 /** Everything the background (empty-space) menu needs. */
@@ -127,6 +129,7 @@ export function buildEntryMenu(ctx: EntryMenuContext): MenuItem[] {
     const items: MenuItem[] = [
         ...pinnedItems(ctx.pinnedActions, entry.path, ctx.onOpenWithPinned),
         { label: 'Open', onSelect: () => ctx.onOpen(entry) },
+        ...(entry.kind === 'file' ? [{ label: 'Preview', onSelect: () => ctx.onPreview(entry) }] : []),
         { label: 'Open with...', onSelect: () => ctx.onOpenWithPicker(entry) },
         { label: 'Open terminal here', onSelect: () => ctx.onOpenTerminal(terminalDirectory) },
         separator,

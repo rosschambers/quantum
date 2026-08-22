@@ -102,6 +102,12 @@ export function createFilesIpc(client: Client = createClient()): FilesIpc {
         openTerminal(directory: string): Promise<void> {
             return client.call('files.open_terminal', { directory }) as Promise<void>;
         },
+        showInViewer(path: string): Promise<void> {
+            return client.call('view.show', {
+                name: 'plugin/file-viewer/file-viewer',
+                args: { path },
+            }) as Promise<void>;
+        },
         preview(path: string): Promise<PreviewPayload> {
             return client.call('files.preview', { path }) as Promise<PreviewPayload>;
         },

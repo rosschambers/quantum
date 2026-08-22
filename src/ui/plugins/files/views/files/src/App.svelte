@@ -815,6 +815,9 @@
                 onProperties: (target) => {
                     propertiesTarget = target;
                 },
+                onPreview: (target) => {
+                    void ipc.showInViewer(target.path);
+                },
             }),
         );
     }
