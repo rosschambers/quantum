@@ -218,14 +218,19 @@ pub fn classify_permissions(
 pub fn content_kind_for_name(name: &str) -> ContentKind {
     let extension = match name.rsplit_once('.') {
         Some((_, extension)) => extension.to_ascii_lowercase(),
-        None => return ContentKind::Other,
+        None => {
+            // Well-known extensionless filenames.
+            return match name.to_ascii_lowercase().as_str() {
+                "justfile" => ContentKind::Code,
+                _ => ContentKind::Other,
+            };
+        }
     };
     match extension.as_str() {
         "jpg" | "jpeg" | "png" | "gif" | "webp" | "svg" => ContentKind::Image,
         "md" | "txt" | "pdf" | "odt" | "docx" => ContentKind::Document,
-        "rs" | "ts" | "js" | "svelte" | "nix" | "toml" | "json" | "sh" | "py" | "css" | "html" => {
-            ContentKind::Code
-        }
+        "rs" | "ts" | "js" | "svelte" | "nix" | "toml" | "json" | "sh" | "py" | "css" | "html"
+        | "just" => ContentKind::Code,
         "zip" | "tar" | "gz" | "zst" | "xz" | "7z" | "rar" => ContentKind::Archive,
         "mp3" | "flac" | "ogg" | "wav" | "opus" => ContentKind::Music,
         _ => ContentKind::Other,
@@ -413,6 +418,7 @@ mod tests {
         assert_eq!(content_kind_for_name("report.PDF"), ContentKind::Document);
         assert_eq!(content_kind_for_name("main.rs"), ContentKind::Code);
         assert_eq!(content_kind_for_name("app.svelte"), ContentKind::Code);
+        assert_eq!(content_kind_for_name("recipes.just"), ContentKind::Code);
         assert_eq!(content_kind_for_name("backup.tar"), ContentKind::Archive);
         assert_eq!(content_kind_for_name("bundle.7z"), ContentKind::Archive);
         assert_eq!(content_kind_for_name("track.FLAC"), ContentKind::Music);
@@ -422,6 +428,12 @@ mod tests {
     #[test]
     fn content_kind_is_case_insensitive() {
         assert_eq!(content_kind_for_name("PHOTO.PnG"), ContentKind::Image);
+    }
+
+    #[test]
+    fn content_kind_extensionless_justfile_is_code() {
+        assert_eq!(content_kind_for_name("justfile"), ContentKind::Code);
+        assert_eq!(content_kind_for_name("Justfile"), ContentKind::Code);
     }
 
     #[test]

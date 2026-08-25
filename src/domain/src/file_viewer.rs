@@ -64,7 +64,7 @@ pub fn viewer_file_type_for_extension(extension: &str) -> ViewerFileType {
         // Code
         "ts" | "tsx" | "js" | "jsx" | "py" | "rs" | "nix" | "toml" | "yaml" | "yml" | "sh"
         | "bash" | "zsh" | "sql" | "go" | "html" | "css" | "scss" | "dockerfile" | "lua"
-        | "zig" | "c" | "cpp" | "h" | "hpp" | "java" | "kt" | "swift" | "rb" => {
+        | "zig" | "c" | "cpp" | "h" | "hpp" | "java" | "kt" | "swift" | "rb" | "just" => {
             ViewerFileType::Code
         }
 
@@ -111,6 +111,7 @@ pub fn language_for_extension(extension: &str) -> Option<String> {
         "kt" => "kotlin",
         "swift" => "swift",
         "rb" => "ruby",
+        "just" => "makefile",
         "md" | "mdx" | "markdown" => "markdown",
         _ => return None,
     };
@@ -169,6 +170,7 @@ mod tests {
         assert_eq!(viewer_file_type_for_extension("go"), ViewerFileType::Code);
         assert_eq!(viewer_file_type_for_extension("java"), ViewerFileType::Code);
         assert_eq!(viewer_file_type_for_extension("rb"), ViewerFileType::Code);
+        assert_eq!(viewer_file_type_for_extension("just"), ViewerFileType::Code);
     }
 
     #[test]
@@ -254,6 +256,7 @@ mod tests {
         assert_eq!(language_for_extension("go"), Some("go".to_string()));
         assert_eq!(language_for_extension("java"), Some("java".to_string()));
         assert_eq!(language_for_extension("rb"), Some("ruby".to_string()));
+        assert_eq!(language_for_extension("just"), Some("makefile".to_string()));
     }
 
     #[test]

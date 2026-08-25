@@ -452,12 +452,20 @@ fn read_for_viewer_blocking(path: &str) -> Result<ViewerFileInfo, FilesError> {
         .map(|p| p.to_string_lossy().to_string())
         .unwrap_or_else(|| "/".to_string());
 
-    // Determine file type from extension
+    // Determine file type from extension, with a fallback for well-known
+    // extensionless filenames (justfile, Makefile, Dockerfile, and similar).
     let extension = canonical_path
         .extension()
         .and_then(|e| e.to_str())
         .unwrap_or("");
-    let file_type = viewer_file_type_for_extension(extension);
+    let file_type = if extension.is_empty() {
+        match filename.to_ascii_lowercase().as_str() {
+            "justfile" => ViewerFileType::Code,
+            _ => viewer_file_type_for_extension(extension),
+        }
+    } else {
+        viewer_file_type_for_extension(extension)
+    };
 
     match file_type {
         ViewerFileType::Image | ViewerFileType::Video => {
@@ -501,7 +509,13 @@ fn read_for_viewer_blocking(path: &str) -> Result<ViewerFileInfo, FilesError> {
 
             let content = String::from_utf8_lossy(&buffer).to_string();
             let language = if file_type == ViewerFileType::Code {
-                language_for_extension(extension)
+                language_for_extension(extension).or_else(|| {
+                    // Extensionless code files: derive language from filename.
+                    match filename.to_ascii_lowercase().as_str() {
+                        "justfile" => Some("makefile".to_string()),
+                        _ => None,
+                    }
+                })
             } else {
                 None
             };
