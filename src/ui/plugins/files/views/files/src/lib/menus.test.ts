@@ -65,6 +65,7 @@ describe('buildEntryMenu order and membership', () => {
         const items = buildEntryMenu(entryContext({ entry: entry({ name: 'report.txt' }) }));
         expect(labels(items)).toEqual([
             'Open',
+            'Preview',
             'Open with...',
             'Open terminal here',
             'Cut',
