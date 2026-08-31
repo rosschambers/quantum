@@ -33,8 +33,7 @@ impl ProcStatsProvider {
             // ~100% of a core until the daemon is restarted. `Skip` re-anchors
             // the next deadline to the first period boundary after "now", so a
             // resume produces a single catch-up tick and then normal cadence,
-            // never a spin. See
-            // docs/plans/2026-07-12-suspend-resume-timer-spin-design.md.
+            // never a spin.
             let mut interval = tokio::time::interval(std::time::Duration::from_secs(1));
             interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
             loop {
@@ -191,8 +190,7 @@ mod tests {
     // resume), fire a single catch-up tick and then wait a full period — it
     // must NOT burst or spin. A regression to `sleep`-in-loop or the default
     // `Burst` behavior would break this and reintroduce the post-resume
-    // busy-loop (tokio#7883). See
-    // docs/plans/2026-07-12-suspend-resume-timer-spin-design.md.
+    // busy-loop (tokio#7883).
     #[tokio::test(start_paused = true)]
     async fn skip_interval_does_not_spin_after_a_large_clock_jump() {
         use std::time::Duration;

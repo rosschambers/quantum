@@ -525,9 +525,8 @@ await client.call('action.invoke', {
 ```
 
 The inner `data` carries the variant fields; the inner `payload` carries
-the provider-specific command shape. See the per-provider sections in
-`docs/plans/2026-05-29-quantum-tray-design.md` for the full payload
-catalog.
+the provider-specific command shape. See `docs/protocol.md` for the IPC
+method and payload reference.
 
 ### system_power configuration
 

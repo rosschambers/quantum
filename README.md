@@ -12,7 +12,7 @@ Quantum is a daemon that provides a modern launcher interface for Linux desktop 
 - **Themeable views** — Svelte 5 frontends served via custom `quantum://` URI scheme
 - **IPC-driven** — Control via `quantumctl` CLI or programmatically
 
-For architecture details, see [Design Doc](docs/plans/2026-05-26-quantum-launcher-design.md).
+For architecture details, see [Architecture](docs/architecture.md).
 
 ## Working Agreement
 
@@ -146,8 +146,6 @@ See [AGENTS.md](AGENTS.md) for dependency rules.
 
 ## Documentation
 
-- [Design Document](docs/plans/2026-05-26-quantum-launcher-design.md) — Full technical vision and design decisions
-- [GUI Realization Plan](docs/plans/2026-05-28-quantum-gui-realization.md) — GTK4 + WebKit integration, threading model
 - [Architecture](docs/architecture.md) — Onion layer structure, module organization, and threading model
 - [Verification](docs/VERIFICATION.md) — v1 acceptance criteria checklist
 - [Protocol Reference](docs/protocol.md) — IPC methods and message formats

@@ -5,8 +5,7 @@ before building (see the brainstorming skill).
 
 ## Shipped 2026-07-21 — launcher power-ups + clock calendar
 
-Design + plan: `docs/plans/2026-07-21-launcher-powerups-and-calendar-design.md`
-and `docs/plans/2026-07-21-launcher-powerups-and-calendar.md`. Delivered: a
+Delivered: a
 `calc` provider (`=` prefix and bare math, plus unit conversion), an `emoji`
 provider (`:` prefix), a clipboard-history subsystem (`;` prefix, text + image
 thumbnails + binary icons, blob-plus-JSON store, configurable `wl-paste`

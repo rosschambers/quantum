@@ -7,7 +7,7 @@ Working agreement for any agent or human contributor in this repo.
 Quantum is a Wayland/Hyprland launcher and widget host. Single Rust daemon
 owns a Tokio runtime and GTK4 main loop, renders Svelte 5 frontends inside
 WebKitGTK windows anchored via gtk4-layer-shell. See
-`docs/plans/2026-05-26-quantum-launcher-design.md` for the design.
+`docs/architecture.md` for the design.
 
 ## Architecture — Onion Layers
 
@@ -293,8 +293,7 @@ broken CI before; do not reintroduce them:
   and streams `{event:"size", path:<child>, bytes, complete}` updates; the `files`
   view shows the running number, a `--color-accent` "Calculating" dot before it
   until `complete`, and re-requests sizes after a `changed` reload. Four
-  invariants a future change MUST preserve (each was a real bug fixed 2026-07-20 —
-  see `docs/plans/2026-07-20-*sizer*` / `*size*`):
+  invariants a future change MUST preserve (each was a real bug fixed 2026-07-20):
   - **`BackgroundSizer` walks cache-miss children CONCURRENTLY** on a bounded pool
     of `SIZER_WORKERS = 4` threads (`std::thread::scope`, stdlib, no crate). A huge
     child (a 253 GB Steam library) must not block its siblings — they size in

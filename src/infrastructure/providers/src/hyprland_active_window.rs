@@ -27,8 +27,8 @@ pub(crate) struct MonitorSeed {
 /// Pure event-application function. Factored out of the spawned event-loop
 /// task so it can be unit-tested without spinning up a Tokio runtime.
 ///
-/// Mutates `state` in place per the contract documented in
-/// `docs/plans/2026-06-01-multi-monitor-bar.md` Task A.3.
+/// Mutates `state` in place: each Hyprland event updates the per-monitor
+/// active-window bookkeeping used by the multi-monitor bar.
 pub(crate) fn apply_event(state: &mut MonitorActiveWindowState, ev: HyprlandEvent) {
     match ev {
         HyprlandEvent::FocusedMon { monitor, workspace } => {
