@@ -26,10 +26,6 @@ Quantum runs as a single daemon on Hyprland. It gives you:
 
 ![Status bar spanning the full monitor width](assets/bar.png)
 
-### Wi-Fi
-
-![Wi-Fi manager showing available networks with signal strength](assets/wifi.png)
-
 ### Sound mixer
 
 ![Sound mixer with per-device output and input sliders](assets/sound.png)
