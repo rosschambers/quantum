@@ -114,7 +114,7 @@
                         <TocSidebar content={effectiveContent} contentElement={markdownContentElement} />
                     {/if}
                     <div class="markdown-content" bind:this={markdownContentElement}>
-                        <MarkdownRenderer content={effectiveContent} />
+                        <MarkdownRenderer content={effectiveContent} fileDirectory={fileInfo?.directory} />
                     </div>
                 </div>
             {:else if fileInfo.file_type === 'json'}

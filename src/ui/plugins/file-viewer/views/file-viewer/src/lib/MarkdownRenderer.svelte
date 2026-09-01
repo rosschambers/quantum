@@ -6,9 +6,21 @@
 
     interface Props {
         content: string;
+        fileDirectory?: string;
     }
 
-    let { content }: Props = $props();
+    let { content, fileDirectory }: Props = $props();
+
+    function isAbsoluteOrDataUrl(url: string): boolean {
+        return /^(?:[a-z][a-z0-9+.-]*:|\/\/)/i.test(url);
+    }
+
+    function resolveImageSrc(href: string): string {
+        if (!fileDirectory || !href || isAbsoluteOrDataUrl(href)) {
+            return href;
+        }
+        return `file://${fileDirectory}/${href}`;
+    }
 
     let parsedHtml = $derived.by(() => {
         try {
@@ -36,6 +48,13 @@
                 const highlightedCode = highlightCode(token.text, language);
                 const languageClass = language ? ` language-${language}` : '';
                 return `<pre><code class="hljs${languageClass}">${highlightedCode}</code></pre>`;
+            };
+
+            renderer.image = (token) => {
+                const src = resolveImageSrc(token.href);
+                const alt = token.text || '';
+                const titleAttribute = token.title ? ` title="${token.title}"` : '';
+                return `<img src="${src}" alt="${alt}"${titleAttribute} />`;
             };
 
             marked.setOptions({ renderer });

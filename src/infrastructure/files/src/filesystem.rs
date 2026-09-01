@@ -412,6 +412,127 @@ fn mounts_blocking() -> Result<Vec<DriveInfo>, FilesError> {
 /// Maximum file size for text preview: 5 megabytes.
 const VIEWER_TEXT_MAX_BYTES: u64 = 5 * 1024 * 1024;
 
+/// Maximum size of a single image file that will be embedded as a data URI in
+/// markdown content. Larger images are left as their original relative path.
+const MARKDOWN_IMAGE_EMBED_MAX_BYTES: u64 = 5 * 1024 * 1024;
+
+/// Returns true when the URL is a relative file path (not an absolute URL, not
+/// a scheme-qualified URI, not a fragment-only reference, not an absolute path).
+fn is_relative_image_path(url: &str) -> bool {
+    !url.starts_with('/')
+        && !url.starts_with('#')
+        && !url.contains("://")
+        && !url.starts_with("data:")
+}
+
+/// Read a file from disk and return it as a `data:<mime>;base64,...` URI, or
+/// `None` if the file cannot be read, exceeds [`MARKDOWN_IMAGE_EMBED_MAX_BYTES`],
+/// has no recognizable MIME type, or is not an image.
+fn read_file_as_data_uri(path: &Path) -> Option<String> {
+    use base64::Engine as _;
+
+    let metadata = std::fs::metadata(path).ok()?;
+    if metadata.len() > MARKDOWN_IMAGE_EMBED_MAX_BYTES {
+        return None;
+    }
+
+    let extension = path.extension()?.to_str()?;
+    let mime = mime_guess::from_ext(extension).first()?.to_string();
+
+    // Only embed image files.
+    if !mime.starts_with("image/") {
+        return None;
+    }
+
+    let bytes = std::fs::read(path).ok()?;
+    let encoded = base64::engine::general_purpose::STANDARD.encode(&bytes);
+    Some(format!("data:{mime};base64,{encoded}"))
+}
+
+/// Scan markdown content for `![alt](relative-path)` image references and
+/// replace relative paths with base64 data URIs so they render inside the
+/// `quantum://` WebView (which cannot load `file://` subresources due to
+/// WebKit cross-origin restrictions). Absolute URLs, data URIs, and images
+/// that cannot be read are left untouched.
+///
+/// The scanner works at the byte level and only branches on ASCII delimiter
+/// characters (`!`, `[`, `]`, `(`, `)`, space, tab, `"`, `'`), so it is safe
+/// for arbitrary UTF-8 content — every split point is on a character boundary.
+fn embed_markdown_images(content: &str, base_dir: &Path) -> String {
+    let bytes = content.as_bytes();
+    let len = bytes.len();
+    let mut replacements: Vec<(usize, usize, String)> = Vec::new();
+    let mut i = 0;
+
+    while i < len {
+        if bytes[i] == b'!' && i + 1 < len && bytes[i + 1] == b'[' {
+            let mut j = i + 2;
+
+            // Find the closing `]` by tracking bracket depth.
+            let mut depth: u32 = 1;
+            while j < len && depth > 0 {
+                match bytes[j] {
+                    b'[' => depth += 1,
+                    b']' => depth -= 1,
+                    _ => {}
+                }
+                if depth > 0 {
+                    j += 1;
+                }
+            }
+
+            // Expect `](` immediately after the alt text.
+            if j < len && bytes[j] == b']' && j + 1 < len && bytes[j + 1] == b'(' {
+                j += 2; // skip `](`
+                let url_start = j;
+
+                // The URL runs until whitespace, a quote (title delimiter), or `)`.
+                while j < len && !matches!(bytes[j], b')' | b' ' | b'\t' | b'"' | b'\'') {
+                    j += 1;
+                }
+                let url_end = j;
+
+                // Skip any optional title and find the closing `)`.
+                while j < len && bytes[j] != b')' {
+                    j += 1;
+                }
+
+                if j < len && bytes[j] == b')' {
+                    let url = &content[url_start..url_end];
+                    if !url.is_empty() && is_relative_image_path(url) {
+                        let image_path = base_dir.join(url);
+                        if let Some(data_uri) = read_file_as_data_uri(&image_path) {
+                            replacements.push((url_start, url_end, data_uri));
+                        }
+                    }
+                    i = j + 1;
+                    continue;
+                }
+            }
+
+            // Not a valid image reference — advance past the `!` and retry.
+            i = j;
+            continue;
+        }
+        i += 1;
+    }
+
+    if replacements.is_empty() {
+        return content.to_string();
+    }
+
+    // Build the result by splicing replacements into the original content.
+    let mut result = String::with_capacity(content.len());
+    let mut last = 0;
+    for (start, end, replacement) in &replacements {
+        result.push_str(&content[last..*start]);
+        result.push_str(replacement);
+        last = *end;
+    }
+    result.push_str(&content[last..]);
+    result
+}
+
 /// Read a file for viewing, returning file type, content (for text), and metadata.
 /// Text types are read up to 5 megabytes; binary check is performed on text reads.
 /// Media types (image, video) return no content but include a file:// URI.
@@ -507,7 +628,19 @@ fn read_for_viewer_blocking(path: &str) -> Result<ViewerFileInfo, FilesError> {
                 )));
             }
 
-            let content = String::from_utf8_lossy(&buffer).to_string();
+            let raw_content = String::from_utf8_lossy(&buffer).to_string();
+
+            // For markdown files, embed relative image references as base64
+            // data URIs so they render inside the quantum:// WebView.
+            let content = if file_type == ViewerFileType::Markdown {
+                embed_markdown_images(
+                    &raw_content,
+                    &canonical_path.parent().unwrap_or(Path::new("/")),
+                )
+            } else {
+                raw_content
+            };
+
             let language = if file_type == ViewerFileType::Code {
                 language_for_extension(extension).or_else(|| {
                     // Extensionless code files: derive language from filename.
