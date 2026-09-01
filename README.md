@@ -1,128 +1,73 @@
 # Quantum
 
-A Wayland/Hyprland native launcher and widget host built with Rust and Svelte.
+A desktop shell for Wayland. Launcher, status bar, notifications, and system menus — all in one daemon.
 
-## Overview
+![Quantum launcher showing application search results](assets/launcher.png)
 
-Quantum is a daemon that provides a modern launcher interface for Linux desktop environments. It features:
+## What it does
 
-- **Native Hyprland integration** — Direct IPC for window focusing and management
-- **Search across multiple providers** — Applications, open windows, shell commands, custom scripts
-- **Launcher power-ups** — Inline calculator and unit conversion (`=`), emoji picker (`:`), and clipboard history with image thumbnails (`;`), plus a Ctrl+K secondary-actions panel
-- **Themeable views** — Svelte 5 frontends served via custom `quantum://` URI scheme
-- **IPC-driven** — Control via `quantumctl` CLI or programmatically
+Quantum runs as a single daemon on Hyprland. It gives you:
 
-For architecture details, see [Architecture](docs/architecture.md).
+- **Launcher** with fuzzy search across apps, open windows, and shell commands. Prefix modes: `=` calculator with unit conversion, `:` emoji picker, `;` clipboard history with image thumbnails. Ctrl+K opens secondary actions on any result.
+- **Status bar** spanning each monitor — workspaces, active window title, media controls, system tray, clock. Per-monitor: plug in a display, the bar appears.
+- **Wi-Fi manager** — scan, connect, switch bands, see signal strength. No NetworkManager applet needed.
+- **Sound mixer** — per-device volume sliders for every output and input, playback info, PipeWire/PulseAudio device profile switching.
+- **Notifications** — D-Bus notification daemon with toast popups and a notification center.
+- **Bluetooth manager** — pair, connect, forget, switch profiles.
+- **Timers** — create, edit, dismiss. Persistent across restarts. Desktop ring indicator in the bar.
+- **File explorer** — panel view with places sidebar, right-click context menus, recursive folder sizing, file previews (markdown, code, images, video).
+- **File viewer** — open any file for read-only preview from the shell with `qv <path>`.
+- **System tray** — full D-Bus system tray with nested menus (SNI + dbusmenu).
+- **Clipboard manager** — searchable history with image support, accessible from the launcher.
 
-## Working Agreement
+## Screenshots
 
-See [AGENTS.md](AGENTS.md) for conventions, layer rules, and commit style.
+| Wi-Fi | Sound |
+|-------|-------|
+| ![Wi-Fi manager showing available networks](assets/wifi.png) | ![Sound mixer with output and input device sliders](assets/sound.png) |
 
-## Installation
+![Status bar](assets/desktop.png)
 
-### Canonical: nix-shell
+## Tech stack
 
-All builds, tests, lint, and format checks run through the nix-shell defined
-by `shell.nix`, wrapped by `./scripts/devsh.sh`. This is the supported path:
-it provides the correct Rust, GTK4, WebKitGTK 6, and gtk4-layer-shell, and
-installs the pkg-config alias the `gtk4-layer-shell` crate needs (upstream
-ships `gtk4-layer-shell-0.pc`, but the crate looks up `gtk4-layer-shell.pc`).
+Rust daemon (Tokio + GTK4 + WebKitGTK + gtk4-layer-shell) serving Svelte 5 frontends over a custom `quantum://` URI scheme. IPC via Unix socket. Controlled with `quantumctl`.
+
+## Build and run
+
+Builds run through a nix-shell (`shell.nix`) that provides the correct Rust toolchain, GTK4, WebKitGTK 6, and gtk4-layer-shell.
 
 ```bash
-just build          # builds all crates inside the nix-shell
-# or, equivalently:
+just build          # build all crates
+just test           # run all tests
+just lint           # clippy, warnings as errors
+just fmt            # format rust code
+just dev            # run the daemon in dev mode
+```
+
+Or directly through the nix-shell wrapper:
+
+```bash
 ./scripts/devsh.sh cargo build --bin quantumd --bin quantumctl
 ```
 
-To install the built binaries for the systemd user service:
+### Install the binaries
 
 ```bash
 ./scripts/devsh.sh cargo install --path src/binaries/quantumd
 ./scripts/devsh.sh cargo install --path src/binaries/quantumctl
 ```
 
-### Advanced / unsupported: system toolchain
+### Keybind
 
-Building against a system-installed toolchain (outside nix-shell) is **not
-supported**. If you attempt it, you must supply the GTK4, WebKitGTK 6, and
-gtk4-layer-shell development packages yourself, for example on Ubuntu:
-
-```bash
-sudo apt-get install libgtk-4-dev libwebkit2gtk-6.0-dev libgtk4-layer-shell-dev
-```
-
-You must also alias the pkg-config file the `gtk4-layer-shell` crate expects
-(`gtk4-layer-shell.pc` pointing at the system's `gtk4-layer-shell-0.pc`);
-`shell.nix` does this automatically, a bare `cargo install` does not.
-
-## Quick Start
-
-### Commands
-
-| Command | Purpose |
-|---------|---------|
-| `just build` | Build all crates |
-| `just test` | Run all tests |
-| `just fmt` | Format Rust code |
-| `just lint` | Clippy + warnings as errors |
-| `just dev` | Run daemon in dev mode |
-
-### Running
-
-Build via `just build`:
-
-```bash
-just build
-```
-
-Or build through the nix-shell wrapper directly:
-
-```bash
-./scripts/devsh.sh cargo build --bin quantumd --bin quantumctl
-```
-
-Start the daemon in dev mode via `just`:
-
-```bash
-just dev
-```
-
-Or run directly through the nix-shell wrapper:
-
-```bash
-RUST_LOG=info ./scripts/devsh.sh ./target/debug/quantumd &
-```
-
-Control the launcher via `quantumctl`:
-
-```bash
-quantumctl toggle launcher    # Show/hide
-quantumctl show launcher      # Show
-quantumctl hide launcher      # Hide
-```
-
-### Smoke Test Scripts
-
-Manual verification scripts for end-to-end testing:
-
-```bash
-./scripts/manual-smoke-launcher.sh  # Test launcher window: type, enter, esc
-./scripts/manual-smoke-widget.sh    # Test widget window: clock display
-```
-
-### Keybind Setup
-
-Add the launcher to your Hyprland config:
+Add to your Hyprland config:
 
 ```conf
 bind = SUPER, SPACE, exec, quantumctl toggle launcher
 ```
 
-See [packaging/hyprland/example.conf](packaging/hyprland/example.conf) for additional window rules and widget keybinds.
+See [packaging/hyprland/example.conf](packaging/hyprland/example.conf) for window rules and widget keybinds.
 
-### Systemd Setup
-
-To run the daemon as a user service, copy the unit file and enable it:
+### Systemd service
 
 ```bash
 mkdir -p ~/.config/systemd/user
@@ -131,22 +76,28 @@ systemctl --user daemon-reload
 systemctl --user enable --now quantum
 ```
 
-See [packaging/systemd/quantum.service](packaging/systemd/quantum.service) for details.
+### Without nix (unsupported)
+
+You will need GTK4, WebKitGTK 6, and gtk4-layer-shell development packages, plus a manual pkg-config alias (`gtk4-layer-shell.pc` pointing at `gtk4-layer-shell-0.pc`). The nix-shell handles this automatically.
 
 ## Architecture
 
-Quantum follows a strict onion architecture enforced at the Cargo crate level:
+Onion architecture enforced at the Cargo crate level:
 
-- **Domain** — Pure value objects, errors, and port definitions (no I/O)
-- **Application** — Use cases and business logic
-- **Infrastructure** — Implementations: providers, IPC, shell, config
-- **UI** — GTK4 + WebKitGTK windows and Svelte frontends
+- **Domain** — pure types, errors, port traits. No I/O.
+- **Application** — use cases and business logic.
+- **Infrastructure** — providers, IPC, D-Bus, Hyprland, config, files, processes.
+- **UI** — GTK4 + WebKitGTK windows and Svelte frontends.
 
-See [AGENTS.md](AGENTS.md) for dependency rules.
+See [docs/architecture.md](docs/architecture.md) for the full layout.
 
 ## Documentation
 
-- [Architecture](docs/architecture.md) — Onion layer structure, module organization, and threading model
-- [Verification](docs/VERIFICATION.md) — v1 acceptance criteria checklist
-- [Protocol Reference](docs/protocol.md) — IPC methods and message formats
-- [Theming Guide](docs/theming.md) — How to write and customize themes
+- [Architecture](docs/architecture.md) — layers, modules, threading model
+- [Protocol](docs/protocol.md) — IPC methods and message formats
+- [Theming](docs/theming.md) — writing and customizing themes
+- [Development](docs/development.md) — fast local iteration workflow
+
+## License
+
+MIT
