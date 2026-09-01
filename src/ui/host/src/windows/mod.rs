@@ -47,6 +47,120 @@ pub(crate) fn suppress_browser_context_menu(webview: &webkit6::WebView, inspecto
     webview.connect_context_menu(move |_view, _menu, _hit_test| !inspector_enabled);
 }
 
+/// The result of classifying a navigation URI for policy enforcement.
+///
+/// Used by [`install_navigation_policy`] to decide what to do when a WebView
+/// attempts to navigate to a URI. The classification is extracted as a pure
+/// function ([`classify_navigation_uri`]) so it can be unit-tested without GTK.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum NavigationDecision {
+    /// Allow the WebView to navigate (quantum:// or empty URI).
+    Allow,
+    /// Block the navigation and open the URI in the user's default browser.
+    OpenExternal(String),
+    /// Block the navigation silently (unknown or unsafe schemes).
+    Block,
+}
+
+/// Classify a navigation URI into a [`NavigationDecision`].
+///
+/// - `quantum://` URIs and empty or blank URIs are allowed (internal navigation).
+/// - `http://` and `https://` URIs are opened externally in the default browser.
+/// - All other schemes (ftp, javascript, data, file, and similar) are blocked.
+pub(crate) fn classify_navigation_uri(uri: &str) -> NavigationDecision {
+    let trimmed = uri.trim();
+    if trimmed.is_empty() {
+        return NavigationDecision::Allow;
+    }
+    if trimmed.starts_with("quantum://") {
+        return NavigationDecision::Allow;
+    }
+    if trimmed.starts_with("http://") || trimmed.starts_with("https://") {
+        return NavigationDecision::OpenExternal(trimmed.to_owned());
+    }
+    NavigationDecision::Block
+}
+
+/// Spawn `xdg-open` for the given URI in a fire-and-forget manner.
+///
+/// stdin, stdout, and stderr are all directed to null so the child process
+/// is fully detached from the daemon. The process is not killed when the
+/// `Child` handle is dropped (`kill_on_drop` is false by default for
+/// `std::process::Command`).
+fn open_url_externally(uri: &str) {
+    match std::process::Command::new("xdg-open")
+        .arg(uri)
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+    {
+        Ok(_child) => {
+            tracing::debug!(uri, "spawned xdg-open for external URI");
+        }
+        Err(error) => {
+            tracing::warn!(uri, %error, "failed to spawn xdg-open for external URI");
+        }
+    }
+}
+
+/// Install a navigation policy handler on a Quantum WebView.
+///
+/// Quantum views are a widget/launcher host, not a browser. When the rendered
+/// content contains clickable links (for example Markdown in the file viewer),
+/// the default WebKit behavior is to navigate the WebView itself — which is
+/// wrong: the user expects `https://` links to open in their browser.
+///
+/// This handler intercepts every navigation policy decision:
+/// - `quantum://` and empty URIs are allowed (internal navigation).
+/// - `http://` and `https://` URIs are blocked and opened externally via
+///   `xdg-open`.
+/// - All other schemes are blocked silently.
+///
+/// Non-navigation decisions (resource loads, and similar) are left to WebKit's
+/// default policy.
+pub(crate) fn install_navigation_policy(webview: &webkit6::WebView) {
+    use glib::prelude::Cast;
+    use webkit6::prelude::*;
+
+    webview.connect_decide_policy(|_view, decision, decision_type| {
+        if decision_type != webkit6::PolicyDecisionType::NavigationAction
+            && decision_type != webkit6::PolicyDecisionType::NewWindowAction
+        {
+            return false;
+        }
+
+        let Some(navigation_decision) =
+            decision.downcast_ref::<webkit6::NavigationPolicyDecision>()
+        else {
+            decision.ignore();
+            return true;
+        };
+
+        let uri = navigation_decision
+            .navigation_action()
+            .and_then(|mut action| action.request())
+            .and_then(|request| request.uri())
+            .map(|gstring| gstring.to_string())
+            .unwrap_or_default();
+
+        match classify_navigation_uri(&uri) {
+            NavigationDecision::Allow => {
+                decision.use_();
+            }
+            NavigationDecision::OpenExternal(external_uri) => {
+                decision.ignore();
+                open_url_externally(&external_uri);
+            }
+            NavigationDecision::Block => {
+                decision.ignore();
+            }
+        }
+
+        true
+    });
+}
+
 /// The shared host context every window constructor needs: the IPC
 /// dispatcher and theme store, the Tokio runtime handle and broadcast sender
 /// for event forwarding, and the optional monitor to pin the surface to.
@@ -133,6 +247,7 @@ pub(crate) fn inject_view_args(webview: &webkit6::WebView, args: Option<serde_js
 #[cfg(test)]
 mod tests {
     use super::resolve_view_uri;
+    use super::{classify_navigation_uri, NavigationDecision};
 
     #[test]
     fn plugin_view_resolves_to_plugin_uri() {
@@ -161,6 +276,76 @@ mod tests {
         assert_eq!(
             resolve_view_uri("plugin/onlyone"),
             "quantum://theme/default/views/plugin/onlyone/index.html"
+        );
+    }
+
+    #[test]
+    fn quantum_scheme_is_allowed() {
+        assert_eq!(
+            classify_navigation_uri("quantum://plugin/launcher/views/launcher/index.html"),
+            NavigationDecision::Allow,
+        );
+        assert_eq!(
+            classify_navigation_uri("quantum://theme/default/views/widgets/clock/index.html"),
+            NavigationDecision::Allow,
+        );
+    }
+
+    #[test]
+    fn empty_uri_is_allowed() {
+        assert_eq!(classify_navigation_uri(""), NavigationDecision::Allow);
+        assert_eq!(classify_navigation_uri("   "), NavigationDecision::Allow);
+    }
+
+    #[test]
+    fn https_opens_externally() {
+        assert_eq!(
+            classify_navigation_uri("https://example.com/page"),
+            NavigationDecision::OpenExternal("https://example.com/page".to_owned()),
+        );
+        assert_eq!(
+            classify_navigation_uri("https://github.com/user/repo#readme"),
+            NavigationDecision::OpenExternal("https://github.com/user/repo#readme".to_owned()),
+        );
+    }
+
+    #[test]
+    fn http_opens_externally() {
+        assert_eq!(
+            classify_navigation_uri("http://example.com"),
+            NavigationDecision::OpenExternal("http://example.com".to_owned()),
+        );
+    }
+
+    #[test]
+    fn ftp_scheme_is_blocked() {
+        assert_eq!(
+            classify_navigation_uri("ftp://files.example.com/pub"),
+            NavigationDecision::Block,
+        );
+    }
+
+    #[test]
+    fn javascript_scheme_is_blocked() {
+        assert_eq!(
+            classify_navigation_uri("javascript:alert(1)"),
+            NavigationDecision::Block,
+        );
+    }
+
+    #[test]
+    fn data_scheme_is_blocked() {
+        assert_eq!(
+            classify_navigation_uri("data:text/html,<h1>hi</h1>"),
+            NavigationDecision::Block,
+        );
+    }
+
+    #[test]
+    fn file_scheme_is_blocked() {
+        assert_eq!(
+            classify_navigation_uri("file:///etc/passwd"),
+            NavigationDecision::Block,
         );
     }
 }

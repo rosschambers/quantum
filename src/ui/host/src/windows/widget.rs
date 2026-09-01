@@ -497,6 +497,9 @@ fn build_webview(
     // under the inspector flag so "Inspect Element" is available in dev.
     crate::windows::suppress_browser_context_menu(&webview, inspector_enabled);
 
+    // Block external navigations and open them in the default browser.
+    crate::windows::install_navigation_policy(&webview);
+
     webview.connect_load_failed(|_view, event, uri, err| {
         tracing::error!(
             "widget WebView load_failed: event={:?} uri={} err={}",

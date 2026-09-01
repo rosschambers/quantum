@@ -234,6 +234,13 @@ impl PanelWindow {
         // only under the inspector flag so "Inspect Element" stays available.
         crate::windows::suppress_browser_context_menu(&webview, inspector_enabled);
 
+        // Block external navigations (http/https) and open them in the user's
+        // default browser via xdg-open. Internal quantum:// navigations are
+        // allowed. This prevents the WebView from navigating away from its
+        // plugin page when the user clicks an external link (for example in
+        // rendered markdown).
+        crate::windows::install_navigation_policy(&webview);
+
         // Surface load failures so we can diagnose missing assets etc.
         webview.connect_load_failed(|_view, event, uri, err| {
             tracing::error!(

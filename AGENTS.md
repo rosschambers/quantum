@@ -495,6 +495,15 @@ broken CI before; do not reintroduce them:
   indicators wire it through `wireBarMenu`
   (`src/ui/plugins/bar/views/bar/src/lib/tray/barMenu.ts`), which handles the
   anchor and the bar input-region expand/reset (below).
+- **All WebViews block external navigation and open `http(s)://` links in the
+  default browser.** `install_navigation_policy`
+  (`src/ui/host/src/windows/mod.rs`) connects a `decide-policy` handler on
+  every WebView that allows `quantum://` navigations, blocks `http://` and
+  `https://` navigations (opening them via `xdg-open` instead), and silently
+  blocks all other schemes (`javascript:`, `data:`, `file:`). This prevents a
+  view from navigating away from its plugin page when the user clicks an
+  external link (for example in rendered markdown), and closes the
+  navigation-based XSS vector flagged in `docs/2026-06-18-repo-review.md:472`.
 - **Widget layer depends on interactivity. `Layer::Background` surfaces are
   NON-interactive in Hyprland — they receive no pointer clicks and no keyboard.**
   Content-sized widgets (the clock) sit on `Layer::Background` and anchor per the
