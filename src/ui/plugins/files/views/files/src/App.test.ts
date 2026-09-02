@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, fireEvent } from '@testing-library/svelte/svelte5';
 import type { FileEntry, FilesEvent, MenuItem } from '@quantum/client';
 import App from './App.svelte';
@@ -582,5 +582,82 @@ describe('App size-event batching', () => {
         } finally {
             vi.useRealTimers();
         }
+    });
+});
+
+describe('App path argument (window.__quantum_args)', () => {
+    const TARGET = '/usr/share/icons';
+
+    afterEach(() => {
+        delete (window as any).__quantum_args;
+    });
+
+    it('opens to the args.path directory when it is a valid, listable directory', async () => {
+        (window as any).__quantum_args = { path: TARGET };
+        const ipc = createFakeIpc([]);
+        // Allow the target path to be listed successfully (it is a directory).
+        ipc.list = vi.fn((path: string) =>
+            Promise.resolve(
+                path === TARGET
+                    ? [makeEntry({ name: 'hicolor', path: `${TARGET}/hicolor`, kind: 'directory' })]
+                    : [],
+            ),
+        );
+        const { container } = render(App, { props: { ipc } });
+
+        // The pane navigates to the args path, so list is called with it.
+        await vi.waitFor(() => {
+            expect(ipc.list).toHaveBeenCalledWith(TARGET);
+        });
+
+        // The active pane path label shows the target directory.
+        const activePath = container.querySelector('.pane:not(.inactive-pane) .pane-path');
+        await vi.waitFor(() => {
+            expect(activePath?.textContent).toBe(TARGET);
+        });
+    });
+
+    it('falls back to home when args.path is not a valid directory', async () => {
+        (window as any).__quantum_args = { path: '/nonexistent/path' };
+        const consoleWarn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+        const ipc = createFakeIpc([makeEntry({ name: 'alpha', path: `${HOME}/alpha` })]);
+        // The target path rejects (does not exist); Home still resolves.
+        const originalList = ipc.list as ReturnType<typeof vi.fn>;
+        ipc.list = vi.fn((path: string) => {
+            if (path === '/nonexistent/path') {
+                return Promise.reject(new Error('No such directory'));
+            }
+            return originalList(path);
+        });
+        const { container } = render(App, { props: { ipc } });
+
+        // It must fall back to the home directory.
+        await vi.waitFor(() => {
+            expect(ipc.list).toHaveBeenCalledWith(HOME);
+        });
+        const activePath = container.querySelector('.pane:not(.inactive-pane) .pane-path');
+        await vi.waitFor(() => {
+            expect(activePath?.textContent).toBe(HOME);
+        });
+
+        // A console warning is emitted for the invalid path.
+        expect(consoleWarn).toHaveBeenCalledWith(
+            expect.stringContaining('/nonexistent/path'),
+        );
+        consoleWarn.mockRestore();
+    });
+
+    it('opens to home when no args are provided (existing behavior)', async () => {
+        // No __quantum_args set.
+        const ipc = createFakeIpc([makeEntry({ name: 'alpha', path: `${HOME}/alpha` })]);
+        const { container } = render(App, { props: { ipc } });
+
+        await vi.waitFor(() => {
+            expect(ipc.list).toHaveBeenCalledWith(HOME);
+        });
+        const activePath = container.querySelector('.pane:not(.inactive-pane) .pane-path');
+        await vi.waitFor(() => {
+            expect(activePath?.textContent).toBe(HOME);
+        });
     });
 });

@@ -268,7 +268,8 @@
         }
     }
 
-    // Startup: load places, then seed both panes at Home (the first pin) so the
+    // Startup: load places, then seed both panes at Home (the first pin) — or
+    // at the directory specified by `window.__quantum_args.path` — so the
     // history starts clean rather than carrying the placeholder root.
     let initialized = false;
     $effect(() => {
@@ -276,13 +277,36 @@
             return;
         }
         initialized = true;
+
+        // Views that accept arguments read them from `window.__quantum_args`,
+        // injected by the host before the page commits. CLI:
+        // `quantumctl show plugin/files/files --args '{"path":"/some/dir"}'`
+        const args = (window as any).__quantum_args as { path?: string } | undefined;
+        const argsPath = args?.path;
+
         void ipc
             .places()
-            .then((places) => {
+            .then(async (places) => {
                 pins = places.pins;
                 drives = places.drives;
                 const home = places.pins[0]?.path ?? '/';
-                if (home !== '/') {
+
+                if (argsPath) {
+                    try {
+                        // Validate the path is a listable directory before navigating.
+                        await ipc.list(argsPath);
+                        panes[0].navigate(argsPath);
+                        panes[1].navigate(argsPath);
+                    } catch {
+                        console.warn(
+                            `files: args.path "${argsPath}" is not a valid directory, falling back to home`,
+                        );
+                        if (home !== '/') {
+                            panes[0].navigate(home);
+                            panes[1].navigate(home);
+                        }
+                    }
+                } else if (home !== '/') {
                     panes[0].navigate(home);
                     panes[1].navigate(home);
                 }
