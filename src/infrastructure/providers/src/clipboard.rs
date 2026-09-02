@@ -514,7 +514,7 @@ mod tests {
     #[test]
     fn single_line_collapses_and_caps() {
         assert_eq!(single_line("a   b\n c"), "a b c");
-        let long: String = std::iter::repeat('x').take(200).collect();
+        let long: String = "x".repeat(200);
         let line = single_line(&long);
         assert!(line.chars().count() <= 81);
         assert!(line.ends_with('…'));

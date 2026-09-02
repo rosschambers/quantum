@@ -1,19 +1,25 @@
 #!/usr/bin/env bash
-# Pre-commit hook: reject commits whose staged Rust files are not rustfmt-clean.
+# Pre-commit hook: reject commits whose staged Rust files fail rustfmt or clippy.
 #
-# CI runs `cargo fmt --all -- --check` (rustfmt 1.95) as the first Rust step and
-# aborts the whole job on a single unformatted line, which also skips clippy and
-# the test suite. This hook catches that locally so a formatting nit never gets
-# pushed and never masks a real clippy or test failure in CI.
+# CI runs `cargo fmt --all -- --check` and then `cargo clippy --workspace
+# --all-targets -- -D warnings` inside the nix-shell. A single unformatted line
+# or clippy warning aborts the whole CI job, which also skips the test suite.
+# This hook catches both locally so lint violations never get pushed and never
+# mask real test failures in CI.
 #
 # Runs only when Rust files are staged, and uses the same nix-shell toolchain as
-# CI via scripts/devsh.sh so the local and CI rustfmt versions match exactly.
+# CI via scripts/devsh.sh so the local and CI tool versions match exactly.
+#
+# Note: clippy requires a build, so the first run after a clean is slow (~2-3
+# min). Subsequent runs with a warm target/ are fast (seconds). To skip the hook
+# in an emergency: git commit --no-verify.
 set -euo pipefail
 
 REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 
-# Skip if no staged Rust files: format checks are irrelevant to frontend-only or
-# documentation-only commits, and entering the nix-shell is not free.
+# Skip if no staged Rust files: format and lint checks are irrelevant to
+# frontend-only or documentation-only commits, and entering the nix-shell is not
+# free.
 if ! git -C "$REPO_DIR" diff --cached --name-only --diff-filter=ACM | grep -q '\.rs$'; then
     exit 0
 fi
@@ -21,5 +27,11 @@ fi
 if ! "$REPO_DIR/scripts/devsh.sh" cargo fmt --all -- --check; then
     echo ""
     echo "pre-commit: Rust code is not formatted. Run 'just fmt' and re-stage." >&2
+    exit 1
+fi
+
+if ! "$REPO_DIR/scripts/devsh.sh" cargo clippy --workspace --all-targets -- -D warnings; then
+    echo ""
+    echo "pre-commit: clippy found warnings treated as errors. Run 'just lint' to see details." >&2
     exit 1
 fi

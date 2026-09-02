@@ -289,7 +289,11 @@ mod tests {
         let mut opens: Vec<String> = Vec::new();
         for message in drain(&mut rx) {
             match message {
-                WindowRequest::Open { view, mode, args } => {
+                WindowRequest::Open {
+                    view,
+                    mode,
+                    args: _,
+                } => {
                     assert!(matches!(mode, WindowMode::Show));
                     opens.push(view);
                 }
@@ -319,7 +323,11 @@ mod tests {
         let messages = drain(&mut rx);
         assert_eq!(messages.len(), 1);
         match &messages[0] {
-            WindowRequest::Open { view, mode, args } => {
+            WindowRequest::Open {
+                view,
+                mode,
+                args: _,
+            } => {
                 assert_eq!(view, "plugin/bar/bar@HDMI-A-1");
                 assert!(matches!(mode, WindowMode::Show));
             }
@@ -367,7 +375,11 @@ mod tests {
         let mut opens: Vec<String> = Vec::new();
         for message in drain(&mut rx) {
             match message {
-                WindowRequest::Open { view, mode, args } => {
+                WindowRequest::Open {
+                    view,
+                    mode,
+                    args: _,
+                } => {
                     assert!(matches!(mode, WindowMode::Show));
                     opens.push(view);
                 }

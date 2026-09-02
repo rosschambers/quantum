@@ -312,7 +312,7 @@ mod forest_tests {
     }
 
     /// Find a node by pid anywhere in a forest, for assertions.
-    fn find<'a>(roots: &'a [ProcessNode], pid: i32) -> Option<&'a ProcessNode> {
+    fn find(roots: &[ProcessNode], pid: i32) -> Option<&ProcessNode> {
         for node in roots {
             if node.pid == pid {
                 return Some(node);

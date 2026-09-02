@@ -540,9 +540,9 @@ fn read_for_viewer_blocking(path: &str) -> Result<ViewerFileInfo, FilesError> {
     let path_buf = PathBuf::from(path);
 
     // Canonicalize the path (expand ~ via home_dir, resolve symlinks, etc.)
-    let canonical_path = if path.starts_with('~') {
+    let canonical_path = if let Some(rest) = path.strip_prefix('~') {
         if let Some(home) = dirs::home_dir() {
-            let rest = path.strip_prefix("~/").unwrap_or(&path[1..]);
+            let rest = rest.strip_prefix('/').unwrap_or(rest);
             home.join(rest)
         } else {
             PathBuf::from(path)
@@ -635,7 +635,7 @@ fn read_for_viewer_blocking(path: &str) -> Result<ViewerFileInfo, FilesError> {
             let content = if file_type == ViewerFileType::Markdown {
                 embed_markdown_images(
                     &raw_content,
-                    &canonical_path.parent().unwrap_or(Path::new("/")),
+                    canonical_path.parent().unwrap_or(Path::new("/")),
                 )
             } else {
                 raw_content
@@ -1208,14 +1208,11 @@ mod tests {
         assert_eq!(info.filename, "image.png");
         assert_eq!(info.file_type, ViewerFileType::Image);
         assert_eq!(info.content, "");
-        assert!(info
-            .uri
-            .as_ref()
-            .map_or(false, |u| u.starts_with("file://")));
+        assert!(info.uri.as_ref().is_some_and(|u| u.starts_with("file://")));
         assert!(info
             .mime_type
             .as_ref()
-            .map_or(false, |m| m.starts_with("image/")));
+            .is_some_and(|m| m.starts_with("image/")));
     }
 
     #[tokio::test]

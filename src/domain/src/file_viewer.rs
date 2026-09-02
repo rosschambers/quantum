@@ -124,7 +124,7 @@ pub fn language_for_extension(extension: &str) -> Option<String> {
 /// Returns `true` if null bytes are found in the first 8192 bytes of the buffer.
 pub fn is_likely_binary(buffer: &[u8]) -> bool {
     let check_limit = buffer.len().min(8192);
-    buffer[..check_limit].iter().any(|&b| b == 0)
+    buffer[..check_limit].contains(&0)
 }
 
 #[cfg(test)]

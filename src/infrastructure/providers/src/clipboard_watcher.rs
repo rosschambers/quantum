@@ -394,7 +394,7 @@ mod tests {
     #[test]
     fn text_preview_collapses_whitespace_and_caps_length() {
         assert_eq!(text_preview("  hello   world \n line "), "hello world line");
-        let long: String = std::iter::repeat('a').take(200).collect();
+        let long: String = "a".repeat(200);
         let preview = text_preview(&long);
         assert!(preview.chars().count() <= 121);
         assert!(preview.ends_with('…'));
