@@ -248,18 +248,22 @@ pub struct ManagedWindowConstructor {
     runtime: Handle,
     event_tx: broadcast::Sender<EventEnvelope>,
     catalog: crate::ViewCatalog,
+    web_context: webkit6::WebContext,
 }
 
 impl ManagedWindowConstructor {
     /// Create a new window constructor. The `catalog` supplies the
     /// [`ViewDescriptor`] for each canonical view name so `construct`
     /// dispatches on declared window semantics instead of hardcoded names.
+    /// The `web_context` is the memory-tuned context from
+    /// [`crate::build_web_context`]; every constructed window inherits it.
     pub fn new(
         dispatcher: Arc<dyn IpcDispatcher>,
         theme_store: Arc<dyn ThemeStore>,
         runtime: Handle,
         event_tx: broadcast::Sender<EventEnvelope>,
         catalog: crate::ViewCatalog,
+        web_context: webkit6::WebContext,
     ) -> Self {
         Self {
             dispatcher,
@@ -267,6 +271,7 @@ impl ManagedWindowConstructor {
             runtime,
             event_tx,
             catalog,
+            web_context,
         }
     }
 
@@ -292,6 +297,7 @@ impl ManagedWindowConstructor {
             runtime: self.runtime.clone(),
             event_tx: self.event_tx.clone(),
             monitor,
+            web_context: self.web_context.clone(),
         }
     }
 }

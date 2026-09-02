@@ -110,6 +110,7 @@ impl WidgetWindow {
             runtime,
             event_tx,
             monitor,
+            web_context,
         } = ctx;
         let window = gtk4::Window::builder().decorated(false).build();
 
@@ -329,6 +330,7 @@ impl WidgetWindow {
         let webview = build_webview(
             &window,
             &view_name,
+            &web_context,
             dispatcher,
             theme_store,
             runtime,
@@ -367,6 +369,7 @@ impl WidgetWindow {
             runtime,
             event_tx,
             monitor,
+            web_context,
         } = ctx;
         let window = gtk4::Window::builder().decorated(false).build();
 
@@ -431,6 +434,7 @@ impl WidgetWindow {
         let webview = build_webview(
             &window,
             &view_name,
+            &web_context,
             dispatcher,
             theme_store,
             runtime,
@@ -465,6 +469,7 @@ impl WidgetWindow {
 fn build_webview(
     window: &gtk4::Window,
     view_name: &str,
+    web_context: &webkit6::WebContext,
     dispatcher: Arc<dyn IpcDispatcher>,
     theme_store: Arc<dyn ThemeStore>,
     runtime: Handle,
@@ -474,7 +479,7 @@ fn build_webview(
     // Widget-style views (bar, clock, timers, toast) are always-warm and never
     // destroyed on dismiss, so they share a single render process via the
     // shared web-process anchor to cut per-view renderer memory.
-    let webview = crate::web_process::new_webview(true);
+    let webview = crate::web_process::new_webview(web_context, true);
 
     // Transparent WebView background so the layer-shell surface's
     // overflow region stays see-through. Without this WebKit paints

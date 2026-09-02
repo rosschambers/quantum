@@ -100,6 +100,7 @@ impl PanelWindow {
             runtime,
             event_tx,
             monitor,
+            web_context,
         } = ctx;
         let view_name: String = canonical_name.into();
 
@@ -206,7 +207,7 @@ impl PanelWindow {
         // process via the anchor (share_process is always true): overlays are
         // hidden and reused on dismiss, never destroyed, so an isolated renderer
         // would stay resident regardless.
-        let webview = crate::web_process::new_webview(share_process);
+        let webview = crate::web_process::new_webview(&web_context, share_process);
 
         // For the fullscreen overlay the WebView must paint transparent
         // too, so the page's `.backdrop` controls the dim, not WebKit's

@@ -1,4 +1,4 @@
-//! Shared WebKit render-process anchor.
+//! Shared WebKit render-process anchor and memory-tuned `WebContext`.
 //!
 //! WebKitGTK spawns one web process per [`webkit6::WebView`]. The `related-view`
 //! construct property (via [`webkit6::WebView::builder`]) makes a new view share
@@ -21,8 +21,74 @@
 //! shared-process request and cached in a `thread_local!` for the lifetime of
 //! the process. All `WebView` construction happens on the GTK main thread, so a
 //! thread-local holding the `!Send` `WebView` is safe and needs no locking.
+//!
+//! ## Memory tuning (2026-09-02)
+//!
+//! The default `WebContext` allocates browser-grade caches that quantum never
+//! benefits from (its views are tiny local Svelte bundles, not the open web).
+//! [`build_web_context`] constructs an explicit context with:
+//!
+//! - **`MemoryPressureSettings`** — caps per-web-process memory at 512 MB,
+//!   starts conservative GC at 50 %, aggressive release at 80 %, and kills the
+//!   process at 2 × the limit (1 GB). Killed processes trigger
+//!   `web-process-terminated` on every attached `WebView`, which callers must
+//!   handle by reloading.
+//! - **`CacheModel::DocumentViewer`** — minimal page/back-forward cache, sized
+//!   for a document viewer rather than a general web browser.
+//!
+//! See `docs/plans/2026-09-02-memory-b-webkit-memory-pressure.md`.
 
 use std::cell::RefCell;
+
+/// Per-web-process memory limit in megabytes. WebKit's conservative and strict
+/// thresholds are fractions of this, and the kill threshold a multiple. Tunable
+/// via the `QUANTUM_WEBKIT_MEMORY_LIMIT_MB` environment variable; defaults to
+/// 512 MB. The shared render process hosts all warm view DOM/JS heaps, so this
+/// must accommodate the combined working set of bars, timers, launcher, clock,
+/// and toast — but well below the multi-gigabyte growth seen on 2026-09-02.
+const DEFAULT_MEMORY_LIMIT_MB: u32 = 512;
+
+/// Build the memory-tuned [`webkit6::WebContext`] used for all quantum views.
+///
+/// Must be called exactly once, at activate time, before any `WebView` is
+/// created. The returned context owns the `MemoryPressureSettings` and cache
+/// model; register the `quantum://` scheme on it before loading any view.
+pub fn build_web_context() -> webkit6::WebContext {
+    let limit_mb = std::env::var("QUANTUM_WEBKIT_MEMORY_LIMIT_MB")
+        .ok()
+        .and_then(|v| v.parse::<u32>().ok())
+        .unwrap_or(DEFAULT_MEMORY_LIMIT_MB);
+
+    let mut pressure = webkit6::MemoryPressureSettings::new();
+    pressure.set_memory_limit(limit_mb);
+    // Begin releasing caches (page cache, JIT code caches, malloc trim) when
+    // the web process reaches 50 % of the limit.
+    pressure.set_conservative_threshold(0.50);
+    // Aggressive release (drop JIT caches, force full GC) at 80 %.
+    pressure.set_strict_threshold(0.80);
+    // Kill the web process at 2x the limit (last resort). If the shared process
+    // is killed, every warm view receives `web-process-terminated` and must
+    // reload. This is still better than the process growing unbounded.
+    pressure.set_kill_threshold(2.0);
+    // Check every 30 seconds.
+    pressure.set_poll_interval(30.0);
+
+    let context = webkit6::WebContext::builder()
+        .memory_pressure_settings(&pressure)
+        .build();
+
+    // Minimal cache model — quantum serves tiny local Svelte bundles over
+    // quantum://, not the open web. The default web-browser model keeps
+    // page/back-forward caches sized for general browsing that waste memory.
+    context.set_cache_model(webkit6::CacheModel::DocumentViewer);
+
+    tracing::info!(
+        limit_mb,
+        "WebContext built with MemoryPressureSettings and DocumentViewer cache model"
+    );
+
+    context
+}
 
 thread_local! {
     /// The lazily created, never-shown anchor whose render process the warm
@@ -30,18 +96,21 @@ thread_local! {
     static ANCHOR: RefCell<Option<webkit6::WebView>> = const { RefCell::new(None) };
 }
 
-/// Create a [`webkit6::WebView`].
+/// Create a [`webkit6::WebView`] on the given [`webkit6::WebContext`].
 ///
 /// When `share_process` is `true` the returned view shares the process-lifetime
 /// anchor's render process (creating the anchor on first use); when `false` the
-/// view gets its own isolated render process.
-pub fn new_webview(share_process: bool) -> webkit6::WebView {
+/// view gets its own isolated render process. All views use the explicit
+/// context so they inherit its `MemoryPressureSettings` and `CacheModel`.
+pub fn new_webview(context: &webkit6::WebContext, share_process: bool) -> webkit6::WebView {
     if !share_process {
-        return webkit6::WebView::new();
+        return webkit6::WebView::builder().web_context(context).build();
     }
     ANCHOR.with(|cell| {
         let mut slot = cell.borrow_mut();
-        let anchor = slot.get_or_insert_with(webkit6::WebView::new).clone();
+        let anchor = slot
+            .get_or_insert_with(|| webkit6::WebView::builder().web_context(context).build())
+            .clone();
         webkit6::WebView::builder().related_view(&anchor).build()
     })
 }
@@ -58,6 +127,15 @@ pub fn new_webview(share_process: bool) -> webkit6::WebView {
 ///
 /// Call this on the [`webkit6::Settings`] of every view before applying them.
 pub fn apply_widget_settings(settings: &webkit6::Settings) {
+    // Disable WebKit's GPU-accelerated compositing. WebKitGTK loads
+    // libvulkan_intel.so for its own internal compositor independently of
+    // GSK_RENDERER, allocating six 1 GB sparse "state table" memfds via Mesa's
+    // ANV driver that grow monotonically (840 MB resident at startup, 1.66 GB
+    // after 13 h on 2026-09-02). Quantum's views are tiny Svelte widgets with
+    // no WebGL, canvas, or video — software compositing is sufficient and
+    // eliminates the Vulkan state pool overhead entirely. Easily reverted if
+    // animation smoothness regresses.
+    settings.set_hardware_acceleration_policy(webkit6::HardwareAccelerationPolicy::Never);
     settings.set_enable_webgl(false);
     settings.set_enable_webrtc(false);
     settings.set_enable_media_stream(false);

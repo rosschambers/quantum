@@ -92,10 +92,12 @@ pub fn run(
     app.connect_activate(move |app| {
         *hold_for_activate.borrow_mut() = Some(app.hold());
 
-        // Register the quantum:// URI scheme on the default WebContext so
-        // every WebView built from `WebContext::default()` can resolve theme
-        // bundles. Must happen before any WebView load_uri call.
-        quantum_ui::register_quantum_scheme_on_default(theme_store_for_scheme.clone());
+        // Build the memory-tuned WebContext and register the quantum:// URI
+        // scheme on it. The context is threaded to the window constructor so
+        // every WebView inherits its MemoryPressureSettings and CacheModel.
+        // Must happen before any WebView load_uri call.
+        let web_context = quantum_ui::build_web_context();
+        quantum_ui::register_quantum_scheme(&web_context, theme_store_for_scheme.clone());
 
         let ctor = ManagedWindowConstructor::new(
             dispatcher_for_activate.clone(),
@@ -103,6 +105,7 @@ pub fn run(
             runtime.clone(),
             event_tx_for_activate.clone(),
             view_catalog.clone(),
+            web_context,
         );
         let registry = Rc::new(RefCell::new(WindowRegistry::new(
             ctor,

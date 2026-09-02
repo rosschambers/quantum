@@ -9,6 +9,10 @@ use webkit6::{URISchemeRequest, WebContext};
 /// Register the quantum:// URI scheme on `WebContext::default()`. Use this
 /// convenience from binaries that don't want to take a webkit6 dependency
 /// just to call into the default context.
+///
+/// **Prefer passing the explicit `WebContext` from [`crate::build_web_context`]
+/// to [`register_quantum_scheme`] instead.** This fallback exists only for
+/// backwards compatibility with callers that have not yet been migrated.
 pub fn register_quantum_scheme_on_default(theme_store: Arc<dyn ThemeStore>) {
     let Some(ctx) = WebContext::default() else {
         tracing::error!("WebContext::default() returned None; quantum:// scheme not registered");

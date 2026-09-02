@@ -25,6 +25,7 @@ pub use registry::{
 pub use scheme::{register_quantum_scheme, register_quantum_scheme_on_default, token_push_js};
 pub use subscriptions::{should_forward, WebviewSubscriptions};
 pub use view_catalog::ViewCatalog;
+pub use web_process::build_web_context;
 pub use window_host::{DummyWindowHost, GtkWindowHost};
 pub use windows::PanelWindow;
 

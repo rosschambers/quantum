@@ -176,6 +176,7 @@ pub(crate) struct WindowContext {
     pub runtime: Handle,
     pub event_tx: broadcast::Sender<EventEnvelope>,
     pub monitor: Option<gdk::Monitor>,
+    pub web_context: webkit6::WebContext,
 }
 
 /// Resolve the `quantum://` URI a view loads from its canonical name.
