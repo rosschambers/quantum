@@ -233,10 +233,13 @@ mod tests {
 
     #[test]
     fn resolve_sound_file_returns_none_when_absent_everywhere() {
+        // Use a sound name that cannot exist in system fallback directories
+        // (/usr/share, /usr/local/share) either — "message" exists in the
+        // freedesktop sound theme installed on Ubuntu CI runners.
         let dir = tempfile::tempdir().expect("temp dir");
         let data_dirs = dir.path().display().to_string();
 
-        assert!(resolve_sound_file("message", Some(&data_dirs)).is_none());
+        assert!(resolve_sound_file("nonexistent-quantum-test-sound", Some(&data_dirs)).is_none());
     }
 
     #[test]
