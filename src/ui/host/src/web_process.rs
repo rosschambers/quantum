@@ -61,15 +61,19 @@ pub fn build_web_context() -> webkit6::WebContext {
 
     let mut pressure = webkit6::MemoryPressureSettings::new();
     pressure.set_memory_limit(limit_mb);
-    // Begin releasing caches (page cache, JIT code caches, malloc trim) when
-    // the web process reaches 50 % of the limit.
-    pressure.set_conservative_threshold(0.50);
+    // WebKit validates ordering: conservative < strict < kill. Set strict and
+    // kill BEFORE conservative — the default strict is 0.5, so setting
+    // conservative to 0.5 first trips the assertion. Order matters.
+    //
     // Aggressive release (drop JIT caches, force full GC) at 80 %.
     pressure.set_strict_threshold(0.80);
     // Kill the web process at 2x the limit (last resort). If the shared process
     // is killed, every warm view receives `web-process-terminated` and must
     // reload. This is still better than the process growing unbounded.
     pressure.set_kill_threshold(2.0);
+    // Begin releasing caches (page cache, JIT code caches, malloc trim) when
+    // the web process reaches 50 % of the limit.
+    pressure.set_conservative_threshold(0.50);
     // Check every 30 seconds.
     pressure.set_poll_interval(30.0);
 
@@ -127,15 +131,14 @@ pub fn new_webview(context: &webkit6::WebContext, share_process: bool) -> webkit
 ///
 /// Call this on the [`webkit6::Settings`] of every view before applying them.
 pub fn apply_widget_settings(settings: &webkit6::Settings) {
-    // Disable WebKit's GPU-accelerated compositing. WebKitGTK loads
-    // libvulkan_intel.so for its own internal compositor independently of
-    // GSK_RENDERER, allocating six 1 GB sparse "state table" memfds via Mesa's
-    // ANV driver that grow monotonically (840 MB resident at startup, 1.66 GB
-    // after 13 h on 2026-09-02). Quantum's views are tiny Svelte widgets with
-    // no WebGL, canvas, or video — software compositing is sufficient and
-    // eliminates the Vulkan state pool overhead entirely. Easily reverted if
-    // animation smoothness regresses.
-    settings.set_hardware_acceleration_policy(webkit6::HardwareAccelerationPolicy::Never);
+    // NOTE: HardwareAccelerationPolicy::Never was tried here on 2026-09-02 to
+    // eliminate WebKit's Vulkan state-table memfds, but it crashes the
+    // WebKitWebProcess in ThreadedCompositor::setSize ~10 s after startup —
+    // the threaded compositor initializes before the per-view settings take
+    // effect, and disabling accel after init leaves it in an inconsistent
+    // state. WebKit's GPU compositing cannot be disabled via this path without
+    // upstream fixes. The Vulkan state pools remain; MemoryPressureSettings
+    // and the cgroup MemoryMax guard are the working mitigations.
     settings.set_enable_webgl(false);
     settings.set_enable_webrtc(false);
     settings.set_enable_media_stream(false);
