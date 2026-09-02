@@ -34,6 +34,10 @@ Quantum runs as a single daemon on Hyprland. It gives you:
 
 ![Bluetooth manager with connected and available devices](assets/bluetooth.png)
 
+### File explorer
+
+![Dual-pane file explorer showing /etc and a project directory](assets/file-explorer.png)
+
 ### File viewer
 
 ![File viewer rendering a markdown document with a table-of-contents sidebar](assets/file-viewer.png)
