@@ -255,6 +255,7 @@ impl PanelWindow {
 
         let url = crate::windows::resolve_view_uri(&view_name);
         webview.load_uri(&url);
+        crate::windows::install_web_process_crash_handler(&webview, &view_name);
         window.set_child(Some(&webview));
 
         // Per-webview subscription set, shared between the bridge (which

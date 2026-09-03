@@ -550,6 +550,7 @@ fn build_webview(
     // views load `quantum://theme/...` (see `resolve_view_uri`).
     let uri = crate::windows::resolve_view_uri(view_name);
     webview.load_uri(&uri);
+    crate::windows::install_web_process_crash_handler(&webview, view_name);
     window.set_child(Some(&webview));
 
     // Per-webview subscription set, shared between the bridge (which seeds and

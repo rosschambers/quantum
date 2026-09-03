@@ -161,6 +161,54 @@ pub(crate) fn install_navigation_policy(webview: &webkit6::WebView) {
     });
 }
 
+/// Connect a `web-process-terminated` handler that reloads the view when its
+/// render process crashes or is OOM-killed.
+///
+/// Without this handler, a dead WebKitWebProcess leaves the view's surface
+/// blank forever (the "stranded blank bar" failure mode). The handler logs the
+/// reason and reloads the same `quantum://` URI — since views are stateless
+/// Svelte bundles served over the custom scheme, a reload restores them fully.
+///
+/// `TerminatedByApi` (explicit teardown via `terminate_web_process()` on
+/// `destroy_on_dismiss` views) is excluded — those views are being deliberately
+/// torn down and should not reload.
+pub(crate) fn install_web_process_crash_handler(webview: &webkit6::WebView, view_name: &str) {
+    use webkit6::prelude::*;
+    let name = view_name.to_string();
+    webview.connect_web_process_terminated(move |view, reason| {
+        match reason {
+            webkit6::WebProcessTerminationReason::Crashed => {
+                tracing::warn!(view = %name, "WebKitWebProcess crashed; reloading view");
+            }
+            webkit6::WebProcessTerminationReason::ExceededMemoryLimit => {
+                tracing::warn!(
+                    view = %name,
+                    "WebKitWebProcess exceeded memory limit; reloading view"
+                );
+            }
+            webkit6::WebProcessTerminationReason::TerminatedByApi => {
+                // Deliberate teardown (destroy_on_dismiss); do not reload.
+                tracing::debug!(view = %name, "WebKitWebProcess terminated by API");
+                return;
+            }
+            _ => {
+                tracing::warn!(view = %name, ?reason, "WebKitWebProcess terminated; reloading view");
+            }
+        }
+        // Reload the view's current URI. If it's still the quantum:// URI we
+        // loaded originally, this restores the view. If somehow blank, fall
+        // back to reload() which re-requests the last committed URI.
+        if let Some(uri) = view.uri() {
+            let uri_str = uri.as_str();
+            if !uri_str.is_empty() && uri_str != "about:blank" {
+                view.load_uri(uri_str);
+                return;
+            }
+        }
+        view.reload();
+    });
+}
+
 /// The shared host context every window constructor needs: the IPC
 /// dispatcher and theme store, the Tokio runtime handle and broadcast sender
 /// for event forwarding, and the optional monitor to pin the surface to.
