@@ -397,6 +397,80 @@ describe('App pinned actions', () => {
     });
 });
 
+describe('App search shortcuts', () => {
+    it('Ctrl+F focuses the toolbar filter input', async () => {
+        const ipc = createFakeIpc([]);
+        const { container } = render(App, { props: { ipc } });
+
+        await vi.waitFor(() => {
+            expect(ipc.list).toHaveBeenCalledWith(HOME);
+        });
+
+        await fireEvent.keyDown(window, { key: 'f', ctrlKey: true });
+
+        const filterInput = container.querySelector('.filter-input') as HTMLInputElement;
+        expect(document.activeElement).toBe(filterInput);
+    });
+
+    it('Ctrl+F focuses the filter input even when focus is already inside it', async () => {
+        const ipc = createFakeIpc([]);
+        const { container } = render(App, { props: { ipc } });
+
+        await vi.waitFor(() => {
+            expect(ipc.list).toHaveBeenCalledWith(HOME);
+        });
+
+        const filterInput = container.querySelector('.filter-input') as HTMLInputElement;
+        filterInput.focus();
+        expect(document.activeElement).toBe(filterInput);
+
+        await fireEvent.keyDown(filterInput, { key: 'f', ctrlKey: true });
+
+        expect(document.activeElement).toBe(filterInput);
+    });
+
+    it('Ctrl+A inside the filter input does not dispatch select-all', async () => {
+        const ipc = createFakeIpc([makeEntry({ name: 'alpha', path: `${HOME}/alpha` })]);
+        const { container } = render(App, { props: { ipc } });
+
+        await vi.waitFor(() => {
+            expect(ipc.list).toHaveBeenCalledWith(HOME);
+        });
+
+        const filterInput = container.querySelector('.filter-input') as HTMLInputElement;
+        filterInput.focus();
+
+        await fireEvent.keyDown(filterInput, { key: 'a', ctrlKey: true });
+
+        const activeRow = container.querySelector('.pane:not(.inactive-pane) .frow.selected');
+        expect(activeRow).toBeNull();
+    });
+
+    it('Ctrl+Shift+F toggles deep search on and off and focuses the filter input', async () => {
+        const ipc = createFakeIpc([]);
+        const { container } = render(App, { props: { ipc } });
+
+        await vi.waitFor(() => {
+            expect(ipc.list).toHaveBeenCalledWith(HOME);
+        });
+
+        const deepButton = container.querySelector('.deep') as HTMLButtonElement;
+        expect(deepButton.classList.contains('on')).toBe(false);
+
+        await fireEvent.keyDown(window, { key: 'F', ctrlKey: true, shiftKey: true });
+
+        expect(deepButton.classList.contains('on')).toBe(true);
+        const filterInput = container.querySelector('.filter-input') as HTMLInputElement;
+        expect(document.activeElement).toBe(filterInput);
+
+        filterInput.blur();
+        await fireEvent.keyDown(window, { key: 'F', ctrlKey: true, shiftKey: true });
+
+        expect(deepButton.classList.contains('on')).toBe(false);
+        expect(document.activeElement).toBe(filterInput);
+    });
+});
+
 describe('App keyboard shortcuts cheat sheet', () => {
     it('pressing ? opens the shortcuts cheat sheet', async () => {
         const ipc = createFakeIpc([]);

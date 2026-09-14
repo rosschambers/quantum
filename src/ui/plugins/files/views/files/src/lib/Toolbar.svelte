@@ -28,6 +28,12 @@
          * the App can flip it on Ctrl+L; forwarded straight to the Breadcrumb.
          */
         editing?: boolean;
+        /**
+         * Incremented by the App whenever the filter input should be focused
+         * and its text selected (Ctrl+F / Ctrl+Shift+F). Only the CHANGE
+         * matters, not the value, so the initial mount never steals focus.
+         */
+        focusSignal?: number;
         onNavigate: (path: string) => void;
         onBack: () => void;
         onForward: () => void;
@@ -49,6 +55,7 @@
         deepSearch,
         dualPane,
         editing = $bindable(false),
+        focusSignal = 0,
         onNavigate,
         onBack,
         onForward,
@@ -63,6 +70,28 @@
 
     // Up is enabled everywhere except the filesystem root.
     const canGoUp = $derived(path !== '/');
+    // The wrap gets its accent/glow treatment while the filter holds text,
+    // matching the :focus-within state so a populated-but-blurred filter
+    // still reads as active.
+    const filterActive = $derived(filter.trim() !== '');
+
+    let inputEl = $state<HTMLInputElement | null>(null);
+    // Sentinel so the first effect run (on mount) records the initial
+    // focusSignal without focusing; only a later CHANGE steals focus.
+    const UNSET = Symbol('unset');
+    let lastFocusSignal: number | typeof UNSET = UNSET;
+
+    $effect(() => {
+        if (lastFocusSignal === UNSET) {
+            lastFocusSignal = focusSignal;
+            return;
+        }
+        if (focusSignal !== lastFocusSignal) {
+            lastFocusSignal = focusSignal;
+            inputEl?.focus();
+            inputEl?.select();
+        }
+    });
 
     function handleFilterInput(event: Event): void {
         onFilterInput((event.currentTarget as HTMLInputElement).value);
@@ -107,13 +136,14 @@
 
     <Breadcrumb {path} {onNavigate} bind:editing />
 
-    <div class="filter-wrap">
+    <div class="filter-wrap" class:active={filterActive}>
         <span class="filter-ic"><Icon name="search" size={13} /></span>
         <input
             class="filter-input"
             placeholder="Filter..."
             title="Filter this folder; toggle deep for recursive search"
             value={filter}
+            bind:this={inputEl}
             oninput={handleFilterInput}
             onkeydown={handleFilterKeyDown}
         />
@@ -214,6 +244,18 @@
         height: 30px;
         padding: 0 8px;
         width: 200px;
+        transition:
+            border-color 120ms ease,
+            box-shadow 120ms ease,
+            width 120ms ease;
+    }
+    .filter-wrap:focus-within,
+    .filter-wrap.active {
+        border-color: var(--color-accent);
+        box-shadow:
+            0 0 0 1px var(--color-accent),
+            0 0 10px rgb(166 227 161 / 25%);
+        width: 320px;
     }
     .filter-ic {
         display: inline-flex;

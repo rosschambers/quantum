@@ -90,6 +90,9 @@
     let anchors = $state<number[]>([0, 0]);
 
     let breadcrumbEditing = $state(false);
+    // Incremented to tell the Toolbar to focus and select the filter input
+    // (Ctrl+F / Ctrl+Shift+F); only the change matters, not the value.
+    let filterFocusSignal = $state(0);
     let propertiesTarget = $state<PropertiesTarget | null>(null);
     let promptRequest = $state<PromptRequest | null>(null);
     let confirmRequest = $state<ConfirmRequest | null>(null);
@@ -439,11 +442,23 @@
                 return;
             }
 
+            const action = resolveShortcut(event);
+
+            // The search shortcuts must reach the toolbar filter input even
+            // while focus is already inside an input (the filter itself or
+            // the location bar) — every other shortcut still respects the
+            // inInput guard below so browser-native editing (Ctrl+A etc.)
+            // keeps working inside inputs.
+            if (action !== null && (action.kind === 'focus-search' || action.kind === 'deep-search')) {
+                event.preventDefault();
+                dispatchShortcut(action);
+                return;
+            }
+
             if (inInput) {
                 return;
             }
 
-            const action = resolveShortcut(event);
             if (action !== null && action.kind !== 'clear-selection') {
                 event.preventDefault();
                 dispatchShortcut(action);
@@ -616,6 +631,13 @@
             case 'help':
                 helpOpen = true;
                 break;
+            case 'focus-search':
+                focusFilter();
+                break;
+            case 'deep-search':
+                toggleDeep();
+                focusFilter();
+                break;
             default: {
                 // Compile-time exhaustiveness: a new ShortcutAction variant that
                 // is not handled above becomes a type error here rather than a
@@ -745,6 +767,11 @@
         const pane = active;
         pane.deepSearch = !pane.deepSearch;
         void loadPane(pane);
+    }
+
+    /** Tell the toolbar to focus and select the filter input's text. */
+    function focusFilter(): void {
+        filterFocusSignal += 1;
     }
 
     // ── Sidebar and drag-and-drop ───────────────────────────────────────────
@@ -910,6 +937,7 @@
         deepSearch={active.deepSearch}
         {dualPane}
         bind:editing={breadcrumbEditing}
+        focusSignal={filterFocusSignal}
         onNavigate={navigateValidated}
         onBack={() => active.back()}
         onForward={() => active.forward()}

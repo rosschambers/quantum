@@ -107,4 +107,34 @@ describe('Toolbar', () => {
         await fireEvent.click(help);
         expect(onHelp).toHaveBeenCalledTimes(1);
     });
+
+    it('does not steal focus from the filter input on initial mount', () => {
+        renderToolbar({ focusSignal: 0 });
+        const input = document.activeElement;
+        expect(input?.tagName).not.toBe('INPUT');
+    });
+
+    it('focuses and selects the filter input text when focusSignal changes', async () => {
+        const { container, rerender } = renderToolbar({ filter: 'report', focusSignal: 0 });
+        const input = container.querySelector('.filter-input') as HTMLInputElement;
+        expect(document.activeElement).not.toBe(input);
+
+        await rerender({ filter: 'report', focusSignal: 1 });
+
+        expect(document.activeElement).toBe(input);
+        expect(input.selectionStart).toBe(0);
+        expect(input.selectionEnd).toBe(input.value.length);
+    });
+
+    it('marks the filter wrap active when the filter is non-empty', () => {
+        const { container } = renderToolbar({ filter: 'report' });
+        const wrap = container.querySelector('.filter-wrap') as HTMLElement;
+        expect(wrap.classList.contains('active')).toBe(true);
+    });
+
+    it('does not mark the filter wrap active when the filter is empty', () => {
+        const { container } = renderToolbar({ filter: '' });
+        const wrap = container.querySelector('.filter-wrap') as HTMLElement;
+        expect(wrap.classList.contains('active')).toBe(false);
+    });
 });
