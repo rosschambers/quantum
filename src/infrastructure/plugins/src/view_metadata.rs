@@ -24,6 +24,8 @@ pub fn parse_view_toml(text: &str) -> Result<ViewDescriptor, PluginsError> {
         fill_output: Option<bool>,
         destroy_on_dismiss: Option<bool>,
         click_through: Option<bool>,
+        multi_instance: Option<bool>,
+        max_instances: Option<u32>,
     }
 
     let raw: RawView =
@@ -83,8 +85,8 @@ pub fn parse_view_toml(text: &str) -> Result<ViewDescriptor, PluginsError> {
             .destroy_on_dismiss
             .unwrap_or(defaults.destroy_on_dismiss),
         click_through: raw.click_through.unwrap_or(defaults.click_through),
-        multi_instance: defaults.multi_instance,
-        max_instances: defaults.max_instances,
+        multi_instance: raw.multi_instance.unwrap_or(defaults.multi_instance),
+        max_instances: raw.max_instances.or(defaults.max_instances),
     })
 }
 
@@ -269,6 +271,33 @@ single_instance = false
     fn destroy_on_dismiss_defaults_false_when_missing() {
         let descriptor = parse_view_toml("kind = \"overlay\"\n").expect("valid");
         assert!(!descriptor.destroy_on_dismiss);
+    }
+
+    #[test]
+    fn multi_instance_true_parses() {
+        let descriptor = parse_view_toml("multi_instance = true\n").expect("valid multi_instance");
+        assert!(descriptor.multi_instance);
+    }
+
+    #[test]
+    fn multi_instance_defaults_false_when_missing() {
+        let descriptor =
+            parse_view_toml("kind = \"panel\"\n").expect("missing multi_instance is valid");
+        assert!(!descriptor.multi_instance);
+    }
+
+    #[test]
+    fn max_instances_parses_when_present() {
+        let descriptor = parse_view_toml("multi_instance = true\nmax_instances = 4\n")
+            .expect("valid max_instances");
+        assert_eq!(descriptor.max_instances, Some(4));
+    }
+
+    #[test]
+    fn max_instances_defaults_none_when_missing() {
+        let descriptor =
+            parse_view_toml("multi_instance = true\n").expect("missing max_instances is valid");
+        assert_eq!(descriptor.max_instances, None);
     }
 
     #[test]
