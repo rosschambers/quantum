@@ -21,6 +21,7 @@
     import Icon from './Icon.svelte';
     import { getDragSources, endDrag } from './dragState.svelte';
     import { isValidDrop } from './dnd';
+    import { relativeGroupLabel } from './path';
 
     interface Props {
         /** The rows to render, from `PaneState.listItems()`: entries plus any group headers. */
@@ -78,14 +79,11 @@
     /**
      * The display label for a group header: "." for the search root itself,
      * otherwise the group's absolute path with the search root prefix
-     * stripped. Falls back to the absolute path when `path` is unset.
+     * stripped (shared helper from `path.ts`). Falls back to the absolute
+     * path when no search root is set.
      */
-    function relativeGroupLabel(groupPath: string): string {
-        if (path === undefined || groupPath === path) {
-            return '.';
-        }
-        const prefix = path === '/' ? '/' : `${path}/`;
-        return groupPath.startsWith(prefix) ? groupPath.slice(prefix.length) : groupPath;
+    function groupLabel(groupPath: string): string {
+        return path === undefined ? groupPath : relativeGroupLabel(groupPath, path);
     }
 
     const ROW_HEIGHT = 30;
@@ -212,7 +210,7 @@
                         onclick={() => onGroupNavigate?.(item.path)}
                     >
                         <span class="group-ico"><Icon name="folder" size={13} /></span>
-                        <span class="group-label">{relativeGroupLabel(item.path)}</span>
+                        <span class="group-label">{groupLabel(item.path)}</span>
                     </button>
                 {:else}
                     <Row

@@ -6,7 +6,7 @@
 // keeps it unit-testable without mocking the client.
 
 import type { FileEntry } from '@quantum/client';
-import { parentOf } from './path';
+import { parentOf, relativeGroupLabel } from './path';
 
 /** The column a pane sorts its entries by. */
 export type SortColumn = 'name' | 'size' | 'mtime';
@@ -193,9 +193,12 @@ export class PaneState {
                 groups.set(groupPath, [entry]);
             }
         }
+        // Plain ordinal comparison on the relative labels so "." reliably
+        // sorts before letters, keeping the root group first regardless of
+        // collation rules.
         const orderedGroupPaths = [...groups.keys()].sort((a, b) => {
-            const labelA = this.relativeGroupLabel(a);
-            const labelB = this.relativeGroupLabel(b);
+            const labelA = relativeGroupLabel(a, this.path);
+            const labelB = relativeGroupLabel(b, this.path);
             if (labelA === labelB) {
                 return 0;
             }
@@ -209,21 +212,6 @@ export class PaneState {
             }
         }
         return result;
-    }
-
-    /**
-     * The sort key used to order groups: "." for the search root itself,
-     * otherwise the group's absolute path with the search root prefix
-     * stripped. Plain ordinal comparison (not `localeCompare`) is used on
-     * this key so "." reliably sorts before letters, keeping the root group
-     * first regardless of collation rules.
-     */
-    private relativeGroupLabel(groupPath: string): string {
-        if (groupPath === this.path) {
-            return '.';
-        }
-        const prefix = this.path === '/' ? '/' : `${this.path}/`;
-        return groupPath.startsWith(prefix) ? groupPath.slice(prefix.length) : groupPath;
     }
 
     /** Comparator: directories always precede files, then by the active column. */

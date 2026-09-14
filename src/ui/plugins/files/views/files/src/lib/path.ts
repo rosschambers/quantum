@@ -60,6 +60,19 @@ export function pathBaseName(path: string): string {
 }
 
 /**
+ * A group's display/sort label relative to the search root: "." when the
+ * group IS the root, otherwise the group path with the root prefix stripped.
+ * Falls back to the absolute path when the group is not under the root.
+ */
+export function relativeGroupLabel(groupPath: string, root: string): string {
+    if (groupPath === root) {
+        return '.';
+    }
+    const prefix = root === '/' ? '/' : `${root}/`;
+    return groupPath.startsWith(prefix) ? groupPath.slice(prefix.length) : groupPath;
+}
+
+/**
  * The parent directory of an absolute POSIX path. The root "/" is its own
  * parent, and a top-level directory such as "/home" resolves to "/". A trailing
  * slash is ignored. This is the single source of truth for "the directory that
