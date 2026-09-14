@@ -15,7 +15,7 @@
 
 import type { ApplicationInfo, FileEntry, FileOperation, MenuItem, PinnedAction } from '@quantum/client';
 import type { ClipboardOperation } from './clipboard.svelte';
-import { pathBaseName } from './path';
+import { parentOf, pathBaseName } from './path';
 import { SHORTCUT_KEYS } from './shortcuts';
 
 /** A pin target: the path to pin and the label to show for it. A `FileEntry` satisfies this. */
@@ -124,7 +124,10 @@ export function buildEntryMenu(ctx: EntryMenuContext): MenuItem[] {
         ctx.selectionPaths.includes(entry.path) && ctx.selectionPaths.length > 1
             ? ctx.selectionPaths
             : [entry.path];
-    const terminalDirectory = entry.kind === 'directory' ? entry.path : ctx.path;
+    // For a file, open the terminal in the directory CONTAINING that entry —
+    // during deep search `ctx.path` is the search root, not the file's parent.
+    // For a directory, "here" means the directory itself.
+    const terminalDirectory = entry.kind === 'directory' ? entry.path : parentOf(entry.path);
 
     const items: MenuItem[] = [
         ...pinnedItems(ctx.pinnedActions, entry.path, ctx.onOpenWithPinned),

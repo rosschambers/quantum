@@ -140,6 +140,30 @@ describe('buildEntryMenu actions', () => {
         expect(onOpenTerminal).toHaveBeenCalledWith('/home/user');
     });
 
+    it('Open terminal here uses the file\'s own parent when listing differs from the pane directory (deep search)', () => {
+        // During deep search `path` is the search root while the entry lives deeper.
+        // The terminal must open the folder CONTAINING the file, not the search root.
+        const file = entry({ name: 'deep.txt', path: '/home/user/projects/quantum/deep.txt' });
+        const onOpenTerminal = vi.fn();
+        const items = buildEntryMenu(
+            entryContext({ entry: file, path: '/home/user', onOpenTerminal }),
+        );
+        item(items, 'Open terminal here')?.onSelect?.();
+        expect(onOpenTerminal).toHaveBeenCalledWith('/home/user/projects/quantum');
+    });
+
+    it('Open terminal here on a deep-search directory still opens that directory itself', () => {
+        const dir = entry({
+            name: 'nested',
+            path: '/home/user/projects/nested',
+            kind: 'directory',
+        });
+        const onOpenTerminal = vi.fn();
+        const items = buildEntryMenu(entryContext({ entry: dir, path: '/home/user', onOpenTerminal }));
+        item(items, 'Open terminal here')?.onSelect?.();
+        expect(onOpenTerminal).toHaveBeenCalledWith('/home/user/projects/nested');
+    });
+
     it('Cut and Copy pass the resolved paths to onClipboard', () => {
         const target = entry({ name: 'report.txt' });
         const onClipboard = vi.fn();
