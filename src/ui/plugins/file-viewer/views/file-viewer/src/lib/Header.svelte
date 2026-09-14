@@ -1,6 +1,7 @@
 <script lang="ts">
     import { createClient } from '@quantum/client';
     import type { ViewerFileInfo } from './types';
+    import { selfViewName } from './selfName';
 
     interface Props {
         fileInfo: ViewerFileInfo;
@@ -24,7 +25,7 @@
 
     async function closePanel() {
         try {
-            await client.call('view.hide', { name: 'plugin/file-viewer/file-viewer' });
+            await client.call('view.hide', { name: selfViewName() });
         } catch (error) {
             console.error('Failed to close panel:', error);
         }

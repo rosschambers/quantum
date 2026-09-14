@@ -2,6 +2,7 @@
     import { onMount } from 'svelte';
     import { createClient } from '@quantum/client';
     import type { ViewerFileInfo } from './lib/types';
+    import { selfViewName } from './lib/selfName';
     import Header from './lib/Header.svelte';
     import MarkdownRenderer from './lib/MarkdownRenderer.svelte';
     import CodeRenderer from './lib/CodeRenderer.svelte';
@@ -76,7 +77,7 @@
             }
 
             if (event.key === 'Escape') {
-                client.call('view.hide', { name: 'plugin/file-viewer/file-viewer' }).catch(console.error);
+                client.call('view.hide', { name: selfViewName() }).catch(console.error);
             }
         };
 

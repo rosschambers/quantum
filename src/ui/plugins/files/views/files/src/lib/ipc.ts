@@ -139,7 +139,17 @@ export function createFilesIpc(client: Client = createClient()): FilesIpc {
             );
         },
         close(): void {
-            void client.call('view.hide', { name: 'plugin/files/files' }).catch(() => {});
+            // Close THIS window's own instance. A multi_instance view is
+            // opened as `plugin/files/files#<id>`; the host injects that full
+            // instance-qualified name as `window.__quantum_view_name`, so hide
+            // it rather than the bare shared name (which would resolve to a
+            // different key and never close this window). Fall back to the bare
+            // name if the host predates the injection.
+            const selfName =
+                (typeof window !== 'undefined' &&
+                    (window as { __quantum_view_name?: string }).__quantum_view_name) ||
+                'plugin/files/files';
+            void client.call('view.hide', { name: selfName }).catch(() => {});
         },
     };
 }

@@ -242,6 +242,12 @@ pub trait WindowOps {
     /// Inject view arguments as `window.__quantum_args` into the WebView.
     /// Default no-op for windows that do not need view args.
     fn inject_view_args(&mut self, _args: Option<serde_json::Value>) {}
+    /// Inject the instance-qualified view name (the full name the window was
+    /// opened with, including any `#<instance>` suffix) as
+    /// `window.__quantum_view_name` into the WebView, so a multi-instance view
+    /// can address and close its OWN instance rather than the bare view name.
+    /// Default no-op for windows that do not need it.
+    fn inject_view_name(&mut self, _name: &str) {}
 }
 
 /// Stable identity of a connected monitor. Two values compare equal only
@@ -508,6 +514,13 @@ impl WindowOps for ManagedWindow {
         match self {
             ManagedWindow::Panel(w) => w.inject_view_args(args),
             ManagedWindow::Widget(w) => w.inject_view_args(args),
+        }
+    }
+
+    fn inject_view_name(&mut self, name: &str) {
+        match self {
+            ManagedWindow::Panel(w) => w.inject_view_name(name),
+            ManagedWindow::Widget(w) => w.inject_view_name(name),
         }
     }
 }
@@ -813,6 +826,10 @@ impl<C: WindowConstructor> WindowRegistry<C> {
                     }
                 };
                 window.inject_view_args(args);
+                // Hand the window its own instance-qualified name (with any
+                // `#<instance>` suffix) so a multi-instance view can close the
+                // exact window it lives in, not the bare shared name.
+                window.inject_view_name(&view);
                 self.window_monitor_id.insert(key.clone(), current_id);
                 self.window_monitor.insert(key, requested);
                 match mode {

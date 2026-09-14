@@ -293,6 +293,46 @@ pub(crate) fn inject_view_args(webview: &webkit6::WebView, args: Option<serde_js
     });
 }
 
+/// Inject the instance-qualified view name into a WebView as
+/// `window.__quantum_view_name` on load.
+///
+/// The name is the full view name the window was opened with, including any
+/// `#<instance>` suffix, so a multi-instance view (the file explorer, the file
+/// viewer) can address and close the exact window it lives in via
+/// `view.hide { name }` rather than the bare shared name. Injected on
+/// `LoadEvent::Committed` (and immediately, in case the load already fired), so
+/// it persists across navigation and reloads, mirroring [`inject_view_args`].
+pub(crate) fn inject_view_name(webview: &webkit6::WebView, name: &str) {
+    use webkit6::prelude::WebViewExt;
+    let json_name = serde_json::to_string(name).unwrap_or_else(|_| "\"\"".into());
+    let js = format!("window.__quantum_view_name = {};", json_name);
+
+    let webview_immediate = webview.clone();
+    let js_immediate = js.clone();
+    WebViewExt::evaluate_javascript(
+        &webview_immediate,
+        &js_immediate,
+        None,
+        None,
+        gtk4::gio::Cancellable::NONE,
+        |_| {},
+    );
+
+    let webview_clone = webview.clone();
+    webview.connect_load_changed(move |_view, event| {
+        if event == webkit6::LoadEvent::Committed {
+            WebViewExt::evaluate_javascript(
+                &webview_clone,
+                &js,
+                None,
+                None,
+                gtk4::gio::Cancellable::NONE,
+                |_| {},
+            );
+        }
+    });
+}
+
 #[cfg(test)]
 mod tests {
     use super::resolve_view_uri;

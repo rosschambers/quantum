@@ -726,6 +726,10 @@ impl crate::registry::WindowOps for WidgetWindow {
     fn inject_view_args(&mut self, args: Option<serde_json::Value>) {
         crate::windows::inject_view_args(&self.webview, args);
     }
+
+    fn inject_view_name(&mut self, name: &str) {
+        crate::windows::inject_view_name(&self.webview, name);
+    }
 }
 
 impl Drop for WidgetWindow {
