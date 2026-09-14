@@ -7,6 +7,10 @@ describe('shortcuts reference', () => {
         expect(SHORTCUT_KEYS.deletePermanent).toBe('Shift+Del');
         expect(SHORTCUT_KEYS.newFolder).toBe('Ctrl+Shift+N');
     });
+    test('SHORTCUT_KEYS has the search actions', () => {
+        expect(SHORTCUT_KEYS.focusSearch).toBe('Ctrl+F');
+        expect(SHORTCUT_KEYS.deepSearch).toBe('Ctrl+Shift+F');
+    });
     test('every group hint has keys and description', () => {
         expect(SHORTCUT_GROUPS.length).toBeGreaterThan(0);
         for (const group of SHORTCUT_GROUPS) {
@@ -21,5 +25,12 @@ describe('shortcuts reference', () => {
         const clipboard = SHORTCUT_GROUPS.find((g) => g.title === 'Clipboard');
         const copy = clipboard?.hints.find((h) => h.description === 'Copy');
         expect(copy?.keys).toBe(SHORTCUT_KEYS.copy);
+    });
+    test('View group has the search rows', () => {
+        const view = SHORTCUT_GROUPS.find((g) => g.title === 'View');
+        const focusSearch = view?.hints.find((h) => h.description === 'Focus filter');
+        const deepSearch = view?.hints.find((h) => h.description === 'Toggle deep search');
+        expect(focusSearch?.keys).toBe(SHORTCUT_KEYS.focusSearch);
+        expect(deepSearch?.keys).toBe(SHORTCUT_KEYS.deepSearch);
     });
 });

@@ -30,6 +30,8 @@ export const SHORTCUT_KEYS = {
     refresh: 'F5',
     locationBar: 'Ctrl+L',
     help: '?',
+    focusSearch: 'Ctrl+F',
+    deepSearch: 'Ctrl+Shift+F',
 } as const;
 
 /** A single shortcut row: its key label and what it does. */
@@ -92,6 +94,8 @@ export const SHORTCUT_GROUPS: ShortcutGroup[] = [
             { keys: SHORTCUT_KEYS.toggleHidden, description: 'Toggle hidden files' },
             { keys: SHORTCUT_KEYS.refresh, description: 'Refresh' },
             { keys: SHORTCUT_KEYS.locationBar, description: 'Location bar' },
+            { keys: SHORTCUT_KEYS.focusSearch, description: 'Focus filter' },
+            { keys: SHORTCUT_KEYS.deepSearch, description: 'Toggle deep search' },
             { keys: SHORTCUT_KEYS.help, description: 'Keyboard shortcuts' },
         ],
     },
