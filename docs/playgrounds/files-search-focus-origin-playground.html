@@ -1,0 +1,300 @@
+<!DOCTYPE html>
+<!-- Playground: files view — filter-box focus state + deep-search result origin display.
+     Decision playground: models the REAL file-explorer chrome (sycamore tokens, 42px toolbar,
+     200px filter box, 30px rows from Row.svelte). One control per open question; cost readout
+     for the options that carry implementation cost. Prompt output records every settled choice. -->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>files — search focus + deep origin playground</title>
+<style>
+    :root {
+        /* sycamore theme tokens (src/ui/themes/sycamore/tokens.toml) */
+        --color-bg: #292520;
+        --color-bg-alt: #3b3630;
+        --color-border: #4a443e;
+        --color-fg: #e8e4d8;
+        --color-fg-alt: #d8d4c8;
+        --color-accent: #a6e3a1;
+        --color-muted: #8a8578;
+        --color-error: #af4e3c;
+        --color-surface: #3b3630;
+        --color-surface-hover: #4a443e;
+        --color-shadow: rgba(10, 8, 6, 0.6);
+        --color-divider: rgba(232, 228, 216, 0.25);
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+        font-family: system-ui, sans-serif;
+        background: #1c1a17;
+        color: var(--color-fg);
+        display: grid;
+        grid-template-columns: 320px 1fr;
+        grid-template-rows: 1fr auto;
+        height: 100vh;
+        gap: 14px;
+        padding: 14px;
+    }
+    /* ── Controls column ─────────────────────────────────────── */
+    #controls { grid-row: 1 / 3; overflow-y: auto; background: #211f1c; border: 1px solid #35322d; border-radius: 10px; padding: 14px; }
+    #controls h2 { font-size: 12px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--color-muted); margin: 16px 0 8px; }
+    #controls h2:first-child { margin-top: 0; }
+    .ctl { margin-bottom: 10px; }
+    .ctl label { display: block; font-size: 12px; color: var(--color-fg-alt); margin-bottom: 4px; }
+    .seg { display: flex; flex-wrap: wrap; gap: 4px; }
+    .seg button {
+        font: 11px ui-monospace, monospace; color: var(--color-fg-alt); background: #2b2823;
+        border: 1px solid #3b3730; border-radius: 6px; padding: 4px 8px; cursor: pointer;
+    }
+    .seg button.on { color: var(--color-accent); border-color: var(--color-accent); background: rgba(166, 227, 161, 0.12); }
+    .cards { display: flex; flex-direction: column; gap: 6px; }
+    .method-card { border: 1px solid #3b3730; border-radius: 8px; padding: 8px 10px; cursor: pointer; background: #2b2823; }
+    .method-card.on { border-color: var(--color-accent); background: rgba(166, 227, 161, 0.10); }
+    .method-card b { font-size: 12px; }
+    .method-card.on b { color: var(--color-accent); }
+    .method-card small { display: block; font-size: 11px; color: var(--color-muted); margin-top: 2px; }
+    .cost { font-size: 10px; font-family: ui-monospace, monospace; margin-top: 4px; padding: 2px 6px; border-radius: 4px; display: inline-block; }
+    .cost.free { color: #8a8578; background: #35322d; }
+    .cost.low { color: var(--color-accent); background: rgba(166, 227, 161, 0.10); }
+    .cost.med { color: #e0c97a; background: rgba(224, 201, 122, 0.10); }
+    .toggle { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--color-fg-alt); margin-bottom: 8px; cursor: pointer; }
+    .toggle input { accent-color: var(--color-accent); }
+    input[type=range] { width: 100%; accent-color: var(--color-accent); }
+    #costreadout { margin-top: 14px; border-top: 1px solid #35322d; padding-top: 10px; font: 11px ui-monospace, monospace; color: var(--color-muted); white-space: pre-wrap; }
+    /* ── Preview ─────────────────────────────────────────────── */
+    #preview { overflow: hidden; display: flex; }
+    #window {
+        flex: 1; display: flex; flex-direction: column; background: var(--color-bg);
+        border: 1px solid var(--color-border); border-radius: 12px; overflow: hidden;
+        box-shadow: 0 14px 40px var(--color-shadow); min-height: 0;
+    }
+    /* toolbar — measured from Toolbar.svelte: 42px, gap 6, padding 0 10 */
+    .toolbar { height: 42px; flex: none; display: flex; align-items: center; gap: 6px; padding: 0 10px; border-bottom: 1px solid var(--color-border); }
+    .icon-btn { width: 28px; height: 28px; flex: none; display: inline-flex; align-items: center; justify-content: center; background: transparent; border: none; border-radius: 7px; color: var(--color-fg-alt); font-size: 14px; }
+    .filter-wrap {
+        display: flex; align-items: center; gap: 4px; background: var(--color-bg-alt);
+        border: 1px solid var(--color-border); border-radius: 8px; height: 30px; padding: 0 8px;
+        width: var(--fb-width, 200px); transition: width 0.12s ease, box-shadow 0.12s ease, border-color 0.12s ease;
+    }
+    .filter-wrap svg { flex: none; color: var(--color-muted); }
+    .filter-input { flex: 1; min-width: 0; background: transparent; border: none; outline: none; color: var(--color-fg); font-size: 12px; font-family: inherit; }
+    .deep-chip { font-size: 9px; padding: 2px 5px; border-radius: 4px; color: var(--color-muted); border: 1px solid var(--color-border); background: transparent; flex: none; }
+    .deep-chip.on { color: var(--color-accent); border-color: var(--color-accent); }
+    .breadcrumb { font-size: 12px; color: var(--color-fg-alt); padding: 0 6px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .breadcrumb .sep { color: var(--color-muted); margin: 0 2px; }
+    /* list — Row.svelte: 30px rows, gap 8, padding 0 6, radius 6, font 12 */
+    #list { flex: 1; overflow-y: auto; padding: 4px 6px; min-height: 0; }
+    .frow { display: flex; align-items: center; gap: 8px; height: 30px; padding: 0 6px; border-radius: 6px; font-size: 12px; color: var(--color-fg-alt); }
+    .frow:hover { background: var(--color-surface-hover); }
+    .frow.sel { background: rgba(166, 227, 161, 0.16); color: var(--color-fg); }
+    .fico { flex: none; display: inline-flex; align-items: center; opacity: 0.85; }
+    .nm { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .origin-col { flex: 0 0 var(--origin-col-w, 260px); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font: 11px ui-monospace, monospace; color: var(--color-muted); text-align: right; }
+    .sub { display: block; font-size: 10px; line-height: 1.1; color: var(--color-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .nm.two-line { flex-direction: column; align-items: flex-start; gap: 0; }
+    .sz { flex: 0 0 90px; display: flex; align-items: center; gap: 6px; justify-content: flex-end; font-size: 11px; color: var(--color-muted); }
+    .minibar { width: 34px; height: 4px; border-radius: 2px; background: #35322d; overflow: hidden; }
+    .minibar i { display: block; height: 100%; background: var(--color-accent); }
+    .mt { flex: 0 0 74px; font-size: 11px; color: var(--color-muted); text-align: right; }
+    /* group header rows */
+    .group-header { display: flex; align-items: center; gap: 8px; padding: 0 6px; height: var(--gh, 30px); border-radius: 6px; font: 11px ui-monospace, monospace; color: var(--color-muted); }
+    .group-header:hover { background: var(--color-surface-hover); }
+    .group-header svg { flex: none; opacity: 0.85; }
+    .rows-under { padding-left: var(--indent, 12px); }
+    .cursor-hint { color: var(--color-accent); font-size: 9px; margin-left: 6px; }
+    /* ── Prompt output ───────────────────────────────────────── */
+    #promptbox { grid-column: 2; background: #211f1c; border: 1px solid #35322d; border-radius: 10px; padding: 12px 14px; }
+    #promptbox h2 { font-size: 12px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--color-muted); margin-bottom: 8px; }
+    #prompt { font-size: 12.5px; line-height: 1.55; white-space: pre-wrap; min-height: 90px; color: var(--color-fg-alt); }
+    #copy { margin-top: 8px; font: 12px system-ui; color: var(--color-accent); background: rgba(166, 227, 161, 0.10); border: 1px solid var(--color-accent); border-radius: 7px; padding: 5px 12px; cursor: pointer; }
+</style>
+</head>
+<body>
+<div id="controls">
+    <h2>Filter box — focus state</h2>
+    <div class="ctl"><label>Focused style</label><div class="seg" id="seg-focus"></div></div>
+    <label class="toggle"><input type="checkbox" id="t-focused" checked> Simulate: filter box focused</label>
+    <label class="toggle"><input type="checkbox" id="t-nonempty" checked> Same accent while filter is non-empty (unfocused)</label>
+
+    <h2>Deep results — origin display</h2>
+    <div class="cards" id="method-cards"></div>
+    <div class="ctl"><label>Header path format</label><div class="seg" id="seg-pathfmt"></div></div>
+    <div class="ctl"><label>Indent under header: <span id="indent-val"></span>px (0 = none)</label><input type="range" id="indent" min="0" max="24" step="4"></div>
+    <label class="toggle"><input type="checkbox" id="t-headerheight"> Compact header height (24px, breaks fixed-30px virtualization)</label>
+    <label class="toggle"><input type="checkbox" id="t-collapse"> Hide header when every result shares one parent</label>
+
+    <div id="costreadout"></div>
+</div>
+
+<div id="preview"><div id="window">
+    <div class="toolbar">
+        <span class="icon-btn">&#8249;</span><span class="icon-btn">&#8250;</span><span class="icon-btn">&#8964;</span>
+        <span class="breadcrumb">~<span class="sep">/</span>projects<span class="sep">/</span>quantum</span>
+        <div class="filter-wrap" id="filter-wrap">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg>
+            <input class="filter-input" id="filter-input" value="play" spellcheck="false">
+            <span class="deep-chip on">deep</span>
+        </div>
+        <span style="flex:1"></span>
+        <span class="icon-btn">&#9635;</span><span class="icon-btn">?</span><span class="icon-btn">&#10005;</span>
+    </div>
+    <div id="list"></div>
+</div></div>
+
+<div id="promptbox"><h2>Prompt</h2><div id="prompt"></div><button id="copy">Copy Prompt</button></div>
+
+<script>
+// ── State (one object; every control writes here, every render reads it) ────
+const DEFAULTS = { focusStyle: 'border-glow', nonEmptyAccent: true, simulateFocused: true,
+    method: 'groups', pathFmt: 'relative', indent: 12, compactHeaderHeight: false, collapseSingleParent: true };
+const state = structuredClone(DEFAULTS);
+
+const FOCUS_STYLES = [
+    ['none', 'today (no focus state)'],
+    ['border', 'accent border'],
+    ['border-glow', 'accent border + soft glow'],
+    ['expand', 'border + glow + grow to 320px'],
+];
+const METHODS = [
+    ['groups', 'Grouped section headers', 'results grouped by containing folder, header line per group', 'low', 'virtualization-safe if headers stay fixed-height'],
+    ['column', 'Muted origin column', 'flat list; a monospace path column right of the name', 'free', 'pure render change — rows unchanged'],
+    ['twoline', 'Second line under name', 'name on line 1, muted origin path on line 2', 'med', 'rows grow ~44px — virtualization ROW_HEIGHT must become variable'],
+];
+const PATHFMTS = [['relative', 'relative to search root'], ['absolute', 'absolute']];
+
+// Realistic deep-search data: query "play" under ~/projects
+const ROOT = '/home/user/projects';
+const RESULTS = [
+    { name: 'files-layout-playground.html', dir: 'quantum/docs/playgrounds', size: 34, mtime: 'Aug 12' },
+    { name: 'layout-playground.html', dir: 'quantum/docs/playgrounds', size: 21, mtime: 'Jul 09' },
+    { name: 'playground-render.png', dir: 'exocortex', size: 412, mtime: 'Jun 30' },
+    { name: 'playground-initial.png', dir: 'exocortex', size: 388, mtime: 'Jun 30' },
+    { name: 'playground.html', dir: 'murmur8/docs/playgrounds', size: 27, mtime: 'Aug 02' },
+    { name: 'playground', dir: 'exocortex/code/infra/config/docs/plans', size: 156, mtime: 'Jul 22' },
+    { name: 'playground-design-notes.md', dir: 'grimoire-studio/docs', size: 9, mtime: 'Aug 20' },
+    { name: 'replay-buffer.log', dir: 'frame/logs', size: 2048, mtime: 'Sep 12' },
+    { name: 'displaylist.rs', dir: 'quantum/src/ui/host/src/windows', size: 12, mtime: 'Aug 28' },
+];
+
+// ── Controls rendering ───────────────────────────────────────────────────────
+function seg(el, options, key, labelsFn) {
+    el.innerHTML = '';
+    options.forEach(([val, label]) => {
+        const b = document.createElement('button');
+        b.textContent = labelsFn ? labelsFn(val, label) : label;
+        b.className = state[key] === val ? 'on' : '';
+        b.onclick = () => { state[key] = val; seg(el, options, key, labelsFn); updateAll(); };
+        el.appendChild(b);
+    });
+}
+function cards() {
+    const el = document.getElementById('method-cards');
+    el.innerHTML = '';
+    METHODS.forEach(([val, title, desc, cost, note]) => {
+        const d = document.createElement('div');
+        d.className = 'method-card' + (state.method === val ? ' on' : '');
+        d.innerHTML = `<b>${title}</b><small>${desc}</small><span class="cost ${cost}">cost: ${cost === 'free' ? 'trivial' : cost === 'low' ? 'moderate — virtualization-aware' : 'heavy — variable row height'}</span><small>${note}</small>`;
+        d.onclick = () => { state.method = val; cards(); updateAll(); };
+        el.appendChild(d);
+    });
+}
+document.getElementById('t-focused').onchange = e => { state.simulateFocused = e.target.checked; updateAll(); };
+document.getElementById('t-nonempty').onchange = e => { state.nonEmptyAccent = e.target.checked; updateAll(); };
+document.getElementById('t-collapse').onchange = e => { state.collapseSingleParent = e.target.checked; updateAll(); };
+document.getElementById('t-headerheight').onchange = e => { state.compactHeaderHeight = e.target.checked; updateAll(); };
+document.getElementById('indent').oninput = e => { state.indent = +e.target.value; updateAll(); };
+
+// ── Preview rendering ────────────────────────────────────────────────────────
+function renderToolbar() {
+    const wrap = document.getElementById('filter-wrap');
+    const active = (state.simulateFocused) || (state.nonEmptyAccent && document.getElementById('filter-input').value !== '');
+    wrap.style.setProperty('--fb-width', state.focusStyle === 'expand' && active ? '320px' : '200px');
+    if (!active || state.focusStyle === 'none') {
+        wrap.style.borderColor = 'var(--color-border)';
+        wrap.style.boxShadow = 'none';
+    } else {
+        wrap.style.borderColor = 'var(--color-accent)';
+        wrap.style.boxShadow = state.focusStyle === 'border' ? 'none' : '0 0 0 1px var(--color-accent), 0 0 10px rgba(166,227,161,0.25)';
+    }
+}
+
+const FILE_SVG = '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/></svg>';
+const DIR_SVG = '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-4 0H4a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2Z"/></svg>';
+
+function pathFor(dir) {
+    if (state.pathFmt === 'absolute') return ROOT + '/' + dir;
+    return dir.split('/').join(' / ');
+}
+
+function row(r, indentPx) {
+    const sel = r.name === 'playground-render.png' ? ' sel' : '';
+    const originHtml = state.method === 'twoline'
+        ? `<span class="nm two-line"><span class="label">${r.name}</span><span class="sub">${pathFor(r.dir)}</span></span>`
+        : `<span class="nm">${r.name}</span>`;
+    const originCol = state.method === 'column' ? `<span class="origin-col">${pathFor(r.dir)}</span>` : '';
+    return `<div class="frow${sel}" style="padding-left:${6 + indentPx}px"><span class="fico">${FILE_SVG}</span>${originHtml}${originCol}<span class="sz"><span>${r.size} KB</span><span class="minibar"><i style="width:${Math.min(100, r.size / 20)}%"></i></span></span><span class="mt">${r.mtime}</span></div>`;
+}
+
+function renderList() {
+    const list = document.getElementById('list');
+    document.getElementById('window').style.setProperty('--indent', state.indent + 'px');
+    document.getElementById('window').style.setProperty('--gh', state.compactHeaderHeight ? '24px' : '30px');
+    let html = '';
+    if (state.method === 'groups') {
+        const groups = new Map();
+        for (const r of RESULTS) { if (!groups.has(r.dir)) groups.set(r.dir, []); groups.get(r.dir).push(r); }
+        const dirs = [...groups.keys()].sort();
+        // single-parent collapse only bites when every result shares one folder
+        const hideHeaders = state.collapseSingleParent && dirs.length === 1;
+        for (const dir of dirs) {
+            if (!hideHeaders) html += `<div class="group-header">${DIR_SVG}${pathFor(dir)}</div>`;
+            html += `<div class="rows-under">` + groups.get(dir).map(r => row(r, 0)).join('') + `</div>`;
+        }
+    } else {
+        html = [...RESULTS].sort((a, b) => a.name.localeCompare(b.name)).map(r => row(r, 0)).join('');
+    }
+    list.innerHTML = html;
+}
+
+function costReadout() {
+    const parts = [];
+    if (state.focusStyle !== 'none') parts.push('focus state: CSS on .filter-wrap only (trivial)');
+    else parts.push('focus state: none (CSS-only control becomes moot for focus, keeps non-empty accent only)');
+    if (state.focusStyle === 'expand') parts.push('width grow on focus = layout shift in toolbar — note tension with fixed-footprint preference');
+    if (state.method === 'groups') parts.push('grouped: paneState gains group-aware ordering; cursor skips header rows; headers non-selectable, click navigates; virtualization must treat headers as fixed-height rows');
+    if (state.method === 'column') parts.push('column: render-only change; selection model untouched; truncates long paths unless window is wide');
+    if (state.method === 'twoline') parts.push('two-line rows: ROW_HEIGHT 30 -> ~44 in FileList virtualization + Row.svelte height; bigger diff');
+    if (state.compactHeaderHeight) parts.push('compact 24px header: virtualization needs per-row heights (adds cost to grouped option)');
+    document.getElementById('costreadout').textContent = 'COST READOUT\n' + parts.map(p => '• ' + p).join('\n');
+}
+
+function updatePrompt() {
+    const parts = [];
+    parts.push(`Filter box focus state: ${FOCUS_STYLES.find(f => f[0] === state.focusStyle)[1]}` +
+        (state.nonEmptyAccent ? ', and the same accent stays on while the filter is non-empty even when unfocused' : '') + '.');
+    parts.push('Bind Ctrl+F to focus the filter box and Ctrl+Shift+F to toggle deep search (plus focus), added to shortcuts.ts so menus and the cheat sheet stay in lockstep.');
+    const m = METHODS.find(m => m[0] === state.method);
+    parts.push(`Deep-search origin display: ${m[1].toLowerCase()} — ${m[2]}, with header/origin paths ${PATHFMTS.find(p => p[0] === state.pathFmt)[1]} to the search root` +
+        (state.method === 'groups' ? `, rows indented ${state.indent}px under their group header, headers ${state.compactHeaderHeight ? 'compact 24px (variable row height)' : 'kept at the standard 30px row height so virtualization stays pure arithmetic'}, non-selectable to the cursor, single-parent case ${state.collapseSingleParent ? 'collapses the header' : 'always shows the header'}` : '') + '.');
+    parts.push('Hover/Properties on any result shows the full absolute path. The open-terminal-on-deep-file fix (terminal opens the file\'s parent directory, not the search root) is already decided and independent.');
+    document.getElementById('prompt').textContent = parts.join(' ');
+}
+
+function updateAll() {
+    document.getElementById('indent-val').textContent = state.indent;
+    renderToolbar(); renderList(); costReadout(); updatePrompt();
+}
+
+seg(document.getElementById('seg-focus'), FOCUS_STYLES, 'focusStyle', (v, l) => l);
+seg(document.getElementById('seg-pathfmt'), PATHFMTS, 'pathFmt');
+cards();
+document.getElementById('filter-input').addEventListener('input', updateAll);
+document.getElementById('copy').onclick = () => {
+    navigator.clipboard.writeText(document.getElementById('prompt').textContent);
+    document.getElementById('copy').textContent = 'Copied!';
+    setTimeout(() => document.getElementById('copy').textContent = 'Copy Prompt', 900);
+};
+updateAll();
+</script>
+</body>
+</html>
