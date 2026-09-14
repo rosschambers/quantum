@@ -331,7 +331,12 @@ impl WindowConstructor for ManagedWindowConstructor {
     type Window = ManagedWindow;
 
     fn construct(&mut self, view: &str) -> Option<Self::Window> {
-        let (prefix, monitor_name_opt) = split_view_key(view);
+        // Drop any #<instance> suffix: it keys the window map (registry
+        // side), but the constructed window loads the base view's
+        // URI/namespace and reads the base view's descriptor. Everything
+        // below deals only in the instance-free name.
+        let (base, _instance) = split_instance(view);
+        let (prefix, monitor_name_opt) = split_view_key(base);
         // Resolve the legacy alias (warning on every hit) before any catalog
         // lookup or URL building so the rest of the flow only ever deals in
         // canonical `plugin/<plugin>/<view>` names.
@@ -552,7 +557,8 @@ impl<C: WindowConstructor> WindowRegistry<C> {
     /// (theme-hosted widgets, unknown names) is treated as warm (`false`), so
     /// only views that explicitly opt in are torn down on dismiss.
     fn is_destroy_on_dismiss(&self, view: &str) -> bool {
-        let (prefix, _suffix) = split_view_key(view);
+        let (base, _instance) = split_instance(view);
+        let (prefix, _suffix) = split_view_key(base);
         let canonical = match resolve_alias(prefix) {
             Some(canonical) => canonical.to_string(),
             None => prefix.to_string(),
@@ -1028,7 +1034,8 @@ mod tests {
             // plugin/theme/none fallback all collapse here to "is a window
             // built at all": plugin/* and widgets/* names build one, anything
             // else does not.
-            let (prefix, _monitor) = split_view_key(view);
+            let (base, _instance) = split_instance(view);
+            let (prefix, _monitor) = split_view_key(base);
             let canonical = match resolve_alias(prefix) {
                 Some(c) => c.to_string(),
                 None => prefix.to_string(),
@@ -1945,6 +1952,29 @@ mod tests {
         assert_eq!(
             canonical_view_key("widgets/clock@eDP-1", &catalog),
             "widgets/clock@eDP-1"
+        );
+    }
+
+    #[test]
+    fn two_instances_construct_two_windows() {
+        let count = Rc::new(Cell::new(0));
+        let shown = Rc::new(Cell::new(false));
+        let ctor = fake_ctor(&count, &shown);
+        let mut reg = WindowRegistry::new(ctor, multi_instance_catalog());
+        reg.handle(WindowRequest::Open {
+            view: "plugin/files/files#3".into(),
+            mode: WindowMode::Show,
+            args: None,
+        });
+        reg.handle(WindowRequest::Open {
+            view: "plugin/files/files#4".into(),
+            mode: WindowMode::Show,
+            args: None,
+        });
+        assert_eq!(
+            count.get(),
+            2,
+            "two distinct instances construct two windows"
         );
     }
 
