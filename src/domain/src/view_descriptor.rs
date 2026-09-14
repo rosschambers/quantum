@@ -78,6 +78,20 @@ pub struct ViewDescriptor {
     /// find-mouse cursor flash. Ignored for views that are not `fill_output`.
     #[serde(default)]
     pub click_through: bool,
+    /// When true, more than one live window of this view may exist at once,
+    /// each keyed by a caller-supplied `#<instance>` suffix on the view name.
+    /// Default false: the view is single-instance and every open reuses the
+    /// one window. Orthogonal to `single_instance`, which controls monitor
+    /// suffix stripping for the single-window case.
+    #[serde(default)]
+    pub multi_instance: bool,
+    /// Upper bound on simultaneously-live instances of a `multi_instance`
+    /// view. `None` falls back to the daemon's global default
+    /// (`QUANTUM_MAX_VIEW_INSTANCES`, default 8). When the cap is reached the
+    /// oldest instance is destroyed before a new one opens. Ignored unless
+    /// `multi_instance` is true.
+    #[serde(default)]
+    pub max_instances: Option<u32>,
 }
 
 impl Default for ViewDescriptor {
@@ -94,6 +108,8 @@ impl Default for ViewDescriptor {
             fill_output: false,
             destroy_on_dismiss: false,
             click_through: false,
+            multi_instance: false,
+            max_instances: None,
         }
     }
 }
@@ -110,6 +126,11 @@ impl ViewDescriptor {
                 ViewKind::Panel | ViewKind::Overlay | ViewKind::Toast
             ),
         }
+    }
+
+    /// Whether this view permits multiple simultaneous instances.
+    pub fn effective_multi_instance(&self) -> bool {
+        self.multi_instance
     }
 }
 
@@ -130,6 +151,28 @@ mod tests {
         assert_eq!(descriptor.single_instance, None);
         assert!(!descriptor.fill_output);
         assert!(!descriptor.click_through);
+        assert!(!descriptor.multi_instance);
+        assert_eq!(descriptor.max_instances, None);
+    }
+
+    #[test]
+    fn multi_instance_defaults_false_and_round_trips() {
+        assert!(!ViewDescriptor::default().multi_instance);
+        assert!(!ViewDescriptor::default().effective_multi_instance());
+        let descriptor = ViewDescriptor {
+            multi_instance: true,
+            max_instances: Some(4),
+            ..ViewDescriptor::default()
+        };
+        assert!(descriptor.effective_multi_instance());
+        let json = serde_json::to_string(&descriptor).unwrap();
+        let restored: ViewDescriptor = serde_json::from_str(&json).unwrap();
+        assert_eq!(restored, descriptor);
+    }
+
+    #[test]
+    fn max_instances_defaults_none() {
+        assert_eq!(ViewDescriptor::default().max_instances, None);
     }
 
     #[test]
@@ -201,6 +244,8 @@ mod tests {
             fill_output: true,
             destroy_on_dismiss: true,
             click_through: true,
+            multi_instance: true,
+            max_instances: Some(4),
         };
         let json = serde_json::to_string(&descriptor).unwrap();
         let restored: ViewDescriptor = serde_json::from_str(&json).unwrap();

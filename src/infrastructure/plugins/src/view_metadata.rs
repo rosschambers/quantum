@@ -83,6 +83,8 @@ pub fn parse_view_toml(text: &str) -> Result<ViewDescriptor, PluginsError> {
             .destroy_on_dismiss
             .unwrap_or(defaults.destroy_on_dismiss),
         click_through: raw.click_through.unwrap_or(defaults.click_through),
+        multi_instance: defaults.multi_instance,
+        max_instances: defaults.max_instances,
     })
 }
 
@@ -129,6 +131,8 @@ single_instance = false
                 fill_output: false,
                 destroy_on_dismiss: false,
                 click_through: false,
+                multi_instance: false,
+                max_instances: None,
             }
         );
     }
