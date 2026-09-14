@@ -19,6 +19,12 @@ use crate::windows::{PanelWindow, WidgetWindow, WindowContext};
 
 use tracing::warn;
 
+/// Fallback cap on simultaneously-live instances of a `multi_instance` view
+/// when the daemon supplies no override and the view's descriptor sets no
+/// `max_instances`. Bounds the aggregate renderer memory a runaway open loop
+/// can pin, keeping multi-instance safe under the cgroup guard.
+const DEFAULT_MAX_VIEW_INSTANCES: u32 = 8;
+
 /// Default panel width in pixels when a panel descriptor omits `width`.
 const DEFAULT_PANEL_WIDTH: i32 = 480;
 /// Default panel height in pixels when a panel descriptor omits `height`.
@@ -526,6 +532,16 @@ pub struct WindowRegistry<C: WindowConstructor> {
     /// one detects that flap so the window is rebuilt against the fresh object.
     window_monitor_id: HashMap<String, Option<MonitorId>>,
     catalog: crate::ViewCatalog,
+    /// Global default cap on simultaneously-live instances of a
+    /// `multi_instance` view, used when the view's descriptor leaves
+    /// `max_instances` unset. Set from `QUANTUM_MAX_VIEW_INSTANCES` by the
+    /// daemon (default [`DEFAULT_MAX_VIEW_INSTANCES`]).
+    max_view_instances: u32,
+    /// Ordered live instance storage-keys per base canonical name (insertion
+    /// order, oldest first), so the cap can evict the oldest instance. Only
+    /// `multi_instance` views populate this; single-instance and per-monitor
+    /// views never appear here.
+    instance_order: HashMap<String, Vec<String>>,
 }
 
 impl<C: WindowConstructor> WindowRegistry<C> {
@@ -533,12 +549,21 @@ impl<C: WindowConstructor> WindowRegistry<C> {
     /// view names to their declared window descriptors and is consulted by
     /// [`canonical_view_key`] to decide single-instance suffix stripping.
     pub fn new(constructor: C, catalog: crate::ViewCatalog) -> Self {
+        Self::with_instance_cap(constructor, catalog, DEFAULT_MAX_VIEW_INSTANCES)
+    }
+
+    /// Create a registry with an explicit global multi-instance cap. The
+    /// daemon uses this to thread `QUANTUM_MAX_VIEW_INSTANCES`; [`Self::new`]
+    /// delegates here with [`DEFAULT_MAX_VIEW_INSTANCES`].
+    pub fn with_instance_cap(constructor: C, catalog: crate::ViewCatalog, cap: u32) -> Self {
         Self {
             constructor,
             windows: HashMap::new(),
             window_monitor: HashMap::new(),
             window_monitor_id: HashMap::new(),
             catalog,
+            max_view_instances: cap,
+            instance_order: HashMap::new(),
         }
     }
 
@@ -569,6 +594,29 @@ impl<C: WindowConstructor> WindowRegistry<C> {
             .unwrap_or(false)
     }
 
+    /// Resolve the base canonical name of `view` (instance and monitor
+    /// suffixes stripped, legacy alias resolved) so it can be matched against
+    /// the catalog and used as the `instance_order` bucket key. Mirrors the
+    /// resolution in [`Self::is_destroy_on_dismiss`].
+    fn base_canonical(view: &str) -> String {
+        let (base, _instance) = split_instance(view);
+        let (prefix, _suffix) = split_view_key(base);
+        match resolve_alias(prefix) {
+            Some(canonical) => canonical.to_string(),
+            None => prefix.to_string(),
+        }
+    }
+
+    /// Remove `key` from every `instance_order` bucket it appears in, and drop
+    /// any bucket left empty. Called on every teardown path (cap eviction,
+    /// destroy, close) so the per-view instance count stays accurate.
+    fn forget_instance(&mut self, key: &str) {
+        for order in self.instance_order.values_mut() {
+            order.retain(|stored| stored != key);
+        }
+        self.instance_order.retain(|_, order| !order.is_empty());
+    }
+
     /// Tear down and remove the stored window under `key`, destroying it
     /// WITHOUT hiding first.
     ///
@@ -589,6 +637,7 @@ impl<C: WindowConstructor> WindowRegistry<C> {
         }
         self.window_monitor.remove(key);
         self.window_monitor_id.remove(key);
+        self.forget_instance(key);
     }
 
     /// Hide a stored window and KEEP it for reuse on the next open.
@@ -704,6 +753,55 @@ impl<C: WindowConstructor> WindowRegistry<C> {
                         old.destroy();
                     }
                 }
+                // A genuinely new window (vacant map entry) for a
+                // multi_instance view addressed with an instance id counts
+                // against that view's instance cap. Enforce the cap BEFORE
+                // constructing: evict the oldest live instance(s) until the
+                // view is strictly below its cap, then record this key. Views
+                // that are not multi_instance, or an open with no instance id,
+                // never populate `instance_order`, so this is a no-op for them.
+                // Reuse of an existing key skips this whole block (it is not
+                // vacant), so re-showing the same instance never evicts.
+                if !self.windows.contains_key(&key) {
+                    let (_, instance) = split_instance(&view);
+                    let base = Self::base_canonical(&view);
+                    if let Some(descriptor) = self.catalog.get(&base) {
+                        if descriptor.effective_multi_instance() && instance.is_some() {
+                            let cap = descriptor
+                                .max_instances
+                                .unwrap_or(self.max_view_instances)
+                                .max(1) as usize;
+                            while self
+                                .instance_order
+                                .get(&base)
+                                .map(|order| order.len())
+                                .unwrap_or(0)
+                                >= cap
+                            {
+                                let victim = self.instance_order.get_mut(&base).and_then(|order| {
+                                    if order.is_empty() {
+                                        None
+                                    } else {
+                                        Some(order.remove(0))
+                                    }
+                                });
+                                match victim {
+                                    Some(victim_key) => {
+                                        tracing::info!(
+                                            "instance cap ({cap}) reached for {base}; evicting {victim_key}"
+                                        );
+                                        self.destroy_window(&victim_key);
+                                    }
+                                    None => break,
+                                }
+                            }
+                            self.instance_order
+                                .entry(base)
+                                .or_default()
+                                .push(key.clone());
+                        }
+                    }
+                }
                 let window = match self.windows.entry(key.clone()) {
                     std::collections::hash_map::Entry::Occupied(e) => e.into_mut(),
                     std::collections::hash_map::Entry::Vacant(v) => {
@@ -769,6 +867,7 @@ impl<C: WindowConstructor> WindowRegistry<C> {
                 } else {
                     self.window_monitor.remove(&key);
                     self.window_monitor_id.remove(&key);
+                    self.forget_instance(&key);
                     tracing::debug!("close request for unknown view: {view}");
                 }
             }
@@ -1976,6 +2075,126 @@ mod tests {
             2,
             "two distinct instances construct two windows"
         );
+    }
+
+    #[test]
+    fn instance_cap_evicts_oldest() {
+        // With a cap of 2, opening three distinct instances leaves exactly two
+        // live windows: the oldest (#1) is destroyed when #3 pushes past the
+        // cap, while #2 and #3 survive.
+        let count = Rc::new(Cell::new(0));
+        let shown = Rc::new(Cell::new(false));
+        let destroyed = Rc::new(Cell::new(0));
+        let ctor = fake_ctor_with_destroy(&count, &shown, &destroyed);
+        let mut reg = WindowRegistry::with_instance_cap(ctor, multi_instance_catalog(), 2);
+        for id in ["1", "2", "3"] {
+            reg.handle(WindowRequest::Open {
+                view: format!("plugin/files/files#{id}"),
+                mode: WindowMode::Show,
+                args: None,
+            });
+        }
+        assert_eq!(count.get(), 3, "three instances were constructed");
+        assert_eq!(
+            destroyed.get(),
+            1,
+            "the oldest instance was evicted when the cap was exceeded"
+        );
+    }
+
+    #[test]
+    fn reopening_same_instance_does_not_evict() {
+        // Re-showing the SAME instance id must not count as a new instance and
+        // must never evict, even at a cap of 1.
+        let count = Rc::new(Cell::new(0));
+        let shown = Rc::new(Cell::new(false));
+        let destroyed = Rc::new(Cell::new(0));
+        let ctor = fake_ctor_with_destroy(&count, &shown, &destroyed);
+        let mut reg = WindowRegistry::with_instance_cap(ctor, multi_instance_catalog(), 1);
+        for _ in 0..3 {
+            reg.handle(WindowRequest::Open {
+                view: "plugin/files/files#same".into(),
+                mode: WindowMode::Show,
+                args: None,
+            });
+        }
+        assert_eq!(
+            count.get(),
+            1,
+            "the one instance is constructed once and reused"
+        );
+        assert_eq!(destroyed.get(), 0, "reusing an instance never evicts");
+    }
+
+    #[test]
+    fn descriptor_max_instances_overrides_global_cap() {
+        // A per-view max_instances on the descriptor wins over the registry's
+        // global cap. Here the descriptor says 1, the global cap is 8, so the
+        // second instance evicts the first.
+        let catalog = crate::ViewCatalog::from_plugins(vec![(
+            "plugin/files/files".to_string(),
+            ViewDescriptor {
+                kind: ViewKind::Panel,
+                destroy_on_dismiss: true,
+                multi_instance: true,
+                max_instances: Some(1),
+                ..ViewDescriptor::default()
+            },
+        )]);
+        let count = Rc::new(Cell::new(0));
+        let shown = Rc::new(Cell::new(false));
+        let destroyed = Rc::new(Cell::new(0));
+        let ctor = fake_ctor_with_destroy(&count, &shown, &destroyed);
+        let mut reg = WindowRegistry::with_instance_cap(ctor, catalog, 8);
+        reg.handle(WindowRequest::Open {
+            view: "plugin/files/files#a".into(),
+            mode: WindowMode::Show,
+            args: None,
+        });
+        reg.handle(WindowRequest::Open {
+            view: "plugin/files/files#b".into(),
+            mode: WindowMode::Show,
+            args: None,
+        });
+        assert_eq!(count.get(), 2, "both instances constructed");
+        assert_eq!(destroyed.get(), 1, "descriptor cap of 1 evicted the first");
+    }
+
+    #[test]
+    fn closing_instance_frees_its_cap_slot() {
+        // Closing an instance must free its slot so a later open does not
+        // wrongly evict a survivor. Cap 2: open #1 #2, close #1, open #3 ->
+        // no eviction should happen on #3 (only #2 and #3 live).
+        let count = Rc::new(Cell::new(0));
+        let shown = Rc::new(Cell::new(false));
+        let destroyed = Rc::new(Cell::new(0));
+        let ctor = fake_ctor_with_destroy(&count, &shown, &destroyed);
+        let mut reg = WindowRegistry::with_instance_cap(ctor, multi_instance_catalog(), 2);
+        reg.handle(WindowRequest::Open {
+            view: "plugin/files/files#1".into(),
+            mode: WindowMode::Show,
+            args: None,
+        });
+        reg.handle(WindowRequest::Open {
+            view: "plugin/files/files#2".into(),
+            mode: WindowMode::Show,
+            args: None,
+        });
+        reg.handle(WindowRequest::Close {
+            view: "plugin/files/files#1".into(),
+        });
+        assert_eq!(destroyed.get(), 1, "closing #1 destroyed it");
+        reg.handle(WindowRequest::Open {
+            view: "plugin/files/files#3".into(),
+            mode: WindowMode::Show,
+            args: None,
+        });
+        assert_eq!(
+            destroyed.get(),
+            1,
+            "opening #3 evicts nothing because #1's slot was freed on close"
+        );
+        assert_eq!(count.get(), 3, "three instances constructed across the run");
     }
 
     #[test]
