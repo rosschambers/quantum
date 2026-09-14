@@ -2,7 +2,7 @@
 // to an action descriptor without touching the DOM, mirroring how menus.ts maps
 // a menu selection to a callback. App.svelte's onKeyDown calls this and
 // dispatches the returned action to the existing handlers. Only the "management"
-// shortcuts live here; arrow/Enter/Tab/Ctrl+L/type-ahead stay in onKeyDown.
+// shortcuts live here; arrow/Enter/Tab/Ctrl+L/type-to-filter stay in onKeyDown.
 
 /** An action a keyboard shortcut requests the App to perform. */
 export type ShortcutAction =

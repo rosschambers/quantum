@@ -507,26 +507,6 @@
         );
     }
 
-    /** Accumulate a type-ahead buffer and select the first name-prefix match. */
-    function typeAhead(character: string): void {
-        clearTimeout(typeaheadTimer);
-        typeaheadBuffer += character;
-        typeaheadTimer = setTimeout(() => {
-            typeaheadBuffer = '';
-        }, 900);
-
-        const pane = active;
-        const index = activePaneIndex;
-        const visible = pane.visibleEntries();
-        const prefix = typeaheadBuffer.toLowerCase();
-        const matchIndex = visible.findIndex((entry) => entry.name.toLowerCase().startsWith(prefix));
-        if (matchIndex >= 0) {
-            pane.selectOnly(visible[matchIndex].path);
-            anchors[index] = matchIndex;
-            cursors[index] = matchIndex;
-        }
-    }
-
     // ── Keyboard shortcuts ──────────────────────────────────────────────────
 
     /** The paths a management shortcut targets: the selection, else the cursor entry. */
