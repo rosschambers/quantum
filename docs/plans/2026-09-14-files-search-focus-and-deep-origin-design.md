@@ -48,10 +48,12 @@ truncates, so the growth has room.
 
 ### Grouped deep results
 
-- Pure module (new `grouping.ts` next to `path.ts`, unit-testable): takes the sorted visible
-  entries of a deep search plus the search root and returns a flat render list of
-  `{ kind: 'header', path } | { kind: 'entry', entry }` items — groups ordered alphabetically by
-  relative path from the search root, entries within a group keeping the pane's current sort.
+- Pure logic in `PaneState` (not a standalone module — the cursor and `selectRange` index into
+  `visibleEntries()`, so grouped ordering must happen there): when grouped, `visibleEntries()`
+  regroups entries alphabetically by containing folder relative to the search root (root group
+  label `.`, plain ordinal comparison so `.` sorts first), preserving the pane's sort within each
+  group; a derived `listItems()` interleaves `{ kind: 'header', path }` items. The shared
+  `relativeGroupLabel(groupPath, root)` helper lives in `path.ts`.
 - `FileList.svelte` renders headers as fixed-30px presentation rows (folder glyph + muted mono
   relative path) inside the same virtualization list — every render item keeps the same height so
   the scroll arithmetic is unchanged. Selection, cursor movement, Ctrl+A, and drag all operate on

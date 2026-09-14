@@ -204,6 +204,10 @@
         <div class="rows" style="transform: translateY({offsetY}px)">
             {#each visible as item (item.kind === 'header' ? `header:${item.path}` : item.entry.path)}
                 {#if item.kind === 'header'}
+                    <!-- Deliberately no oncontextmenu: a right-click on a header
+                         bubbles to the list background menu and operates on the
+                         pane's directory (the search root), matching how the
+                         background menu behaves during deep search generally. -->
                     <button
                         type="button"
                         class="group-header"

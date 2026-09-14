@@ -75,7 +75,7 @@
     // still reads as active.
     const filterActive = $derived(filter.trim() !== '');
 
-    let inputEl = $state<HTMLInputElement | null>(null);
+    let inputElement = $state<HTMLInputElement | null>(null);
     // Sentinel so the first effect run (on mount) records the initial
     // focusSignal without focusing; only a later CHANGE steals focus.
     const UNSET = Symbol('unset');
@@ -88,8 +88,8 @@
         }
         if (focusSignal !== lastFocusSignal) {
             lastFocusSignal = focusSignal;
-            inputEl?.focus();
-            inputEl?.select();
+            inputElement?.focus();
+            inputElement?.select();
         }
     });
 
@@ -143,7 +143,7 @@
             placeholder="Filter..."
             title="Filter this folder; toggle deep for recursive search"
             value={filter}
-            bind:this={inputEl}
+            bind:this={inputElement}
             oninput={handleFilterInput}
             onkeydown={handleFilterKeyDown}
         />
@@ -254,7 +254,7 @@
         border-color: var(--color-accent);
         box-shadow:
             0 0 0 1px var(--color-accent),
-            0 0 10px rgb(166 227 161 / 25%);
+            0 0 10px color-mix(in oklab, var(--color-accent) 25%, transparent);
         width: 320px;
     }
     .filter-ic {
