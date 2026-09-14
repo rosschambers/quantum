@@ -14,6 +14,21 @@ export type SortColumn = 'name' | 'size' | 'mtime';
 /** Sort direction: 1 for ascending, -1 for descending. */
 export type SortDirection = 1 | -1;
 
+/**
+ * A presentation-only group header rendered above the entries of a single
+ * containing folder in grouped deep-search results. `path` is the ABSOLUTE
+ * path of the group directory, not a display label — the view layer derives
+ * the relative "." / "sub/dir" label shown to the user, and a click on the
+ * header navigates to this absolute path.
+ */
+export interface ListHeader {
+    kind: 'header';
+    path: string;
+}
+
+/** A single row item: either a group header or a wrapped file entry. */
+export type ListItem = ListHeader | { kind: 'entry'; entry: FileEntry };
+
 export class PaneState {
     /** The directory currently shown in the pane. */
     path = $state('');
@@ -107,7 +122,11 @@ export class PaneState {
      * (unless deepSearch is active, in which case entries are already search
      * results and are not re-filtered), then, when showHidden is false, with
      * dotfiles dropped, then sorted folders-first and by the active column and
-     * direction.
+     * direction. When deep search is active with a non-empty filter, the
+     * sorted entries are additionally regrouped by containing folder (see
+     * `groupByOrigin`) — the App's keyboard cursor and `selectRange` index
+     * into this list, so grouped ordering must live here rather than in the
+     * view layer.
      */
     visibleEntries(): FileEntry[] {
         const filterText = this.filter.toLowerCase();
@@ -119,7 +138,92 @@ export class PaneState {
             ? nameFiltered
             : nameFiltered.filter((item) => !item.name.startsWith('.'));
         filtered.sort((a, b) => this.compareEntries(a, b));
-        return filtered;
+        return this.isGroupedByOrigin() ? this.groupByOrigin(filtered) : filtered;
+    }
+
+    /**
+     * The rows to render, including group headers: when grouped by origin
+     * (see `isGroupedByOrigin`), a header item is inserted before the first
+     * entry of each containing folder found while walking `visibleEntries()`
+     * in order; otherwise every item is a plain entry and no headers appear.
+     */
+    listItems(): ListItem[] {
+        const visible = this.visibleEntries();
+        if (!this.isGroupedByOrigin()) {
+            return visible.map((entry) => ({ kind: 'entry', entry }));
+        }
+        const items: ListItem[] = [];
+        let currentGroup: string | null = null;
+        for (const entry of visible) {
+            const groupPath = parentOf(entry.path);
+            if (groupPath !== currentGroup) {
+                items.push({ kind: 'header', path: groupPath });
+                currentGroup = groupPath;
+            }
+            items.push({ kind: 'entry', entry });
+        }
+        return items;
+    }
+
+    /**
+     * True when results should be regrouped by containing folder: deep search
+     * is active and the filter is non-empty (a blank filter under deep search
+     * shows nothing, so grouping would be meaningless).
+     */
+    private isGroupedByOrigin(): boolean {
+        return this.deepSearch && this.filter.trim() !== '';
+    }
+
+    /**
+     * Reorder already-sorted entries into groups keyed by their containing
+     * folder (`parentOf(entry.path)`), groups ordered alphabetically by path
+     * relative to the search root (`this.path`); a group directly at the
+     * search root sorts under the relative label "."). Entries keep their
+     * relative order within a group because the input is pre-sorted and
+     * `Map` preserves insertion order, so grouping is a stable partition.
+     */
+    private groupByOrigin(sortedEntries: FileEntry[]): FileEntry[] {
+        const groups = new Map<string, FileEntry[]>();
+        for (const entry of sortedEntries) {
+            const groupPath = parentOf(entry.path);
+            const bucket = groups.get(groupPath);
+            if (bucket !== undefined) {
+                bucket.push(entry);
+            } else {
+                groups.set(groupPath, [entry]);
+            }
+        }
+        const orderedGroupPaths = [...groups.keys()].sort((a, b) => {
+            const labelA = this.relativeGroupLabel(a);
+            const labelB = this.relativeGroupLabel(b);
+            if (labelA === labelB) {
+                return 0;
+            }
+            return labelA < labelB ? -1 : 1;
+        });
+        const result: FileEntry[] = [];
+        for (const groupPath of orderedGroupPaths) {
+            const bucket = groups.get(groupPath);
+            if (bucket !== undefined) {
+                result.push(...bucket);
+            }
+        }
+        return result;
+    }
+
+    /**
+     * The sort key used to order groups: "." for the search root itself,
+     * otherwise the group's absolute path with the search root prefix
+     * stripped. Plain ordinal comparison (not `localeCompare`) is used on
+     * this key so "." reliably sorts before letters, keeping the root group
+     * first regardless of collation rules.
+     */
+    private relativeGroupLabel(groupPath: string): string {
+        if (groupPath === this.path) {
+            return '.';
+        }
+        const prefix = this.path === '/' ? '/' : `${this.path}/`;
+        return groupPath.startsWith(prefix) ? groupPath.slice(prefix.length) : groupPath;
     }
 
     /** Comparator: directories always precede files, then by the active column. */

@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import type { FileEntry } from '@quantum/client';
 import { PaneState } from './paneState.svelte';
+import type { ListHeader, ListItem } from './paneState.svelte';
 
 /** Build a `FileEntry` with sensible defaults, overriding only what a test cares about. */
 function entry(overrides: Partial<FileEntry> & { name: string }): FileEntry {
@@ -376,5 +377,150 @@ describe('PaneState sizing', () => {
         const before = pane.sizing;
         pane.setSizeComplete('/a');
         expect(pane.sizing).not.toBe(before);
+    });
+});
+
+describe('PaneState grouped deep-search ordering', () => {
+    it('leaves visibleEntries in natural order when not deep-searching', () => {
+        const pane = new PaneState('/search');
+        pane.entries = [
+            entry({ name: 'zeta.txt', path: '/search/sub/zeta.txt' }),
+            entry({ name: 'alpha.txt', path: '/search/alpha.txt' }),
+        ];
+        pane.filter = 'txt';
+        expect(pane.deepSearch).toBe(false);
+        expect(pane.visibleEntries().map((item) => item.path)).toEqual([
+            '/search/alpha.txt',
+            '/search/sub/zeta.txt',
+        ]);
+    });
+
+    it('leaves visibleEntries in natural order when deep-searching with an empty filter', () => {
+        const pane = new PaneState('/search');
+        pane.entries = [
+            entry({ name: 'zeta.txt', path: '/search/sub/zeta.txt' }),
+            entry({ name: 'alpha.txt', path: '/search/alpha.txt' }),
+        ];
+        pane.deepSearch = true;
+        pane.filter = '   ';
+        expect(pane.visibleEntries().map((item) => item.path)).toEqual([
+            '/search/alpha.txt',
+            '/search/sub/zeta.txt',
+        ]);
+    });
+
+    it('groups by containing folder, ordered alphabetically, root group first', () => {
+        const pane = new PaneState('/search');
+        pane.deepSearch = true;
+        pane.filter = 'txt';
+        pane.entries = [
+            entry({ name: 'nested.txt', path: '/search/sub/nested.txt' }),
+            entry({ name: 'root.txt', path: '/search/root.txt' }),
+            entry({ name: 'file.txt', path: '/search/beta/file.txt' }),
+        ];
+        expect(pane.visibleEntries().map((item) => item.path)).toEqual([
+            '/search/root.txt',
+            '/search/beta/file.txt',
+            '/search/sub/nested.txt',
+        ]);
+    });
+
+    it('preserves the current name sort order within each group', () => {
+        const pane = new PaneState('/search');
+        pane.deepSearch = true;
+        pane.filter = 'txt';
+        pane.entries = [
+            entry({ name: 'zeta.txt', path: '/search/sub/zeta.txt' }),
+            entry({ name: 'alpha.txt', path: '/search/sub/alpha.txt' }),
+        ];
+        expect(pane.visibleEntries().map((item) => item.name)).toEqual([
+            'alpha.txt',
+            'zeta.txt',
+        ]);
+    });
+
+    it('preserves the current size sort order within each group', () => {
+        const pane = new PaneState('/search');
+        pane.deepSearch = true;
+        pane.filter = 'txt';
+        pane.entries = [
+            entry({ name: 'big.txt', path: '/search/sub/big.txt', size: 500 }),
+            entry({ name: 'small.txt', path: '/search/sub/small.txt', size: 10 }),
+        ];
+        pane.toggleSort('size');
+        expect(pane.visibleEntries().map((item) => item.name)).toEqual([
+            'small.txt',
+            'big.txt',
+        ]);
+    });
+});
+
+describe('PaneState listItems', () => {
+    function entriesOf(items: ListItem[]): string[] {
+        return items
+            .filter((item): item is { kind: 'entry'; entry: FileEntry } => item.kind === 'entry')
+            .map((item) => item.entry.path);
+    }
+
+    function headersOf(items: ListItem[]): ListHeader[] {
+        return items.filter((item): item is ListHeader => item.kind === 'header');
+    }
+
+    it('returns entries only, with no headers, when not grouped', () => {
+        const pane = new PaneState('/a');
+        pane.entries = [
+            entry({ name: 'alpha.txt', path: '/a/alpha.txt' }),
+            entry({ name: 'beta.txt', path: '/a/beta.txt' }),
+        ];
+        const items = pane.listItems();
+        expect(headersOf(items)).toEqual([]);
+        expect(entriesOf(items)).toEqual(['/a/alpha.txt', '/a/beta.txt']);
+    });
+
+    it('inserts one header per group, holding the absolute group path', () => {
+        const pane = new PaneState('/search');
+        pane.deepSearch = true;
+        pane.filter = 'txt';
+        pane.entries = [
+            entry({ name: 'nested.txt', path: '/search/sub/nested.txt' }),
+            entry({ name: 'root.txt', path: '/search/root.txt' }),
+            entry({ name: 'file.txt', path: '/search/beta/file.txt' }),
+        ];
+        const items = pane.listItems();
+        expect(headersOf(items).map((header) => header.path)).toEqual([
+            '/search',
+            '/search/beta',
+            '/search/sub',
+        ]);
+        expect(items.map((item) => (item.kind === 'header' ? 'H' : item.entry.name))).toEqual([
+            'H',
+            'root.txt',
+            'H',
+            'file.txt',
+            'H',
+            'nested.txt',
+        ]);
+    });
+
+    it('still emits exactly one header when every result shares a single group', () => {
+        const pane = new PaneState('/search');
+        pane.deepSearch = true;
+        pane.filter = 'txt';
+        pane.entries = [
+            entry({ name: 'alpha.txt', path: '/search/sub/alpha.txt' }),
+            entry({ name: 'beta.txt', path: '/search/sub/beta.txt' }),
+        ];
+        const items = pane.listItems();
+        expect(headersOf(items)).toEqual([{ kind: 'header', path: '/search/sub' }]);
+        expect(entriesOf(items)).toEqual(['/search/sub/alpha.txt', '/search/sub/beta.txt']);
+    });
+
+    it('gives the root-level group a header at the search root path', () => {
+        const pane = new PaneState('/search');
+        pane.deepSearch = true;
+        pane.filter = 'txt';
+        pane.entries = [entry({ name: 'root.txt', path: '/search/root.txt' })];
+        const items = pane.listItems();
+        expect(headersOf(items)).toEqual([{ kind: 'header', path: '/search' }]);
     });
 });
