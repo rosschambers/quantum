@@ -716,9 +716,36 @@
 
     function handleFilterInput(value: string): void {
         const pane = active;
+        const changed = value !== pane.filter;
         pane.filter = value;
-        if (pane.deepSearch) {
-            void loadPane(pane);
+        if (pane.deepSearch && changed) {
+            void loadPane(pane).then(syncFilterSelection);
+        } else {
+            syncFilterSelection();
+        }
+    }
+
+    /**
+     * Point the selection and keyboard cursor at the first visible match after a
+     * filter change, so typed text highlights a target Enter can open. An empty
+     * filter clears the selection (matching Escape); no matches clamps without
+     * selecting.
+     */
+    function syncFilterSelection(): void {
+        const pane = active;
+        const index = activePaneIndex;
+        if (pane.filter === '') {
+            pane.clearSelection();
+            clampCursor(index);
+            return;
+        }
+        const visible = pane.visibleEntries();
+        if (visible.length > 0) {
+            pane.selectOnly(visible[0].path);
+            anchors[index] = 0;
+            cursors[index] = 0;
+        } else {
+            clampCursor(index);
         }
     }
 

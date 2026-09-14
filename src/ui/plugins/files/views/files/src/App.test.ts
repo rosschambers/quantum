@@ -197,6 +197,68 @@ describe('App type-to-filter', () => {
             expect(activeRow(container, `${HOME}/docs`)).toBeNull();
         });
     });
+
+    it('typing selects the first match so Enter can open it', async () => {
+        const ipc = createFakeIpc(filterEntries());
+        const { container } = render(App, { props: { ipc } });
+
+        await vi.waitFor(() => {
+            expect(activeRow(container, `${HOME}/music`)).not.toBeNull();
+        });
+
+        await fireEvent.keyDown(window, { key: 'd' });
+        await fireEvent.keyDown(window, { key: 'o' });
+
+        // The narrowed list is [docs, downloads] (folders first, name order);
+        // the first match must carry the selection class.
+        await vi.waitFor(() => {
+            expect(activeRow(container, `${HOME}/docs`)?.classList.contains('sel')).toBe(true);
+        });
+    });
+
+    it('Backspace re-syncs the selection to the first match of the shortened filter', async () => {
+        const ipc = createFakeIpc(filterEntries());
+        const { container } = render(App, { props: { ipc } });
+
+        await vi.waitFor(() => {
+            expect(activeRow(container, `${HOME}/music`)).not.toBeNull();
+        });
+
+        // "dow" narrows the list to downloads only (docs does not contain "dow").
+        await fireEvent.keyDown(window, { key: 'd' });
+        await fireEvent.keyDown(window, { key: 'o' });
+        await fireEvent.keyDown(window, { key: 'w' });
+        await vi.waitFor(() => {
+            expect(activeRow(container, `${HOME}/downloads`)?.classList.contains('sel')).toBe(true);
+        });
+
+        // Backspace shortens the filter to "do", which widens the list back to
+        // [docs, downloads] (folders first, name order); the selection must
+        // re-sync to the new first match, docs.
+        await fireEvent.keyDown(window, { key: 'Backspace' });
+        await vi.waitFor(() => {
+            expect(activeRow(container, `${HOME}/docs`)?.classList.contains('sel')).toBe(true);
+        });
+    });
+
+    it('clearing the filter clears the selection', async () => {
+        const ipc = createFakeIpc(filterEntries());
+        const { container } = render(App, { props: { ipc } });
+
+        await vi.waitFor(() => {
+            expect(activeRow(container, `${HOME}/music`)).not.toBeNull();
+        });
+
+        await fireEvent.keyDown(window, { key: 'd' });
+        await vi.waitFor(() => {
+            expect(activeRow(container, `${HOME}/docs`)?.classList.contains('sel')).toBe(true);
+        });
+
+        await fireEvent.keyDown(window, { key: 'Backspace' }); // filter empty -> selection cleared
+        await vi.waitFor(() => {
+            expect(container.querySelector('.pane:not(.inactive-pane) .frow.sel')).toBeNull();
+        });
+    });
 });
 
 describe('App navigation', () => {
