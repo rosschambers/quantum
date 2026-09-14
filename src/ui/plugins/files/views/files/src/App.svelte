@@ -769,6 +769,17 @@
         void loadPane(pane);
     }
 
+    /**
+     * A grouped deep-search header was clicked: navigate that pane to the
+     * folder the group came from. `PaneState.navigate` already clears the
+     * filter and turns off deep search, and the per-pane loader effect
+     * (`setupPaneLoader`) reacts to the path change and reloads.
+     */
+    function handleGroupNavigate(index: number, absolutePath: string): void {
+        activePaneIndex = index;
+        panes[index].navigate(absolutePath);
+    }
+
     /** Tell the toolbar to focus and select the filter input's text. */
     function focusFilter(): void {
         filterFocusSignal += 1;
@@ -1048,7 +1059,7 @@
             >
         </div>
         <FileList
-            entries={pane.visibleEntries()}
+            items={pane.listItems()}
             selection={pane.selection}
             maxSize={maxEntrySize(pane.entries)}
             sizing={pane.sizing}
@@ -1057,6 +1068,7 @@
             onSelect={(path, event) => handleSelect(index, path, event)}
             onOpen={(entry) => openEntry(index, entry)}
             onContextMenu={(entry, event) => handleEntryContextMenu(index, entry, event)}
+            onGroupNavigate={(absolutePath) => handleGroupNavigate(index, absolutePath)}
         />
     </div>
 {/snippet}

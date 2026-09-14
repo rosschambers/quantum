@@ -39,6 +39,12 @@
          * render a dot — the caller simply never does that.
          */
         calculating?: boolean;
+        /**
+         * True when this row belongs to a group of grouped deep-search
+         * results, indenting it 12px under its group header. Row height stays
+         * exactly 30px regardless.
+         */
+        indent?: boolean;
     }
 
     const {
@@ -51,6 +57,7 @@
         dragSources,
         onMove,
         calculating = false,
+        indent = false,
     }: Props = $props();
 
     // Content-kind to icon glyph. Directories and symlinks take precedence over
@@ -180,6 +187,7 @@
     class="frow"
     class:sel={selected}
     class:droptarget={isDropTarget}
+    class:indented={indent}
     data-path={entry.path}
     draggable={true}
     onclick={onSelect}
@@ -194,7 +202,7 @@
     tabindex="-1"
 >
     <span class="fico"><Icon name={iconName} size={15} /></span>
-    <span class="nm {permissionClass}" class:p-link={isSymlink}>
+    <span class="nm {permissionClass}" class:p-link={isSymlink} title={entry.path}>
         <span class="label">{entry.name}</span>
         {#if isSymlink && entry.symlink_target}
             <span class="sub">&rarr; {entry.symlink_target}</span>
@@ -238,6 +246,9 @@
     .frow.droptarget {
         outline: 1px dashed var(--color-accent);
         outline-offset: -1px;
+    }
+    .frow.indented {
+        padding-left: 18px;
     }
     .fico {
         flex: none;

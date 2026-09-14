@@ -124,6 +124,26 @@ describe('Row rendering', () => {
         expect(getByText(/→ \/home\/user\/target/)).not.toBeNull();
     });
 
+    it('carries the entry absolute path as the hover title on the name span', () => {
+        const { container } = renderRow(
+            entry({ name: 'report.pdf', path: '/home/user/deep/report.pdf' }),
+        );
+        const name = container.querySelector('.nm');
+        expect(name?.getAttribute('title')).toBe('/home/user/deep/report.pdf');
+    });
+
+    it('indents the row when the indent prop is true, for grouped deep-search results', () => {
+        const { container } = renderRow(entry({ name: 'nested.txt' }), { indent: true });
+        const row = container.querySelector('.frow') as HTMLElement;
+        expect(row.classList.contains('indented')).toBe(true);
+    });
+
+    it('does not indent the row when the indent prop is omitted', () => {
+        const { container } = renderRow(entry({ name: 'flat.txt' }));
+        const row = container.querySelector('.frow') as HTMLElement;
+        expect(row.classList.contains('indented')).toBe(false);
+    });
+
     it('sets the mini bar width from the sizeForBar/maxSize ratio', () => {
         const { container } = renderRow(entry({ name: 'big', size: 250 }), { maxSize: 1000 });
         const bar = container.querySelector('.minibar i') as HTMLElement | null;

@@ -825,3 +825,82 @@ describe('App path argument (window.__quantum_args)', () => {
         });
     });
 });
+
+describe('App deep-search grouped headers', () => {
+    it('clicking a group header navigates there and clears filter and deep search', async () => {
+        const ipc = createFakeIpc([]);
+        ipc.search = vi.fn(() =>
+            Promise.resolve([
+                makeEntry({ name: 'root.txt', path: `${HOME}/root.txt` }),
+                makeEntry({ name: 'nested.txt', path: `${HOME}/sub/nested.txt` }),
+            ]),
+        );
+        const { container } = render(App, { props: { ipc } });
+
+        await vi.waitFor(() => {
+            expect(ipc.list).toHaveBeenCalledWith(HOME);
+        });
+
+        // Turn deep search on, then type a filter character: each keystroke
+        // is live-narrowed through the same path bare-typing uses, and with
+        // deep search active it re-runs `ipc.search`.
+        await fireEvent.keyDown(window, { key: 'F', ctrlKey: true, shiftKey: true });
+        await fireEvent.keyDown(window, { key: 't' });
+
+        await vi.waitFor(() => {
+            expect(ipc.search).toHaveBeenCalled();
+        });
+
+        // Two groups render: the search root ("."), and "sub".
+        const headers = await vi.waitFor(() => {
+            const found = container.querySelectorAll(
+                '.pane:not(.inactive-pane) .group-header',
+            );
+            expect(found.length).toBe(2);
+            return found;
+        });
+        const labels = [...headers].map((header) => header.querySelector('.group-label')?.textContent);
+        expect(labels).toEqual(['.', 'sub']);
+
+        const subHeader = headers[1] as HTMLElement;
+        await fireEvent.click(subHeader);
+
+        // Navigated to the group's absolute path.
+        await vi.waitFor(() => {
+            expect(ipc.list).toHaveBeenCalledWith(`${HOME}/sub`);
+        });
+        const activePath = container.querySelector('.pane:not(.inactive-pane) .pane-path');
+        expect(activePath?.textContent).toBe(`${HOME}/sub`);
+
+        // Filter and deep search are both cleared by the navigation.
+        const filterInput = container.querySelector('.filter-input') as HTMLInputElement;
+        expect(filterInput.value).toBe('');
+        const deepButton = container.querySelector('.deep') as HTMLButtonElement;
+        expect(deepButton.classList.contains('on')).toBe(false);
+    });
+
+    it('clicking a group header never selects a row', async () => {
+        const ipc = createFakeIpc([]);
+        ipc.search = vi.fn(() =>
+            Promise.resolve([makeEntry({ name: 'root.txt', path: `${HOME}/root.txt` })]),
+        );
+        const { container } = render(App, { props: { ipc } });
+
+        await vi.waitFor(() => {
+            expect(ipc.list).toHaveBeenCalledWith(HOME);
+        });
+
+        await fireEvent.keyDown(window, { key: 'F', ctrlKey: true, shiftKey: true });
+        await fireEvent.keyDown(window, { key: 't' });
+
+        const header = await vi.waitFor(() => {
+            const found = container.querySelector('.pane:not(.inactive-pane) .group-header');
+            expect(found).not.toBeNull();
+            return found as HTMLElement;
+        });
+        await fireEvent.click(header);
+
+        const selectedRow = container.querySelector('.pane:not(.inactive-pane) .frow.sel');
+        expect(selectedRow).toBeNull();
+    });
+});

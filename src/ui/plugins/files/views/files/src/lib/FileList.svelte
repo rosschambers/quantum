@@ -6,19 +6,25 @@
      * components. A single full-height sizer keeps the native scrollbar honest.
      *
      * Virtualization is pure arithmetic on `scrollTop` and the viewport height;
-     * there is no third-party dependency. The list is keyboard-agnostic — the
-     * App owns keys (Task 24). Its empty background is a drop target that moves
-     * a drag (typically from the other pane) into this pane's directory; the
-     * rows themselves handle their own directory drops (Task 23).
+     * there is no third-party dependency. The list renders `PaneState.listItems()`,
+     * a flat array mixing plain entries with presentation-only group headers
+     * (grouped deep-search results) — every item, header or entry, is exactly
+     * `ROW_HEIGHT` tall, so the virtualization math stays untouched by grouping.
+     * The list is keyboard-agnostic — the App owns keys (Task 24). Its empty
+     * background is a drop target that moves a drag (typically from the other
+     * pane) into this pane's directory; the rows themselves handle their own
+     * directory drops (Task 23).
      */
     import type { FileEntry } from '@quantum/client';
+    import type { ListItem } from './paneState.svelte';
     import Row from './Row.svelte';
+    import Icon from './Icon.svelte';
     import { getDragSources, endDrag } from './dragState.svelte';
     import { isValidDrop } from './dnd';
 
     interface Props {
-        /** The already visible + sorted entries from `PaneState.visibleEntries()`. */
-        entries: FileEntry[];
+        /** The rows to render, from `PaneState.listItems()`: entries plus any group headers. */
+        items: ListItem[];
         /** Paths currently selected, used to highlight rows. */
         selection: Set<string>;
         /** The largest sibling size, forwarded to each row's mini usage bar. */
@@ -27,7 +33,9 @@
         sizing?: Set<string>;
         /**
          * This pane's current directory. The list background is a drop target
-         * that moves a drag (typically from the other pane) into this path.
+         * that moves a drag (typically from the other pane) into this path;
+         * it is also the search root a group header's relative label is
+         * computed against.
          */
         path?: string;
         /** Move dropped sources into this pane's directory. */
@@ -42,10 +50,15 @@
         onSelect: (path: string, event: MouseEvent) => void;
         onOpen: (entry: FileEntry) => void;
         onContextMenu: (entry: FileEntry, event: MouseEvent) => void;
+        /**
+         * Clicking a group header navigates the pane to that folder. Headers
+         * are otherwise inert: no selection, no drag.
+         */
+        onGroupNavigate?: (absolutePath: string) => void;
     }
 
     const {
-        entries,
+        items,
         selection,
         maxSize,
         sizing = new Set<string>(),
@@ -55,7 +68,25 @@
         onSelect,
         onOpen,
         onContextMenu,
+        onGroupNavigate,
     }: Props = $props();
+
+    // True when the list has at least one group header, meaning every entry
+    // row belongs to a group and is indented under it.
+    const grouped = $derived(items.some((item) => item.kind === 'header'));
+
+    /**
+     * The display label for a group header: "." for the search root itself,
+     * otherwise the group's absolute path with the search root prefix
+     * stripped. Falls back to the absolute path when `path` is unset.
+     */
+    function relativeGroupLabel(groupPath: string): string {
+        if (path === undefined || groupPath === path) {
+            return '.';
+        }
+        const prefix = path === '/' ? '/' : `${path}/`;
+        return groupPath.startsWith(prefix) ? groupPath.slice(prefix.length) : groupPath;
+    }
 
     const ROW_HEIGHT = 30;
     const OVERSCAN = 10;
@@ -83,18 +114,18 @@
     });
 
     const startIndex = $derived(
-        clamp(Math.floor(scrollTop / ROW_HEIGHT) - OVERSCAN, 0, entries.length),
+        clamp(Math.floor(scrollTop / ROW_HEIGHT) - OVERSCAN, 0, items.length),
     );
     const endIndex = $derived(
         clamp(
             startIndex + Math.ceil(effectiveHeight / ROW_HEIGHT) + 2 * OVERSCAN,
             0,
-            entries.length,
+            items.length,
         ),
     );
 
-    const visible = $derived(entries.slice(startIndex, endIndex));
-    const totalHeight = $derived(entries.length * ROW_HEIGHT);
+    const visible = $derived(items.slice(startIndex, endIndex));
+    const totalHeight = $derived(items.length * ROW_HEIGHT);
     const offsetY = $derived(startIndex * ROW_HEIGHT);
 
     function clamp(value: number, low: number, high: number): number {
@@ -173,18 +204,30 @@
 >
     <div class="sizer" style="height: {totalHeight}px">
         <div class="rows" style="transform: translateY({offsetY}px)">
-            {#each visible as entry (entry.path)}
-                <Row
-                    {entry}
-                    {maxSize}
-                    {onMove}
-                    calculating={entry.kind === 'directory' && sizing.has(entry.path)}
-                    selected={selection.has(entry.path)}
-                    dragSources={currentSelectionPaths}
-                    onSelect={(event) => onSelect(entry.path, event)}
-                    onOpen={() => onOpen(entry)}
-                    onContextMenu={(event) => onContextMenu(entry, event)}
-                />
+            {#each visible as item (item.kind === 'header' ? `header:${item.path}` : item.entry.path)}
+                {#if item.kind === 'header'}
+                    <button
+                        type="button"
+                        class="group-header"
+                        onclick={() => onGroupNavigate?.(item.path)}
+                    >
+                        <span class="group-ico"><Icon name="folder" size={13} /></span>
+                        <span class="group-label">{relativeGroupLabel(item.path)}</span>
+                    </button>
+                {:else}
+                    <Row
+                        entry={item.entry}
+                        {maxSize}
+                        {onMove}
+                        indent={grouped}
+                        calculating={item.entry.kind === 'directory' && sizing.has(item.entry.path)}
+                        selected={selection.has(item.entry.path)}
+                        dragSources={currentSelectionPaths}
+                        onSelect={(event) => onSelect(item.entry.path, event)}
+                        onOpen={() => onOpen(item.entry)}
+                        onContextMenu={(event) => onContextMenu(item.entry, event)}
+                    />
+                {/if}
             {/each}
         </div>
     </div>
@@ -211,5 +254,36 @@
         left: 0;
         right: 0;
         will-change: transform;
+    }
+    .group-header {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        width: 100%;
+        height: 30px;
+        padding: 0 6px;
+        border: none;
+        background: none;
+        font: inherit;
+        text-align: left;
+        cursor: pointer;
+        color: var(--color-muted);
+        user-select: none;
+    }
+    .group-header:hover {
+        color: var(--color-fg-alt);
+    }
+    .group-ico {
+        flex: none;
+        display: inline-flex;
+        align-items: center;
+        opacity: 0.85;
+    }
+    .group-label {
+        font-family: var(--font-mono, ui-monospace, monospace);
+        font-size: 11px;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
     }
 </style>

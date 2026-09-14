@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { render, fireEvent } from '@testing-library/svelte/svelte5';
 import type { FileEntry } from '@quantum/client';
+import type { ListItem } from './paneState.svelte';
 import FileList from './FileList.svelte';
 import { beginDrag, endDrag } from './dragState.svelte';
 
@@ -40,10 +41,15 @@ function makeEntries(count: number): FileEntry[] {
     return entries;
 }
 
+/** Wrap plain entries as unheaded `ListItem`s, the shape `FileList` now consumes. */
+function toItems(entries: FileEntry[]): ListItem[] {
+    return entries.map((entry) => ({ kind: 'entry', entry }));
+}
+
 function renderList(entries: FileEntry[], viewportHeight: number) {
     return render(FileList, {
         props: {
-            entries,
+            items: toItems(entries),
             selection: new Set<string>(),
             maxSize: entries.length,
             viewportHeight,
@@ -93,7 +99,7 @@ describe('FileList background drop target', () => {
     function renderEmptyList(path: string, onMove: (sources: string[], destination: string) => void) {
         return render(FileList, {
             props: {
-                entries: [] as FileEntry[],
+                items: [] as ListItem[],
                 selection: new Set<string>(),
                 maxSize: 1,
                 viewportHeight: 600,
@@ -139,7 +145,7 @@ describe('FileList background drop target', () => {
         const onMove = vi.fn();
         const { container } = render(FileList, {
             props: {
-                entries: makeEntries(3),
+                items: toItems(makeEntries(3)),
                 selection: new Set<string>(),
                 maxSize: 3,
                 viewportHeight: 600,
@@ -175,7 +181,7 @@ describe('FileList background drop target', () => {
         };
         const { container } = render(FileList, {
             props: {
-                entries: [directory],
+                items: toItems([directory]),
                 selection: new Set<string>(),
                 maxSize: 1,
                 viewportHeight: 600,
@@ -195,5 +201,108 @@ describe('FileList background drop target', () => {
 
         expect(onMove).toHaveBeenCalledTimes(1);
         expect(onMove).toHaveBeenCalledWith(['/other/a'], '/dir/sub');
+    });
+});
+
+describe('FileList grouped deep-search headers', () => {
+    function groupedItems(): ListItem[] {
+        return [
+            { kind: 'header', path: '/search' },
+            { kind: 'entry', entry: { ...makeEntry(0), name: 'root.txt', path: '/search/root.txt' } },
+            { kind: 'header', path: '/search/sub' },
+            { kind: 'entry', entry: { ...makeEntry(1), name: 'nested.txt', path: '/search/sub/nested.txt' } },
+        ];
+    }
+
+    function renderGrouped(onGroupNavigate = vi.fn(), onSelect = vi.fn()) {
+        return {
+            onGroupNavigate,
+            onSelect,
+            ...render(FileList, {
+                props: {
+                    items: groupedItems(),
+                    selection: new Set<string>(),
+                    maxSize: 10,
+                    viewportHeight: 600,
+                    onGroupNavigate,
+                    onSelect,
+                    onOpen: vi.fn(),
+                    onContextMenu: vi.fn(),
+                },
+            }),
+        };
+    }
+
+    it('renders one header row per group, each 30px tall, with a folder icon', () => {
+        const { container } = renderGrouped();
+        const headers = container.querySelectorAll('.group-header');
+        expect(headers.length).toBe(2);
+        for (const header of headers) {
+            expect((header as HTMLElement).querySelector('.icon')).not.toBeNull();
+        }
+    });
+
+    it('labels the root-level group "." and a nested group by its relative path', () => {
+        const { container } = render(FileList, {
+            props: {
+                items: groupedItems(),
+                selection: new Set<string>(),
+                maxSize: 10,
+                viewportHeight: 600,
+                path: '/search',
+                onSelect: vi.fn(),
+                onOpen: vi.fn(),
+                onContextMenu: vi.fn(),
+            },
+        });
+        const labels = [...container.querySelectorAll('.group-label')].map((el) => el.textContent);
+        expect(labels).toEqual(['.', 'sub']);
+    });
+
+    it('indents entry rows that belong to a group, without indenting headers', () => {
+        const { container } = renderGrouped();
+        const rows = container.querySelectorAll('.frow');
+        expect(rows.length).toBe(2);
+        for (const row of rows) {
+            expect((row as HTMLElement).classList.contains('indented')).toBe(true);
+        }
+    });
+
+    it('does not indent rows when the list is not grouped', () => {
+        const { container } = renderList(makeEntries(2), 600);
+        const row = container.querySelector('.frow') as HTMLElement;
+        expect(row.classList.contains('indented')).toBe(false);
+    });
+
+    it('clicking a header calls onGroupNavigate with the absolute group path and never onSelect', async () => {
+        const { container, onGroupNavigate, onSelect } = renderGrouped();
+        const header = container.querySelectorAll('.group-header')[1] as HTMLElement;
+        await fireEvent.click(header);
+        expect(onGroupNavigate).toHaveBeenCalledTimes(1);
+        expect(onGroupNavigate).toHaveBeenCalledWith('/search/sub');
+        expect(onSelect).not.toHaveBeenCalled();
+    });
+
+    it('gives header rows no selection highlight even when their path matches the selection', () => {
+        const { container } = render(FileList, {
+            props: {
+                items: groupedItems(),
+                selection: new Set<string>(['/search']),
+                maxSize: 10,
+                viewportHeight: 600,
+                onSelect: vi.fn(),
+                onOpen: vi.fn(),
+                onContextMenu: vi.fn(),
+            },
+        });
+        const header = container.querySelectorAll('.group-header')[0] as HTMLElement;
+        expect(header.classList.contains('sel')).toBe(false);
+    });
+
+    it('counts header rows toward the virtualization row height when computing the sizer', () => {
+        const { container } = renderGrouped();
+        const sizer = container.querySelector('.sizer') as HTMLElement;
+        // 4 total items (2 headers + 2 entries), 30px each.
+        expect(sizer.style.height).toBe('120px');
     });
 });
