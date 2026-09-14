@@ -603,9 +603,11 @@ broken CI before; do not reintroduce them:
   and rendered HTML; JSON gets brace/bracket folding and minified-file detection
   with a format prompt; code gets indentation-based folding and highlight.js
   syntax highlighting (15 languages). The viewer is a panel (`kind = "panel"`,
-  `destroy_on_dismiss = true`), so it is rebuilt fresh on each open. When an agent
-  wants to show the user a file for review (a plan, a config, a diff), open it
-  with `qv` rather than dumping text in chat.
+  `destroy_on_dismiss = true`), so it is rebuilt fresh on each open. It is also
+  `multi_instance = true` (see the multi-instance note below), so `qv` opens a
+  NEW viewer window every call rather than replacing the current one. When an
+  agent wants to show the user a file for review (a plan, a config, a diff),
+  open it with `qv` rather than dumping text in chat.
 - **View arg passing: `window.__quantum_args`.** Views that accept arguments
   (file-viewer, and any future view that takes open-time parameters) read
   `(window as any).__quantum_args` in their Svelte `onMount`. The value is
@@ -613,6 +615,42 @@ broken CI before; do not reintroduce them:
   immediately and on `LoadEvent::Committed`. The canonical IPC call is
   `view.show` with params `{ "name": "<view>", "args": { ... } }`. CLI:
   `quantumctl show <view> --args '<json>'`.
+- **Multi-instance views and the `#<instance>` suffix.** By default a `panel`,
+  `overlay`, or `toast` view is single-instance: every `view.show` collapses onto
+  the one window, keyed by `canonical_view_key`
+  (`src/ui/host/src/registry.rs`). A view opts OUT of that by setting
+  `multi_instance = true` in its `view.toml` (`ViewDescriptor.multi_instance`);
+  today the file explorer (`plugin/files/files`) and file viewer
+  (`plugin/file-viewer/file-viewer`) do. A multi-instance view is addressed with
+  a caller-supplied INSTANCE SUFFIX inside the view name:
+  `plugin/files/files#<id>`. The `#<id>` rides inside the `name` string the whole
+  way (`view.show { name }` → `WindowHost::open` → `canonical_view_key`), so NO
+  IPC, dispatcher, use-case, or `quantumctl` signature changed — it is just part
+  of the name. Two distinct ids are two windows; the same id reuses one window; a
+  suffix on a NON-multi-instance view is ignored (stripped) so a stray `#` can
+  never fragment a single-instance view. The suffix is split off (before the
+  `@<monitor>` split) for URI/descriptor/namespace resolution, so both instances
+  load the same view bundle. `split_instance` is the parser; `#` is safe because
+  canonical names and connector suffixes never contain it. To open a fresh
+  instance, the caller mints its own id (`qv` uses `date +%s%N`; a keybind can do
+  the same; frontend code can use `Date.now()`).
+  **Instance cap (memory guard).** Each live instance owns its own render process
+  (both views are `destroy_on_dismiss`), so its renderer memory returns to the OS
+  on close — multi-instance does NOT defeat the memory design. A per-view cap
+  bounds the aggregate: `ViewDescriptor.max_instances` if set, else the global
+  `QUANTUM_MAX_VIEW_INSTANCES` (default 8, read in
+  `src/binaries/quantumd/src/gtk_loop.rs`). When the cap is reached, opening a new
+  instance destroys the OLDEST live one first (`instance_order` in the registry,
+  logged as `instance cap ... evicting`).
+  **Self-close: `window.__quantum_view_name`.** A multi-instance view must close
+  its OWN window, not the bare shared name. The host injects the full
+  instance-qualified name (`plugin/files/files#<id>`) as
+  `window.__quantum_view_name` via `inject_view_name()`
+  (`src/ui/host/src/windows/mod.rs`), alongside `__quantum_args`, on every load.
+  A view's close path calls `view.hide { name: <that> }` (the files view reads it
+  in `lib/ipc.ts`; the file-viewer via `lib/selfName.ts`), falling back to the
+  bare name if unset. Any future multi-instance view that can close itself MUST
+  hide `window.__quantum_view_name`, never the hardcoded bare name.
 - **Panel views need `#app { height: 100% }` for flex scrolling.** The mount
   point div must have explicit height for `overflow-y: auto` to work on flex
   children with `min-height: 0`. Without it, content overflows without scrolling.

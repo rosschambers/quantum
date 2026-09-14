@@ -366,6 +366,22 @@ payload verbatim.
 
 ---
 
+### View name conventions (`view.toggle` / `view.show` / `view.hide`)
+
+The `name` field of the three `view.*` methods may carry two optional suffixes;
+both ride inside the name string and need no extra parameters:
+
+- **`@<monitor>`** (e.g. `plugin/bar/bar@DP-1`) — pins a per-monitor view to a
+  specific Wayland connector.
+- **`#<instance>`** (e.g. `plugin/files/files#1737059000`) — opens a distinct
+  window instance of a `multi_instance` view (the file explorer and file
+  viewer). Two different ids are two windows; the same id reuses one; a `#`
+  suffix on a non-multi-instance view is ignored. The caller mints the id. This
+  is how more than one file explorer or file viewer can be open at once. See the
+  quantum `AGENTS.md` "Multi-instance views" note and
+  `docs/plans/2026-09-14-multi-instance-windows.md` for the full design and the
+  `QUANTUM_MAX_VIEW_INSTANCES` cap.
+
 ### view.toggle
 
 Toggle the visibility of a view (show if hidden, hide if shown).
