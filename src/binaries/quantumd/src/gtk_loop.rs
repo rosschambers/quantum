@@ -107,9 +107,17 @@ pub fn run(
             view_catalog.clone(),
             web_context,
         );
-        let registry = Rc::new(RefCell::new(WindowRegistry::new(
+        // Global cap on simultaneously-live instances of a `multi_instance`
+        // view, overridable via QUANTUM_MAX_VIEW_INSTANCES (default 8). A
+        // view's own `max_instances` descriptor field still wins over this.
+        let max_view_instances = std::env::var("QUANTUM_MAX_VIEW_INSTANCES")
+            .ok()
+            .and_then(|value| value.parse::<u32>().ok())
+            .unwrap_or(8);
+        let registry = Rc::new(RefCell::new(WindowRegistry::with_instance_cap(
             ctor,
             view_catalog.clone(),
+            max_view_instances,
         )));
 
         let Some(mut rx) = rx_for_activate.borrow_mut().take() else {
