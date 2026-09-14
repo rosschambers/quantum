@@ -469,8 +469,10 @@
                 }
                 cursors[index] = next;
             } else if (event.key === 'Enter') {
-                const entry = pane.visibleEntries()[cursors[index]];
-                if (entry !== undefined) {
+                const visible = pane.visibleEntries();
+                if (visible.length > 0) {
+                    clampCursor(index);
+                    const entry = visible[cursors[index]];
                     openEntry(index, entry);
                 }
             } else if (event.key === 'Backspace') {

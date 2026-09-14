@@ -259,6 +259,34 @@ describe('App type-to-filter', () => {
             expect(container.querySelector('.pane:not(.inactive-pane) .frow.sel')).toBeNull();
         });
     });
+
+    it('Enter opens the first match after a stale cursor from a prior selection', async () => {
+        const ipc = createFakeIpc(filterEntries());
+        const { container } = render(App, { props: { ipc } });
+
+        await vi.waitFor(() => {
+            expect(activeRow(container, `${HOME}/music`)).not.toBeNull();
+        });
+
+        // Click the last row (notes.txt) so the cursor sits at index 3.
+        await fireEvent.click(activeRow(container, `${HOME}/notes.txt`)!);
+
+        // Type a prefix matching exactly one entry: the selection sync (Task 1)
+        // moves the highlight to `docs`, so Enter must open `docs`.
+        await fireEvent.keyDown(window, { key: 'd' });
+        await fireEvent.keyDown(window, { key: 'o' });
+        await fireEvent.keyDown(window, { key: 'w' });
+        await vi.waitFor(() => {
+            expect(activeRow(container, `${HOME}/downloads`)?.classList.contains('sel')).toBe(true);
+        });
+
+        await fireEvent.keyDown(window, { key: 'Enter' });
+
+        // Navigating into a directory lists it (see the double-click test pattern).
+        await vi.waitFor(() => {
+            expect(ipc.list).toHaveBeenCalledWith(`${HOME}/downloads`);
+        });
+    });
 });
 
 describe('App navigation', () => {
