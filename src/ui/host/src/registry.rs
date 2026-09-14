@@ -179,16 +179,19 @@ pub(crate) fn split_instance(view: &str) -> (&str, Option<&str>) {
 /// bare canonical name — the registry then failed to find the window to
 /// hide, and the menu became undismissable.
 pub(crate) fn canonical_view_key(view: &str, catalog: &crate::ViewCatalog) -> String {
-    let (prefix, suffix) = split_view_key(view);
+    // Split the instance id off first; the remaining base name is resolved
+    // exactly as before (alias + monitor-suffix handling untouched).
+    let (base, instance) = split_instance(view);
+    let (prefix, suffix) = split_view_key(base);
     let canonical = match resolve_alias(prefix) {
         Some(canonical) => canonical.to_string(),
         None => prefix.to_string(),
     };
-    let single_instance = catalog
-        .get(&canonical)
+    let descriptor = catalog.get(&canonical);
+    let single_instance = descriptor
         .map(ViewDescriptor::effective_single_instance)
         .unwrap_or(false);
-    match (single_instance, suffix) {
+    let base_key = match (single_instance, suffix) {
         // Single-instance: drop the suffix so every request for this
         // logical view hits the same stored window.
         (true, _) => canonical,
@@ -196,6 +199,16 @@ pub(crate) fn canonical_view_key(view: &str, catalog: &crate::ViewCatalog) -> St
         // each monitor's surface is its own window.
         (false, Some(s)) => format!("{canonical}@{s}"),
         (false, None) => canonical,
+    };
+    // Re-append the instance only for a view that opted into multi-instance
+    // AND was actually addressed with an id. A stray `#` on a single-instance
+    // view is dropped so it can never fragment that view's one window.
+    let multi = descriptor
+        .map(ViewDescriptor::effective_multi_instance)
+        .unwrap_or(false);
+    match (multi, instance) {
+        (true, Some(id)) => format!("{base_key}#{id}"),
+        _ => base_key,
     }
 }
 
@@ -1083,6 +1096,30 @@ mod tests {
         ])
     }
 
+    /// A catalog carrying a multi_instance panel (`plugin/files/files`)
+    /// alongside a plain single-instance panel, so tests can exercise the
+    /// caller-supplied `#<instance>` suffix.
+    fn multi_instance_catalog() -> crate::ViewCatalog {
+        crate::ViewCatalog::from_plugins(vec![
+            (
+                "plugin/files/files".to_string(),
+                ViewDescriptor {
+                    kind: ViewKind::Panel,
+                    destroy_on_dismiss: true,
+                    multi_instance: true,
+                    ..ViewDescriptor::default()
+                },
+            ),
+            (
+                "plugin/launcher/launcher".to_string(),
+                ViewDescriptor {
+                    kind: ViewKind::Panel,
+                    ..ViewDescriptor::default()
+                },
+            ),
+        ])
+    }
+
     fn fake_ctor(count: &Rc<Cell<usize>>, shown: &Rc<Cell<bool>>) -> FakeCtor {
         FakeCtor {
             construct_count: count.clone(),
@@ -1908,6 +1945,37 @@ mod tests {
         assert_eq!(
             canonical_view_key("widgets/clock@eDP-1", &catalog),
             "widgets/clock@eDP-1"
+        );
+    }
+
+    #[test]
+    fn multi_instance_keys_are_distinct_per_instance() {
+        let catalog = multi_instance_catalog();
+        assert_eq!(
+            canonical_view_key("plugin/files/files#3", &catalog),
+            "plugin/files/files#3"
+        );
+        assert_eq!(
+            canonical_view_key("plugin/files/files#4", &catalog),
+            "plugin/files/files#4"
+        );
+    }
+
+    #[test]
+    fn multi_instance_without_id_uses_bare_key() {
+        let catalog = multi_instance_catalog();
+        assert_eq!(
+            canonical_view_key("plugin/files/files", &catalog),
+            "plugin/files/files"
+        );
+    }
+
+    #[test]
+    fn instance_suffix_ignored_for_single_instance_view() {
+        let catalog = multi_instance_catalog();
+        assert_eq!(
+            canonical_view_key("plugin/launcher/launcher#9", &catalog),
+            "plugin/launcher/launcher"
         );
     }
 
