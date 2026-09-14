@@ -18,7 +18,9 @@ export type ShortcutAction =
     | { kind: 'cursor'; to: 'first' | 'last' }
     | { kind: 'toggle-hidden' }
     | { kind: 'clear-selection' }
-    | { kind: 'help' };
+    | { kind: 'help' }
+    | { kind: 'focus-search' }
+    | { kind: 'deep-search' };
 
 /** Map a keyboard event to a shortcut action, or null when it is not one. */
 export function resolveShortcut(event: KeyboardEvent): ShortcutAction | null {
@@ -37,14 +39,16 @@ export function resolveShortcut(event: KeyboardEvent): ShortcutAction | null {
             case 'v': return { kind: 'paste' };
             case 'd': return { kind: 'duplicate' };
             case 'h': return { kind: 'toggle-hidden' };
+            case 'f': return { kind: 'focus-search' };
             default: return null;
         }
     }
-    if (control && event.shiftKey && lower === 'n') {
-        return { kind: 'new-folder' };
-    }
     if (control) {
-        return null;
+        switch (lower) {
+            case 'n': return { kind: 'new-folder' };
+            case 'f': return { kind: 'deep-search' };
+            default: return null;
+        }
     }
 
     switch (event.key) {

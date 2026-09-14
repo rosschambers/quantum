@@ -41,6 +41,10 @@ describe('resolveShortcut', () => {
     test('? is help', () => {
         expect(resolveShortcut(key({ key: '?', shiftKey: true }))).toEqual({ kind: 'help' });
     });
+    test('search shortcuts', () => {
+        expect(resolveShortcut(key({ key: 'f', ctrlKey: true }))).toEqual({ kind: 'focus-search' });
+        expect(resolveShortcut(key({ key: 'F', metaKey: true, shiftKey: true }))).toEqual({ kind: 'deep-search' });
+    });
     test('non-shortcuts resolve to null', () => {
         expect(resolveShortcut(key({ key: 'n', ctrlKey: true }))).toBeNull();
         expect(resolveShortcut(key({ key: 'a' }))).toBeNull();
