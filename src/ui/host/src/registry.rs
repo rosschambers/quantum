@@ -140,6 +140,18 @@ pub(crate) fn split_view_key(view: &str) -> (&str, Option<&str>) {
     }
 }
 
+/// Split a view-name key on the first `#`. Returns `(prefix, instance)`
+/// where `instance` is the optional caller-supplied instance id used to key
+/// multiple live windows of a `multi_instance` view. Pure function, no GTK
+/// dependency. Split BEFORE the `@<monitor>` split so a future name carrying
+/// both suffixes (`plugin/x/y#2@DP-1`) is parsed instance-first.
+pub(crate) fn split_instance(view: &str) -> (&str, Option<&str>) {
+    match view.split_once('#') {
+        Some((prefix, suffix)) => (prefix, Some(suffix)),
+        None => (view, None),
+    }
+}
+
 /// Canonicalize a view key for window-map storage.
 ///
 /// Two transformations make the storage key stable regardless of how a
@@ -1419,6 +1431,30 @@ mod tests {
         assert_eq!(
             split_view_key("widgets/bar@DP-1@2"),
             ("widgets/bar", Some("DP-1@2"))
+        );
+    }
+
+    #[test]
+    fn split_instance_no_suffix_returns_whole_name() {
+        assert_eq!(
+            split_instance("plugin/files/files"),
+            ("plugin/files/files", None)
+        );
+    }
+
+    #[test]
+    fn split_instance_extracts_instance_id() {
+        assert_eq!(
+            split_instance("plugin/files/files#3"),
+            ("plugin/files/files", Some("3"))
+        );
+    }
+
+    #[test]
+    fn split_instance_ignores_monitor_only_key() {
+        assert_eq!(
+            split_instance("plugin/bar/bar@DP-1"),
+            ("plugin/bar/bar@DP-1", None)
         );
     }
 
