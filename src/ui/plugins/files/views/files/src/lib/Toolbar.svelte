@@ -37,6 +37,8 @@
         onToggleDual: () => void;
         onHelp: () => void;
         onClose: () => void;
+        /** Fired when Enter is pressed while the filter input has focus. */
+        onEnter?: () => void;
     }
 
     let {
@@ -56,6 +58,7 @@
         onToggleDual,
         onHelp,
         onClose,
+        onEnter,
     }: Props = $props();
 
     // Up is enabled everywhere except the filesystem root.
@@ -63,6 +66,13 @@
 
     function handleFilterInput(event: Event): void {
         onFilterInput((event.currentTarget as HTMLInputElement).value);
+    }
+
+    function handleFilterKeyDown(event: KeyboardEvent): void {
+        if (event.key === 'Enter') {
+            event.preventDefault();
+            onEnter?.();
+        }
     }
 </script>
 
@@ -105,6 +115,7 @@
             title="Filter this folder; toggle deep for recursive search"
             value={filter}
             oninput={handleFilterInput}
+            onkeydown={handleFilterKeyDown}
         />
         <button
             type="button"

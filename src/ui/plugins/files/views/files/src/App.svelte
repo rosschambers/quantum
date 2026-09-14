@@ -469,12 +469,7 @@
                 }
                 cursors[index] = next;
             } else if (event.key === 'Enter') {
-                const visible = pane.visibleEntries();
-                if (visible.length > 0) {
-                    clampCursor(index);
-                    const entry = visible[cursors[index]];
-                    openEntry(index, entry);
-                }
+                openCursorEntry();
             } else if (event.key === 'Backspace') {
                 // While filtering, Backspace edits the filter; with an empty
                 // filter it keeps its "go up" behavior.
@@ -550,6 +545,21 @@
         const high = Math.max(0, length - 1);
         cursors[index] = clamp(cursors[index], 0, high);
         anchors[index] = clamp(anchors[index], 0, high);
+    }
+
+    /**
+     * Open the active pane's entry at the keyboard cursor, clamping the cursor
+     * first. Shared by the window-level Enter handler and the toolbar filter
+     * input's Enter key, so both open the same highlighted entry.
+     */
+    function openCursorEntry(): void {
+        const index = activePaneIndex;
+        const visible = active.visibleEntries();
+        if (visible.length > 0) {
+            clampCursor(index);
+            const entry = visible[cursors[index]];
+            openEntry(index, entry);
+        }
     }
 
     function dispatchShortcut(action: ShortcutAction): void {
@@ -929,6 +939,7 @@
         onToggleDual={() => (dualPane = !dualPane)}
         onHelp={() => (helpOpen = true)}
         onClose={() => ipc.close()}
+        onEnter={openCursorEntry}
     />
 
     <div id="body">

@@ -20,6 +20,7 @@ function renderToolbar(extra: Partial<Record<string, unknown>> = {}) {
             onToggleDual: vi.fn(),
             onHelp: vi.fn(),
             onClose: vi.fn(),
+            onEnter: vi.fn(),
             ...extra,
         },
     });
@@ -82,6 +83,18 @@ describe('Toolbar', () => {
         const close = container.querySelector('.b-close') as HTMLButtonElement;
         await fireEvent.click(close);
         expect(onClose).toHaveBeenCalledTimes(1);
+    });
+
+    it('fires onEnter when Enter is pressed in the filter input', async () => {
+        const onEnter = vi.fn();
+        const { container } = renderToolbar({ onEnter });
+        const input = container.querySelector('.filter-input') as HTMLInputElement;
+
+        await fireEvent.keyDown(input, { key: 'Enter' });
+        expect(onEnter).toHaveBeenCalledTimes(1);
+
+        await fireEvent.keyDown(input, { key: 'a' });
+        expect(onEnter).toHaveBeenCalledTimes(1);
     });
 
     it('calls onHelp when the keyboard-shortcuts button is clicked', async () => {
