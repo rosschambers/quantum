@@ -600,7 +600,14 @@ broken CI before; do not reintroduce them:
   panel for Markdown, JSON, code, images, and video. Open from the shell with
   `qv <filepath>` (a wrapper around `quantumctl show plugin/file-viewer/file-viewer
   --args '{"path":"<absolute-path>"}'`). Markdown gets a collapsible TOC sidebar
-  and rendered HTML; JSON gets brace/bracket folding and minified-file detection
+  and rendered HTML, including ```mermaid fences rendered as SVG diagrams: the
+  marked renderer emits an escaped placeholder div for mermaid fences, and an
+  `$effect` lazy-loads mermaid (only when a fence exists — no-diagram files never
+  fetch the ~700 kB chunk) and renders each placeholder with `securityLevel:
+  'strict'` and theme variables mapped from CSS tokens; a failed diagram falls
+  back to its highlighted source with an error line, per-diagram, without taking
+  the rest down (a mermaid chunk load failure marks every pending placeholder).
+  JSON gets brace/bracket folding and minified-file detection
   with a format prompt; code gets indentation-based folding and highlight.js
   syntax highlighting (15 languages). The viewer is a panel (`kind = "panel"`,
   `destroy_on_dismiss = true`), so it is rebuilt fresh on each open. It is also
