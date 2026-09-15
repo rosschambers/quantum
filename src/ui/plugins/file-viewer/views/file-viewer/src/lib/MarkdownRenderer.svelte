@@ -1,7 +1,7 @@
 <script lang="ts">
     import { marked } from 'marked';
     import { escapeHtml, highlightCode } from './highlighter';
-    import { isMermaidLanguage, mermaidPlaceholderHtml } from './mermaid';
+    import { isMermaidLanguage, isGraphvizLanguage, diagramPlaceholderHtml, type DiagramRenderer } from './mermaid';
     import { slugify } from './types';
     import './markdown.css';
 
@@ -12,6 +12,21 @@
     // scheme may not provide; fall back to a counter for the render id.
     function mermaidRenderId(): string {
         return `mermaid-${crypto.randomUUID?.() ?? String(++mermaidRenderCounter)}`;
+    }
+
+    // The Graphviz WASM module is heavier than mermaid and only loads for files
+    // that actually contain dot/digraph/graphviz fences. Mermaid cannot parse
+    // DOT syntax, so those languages get their own renderer. `Graphviz.load()`
+    // boots the WASM instance (cached after the first call); the layout methods
+    // live on the instance, not the class.
+    let graphvizInstance: { layout: (source: string, format: string) => string } | undefined;
+
+    async function loadGraphviz(): Promise<{ layout: (source: string, format: string) => string }> {
+        if (!graphvizInstance) {
+            const module = await import('@hpcc-js/wasm-graphviz');
+            graphvizInstance = await module.Graphviz.load();
+        }
+        return graphvizInstance;
     }
 
     interface Props {
@@ -32,11 +47,11 @@
         return `file://${fileDirectory}/${href}`;
     }
 
-    function renderMermaidError(placeholder: HTMLElement, message: string): void {
+    function renderDiagramError(placeholder: HTMLElement, renderer: DiagramRenderer, message: string): void {
         const source = placeholder.textContent ?? '';
-        placeholder.classList.add('mermaid-error');
-        placeholder.removeAttribute('data-mermaid-status');
-        placeholder.innerHTML = `<p class="mermaid-error-message">${escapeHtml(message)}</p><pre><code class="hljs">${highlightCode(source, 'mermaid')}</code></pre>`;
+        placeholder.classList.add('diagram-error');
+        placeholder.removeAttribute('data-diagram-status');
+        placeholder.innerHTML = `<p class="diagram-error-message">${escapeHtml(message)}</p><pre><code class="hljs">${highlightCode(source, renderer === 'mermaid' ? 'mermaid' : 'dot')}</code></pre>`;
     }
 
     let parsedHtml = $derived.by(() => {
@@ -63,7 +78,10 @@
             renderer.code = (token) => {
                 const language = token.lang || undefined;
                 if (isMermaidLanguage(language)) {
-                    return mermaidPlaceholderHtml(token.text);
+                    return diagramPlaceholderHtml(token.text, 'mermaid');
+                }
+                if (isGraphvizLanguage(language)) {
+                    return diagramPlaceholderHtml(token.text, 'graphviz');
                 }
                 const highlightedCode = highlightCode(token.text, language);
                 const languageClass = language ? ` language-${language}` : '';
@@ -88,6 +106,10 @@
 
     let container: HTMLDivElement | undefined = $state();
 
+    function errorMessage(error: unknown): string {
+        return error instanceof Error ? error.message : String(error);
+    }
+
     // Staleness contract: a content re-render replaces the {@html} DOM mid-flight,
     // so the cleanup cancel flag stops a superseded effect run from doing any work,
     // and every placeholder's isConnected is re-checked after each await before its
@@ -96,58 +118,93 @@
     $effect(() => {
         if (!parsedHtml || !container) return;
         const placeholders = Array.from(
-            container.querySelectorAll<HTMLElement>('.mermaid-block[data-mermaid-status="pending"]'),
+            container.querySelectorAll<HTMLElement>('.diagram-block[data-diagram-status="pending"]'),
         );
         if (placeholders.length === 0) return;
 
         let cancelled = false;
 
         void (async () => {
-            let mermaid;
-            try {
-                mermaid = (await import('mermaid')).default;
-                const styles = getComputedStyle(document.documentElement);
-                const cssVariable = (name: string, fallback: string) =>
-                    styles.getPropertyValue(name).trim() || fallback;
+            // Each renderer lazy-loads only when a placeholder actually claims it,
+            // and a failed load surfaces on that renderer's placeholders instead of
+            // leaving them silently stuck.
+            const mermaidPlaceholders = placeholders.filter(
+                (placeholder) => placeholder.dataset.diagramRenderer === 'mermaid',
+            );
+            const graphvizPlaceholders = placeholders.filter(
+                (placeholder) => placeholder.dataset.diagramRenderer === 'graphviz',
+            );
 
-                if (!mermaidInitialized) {
-                    mermaid.initialize({
-                        startOnLoad: false,
-                        securityLevel: 'strict',
-                        theme: 'base',
-                        themeVariables: {
-                            fontFamily: cssVariable('--font-sans', 'system-ui'),
-                            primaryColor: cssVariable('--color-surface', '#f0f2f5'),
-                            primaryTextColor: cssVariable('--color-fg', '#1a1a1a'),
-                            lineColor: cssVariable('--color-accent', '#5b6770'),
-                        },
-                    });
-                    mermaidInitialized = true;
+            let mermaid: typeof import('mermaid').default | undefined;
+            if (mermaidPlaceholders.length > 0) {
+                try {
+                    mermaid = (await import('mermaid')).default;
+                    const styles = getComputedStyle(document.documentElement);
+                    const cssVariable = (name: string, fallback: string) =>
+                        styles.getPropertyValue(name).trim() || fallback;
+
+                    if (!mermaidInitialized) {
+                        mermaid.initialize({
+                            startOnLoad: false,
+                            securityLevel: 'strict',
+                            theme: 'base',
+                            themeVariables: {
+                                fontFamily: cssVariable('--font-sans', 'system-ui'),
+                                primaryColor: cssVariable('--color-surface', '#f0f2f5'),
+                                primaryTextColor: cssVariable('--color-fg', '#1a1a1a'),
+                                lineColor: cssVariable('--color-accent', '#5b6770'),
+                            },
+                        });
+                        mermaidInitialized = true;
+                    }
+                } catch (error) {
+                    console.error('Mermaid failed to load:', error);
+                    if (!cancelled) {
+                        for (const placeholder of mermaidPlaceholders) {
+                            if (placeholder.isConnected) {
+                                renderDiagramError(placeholder, 'mermaid', `Mermaid failed to load: ${errorMessage(error)}`);
+                            }
+                        }
+                    }
                 }
-            } catch (error) {
-                // The lazy chunk failed to load or initialize — surface it on every
-                // pending placeholder instead of leaving them silently stuck.
-                const message = error instanceof Error ? error.message : String(error);
-                console.error('Mermaid failed to load:', error);
-                for (const placeholder of placeholders) {
-                    if (!placeholder.isConnected || cancelled) continue;
-                    renderMermaidError(placeholder, `Mermaid failed to load: ${message}`);
+            }
+
+            let graphviz: { layout: (source: string, format: string) => string } | undefined;
+            if (graphvizPlaceholders.length > 0) {
+                try {
+                    graphviz = await loadGraphviz();
+                } catch (error) {
+                    console.error('Graphviz failed to load:', error);
+                    if (!cancelled) {
+                        for (const placeholder of graphvizPlaceholders) {
+                            if (placeholder.isConnected) {
+                                renderDiagramError(placeholder, 'graphviz', `Graphviz failed to load: ${errorMessage(error)}`);
+                            }
+                        }
+                    }
                 }
-                return;
             }
 
             for (const placeholder of placeholders) {
                 if (cancelled || !placeholder.isConnected) continue;
+                const renderer = placeholder.dataset.diagramRenderer as DiagramRenderer;
                 const source = placeholder.textContent ?? '';
                 try {
-                    const { svg } = await mermaid.render(mermaidRenderId(), source);
+                    let svg: string;
+                    if (renderer === 'graphviz') {
+                        if (!graphviz) continue;
+                        svg = graphviz.layout(source, 'svg');
+                    } else {
+                        if (!mermaid) continue;
+                        svg = (await mermaid.render(mermaidRenderId(), source)).svg;
+                    }
                     if (!placeholder.isConnected || cancelled) continue;
                     placeholder.innerHTML = svg;
-                    placeholder.removeAttribute('data-mermaid-status');
+                    placeholder.removeAttribute('data-diagram-status');
                 } catch (error) {
+                    console.error(`Diagram render failed (${renderer}):`, error);
                     if (!placeholder.isConnected || cancelled) continue;
-                    const message = error instanceof Error ? error.message : String(error);
-                    renderMermaidError(placeholder, message);
+                    renderDiagramError(placeholder, renderer, errorMessage(error));
                 }
             }
         })();

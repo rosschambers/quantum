@@ -278,8 +278,8 @@
     color: #f78c6c;
 }
 
-/* Mermaid diagram blocks */
-.markdown-renderer .mermaid-block {
+/* Diagram blocks (mermaid and graphviz renderers) */
+.markdown-renderer .diagram-block {
     margin: 24px auto;
     padding: 16px;
     display: flex;
@@ -292,20 +292,20 @@
     font-family: var(--font-mono, 'monospace');
 }
 
-.markdown-renderer .mermaid-block svg {
+.markdown-renderer .diagram-block svg {
     max-width: 100%;
     height: auto;
     white-space: normal;
     font-family: var(--font-sans, system-ui);
 }
 
-.markdown-renderer .mermaid-error {
+.markdown-renderer .diagram-error {
     flex-direction: column;
     align-items: stretch;
     border-color: var(--color-error, #dc2626);
 }
 
-.markdown-renderer .mermaid-error-message {
+.markdown-renderer .diagram-error-message {
     color: var(--color-error, #dc2626);
     font-family: var(--font-sans, system-ui);
     margin-bottom: 12px;
