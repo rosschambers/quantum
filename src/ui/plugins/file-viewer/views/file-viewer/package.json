@@ -10,8 +10,9 @@
   },
   "dependencies": {
     "@quantum/client": "workspace:*",
+    "highlight.js": "^11",
     "marked": "^14",
-    "highlight.js": "^11"
+    "mermaid": "^11.17.2"
   },
   "devDependencies": {
     "@sveltejs/vite-plugin-svelte": "^4.0.0-next.6",
