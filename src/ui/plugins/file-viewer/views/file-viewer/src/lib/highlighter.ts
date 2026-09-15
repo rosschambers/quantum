@@ -81,7 +81,7 @@ export function detectLanguage(code: string): string | undefined {
  * @param text The text to escape
  * @returns Escaped HTML
  */
-function escapeHtml(text: string): string {
+export function escapeHtml(text: string): string {
 	const map: Record<string, string> = {
 		'&': '&amp;',
 		'<': '&lt;',
