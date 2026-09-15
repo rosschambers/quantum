@@ -77,6 +77,9 @@ importers:
 
   plugins/file-viewer/views/file-viewer:
     dependencies:
+      '@hpcc-js/wasm-graphviz':
+        specifier: ^1.29.0
+        version: 1.29.0
       '@quantum/client':
         specifier: workspace:*
         version: link:../../../../packages/client
@@ -657,6 +660,9 @@ packages:
     peerDependenciesMeta:
       '@noble/hashes':
         optional: true
+
+  '@hpcc-js/wasm-graphviz@1.29.0':
+    resolution: {integrity: sha512-irr5OCt1G5s5j75jlGZm3Y5fb6DboE2c/aWiM/Fv/b3NygbJY/Rp8335kS5Qeklsib0dWInjAYCj4UEClIYQmQ==}
 
   '@iconify/types@2.0.0':
     resolution: {integrity: sha512-+wluvCrRhXrhyOmRDJ3q8mux9JkKy5SJ/v8ol2tu4FVjyYvtEzkc/3pK15ET6RKg4b4w4BmTk1+gsCUhf21Ykg==}
@@ -2105,6 +2111,8 @@ snapshots:
     optional: true
 
   '@exodus/bytes@1.15.1': {}
+
+  '@hpcc-js/wasm-graphviz@1.29.0': {}
 
   '@iconify/types@2.0.0': {}
 

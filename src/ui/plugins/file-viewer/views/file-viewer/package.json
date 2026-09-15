@@ -9,6 +9,7 @@
     "test": "vitest run --passWithNoTests"
   },
   "dependencies": {
+    "@hpcc-js/wasm-graphviz": "^1.29.0",
     "@quantum/client": "workspace:*",
     "highlight.js": "^11",
     "marked": "^14",
