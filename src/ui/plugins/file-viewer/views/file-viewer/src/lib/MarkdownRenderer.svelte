@@ -32,6 +32,13 @@
         return `file://${fileDirectory}/${href}`;
     }
 
+    function renderMermaidError(placeholder: HTMLElement, message: string): void {
+        const source = placeholder.textContent ?? '';
+        placeholder.classList.add('mermaid-error');
+        placeholder.removeAttribute('data-mermaid-status');
+        placeholder.innerHTML = `<p class="mermaid-error-message">${escapeHtml(message)}</p><pre><code class="hljs">${highlightCode(source, 'mermaid')}</code></pre>`;
+    }
+
     let parsedHtml = $derived.by(() => {
         try {
             // Configure marked with GFM enabled, no breaks
@@ -78,8 +85,14 @@
             return `<p>Error rendering markdown: ${error instanceof Error ? error.message : String(error)}</p>`;
         }
     });
+
     let container: HTMLDivElement | undefined = $state();
 
+    // Staleness contract: a content re-render replaces the {@html} DOM mid-flight,
+    // so the cleanup cancel flag stops a superseded effect run from doing any work,
+    // and every placeholder's isConnected is re-checked after each await before its
+    // SVG is injected. Renders run sequentially within a pass — mermaid's renderer
+    // must not be re-entered concurrently.
     $effect(() => {
         if (!parsedHtml || !container) return;
         const placeholders = Array.from(
@@ -90,24 +103,37 @@
         let cancelled = false;
 
         void (async () => {
-            const { default: mermaid } = await import('mermaid');
-            const styles = getComputedStyle(document.documentElement);
-            const token = (name: string, fallback: string) =>
-                styles.getPropertyValue(name).trim() || fallback;
+            let mermaid;
+            try {
+                mermaid = (await import('mermaid')).default;
+                const styles = getComputedStyle(document.documentElement);
+                const cssVariable = (name: string, fallback: string) =>
+                    styles.getPropertyValue(name).trim() || fallback;
 
-            if (!mermaidInitialized) {
-                mermaid.initialize({
-                    startOnLoad: false,
-                    securityLevel: 'strict',
-                    theme: 'base',
-                    themeVariables: {
-                        fontFamily: token('--font-sans', 'system-ui'),
-                        primaryColor: token('--color-surface', '#f0f2f5'),
-                        primaryTextColor: token('--color-fg', '#1a1a1a'),
-                        lineColor: token('--color-accent', '#5b6770'),
-                    },
-                });
-                mermaidInitialized = true;
+                if (!mermaidInitialized) {
+                    mermaid.initialize({
+                        startOnLoad: false,
+                        securityLevel: 'strict',
+                        theme: 'base',
+                        themeVariables: {
+                            fontFamily: cssVariable('--font-sans', 'system-ui'),
+                            primaryColor: cssVariable('--color-surface', '#f0f2f5'),
+                            primaryTextColor: cssVariable('--color-fg', '#1a1a1a'),
+                            lineColor: cssVariable('--color-accent', '#5b6770'),
+                        },
+                    });
+                    mermaidInitialized = true;
+                }
+            } catch (error) {
+                // The lazy chunk failed to load or initialize — surface it on every
+                // pending placeholder instead of leaving them silently stuck.
+                const message = error instanceof Error ? error.message : String(error);
+                console.error('Mermaid failed to load:', error);
+                for (const placeholder of placeholders) {
+                    if (!placeholder.isConnected || cancelled) continue;
+                    renderMermaidError(placeholder, `Mermaid failed to load: ${message}`);
+                }
+                return;
             }
 
             for (const placeholder of placeholders) {
@@ -121,9 +147,7 @@
                 } catch (error) {
                     if (!placeholder.isConnected || cancelled) continue;
                     const message = error instanceof Error ? error.message : String(error);
-                    placeholder.classList.add('mermaid-error');
-                    placeholder.removeAttribute('data-mermaid-status');
-                    placeholder.innerHTML = `<p class="mermaid-error-message">Mermaid render failed: ${escapeHtml(message)}</p><pre><code class="hljs">${highlightCode(source, 'mermaid')}</code></pre>`;
+                    renderMermaidError(placeholder, message);
                 }
             }
         })();
