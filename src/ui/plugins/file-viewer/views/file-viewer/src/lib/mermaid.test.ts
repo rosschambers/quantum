@@ -24,4 +24,10 @@ describe('mermaidPlaceholderHtml', () => {
 	it('escapes HTML-significant characters in the source', () => {
 		expect(mermaidPlaceholderHtml('<script>alert("x")</script>')).toContain('&lt;script&gt;');
 	});
+
+	it('trims leading and trailing whitespace from the source', () => {
+		expect(mermaidPlaceholderHtml('\n  graph TD;\n    A --> B;\n  ')).toBe(
+			'<div class="mermaid-block" data-mermaid-status="pending">graph TD;\n    A --&gt; B;</div>',
+		);
+	});
 });
