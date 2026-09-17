@@ -63,7 +63,7 @@ describe('KillWindowButton', () => {
 		expect(btn).not.toBeNull();
 	});
 
-	it('left-click runs the hyprctl kill picker directly without opening the menu', async () => {
+	it('left-click runs the qkill picker, falling back to hyprctl kill when absent', async () => {
 		const { client } = mockClientWithWindows([]);
 		const { container } = render(KillWindowButton, { props: { client } });
 		const btn = container.querySelector('.bar-button') as HTMLButtonElement | null;
@@ -77,7 +77,14 @@ describe('KillWindowButton', () => {
 			provider: 'shell',
 			action: {
 				kind: 'shell',
-				data: { command: ['hyprctl', 'kill'], terminal: false },
+				data: {
+					command: [
+						'sh',
+						'-c',
+						'if command -v qkill >/dev/null 2>&1; then exec qkill; else exec hyprctl kill; fi',
+					],
+					terminal: false,
+				},
 			},
 		});
 		// Left-click runs the picker directly; it must not open the menu.
@@ -221,8 +228,25 @@ describe('KillWindowButton', () => {
 
 		// The normal application is offered as a target.
 		expect(menuItem('firefox')).toBeTruthy();
-		// Quantum's own window is never offered as a kill target.
-		expect(menuItem('dev.quantum.daemon')).toBeUndefined();
+		// Quantum's own xdg-toplevel windows ARE offered: the menu closes
+		// windows gracefully by address (closewindow), which quantum handles
+		// per-window, so a quantum window no longer takes the daemon down.
+		const quantumItem = menuItem('dev.quantum.daemon');
+		expect(quantumItem).toBeTruthy();
+
+		await fireEvent.click(quantumItem!);
+		await tick();
+
+		expect(client.call).toHaveBeenCalledWith('action.invoke', {
+			provider: 'shell',
+			action: {
+				kind: 'shell',
+				data: {
+					command: ['hyprctl', 'dispatch', 'closewindow', 'address:0xdead'],
+					terminal: false,
+				},
+			},
+		});
 	});
 
 	it('dismissing the menu without selecting performs no kill', async () => {

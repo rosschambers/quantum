@@ -1,12 +1,18 @@
 <script lang="ts">
     /**
-     * Bar button for killing windows. Left-click enters Hyprland's `hyprctl
-     * kill` click-picker directly (crosshair; next clicked window is
-     * force-killed). Right-click opens a menu offering killing the active
-     * window, gracefully closing any open window by address, and the picker as
-     * a menu entry. The raw picker can target a quantum-drawn surface (bar,
-     * widgets, file explorer share one process), which would take the daemon
-     * down; binding it to left-click is the owner's deliberate choice.
+     * Bar button for killing windows. Left-click enters the click-picker:
+     * `qkill` when installed (the quantum-aware picker — resolves the clicked
+     * point against Hyprland's window list, gracefully closes quantum's own
+     * xdg-toplevel windows through `closewindow`, and force-kills everything
+     * else), falling back to plain `hyprctl kill` (crosshair; next clicked
+     * window is force-killed) when it is not. Right-click opens a menu
+     * offering killing the active window, gracefully closing any open window
+     * by address, and the picker as a menu entry. The menu closes by address
+     * (a graceful close request), which quantum handles per-window — a
+     * quantum window no longer needs to be excluded. Killing a quantum LAYER
+     * surface (bar, clock, timers) still takes the whole daemon down: layer
+     * surfaces cannot receive a close request, and every quantum surface shares
+     * one process. `qkill` preserves kill semantics for those.
      */
     import type { Client, MenuItem } from '@quantum/client';
     import Icon from './Icon.svelte';
@@ -23,14 +29,6 @@
 
     /** Longest window title shown in the menu before it is ellipsized. */
     const MAXIMUM_TITLE_LENGTH = 40;
-
-    /**
-     * The GtkApplication identifier of the quantum daemon itself. Every
-     * quantum-drawn surface (bar, widgets, file explorer) reports this class,
-     * so windows carrying it are excluded from the kill list: they share the
-     * daemon process, and closing one would take the whole session down.
-     */
-    const QUANTUM_APPLICATION_ID = 'dev.quantum.daemon';
 
     function runShell(command: string[]): void {
         client
@@ -60,14 +58,14 @@
     }
 
     // Build the kill menu: kill the active window, the list of open windows
-    // (each closes by Hyprland address), or enter the click-picker. When the
+    // (each closes by Hyprland address), or enter the picker. When the
     // window list is empty or the query fails, only the two static items show.
-    // Quantum's own windows are filtered out so the daemon can never be
-    // selected as a target.
+    // Every entry in the Hyprland window list is an xdg-toplevel that can take
+    // a graceful close request — quantum's own windows included (closing one
+    // closes just that window; the daemon routes the close per-window). Layer
+    // surfaces never appear in this list and stay the picker's job.
     async function buildKillMenu(): Promise<MenuItem[]> {
-        const windows = (await fetchWindows()).filter(
-            (entry) => entry.class !== QUANTUM_APPLICATION_ID,
-        );
+        const windows = await fetchWindows();
         const items: MenuItem[] = [
             {
                 label: 'Kill active window',
@@ -103,14 +101,19 @@
     }
 
     /**
-     * Left-click enters Hyprland's click-to-kill picker (`hyprctl kill`)
-     * directly: the pointer becomes a crosshair and the next window clicked is
-     * force-killed. This is the raw, unfiltered picker, so it can target any
-     * surface including quantum's own (which would take the daemon down) — that
-     * is the owner's deliberate choice for a fast one-click kill.
+     * Left-click enters the click-picker. Prefers `qkill` — the quantum-aware
+     * picker shipped alongside the daemon (it resolves the clicked point,
+     * gracefully closes quantum's own xdg-toplevel windows, and force-kills
+     * everything else). Falls back to plain `hyprctl kill` when `qkill` is not
+     * on PATH. The `if` form matters: a bare `qkill || hyprctl kill` would
+     * fire the fallback even when the user cancelled the picker with Escape.
      */
     function pickWindowToKill(): void {
-        runShell(['hyprctl', 'kill']);
+        runShell([
+            'sh',
+            '-c',
+            'if command -v qkill >/dev/null 2>&1; then exec qkill; else exec hyprctl kill; fi',
+        ]);
     }
 
     // Right-click opens the kill menu (kill the active window, close a specific
