@@ -16,6 +16,7 @@
      * filter, Backspace edits that filter (or navigates up when it is empty),
      * and Escape clears it (or closes menus/modals when it is empty).
      */
+    import { untrack } from 'svelte';
     import type {
         ApplicationInfo,
         DriveInfo,
@@ -140,22 +141,24 @@
     // event. Order-preserving: multiple events for the same path apply in
     // arrival order (last wins), matching the previous per-event semantics.
     function flushSizeEvents(): void {
-        const events = pendingSizeEvents;
+        const events = new Map(pendingSizeEvents.map((event) => [event.path, event]));
         pendingSizeEvents = [];
         for (const pane of panes) {
-            for (const ev of events) {
-                const entry = pane.entries.find((candidate) => candidate.path === ev.path);
-                if (entry !== undefined) {
-                    entry.recursive_size = ev.bytes;
+            const sizing = new Set(pane.sizing);
+            for (const entry of pane.entries) {
+                const event = events.get(entry.path);
+                if (event !== undefined) {
+                    entry.recursive_size = event.bytes;
                     // A partial subtotal keeps the path in the sizing set (still
                     // calculating); a complete event clears it (final number).
-                    if (ev.complete) {
-                        pane.setSizeComplete(ev.path);
+                    if (event.complete) {
+                        sizing.delete(event.path);
                     } else {
-                        pane.addSizing(ev.path);
+                        sizing.add(event.path);
                     }
                 }
             }
+            pane.sizing = sizing;
         }
     }
 
@@ -222,18 +225,32 @@
     }
 
     /** Load a pane's directory (or its search results when deep search is active). */
-    async function loadPane(pane: PaneState): Promise<void> {
+    const loadGenerations = new Map<PaneState, number>();
+    let disposed = false;
+
+    async function loadPane(pane: PaneState): Promise<boolean> {
+        const generation = (loadGenerations.get(pane) ?? 0) + 1;
+        loadGenerations.set(pane, generation);
+        const path = pane.path;
+        const deepSearch = pane.deepSearch;
+        const filter = pane.filter;
+        const isCurrent = (): boolean => !disposed && loadGenerations.get(pane) === generation &&
+            pane.path === path && pane.deepSearch === deepSearch && (!deepSearch || pane.filter === filter);
         pane.loading = true;
         try {
-            if (pane.deepSearch && pane.filter.trim() !== '') {
-                pane.entries = await ipc.search(pane.path, pane.filter, 500);
-            } else {
-                pane.entries = await ipc.list(pane.path);
+            const entries = deepSearch && filter.trim() !== ''
+                ? await ipc.search(path, filter, 500)
+                : await ipc.list(path);
+            if (!isCurrent()) {
+                return false;
             }
+            pane.entries = entries;
+            return true;
         } catch {
-            pushToast(`Failed to load ${pane.path}`, 'error');
+            if (isCurrent()) pushToast(`Failed to load ${path}`, 'error');
+            return false;
         } finally {
-            pane.loading = false;
+            if (isCurrent()) pane.loading = false;
         }
     }
 
@@ -335,7 +352,14 @@
     // sizes into whichever pane holds the entry, and toast operation failures.
     $effect(() => {
         const unsubscribe = ipc.subscribeFilesEvents(handleFilesEvent);
-        return unsubscribe;
+        return () => {
+            disposed = true;
+            unsubscribe();
+            clearTimeout(sizeFlushTimer);
+            clearTimeout(driveRefreshTimer);
+            pendingSizeEvents = [];
+            loadGenerations.clear();
+        };
     });
 
     function handleFilesEvent(event: FilesEvent): void {
@@ -352,7 +376,8 @@
                             knownSizes.set(entry.path, entry.recursive_size);
                         }
                     }
-                    void loadPane(pane).then(() => {
+                    void loadPane(pane).then((loaded) => {
+                        if (!loaded || disposed || pane.path !== event.path) return;
                         // Re-request sizes for the reloaded listing. Cancel the
                         // prior request first so the backend reference count
                         // stays balanced (this pane already had a sizes()
@@ -381,22 +406,25 @@
         }
     }
 
-    // Per-pane loader: on navigation (path change) list the directory, watch it,
+    // Per-pane loader: on navigation list the directory, watch it,
     // and request recursive sizes; on cleanup unwatch and cancel sizes. Declared
     // via a helper so both panes share one definition.
     function setupPaneLoader(index: number): void {
         $effect(() => {
             const pane = panes[index];
             const path = pane.path;
+            // Same-path navigation still leaves search and requires a fresh listing.
+            void pane.historyIndex;
             void ipc.watch(path).catch(() => {});
             // Seed the sizing set and request sizes only AFTER the listing
             // resolves: the child directory paths are not known until then.
-            void loadPane(pane).then(() => {
-                requestSizes(pane);
+            void untrack(() => loadPane(pane)).then((loaded) => {
+                if (loaded && !disposed && pane.path === path) requestSizes(pane);
             });
             cursors[index] = 0;
             anchors[index] = 0;
             return () => {
+                loadGenerations.set(pane, (loadGenerations.get(pane) ?? 0) + 1);
                 void ipc.unwatch(path).catch(() => {});
                 void ipc.cancelSizes(path).catch(() => {});
                 pane.clearSizing();
@@ -468,7 +496,10 @@
             const pane = active;
             const index = activePaneIndex;
 
-            if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+            if (event.altKey && event.key === 'ArrowUp') {
+                event.preventDefault();
+                pane.up();
+            } else if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
                 const visible = pane.visibleEntries();
                 if (visible.length === 0) {
                     return;
@@ -497,8 +528,6 @@
                 pane.back();
             } else if (event.altKey && event.key === 'ArrowRight') {
                 pane.forward();
-            } else if (event.altKey && event.key === 'ArrowUp') {
-                pane.up();
             } else if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'l') {
                 event.preventDefault();
                 breadcrumbEditing = true;
@@ -733,7 +762,9 @@
         const changed = value !== pane.filter;
         pane.filter = value;
         if (pane.deepSearch && changed) {
-            void loadPane(pane).then(syncFilterSelection);
+            void loadPane(pane).then((loaded) => {
+                if (loaded && pane === active) syncFilterSelection();
+            });
         } else {
             syncFilterSelection();
         }
@@ -773,7 +804,7 @@
      * A grouped deep-search header was clicked: navigate that pane to the
      * folder the group came from. `PaneState.navigate` already clears the
      * filter and turns off deep search, and the per-pane loader effect
-     * (`setupPaneLoader`) reacts to the path change and reloads.
+     * (`setupPaneLoader`) reacts to navigation even when the path is unchanged.
      */
     function handleGroupNavigate(index: number, absolutePath: string): void {
         activePaneIndex = index;

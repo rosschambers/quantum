@@ -1,7 +1,10 @@
+import './testSvelteRuntime';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, fireEvent } from '@testing-library/svelte/svelte5';
 import type { FileEntry, FilesEvent, MenuItem } from '@quantum/client';
 import App from './App.svelte';
+import { tick } from 'svelte';
+import { PaneState } from './lib/paneState.svelte';
 import type { FilesIpc } from './lib/ipc';
 
 // The App calls `openContextMenu` from `@quantum/client` on right-click. Mock it
@@ -290,6 +293,101 @@ describe('App type-to-filter', () => {
 });
 
 describe('App navigation', () => {
+    it.each([
+        { rejectOld: false, oldFirst: false },
+        { rejectOld: true, oldFirst: false },
+        { rejectOld: false, oldFirst: true },
+        { rejectOld: true, oldFirst: true },
+    ])('guards rows, loading and errors after navigating to root: %j', async ({ rejectOld, oldFirst }) => {
+        const navigation = vi.spyOn(PaneState.prototype, 'navigate');
+        const ipc = createFakeIpc([makeEntry({ name: 'old', path: `${HOME}/old` })]);
+        const { container } = render(App, { props: { ipc } });
+        await vi.waitFor(() => expect(ipc.sizes).toHaveBeenCalledWith(HOME));
+        const pane = navigation.mock.contexts[0];
+        navigation.mockRestore();
+        let resolveOld!: (entries: FileEntry[]) => void;
+        let rejectOldRequest!: (error: Error) => void;
+        let resolveRoot!: (entries: FileEntry[]) => void;
+        ipc.list = vi.fn((path) => {
+            if (path === HOME) return new Promise<FileEntry[]>((resolve, reject) => {
+                resolveOld = resolve;
+                rejectOldRequest = reject;
+            });
+            if (path === '/') return new Promise<FileEntry[]>((resolve) => { resolveRoot = resolve; });
+            return Promise.resolve([]);
+        });
+        await fireEvent.keyDown(window, { key: 'F5' });
+        await fireEvent.keyDown(window, { key: 'ArrowUp', altKey: true });
+        await fireEvent.keyDown(window, { key: 'ArrowUp', altKey: true });
+        expect(pane.path).toBe('/');
+        expect(pane.loading).toBe(true);
+        const toastText = container.querySelector('#toasts')?.textContent;
+        function settleOld(): void {
+            if (rejectOld) rejectOldRequest(new Error('Old directory unavailable'));
+            else resolveOld([makeEntry({ name: 'stale', path: `${HOME}/stale` })]);
+        }
+        if (oldFirst) {
+            settleOld();
+            await tick();
+            expect(pane.loading).toBe(true);
+        }
+        resolveRoot([makeEntry({ name: 'current', path: '/current' })]);
+        await tick();
+        if (!oldFirst) {
+            settleOld();
+            await tick();
+        }
+        expect(pane.loading).toBe(false);
+        expect(pane.entries.map((entry) => entry.path)).toEqual(['/current']);
+        await vi.waitFor(() => expect(container.querySelector('.pane:not(.inactive-pane) .frow[data-path="/current"]')).not.toBeNull());
+        expect(container.querySelector('#toasts')?.textContent).toBe(toastText);
+    });
+
+    it('keeps the newest same-path reload when an older generation resolves last', async () => {
+        const ipc = createFakeIpc([]);
+        const { container } = render(App, { props: { ipc } });
+        await vi.waitFor(() => expect(ipc.sizes).toHaveBeenCalledWith(HOME));
+        const held: Array<(entries: FileEntry[]) => void> = [];
+        ipc.list = vi.fn(() => new Promise<FileEntry[]>((resolve) => held.push(resolve)));
+        await fireEvent.keyDown(window, { key: 'F5' });
+        await fireEvent.keyDown(window, { key: 'F5' });
+        expect(held).toHaveLength(2);
+        held[1]([makeEntry({ name: 'current', path: `${HOME}/current` })]);
+        await tick();
+        held[0]([makeEntry({ name: 'stale', path: `${HOME}/stale` })]);
+        await tick();
+        expect(container.querySelector('.pane:not(.inactive-pane) .frow[data-path="/home/user/current"]')).not.toBeNull();
+        expect(container.querySelector('.pane:not(.inactive-pane) .frow[data-path="/home/user/stale"]')).toBeNull();
+    });
+
+    it('Alt+Up navigates to the parent rather than moving the selection cursor', async () => {
+        const ipc = createFakeIpc([makeEntry({ name: 'alpha', path: `${HOME}/alpha` })]);
+        const { container } = render(App, { props: { ipc } });
+        await vi.waitFor(() => expect(container.querySelector('.pane-path')?.textContent).toBe(HOME));
+        await fireEvent.keyDown(window, { key: 'ArrowUp', altKey: true });
+        expect(container.querySelector('.pane-path')?.textContent).toBe('/home');
+    });
+
+    it('ignores a held reload after navigation, including its size-request continuation', async () => {
+        const ipc = createFakeIpc([makeEntry({ name: 'old', path: `${HOME}/old` })]);
+        let notify!: (event: FilesEvent) => void;
+        ipc.subscribeFilesEvents = vi.fn((callback) => { notify = callback; return () => {}; });
+        const { container } = render(App, { props: { ipc } });
+        await vi.waitFor(() => expect(ipc.sizes).toHaveBeenCalledWith(HOME));
+        const held: Array<(entries: FileEntry[]) => void> = [];
+        ipc.list = vi.fn((path) => path === HOME
+            ? new Promise<FileEntry[]>((resolve) => held.push(resolve))
+            : Promise.resolve([makeEntry({ name: 'new', path: '/home/new' })]));
+        notify({ event: 'changed', path: HOME });
+        await fireEvent.keyDown(window, { key: 'Backspace' });
+        await vi.waitFor(() => expect(container.querySelector('.pane:not(.inactive-pane) .frow[data-path="/home/new"]')).not.toBeNull());
+        const sizeCalls = vi.mocked(ipc.sizes).mock.calls.filter(([path]) => path === '/home').length;
+        for (const resolve of held) resolve([makeEntry({ name: 'stale', path: `${HOME}/stale` })]);
+        await new Promise((resolve) => setTimeout(resolve, 20));
+        expect(container.querySelector('.pane:not(.inactive-pane) .frow[data-path="/home/new"]')).not.toBeNull();
+        expect(vi.mocked(ipc.sizes).mock.calls.filter(([path]) => path === '/home').length).toBe(sizeCalls);
+        expect(container.querySelector('.inactive-pane .frow[data-path="/home/user/stale"]')).not.toBeNull();
+    });
     it('navigates into a directory on double-click', async () => {
         const entries = [
             makeEntry({ name: 'docs', path: `${HOME}/docs`, kind: 'directory' }),
@@ -672,6 +770,43 @@ describe('App recursive-size requests and completion tracking', () => {
 });
 
 describe('App size-event batching', () => {
+    it('visits each pane entry once per batch rather than searching for every size event', async () => {
+        const navigation = vi.spyOn(PaneState.prototype, 'navigate');
+        const entries = Array.from({ length: 1000 }, (_, index) => makeEntry({ name: `entry-${index}`, path: `${HOME}/entry-${index}` }));
+        const ipc = createFakeIpc(entries);
+        let notify!: (event: FilesEvent) => void;
+        ipc.subscribeFilesEvents = vi.fn((callback) => { notify = callback; return () => {}; });
+        const { container } = render(App, { props: { ipc } });
+        await vi.waitFor(() => expect(ipc.sizes).toHaveBeenCalledWith(HOME));
+        const panes = [...navigation.mock.contexts];
+        navigation.mockRestore();
+        const unchangedEntries = panes.map((pane) => pane.entries[0]);
+        await fireEvent.click(container.querySelector('.pane .c-size')!);
+        const listItems = vi.spyOn(PaneState.prototype, 'listItems');
+        const find = vi.spyOn(Array.prototype, 'find');
+        vi.useFakeTimers();
+        try {
+            for (let index = 800; index < 1000; index += 1) {
+                notify({ event: 'size', path: `${HOME}/entry-${index}`, bytes: index, complete: true });
+            }
+            notify({ event: 'size', path: `${HOME}/entry-800`, bytes: 2048, complete: false });
+            await vi.advanceTimersByTimeAsync(0);
+            expect(find.mock.calls.length).toBeLessThan(10);
+            expect(listItems.mock.contexts.filter((pane) => pane === panes[0])).toHaveLength(1);
+            for (const [index, pane] of panes.entries()) {
+                expect(pane.entries[0]).toBe(unchangedEntries[index]);
+                expect(pane.entries[0].recursive_size).toBeNull();
+                expect(pane.entries[800].recursive_size).toBe(2048);
+                expect(pane.entries[999].recursive_size).toBe(999);
+                expect(pane.sizing.has(`${HOME}/entry-800`)).toBe(true);
+                expect(pane.sizing.has(`${HOME}/entry-999`)).toBe(false);
+            }
+        } finally {
+            listItems.mockRestore();
+            find.mockRestore();
+            vi.useRealTimers();
+        }
+    });
     it('buffers size events and applies them together on the debounced flush', async () => {
         // Two directories, each with an unknown recursive size (renders as the
         // on-disk "10 B") and each still in the sizing set from the initial
@@ -827,6 +962,51 @@ describe('App path argument (window.__quantum_args)', () => {
 });
 
 describe('App deep-search grouped headers', () => {
+    it.each(['root group', 'current breadcrumb'])('reloads the directory when leaving search through the %s', async (target) => {
+        const ipc = createFakeIpc([
+            makeEntry({ name: 'ordinary.txt', path: `${HOME}/ordinary.txt` }),
+            makeEntry({ name: 'match.txt', path: `${HOME}/match.txt` }),
+        ]);
+        ipc.search = vi.fn(() => Promise.resolve([
+            makeEntry({ name: 'match.txt', path: `${HOME}/match.txt` }),
+            makeEntry({ name: 'nested-match.txt', path: `${HOME}/sub/nested-match.txt` }),
+        ]));
+        const { container } = render(App, { props: { ipc } });
+        const activePane = container.querySelector('.pane:not(.inactive-pane)')!;
+        await vi.waitFor(() => expect(ipc.sizes).toHaveBeenCalledWith(HOME));
+        await fireEvent.keyDown(window, { key: 'F', ctrlKey: true, shiftKey: true });
+        await fireEvent.keyDown(window, { key: 'm' });
+        await vi.waitFor(() => {
+            expect(activePane.querySelectorAll('.group-header')).toHaveLength(2);
+            expect(activePane.querySelector('.frow.sel')).not.toBeNull();
+        });
+        expect(activePane.querySelector('.frow[data-path="/home/user/ordinary.txt"]')).toBeNull();
+        const listingCalls = vi.mocked(ipc.list).mock.calls.length;
+        const watchCalls = vi.mocked(ipc.watch).mock.calls.length;
+        const sizeCalls = vi.mocked(ipc.sizes).mock.calls.length;
+        if (target === 'root group') {
+            const header = activePane.querySelector('.group-header')!;
+            expect(header.querySelector('.group-label')?.textContent).toBe('.');
+            await fireEvent.click(header);
+        } else {
+            await fireEvent.click(container.querySelector('.crumbs .seg.last')!);
+        }
+        await vi.waitFor(() => {
+            // Breadcrumb navigation retains its existing validation listing.
+            expect(vi.mocked(ipc.list).mock.calls.length).toBe(listingCalls + (target === 'root group' ? 1 : 2));
+            expect(activePane.querySelector('.frow[data-path="/home/user/ordinary.txt"]')).not.toBeNull();
+            expect(vi.mocked(ipc.sizes).mock.calls.length).toBe(sizeCalls + 1);
+        });
+        expect(activePane.querySelectorAll('.frow')).toHaveLength(2);
+        expect(activePane.querySelector('.frow[data-path="/home/user/sub/nested-match.txt"]')).toBeNull();
+        expect(activePane.querySelector('.frow.sel')).toBeNull();
+        expect(activePane.querySelector('.group-header')).toBeNull();
+        expect(activePane.querySelector('.pane-path')?.textContent).toBe(HOME);
+        expect(container.querySelector<HTMLInputElement>('.filter-input')?.value).toBe('');
+        expect(container.querySelector('.deep')?.classList.contains('on')).toBe(false);
+        expect(vi.mocked(ipc.watch).mock.calls.length).toBe(watchCalls + 1);
+    });
+
     it('clicking a group header navigates there and clears filter and deep search', async () => {
         const ipc = createFakeIpc([]);
         ipc.search = vi.fn(() =>

@@ -12,6 +12,7 @@ use quantum_domain::{
     viewer_file_type_for_extension, DriveInfo, FileEntry, FileEntryKind, FileOperation,
     FileSystemPort, FilesError, ViewerFileInfo, ViewerFileType,
 };
+use std::collections::HashMap;
 use std::io::Read;
 use std::os::unix::fs::MetadataExt;
 use std::path::{Path, PathBuf};
@@ -67,10 +68,22 @@ fn resolve_owner(uid: u32) -> String {
     }
 }
 
-/// Look up a user name for `uid` in `/etc/passwd`. Each line is
-/// `name:password:uid:gid:...`; the first line whose uid field matches wins.
+/// Look up a user name for `uid` in `/etc/passwd`. Reads and parses the whole
+/// file for a single lookup; callers resolving many uids from one listing
+/// should instead read the file once and query [`parse_passwd`]'s map
+/// directly, rather than calling this per entry.
 fn owner_from_passwd(uid: u32) -> Option<String> {
     let contents = std::fs::read_to_string("/etc/passwd").ok()?;
+    parse_passwd(&contents).remove(&uid)
+}
+
+/// Parse `/etc/passwd` content into a map from user id to user name. Each
+/// line is `name:password:uid:gid:...`; a line with too few fields or a
+/// non-numeric uid field is skipped rather than failing the whole parse. When
+/// the same uid appears on more than one line, the first occurrence wins
+/// (matching the line-by-line scan this replaces).
+fn parse_passwd(contents: &str) -> HashMap<u32, String> {
+    let mut by_uid = HashMap::new();
     for line in contents.lines() {
         let mut fields = line.split(':');
         let name = match fields.next() {
@@ -85,17 +98,27 @@ fn owner_from_passwd(uid: u32) -> Option<String> {
             Some(field) => field,
             None => continue,
         };
-        if entry_uid.parse::<u32>() == Ok(uid) {
-            return Some(name.to_string());
+        if let Ok(uid) = entry_uid.parse::<u32>() {
+            by_uid.entry(uid).or_insert_with(|| name.to_string());
         }
     }
-    None
+    by_uid
 }
 
 /// Build a [`FileEntry`] for `path` from its own metadata. Uses
 /// `symlink_metadata` so a symlink is classified as a symlink rather than
 /// followed to its target.
-fn entry_from_path(path: &Path) -> Result<FileEntry, FilesError> {
+///
+/// `owner_map` lets a caller resolving many entries from one `/etc/passwd`
+/// read (a directory listing) pass the already-parsed map in: a hit looks up
+/// the name directly; a miss falls back to the numeric uid rendered as a
+/// string, same as today. `None` preserves the single-entry behavior used by
+/// [`FileSystemPort::stat`] and the recursive search walk: read and parse the
+/// file fresh for this one lookup.
+fn entry_from_path(
+    path: &Path,
+    owner_map: Option<&HashMap<u32, String>>,
+) -> Result<FileEntry, FilesError> {
     let path_string = path.to_string_lossy().to_string();
     let metadata =
         std::fs::symlink_metadata(path).map_err(|error| map_io_error(&path_string, &error))?;
@@ -135,7 +158,10 @@ fn entry_from_path(path: &Path) -> Result<FileEntry, FilesError> {
         size: metadata.len(),
         recursive_size: None,
         modified_epoch_seconds: metadata.mtime(),
-        owner: resolve_owner(uid),
+        owner: match owner_map {
+            Some(map) => map.get(&uid).cloned().unwrap_or_else(|| uid.to_string()),
+            None => resolve_owner(uid),
+        },
         permissions: permission_string(mode),
         permission_class,
         symlink_target,
@@ -155,10 +181,17 @@ fn list_directory_blocking(path: PathBuf) -> Result<Vec<FileEntry>, FilesError> 
         )));
     }
     let reader = std::fs::read_dir(&path).map_err(|error| map_io_error(&path_string, &error))?;
+    // Read and parse `/etc/passwd` exactly once for the whole listing, instead
+    // of once per entry: a missing or unreadable file degrades to an empty
+    // map, so every entry falls back to its numeric uid rather than failing
+    // the listing.
+    let owner_map = std::fs::read_to_string("/etc/passwd")
+        .map(|contents| parse_passwd(&contents))
+        .unwrap_or_default();
     let mut entries = Vec::new();
     for item in reader {
         let item = item.map_err(|error| map_io_error(&path_string, &error))?;
-        entries.push(entry_from_path(&item.path())?);
+        entries.push(entry_from_path(&item.path(), Some(&owner_map))?);
     }
     Ok(entries)
 }
@@ -279,7 +312,7 @@ fn search_blocking(
             let entry_path = item.path();
             let name = item.file_name().to_string_lossy().to_string();
             if name.to_lowercase().contains(&query_lower) {
-                if let Ok(entry) = entry_from_path(&entry_path) {
+                if let Ok(entry) = entry_from_path(&entry_path, None) {
                     results.push(entry);
                 }
             }
@@ -691,7 +724,7 @@ impl FileSystemPort for LocalFileSystem {
 
     async fn stat(&self, path: &str) -> Result<FileEntry, FilesError> {
         let owned = PathBuf::from(path);
-        run_blocking(move || entry_from_path(&owned)).await
+        run_blocking(move || entry_from_path(&owned, None)).await
     }
 
     async fn mounts(&self) -> Result<Vec<DriveInfo>, FilesError> {
@@ -770,6 +803,70 @@ mod tests {
     use std::os::unix::fs::{symlink, PermissionsExt};
     use std::path::Path;
     use tempfile::TempDir;
+
+    #[test]
+    fn parse_passwd_extracts_name_by_uid() {
+        let contents =
+            "root:x:0:0:root:/root:/bin/bash\nalice:x:1000:1000:Alice:/home/alice:/bin/bash\n";
+        let map = parse_passwd(contents);
+        assert_eq!(map.get(&0), Some(&"root".to_string()));
+        assert_eq!(map.get(&9999), None);
+    }
+
+    #[test]
+    fn parse_passwd_skips_malformed_lines() {
+        // Line 1 has no uid field at all; line 2's uid field is not numeric.
+        // Both must be skipped without panicking, leaving only the well-formed
+        // line parsed.
+        let contents = "onlyname\nbob::notanumber:1000:Bob:/home/bob:/bin/bash\ncarol:x:42:42:Carol:/home/carol:/bin/bash\n";
+        let map = parse_passwd(contents);
+        assert_eq!(map.len(), 1, "got {map:?}");
+        assert_eq!(map.get(&42), Some(&"carol".to_string()));
+    }
+
+    #[test]
+    fn parse_passwd_keeps_first_entry_when_uid_repeats() {
+        let contents =
+            "first:x:7:7:First:/home/first:/bin/bash\nsecond:x:7:7:Second:/home/second:/bin/bash\n";
+        let map = parse_passwd(contents);
+        assert_eq!(map.get(&7), Some(&"first".to_string()));
+    }
+
+    #[test]
+    fn entry_from_path_owner_map_hit_uses_mapped_name() {
+        let (dir, target) = build_fixture();
+        let _ = dir;
+        let uid = std::fs::symlink_metadata(&target).expect("metadata").uid();
+        let mut owner_map = HashMap::new();
+        owner_map.insert(uid, "mapped-name".to_string());
+
+        let entry = entry_from_path(Path::new(&target), Some(&owner_map)).expect("entry_from_path");
+        assert_eq!(entry.owner, "mapped-name");
+    }
+
+    #[test]
+    fn entry_from_path_owner_map_miss_falls_back_to_numeric_uid() {
+        let (dir, target) = build_fixture();
+        let _ = dir;
+        let uid = std::fs::symlink_metadata(&target).expect("metadata").uid();
+        let owner_map: HashMap<u32, String> = HashMap::new();
+
+        let entry = entry_from_path(Path::new(&target), Some(&owner_map)).expect("entry_from_path");
+        assert_eq!(entry.owner, uid.to_string());
+    }
+
+    #[tokio::test]
+    async fn list_directory_resolves_owner_consistently_across_entries() {
+        let dir = tempfile::tempdir().expect("create tempdir");
+        fs::write(dir.path().join("a.txt"), b"a").expect("write a");
+        fs::write(dir.path().join("b.txt"), b"b").expect("write b");
+        let entries = LocalFileSystem::new()
+            .list_directory(&dir.path().to_string_lossy())
+            .await
+            .expect("list directory");
+        assert_eq!(entries.len(), 2);
+        assert_eq!(entries[0].owner, entries[1].owner);
+    }
 
     /// Build a temporary directory populated with a regular file, a dotfile, an
     /// executable file, a read-only file, a subdirectory, and a symlink to the
@@ -1213,6 +1310,85 @@ mod tests {
             .mime_type
             .as_ref()
             .is_some_and(|m| m.starts_with("image/")));
+    }
+
+    /// Ignored, backend-only timing benchmark for Task 3 of the
+    /// `file-viewer-improvements` plan. Builds a synthetic directory of
+    /// several thousand files under the system temporary directory (not a
+    /// tracked fixture — created and torn down entirely by this test) and
+    /// measures two things:
+    ///
+    /// 1. `list_directory_blocking`'s wall time on a realistically large
+    ///    listing, with the single-parse-per-listing owner resolution now
+    ///    in place (Task 1's fix).
+    /// 2. The actual magnitude of that fix, by directly comparing the OLD
+    ///    per-entry access pattern — looping [`owner_from_passwd`], which
+    ///    this file still exposes unchanged for the single-entry `stat`
+    ///    path — against the NEW parse-once-then-map-lookup pattern
+    ///    ([`parse_passwd`] called once, then a map lookup per entry), for
+    ///    the same entry count.
+    ///
+    /// This measures ONLY the backend listing cost in isolation, on this
+    /// machine's filesystem. It makes NO claim that this backend cost is the
+    /// dominant cause of any user-perceived explorer freeze: confirming that
+    /// requires a live measurement broken down by listing time vs IPC
+    /// transfer vs frontend sort/render, against the real installed
+    /// daemon's WebKit-hosted explorer window (Task 3 of the companion
+    /// plan) — which needs a live daemon and window, is explicitly out of
+    /// scope for this backend-only change, and is NOT performed here.
+    ///
+    /// Run explicitly (ignored by default so normal `cargo test` stays
+    /// fast and deterministic):
+    /// `./scripts/devsh.sh cargo test -p quantum-files --release -- --ignored benchmark_list_directory_on_synthetic_large_directory --nocapture`
+    #[test]
+    #[ignore = "timing benchmark, not a correctness test; run explicitly, see doc comment"]
+    fn benchmark_list_directory_on_synthetic_large_directory() {
+        use std::time::Instant;
+
+        const ENTRY_COUNT: usize = 5000;
+
+        let dir = tempfile::tempdir().expect("create synthetic directory");
+        for index in 0..ENTRY_COUNT {
+            fs::write(dir.path().join(format!("file-{index:05}.txt")), b"x")
+                .expect("write synthetic entry");
+        }
+
+        let started = Instant::now();
+        let entries =
+            list_directory_blocking(dir.path().to_path_buf()).expect("list synthetic directory");
+        let full_listing_elapsed = started.elapsed();
+        assert_eq!(entries.len(), ENTRY_COUNT);
+
+        let current_uid = std::fs::symlink_metadata(PathBuf::from(&entries[0].path))
+            .expect("stat a synthetic entry")
+            .uid();
+
+        let started = Instant::now();
+        for _ in 0..ENTRY_COUNT {
+            let _ = owner_from_passwd(current_uid);
+        }
+        let per_entry_read_elapsed = started.elapsed();
+
+        let started = Instant::now();
+        let contents = std::fs::read_to_string("/etc/passwd").unwrap_or_default();
+        let owner_map = parse_passwd(&contents);
+        for _ in 0..ENTRY_COUNT {
+            let _ = owner_map.get(&current_uid);
+        }
+        let parse_once_elapsed = started.elapsed();
+
+        eprintln!(
+            "benchmark: {ENTRY_COUNT} synthetic entries under {path:?}\n\
+             full list_directory_blocking (post-fix, single /etc/passwd read): {full_listing_elapsed:?}\n\
+             {ENTRY_COUNT} x owner_from_passwd (pre-fix per-entry read pattern, isolated): {per_entry_read_elapsed:?}\n\
+             one parse_passwd + {ENTRY_COUNT} map lookups (post-fix pattern, isolated): {parse_once_elapsed:?}\n\
+             This is a backend-only timing measurement. It does not by itself establish that \
+             backend listing cost (as opposed to IPC transfer or frontend sort/render) is the \
+             dominant cause of any user-perceived explorer freeze; that requires the live, \
+             separated measurement described in the companion plan's Task 3, against the real \
+             installed daemon — not performed here.",
+            path = dir.path(),
+        );
     }
 
     #[tokio::test]

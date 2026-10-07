@@ -1,4 +1,5 @@
-import { describe, it, expect, vi } from 'vitest';
+import '../testSvelteRuntime';
+import { describe, it, expect, vi, afterEach } from 'vitest';
 import { tick } from 'svelte';
 import { render, fireEvent } from '@testing-library/svelte/svelte5';
 import type { FileEntry } from '@quantum/client';
@@ -133,5 +134,94 @@ describe('DirectoryTree lazy loading', () => {
         const row = rowByPath(container, '/home') as HTMLElement;
         await fireEvent.click(row);
         expect(onNavigate).toHaveBeenCalledWith('/home');
+    });
+});
+
+describe('DirectoryTree viewport', () => {
+    afterEach(() => vi.restoreAllMocks());
+
+    function mountLargeTree(activePath = '/') {
+        const sidebar = document.createElement('div');
+        sidebar.className = 'sidebar';
+        document.body.append(sidebar);
+        Object.defineProperty(sidebar, 'clientHeight', { value: 200 });
+        vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function () {
+            const top = this.classList.contains('tree') ? 40 - sidebar.scrollTop : 0;
+            return { top, bottom: top + 200, left: 0, right: 200, width: 200, height: 200, x: 0, y: top, toJSON() {} };
+        });
+        const directories = Array.from({ length: 3000 }, (_, index) =>
+            entry({ name: `directory-${index}`, path: `/directory-${index}`, kind: 'directory' }),
+        );
+        const ipc = fakeIpc({
+            '/': directories,
+            '/directory-1500': [entry({ name: 'child', path: '/directory-1500/child', kind: 'directory' })],
+        });
+        const onNavigate = vi.fn();
+        const rendered = render(DirectoryTree, { target: sidebar, props: { ipc, activePath, onNavigate } });
+        return { ...rendered, sidebar, ipc, onNavigate };
+    }
+
+    it('mounts a bounded DOM subset and expands the correct offscreen node after scrolling', async () => {
+        const { container, sidebar, ipc, onNavigate } = mountLargeTree();
+        await settle();
+        expect(container.querySelectorAll('.tree-row').length).toBeLessThanOrEqual(30);
+        expect(container.querySelector('.tree')?.getAttribute('style')).toContain('60020px');
+        expect(ipc.list).toHaveBeenCalledTimes(1);
+        sidebar.scrollTop = 40 + 1501 * 20;
+        await fireEvent.scroll(sidebar);
+        const row = rowByPath(container, '/directory-1500')!;
+        expect(row).not.toBeNull();
+        await fireEvent.click(row.querySelector('.chev')!);
+        await settle();
+        expect(ipc.list).toHaveBeenCalledWith('/directory-1500');
+        expect(rowByPath(container, '/directory-1500/child')).not.toBeNull();
+        expect(onNavigate).not.toHaveBeenCalled();
+        await fireEvent.click(row);
+        expect(onNavigate).toHaveBeenCalledWith('/directory-1500');
+        expect(container.querySelectorAll('.tree-row').length).toBeLessThanOrEqual(30);
+        sidebar.remove();
+    });
+
+    it('reveals the selected current path without mounting its thousands of preceding siblings', async () => {
+        const { container, sidebar, ipc } = mountLargeTree('/directory-1500/child');
+        await settle();
+        expect(sidebar.scrollTop).toBeGreaterThan(29000);
+        expect(rowByPath(container, '/directory-1500/child')?.classList.contains('active')).toBe(true);
+        expect(container.querySelectorAll('.tree-row').length).toBeLessThanOrEqual(30);
+        expect(ipc.list.mock.calls.map(([path]) => path)).toEqual(['/', '/directory-1500', '/directory-1500/child']);
+        sidebar.remove();
+    });
+
+    it('uses the same row height for rendered rows and the complete scroll range', async () => {
+        const { container, sidebar } = mountLargeTree();
+        await settle();
+        const tree = container.querySelector<HTMLElement>('.tree')!;
+        const row = container.querySelector<HTMLElement>('.tree-row')!;
+        expect(Number.parseFloat(row.style.height)).toBe(Number.parseFloat(tree.style.height) / 3001);
+        sidebar.scrollTop = 40 + 3001 * 20 - sidebar.clientHeight;
+        await fireEvent.scroll(sidebar);
+        expect(rowByPath(container, '/directory-2999')).not.toBeNull();
+        expect(container.querySelectorAll('.tree-row').length).toBeLessThanOrEqual(30);
+        sidebar.remove();
+    });
+
+    it('reveals a changed selection, then preserves manual scrolling and cached nested expansion', async () => {
+        const { container, sidebar, ipc, rerender } = mountLargeTree();
+        await settle();
+        await rerender({ activePath: '/directory-1500/child' });
+        await settle();
+        expect(rowByPath(container, '/directory-1500/child')?.getAttribute('aria-level')).toBe('3');
+        const chevron = rowByPath(container, '/directory-1500')!.querySelector('.chev')!;
+        await fireEvent.click(chevron);
+        expect(rowByPath(container, '/directory-1500/child')).toBeNull();
+        await fireEvent.click(chevron);
+        await settle();
+        expect(rowByPath(container, '/directory-1500/child')).not.toBeNull();
+        expect(ipc.list.mock.calls.filter(([path]) => path === '/directory-1500')).toHaveLength(1);
+        sidebar.scrollTop = 40;
+        await fireEvent.scroll(sidebar);
+        expect(rowByPath(container, '/directory-1500/child')).toBeNull();
+        expect(rowByPath(container, '/directory-0')).not.toBeNull();
+        sidebar.remove();
     });
 });

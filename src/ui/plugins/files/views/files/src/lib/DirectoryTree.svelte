@@ -30,6 +30,14 @@
     const { ipc, activePath, onNavigate, onMove }: Props = $props();
 
     const ROOT = '/';
+    const ROW_HEIGHT = 20;
+    const OVERSCAN = 10;
+    let tree = $state<HTMLElement | null>(null);
+    let scrollContainer: HTMLElement | null = null;
+    let scrollTop = $state(0);
+    let viewportHeight = $state(0);
+    let revealPath = $state<string | null>(null);
+    let disposed = false;
 
     // The node path currently under a valid drag, driving its droptarget outline.
     let dropTargetPath = $state<string | null>(null);
@@ -77,10 +85,13 @@
         pending.add(path);
         try {
             const entries = await ipc.list(path);
+            if (disposed) return;
             const directories = entries.filter((entry) => entry.kind === 'directory');
             const next = new Map(loadedChildren);
             next.set(path, directories);
             loadedChildren = next;
+        } catch {
+            // Leave failures uncached so a later expansion can retry.
         } finally {
             pending.delete(path);
         }
@@ -120,10 +131,77 @@
     // expansion state it mutates, so idempotent re-expansion cannot loop.
     $effect(() => {
         const chain = ancestorPaths(activePath);
+        revealPath = activePath;
         untrack(() => {
             for (const path of chain) {
                 void expand(path);
             }
+        });
+    });
+
+    // Flatten only expanded, already-loaded nodes once per tree change, not per scroll.
+    const rows = $derived.by(() => {
+        const result: Array<{ path: string; depth: number }> = [];
+        const stack = [{ path: ROOT, depth: 0 }];
+        while (stack.length > 0) {
+            const node = stack.pop()!;
+            result.push(node);
+            if (expanded.has(node.path)) {
+                const children = loadedChildren.get(node.path) ?? [];
+                for (let index = children.length - 1; index >= 0; index -= 1) {
+                    stack.push({ path: children[index].path, depth: node.depth + 1 });
+                }
+            }
+        }
+        return result;
+    });
+    const startIndex = $derived(Math.max(0, Math.min(rows.length, Math.floor(scrollTop / ROW_HEIGHT) - OVERSCAN)));
+    const visibleRows = $derived(rows.slice(startIndex, startIndex + Math.ceil(viewportHeight / ROW_HEIGHT) + 2 * OVERSCAN));
+
+    function treeOffset(): number {
+        if (tree === null || scrollContainer === null || tree === scrollContainer) return 0;
+        return tree.getBoundingClientRect().top - scrollContainer.getBoundingClientRect().top + scrollContainer.scrollTop;
+    }
+
+    function measureViewport(): void {
+        if (scrollContainer === null) return;
+        const offset = treeOffset();
+        scrollTop = Math.max(0, scrollContainer.scrollTop - offset);
+        viewportHeight = Math.max(0, scrollContainer.clientHeight - Math.max(0, offset - scrollContainer.scrollTop));
+    }
+
+    $effect(() => {
+        if (tree === null) return;
+        // The sidebar already owns scrolling; keep pins, drives and the tree in that viewport.
+        const element = tree.closest<HTMLElement>('.sidebar') ?? tree;
+        scrollContainer = element;
+        untrack(measureViewport);
+        element.addEventListener('scroll', measureViewport);
+        const observer = typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(measureViewport);
+        observer?.observe(element);
+        observer?.observe(tree);
+        return () => {
+            disposed = true;
+            element.removeEventListener('scroll', measureViewport);
+            observer?.disconnect();
+            scrollContainer = null;
+        };
+    });
+
+    $effect(() => {
+        if (tree === null || revealPath === null) return;
+        const index = rows.findIndex((row) => row.path === revealPath);
+        if (index < 0) return;
+        untrack(() => {
+            if (scrollContainer === null) return;
+            const top = treeOffset() + index * ROW_HEIGHT;
+            const bottom = top + ROW_HEIGHT;
+            if (top < scrollContainer.scrollTop) scrollContainer.scrollTop = top;
+            else if (bottom > scrollContainer.scrollTop + scrollContainer.clientHeight) {
+                scrollContainer.scrollTop = Math.max(0, bottom - scrollContainer.clientHeight);
+            }
+            measureViewport();
+            revealPath = null;
         });
     });
 </script>
@@ -138,10 +216,11 @@
         class:active={activePath === path}
         class:droptarget={dropTargetPath === path}
         data-path={path}
-        style="padding-left: {4 + depth * 14}px"
+        style="padding-left: {4 + depth * 14}px; height: {ROW_HEIGHT}px"
         role="treeitem"
         aria-selected={activePath === path}
         aria-expanded={isOpen}
+        aria-level={depth + 1}
         tabindex="-1"
         onclick={() => onNavigate(path)}
         ondragover={(event) => nodeDragOver(event, path)}
@@ -163,27 +242,32 @@
         <span class="fico"><Icon name="folder" size={13} /></span>
         <span class="nm">{pathBaseName(path)}</span>
     </div>
-    {#if isOpen && children}
-        {#each children as child (child.path)}
-            {@render treeNode(child.path, depth + 1)}
-        {/each}
-    {/if}
 {/snippet}
 
-<div class="tree" role="tree">
-    {@render treeNode(ROOT, 0)}
+<div class="tree" role="tree" bind:this={tree} style="height: {rows.length * ROW_HEIGHT}px">
+    <div class="tree-rows" style="transform: translateY({startIndex * ROW_HEIGHT}px)">
+        {#each visibleRows as node (node.path)}
+            {@render treeNode(node.path, node.depth)}
+        {/each}
+    </div>
 </div>
 
 <style>
     .tree {
-        display: flex;
-        flex-direction: column;
+        position: relative;
+    }
+    .tree-rows {
+        position: absolute;
+        top: 0;
+        left: 0;
+        right: 0;
     }
     .tree-row {
         display: flex;
         align-items: center;
         gap: 4px;
         padding: 3px 4px;
+        box-sizing: border-box;
         border-radius: 6px;
         font-size: 12px;
         color: var(--color-fg-alt);
