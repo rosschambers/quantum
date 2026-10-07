@@ -191,6 +191,85 @@ This is ideal for layout, styling, and component logic with instant HMR; it
 cannot exercise real providers. (The interactive HTML playgrounds under
 `/tmp/opencode/` were built this way.)
 
+## Viewer and explorer verification
+
+The standalone image transport is viewer-owned: `quantum://viewer-image/<token>`
+serves an already-open regular file only to its owning WebView. Grants are revoked
+on a new read, navigation, hide, or destruction; stale asynchronous responses cannot
+restore them. Tokens are not filesystem paths, and an image extension alone grants
+no access. Do not replace this with an arbitrary file-read endpoint or disable the
+WebKit sandbox. Explorer thumbnails and Markdown image embedding are separate paths.
+
+Run the ordinary checks from the repository root, with dependencies installed:
+
+```bash
+./scripts/devsh.sh bash -c 'pnpm -C src/ui -r build && cargo build --locked -p quantumd && cargo test --locked --workspace && cargo fmt --all -- --check'
+./scripts/devsh.sh pnpm -C src/ui -r test
+./scripts/devsh.sh cargo clippy --locked --workspace --all-targets -- -D warnings
+git diff --check
+```
+
+### Isolated native viewer test
+
+`src/ui/host/tests/native_file_image.rs` is feature-gated and ignored by default.
+It tests the real WebKit host bridge and image grants; setting the bundle directory
+also tests the built viewer application, controls, search, and layout against a
+fixture dispatcher, not the installed daemon or integrated filesystem backend.
+Never run it on the desktop or stop the installed service for this check.
+
+Require `xvfb-run`, `dbus-run-session`, `jq`, and `timeout` on `PATH` inside the
+development shell. If missing on NixOS, enter `nix-shell -p xvfb-run dbus jq`
+first; this does not activate system configuration. After the frontend build above,
+run from the repository root (the test currently also requires `/tmp/opencode`):
+
+```bash
+./scripts/devsh.sh bash <<'BASH'
+set -euo pipefail
+command -v xvfb-run dbus-run-session jq timeout
+TEST_BINARY="$(cargo test --locked -p quantum-ui --features gtk-test \
+  --test native_file_image --no-run --message-format=json | \
+  jq -r 'select(.reason == "compiler-artifact" and .target.name == "native_file_image" and .profile.test == true and .executable != null) | .executable')"
+test -x "$TEST_BINARY"
+mkdir -p /tmp/opencode
+SESSION_ROOT="$(mktemp -d /tmp/opencode/quantum-native.XXXXXX)"
+trap 'rm -rf -- "$SESSION_ROOT"' EXIT
+mkdir -p "$SESSION_ROOT"/{home,runtime,config,cache,state,data}
+chmod 700 "$SESSION_ROOT/runtime"
+ulimit -c 0
+env -i PATH="$PATH" LD_LIBRARY_PATH="${LD_LIBRARY_PATH:-}" \
+  HOME="$SESSION_ROOT/home" XDG_RUNTIME_DIR="$SESSION_ROOT/runtime" \
+  XDG_CONFIG_HOME="$SESSION_ROOT/config" XDG_CACHE_HOME="$SESSION_ROOT/cache" \
+  XDG_STATE_HOME="$SESSION_ROOT/state" XDG_DATA_HOME="$SESSION_ROOT/data" \
+  XDG_DATA_DIRS="${XDG_DATA_DIRS:-/run/current-system/sw/share}" \
+  GDK_BACKEND=x11 GTK_A11Y=none QUANTUM_NATIVE_TEST_ISOLATED=1 \
+  QUANTUM_NATIVE_VIEWER_DIST="$PWD/src/ui/plugins/file-viewer/views/file-viewer/dist" \
+  QUANTUM_NATIVE_IMAGE_FIXTURES="${QUANTUM_NATIVE_IMAGE_FIXTURES:-}" \
+  xvfb-run --auto-servernum --server-args='-screen 0 1024x768x24 -nolisten tcp' \
+  dbus-run-session -- timeout 100 "$TEST_BINARY" --ignored --nocapture --test-threads=1
+BASH
+```
+
+The clean environment excludes the desktop display, Wayland sockets, session bus,
+and sandbox overrides; Xvfb and DBus create private sessions. No hashed executable
+name, Nix store path, or temporary helper script is required.
+
+SVG and PNG fixtures are internal. For the other six formats, export
+`QUANTUM_NATIVE_IMAGE_FIXTURES` as an absolute directory containing real 16-by-16
+pixel files named `fixture.jpg`, `fixture.gif`, `fixture.webp`, `fixture.bmp`,
+`fixture.ico`, and `fixture.avif` before running the block. Supply these externally;
+the repository does not contain the temporary fixture generator used during development.
+Missing fixtures log `UNAVAILABLE`; optional formats may report a visible decode
+error without failing the test. An eight-format claim therefore requires all six
+fixtures and checking each logged `built viewer format=` observation for
+`"loaded":true`, not just the final pass count. The test logs bundle hashes.
+
+Native built-bundle coverage includes virtualized text search, nested JSON fold
+reveal, rendered Markdown search excluding Mermaid, image controls and corrupt-image
+errors, special-character filenames, foreign/revoked grants, and asynchronous
+hide/navigation/read races. Component tests also cover code search and drag-to-pan.
+Desktop interaction feel and installed-service verification remain separate checks;
+ask before opening desktop windows, and never run repeated desktop test loops.
+
 ## Quick reference
 
 | You changed                  | Command(s)                                                                 | Reload |

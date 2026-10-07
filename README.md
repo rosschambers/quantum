@@ -20,6 +20,32 @@ Quantum runs as a single daemon on Hyprland. It gives you:
 - **System tray** — full D-Bus system tray with nested menus (SNI + dbusmenu).
 - **Clipboard manager** — searchable history with image support, accessible from the launcher.
 
+### Viewer and explorer improvements (unreleased)
+
+Implemented and locally verified; installation and verification in the running
+desktop service remain separate deployment steps.
+
+- **Find in file:** Ctrl+F (or Command+F) opens literal, case-insensitive search in
+  text, code, JSON, and rendered Markdown. Enter / Shift+Enter move forward / back
+  with wraparound and a match counter. Escape closes search before the viewer.
+  Search reveals offscreen virtualized lines and expands containing folds without
+  changing unrelated folds; revealed folds stay open after search closes.
+  Markdown searches rendered text, including across inline formatting, not raw
+  markup or diagram source/SVG. Regular expressions and replacement are not supported.
+- **Images:** Fit, Actual size (natural dimensions in CSS pixels, not physical
+  display pixels), zoom controls, and drag-to-pan when the image overflows.
+  Load/decode failures show an error instead of a blank pane. PNG, JPEG, GIF, WebP,
+  SVG, BMP, ICO, and AVIF loaded in the isolated native built-bundle verification;
+  this is not a guarantee for every file or decoder installation.
+- **Explorer:** the directory tree now virtualizes rows alongside the existing
+  virtualized file list. Owner lookup reads `/etc/passwd` once per listing;
+  concurrent same-path listings share work without caching settled results.
+  Shared live updates remain, with stale pane-load results guarded during reload,
+  navigation, and teardown. Residual large-directory delays remain under investigation.
+
+See [development verification](docs/development.md#viewer-and-explorer-verification)
+for the image security boundary, test commands, and native coverage limits.
+
 ## Screenshots
 
 ### Status bar
