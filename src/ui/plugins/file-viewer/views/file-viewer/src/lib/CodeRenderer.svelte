@@ -1,12 +1,20 @@
 <script lang="ts">
-	import { highlightCode } from './highlighter';
-	import { buildCodeFoldModel, type CodeFoldRange } from './fold-model';
+	import { highlightCode, highlightLineWithMatches } from './highlighter';
+	import { buildCodeFoldModel, foldAncestors } from './fold-model';
+	import { findMatchesInLines, type MatchRange } from './search';
 	import LineNumbers from './LineNumbers.svelte';
 	import VirtualScroller from './VirtualScroller.svelte';
 
 	interface Props {
 		content: string;
 		language?: string;
+		/** Literal, case-insensitive search query. Empty string means inactive. */
+		query?: string;
+		/** Index into this component's own match list that is "current". */
+		currentMatchIndex?: number | null;
+		/** Fired whenever the computed match count changes. */
+		onMatchCount?: (count: number) => void;
+		navigationRevision?: number;
 	}
 
 	interface CodeVisibleLine {
@@ -16,22 +24,11 @@
 		collapsed: boolean;
 	}
 
-	let { content, language }: Props = $props();
+	let { content, language, query = '', currentMatchIndex = null, onMatchCount, navigationRevision = 0 }: Props = $props();
 
 	let lines = $derived(content.replace(/\n+$/, '').split('\n'));
 	let lineCount = $derived(lines.length);
 	let useVirtualScrolling = $derived(lineCount > 500);
-
-	let highlightedLines = $derived.by(() => {
-		return lines.map((line) => highlightCode(line, language));
-	});
-
-	let visibleStart = $state(0);
-	let visibleEnd = $state(0);
-
-	$effect(() => {
-		visibleEnd = lineCount;
-	});
 
 	// Code folding for non-virtual-scrolling path
 	let codeFoldModel = $derived(buildCodeFoldModel(lines));
@@ -43,6 +40,92 @@
 		codeFoldState = new Map();
 	});
 
+	let matches = $derived(query ? findMatchesInLines(lines, query) : []);
+	let matchesByLine = $derived.by(() => {
+		const map = new Map<number, MatchRange[]>();
+		for (const match of matches) {
+			const existing = map.get(match.lineIndex);
+			if (existing) {
+				existing.push(match.range);
+			} else {
+				map.set(match.lineIndex, [match.range]);
+			}
+		}
+		return map;
+	});
+	let currentMatch = $derived(
+		currentMatchIndex !== null && currentMatchIndex >= 0 && currentMatchIndex < matches.length
+			? matches[currentMatchIndex]
+			: null,
+	);
+
+	$effect(() => {
+		onMatchCount?.(matches.length);
+	});
+
+	function matchesForLine(lineIndex: number): MatchRange[] {
+		return matchesByLine.get(lineIndex) ?? [];
+	}
+
+	function currentRangeForLine(lineIndex: number): MatchRange | null {
+		return currentMatch && currentMatch.lineIndex === lineIndex ? currentMatch.range : null;
+	}
+
+	function highlightedLineHtml(lineIndex: number, text: string): string {
+		const lineMatches = matchesForLine(lineIndex);
+		if (lineMatches.length === 0) {
+			return highlightCode(text, language);
+		}
+		return highlightLineWithMatches(text, language, lineMatches, currentRangeForLine(lineIndex));
+	}
+
+	let highlightedLines = $derived.by(() => {
+		return lines.map((line, index) => highlightedLineHtml(index, line));
+	});
+
+	let codeContentElement: HTMLDivElement | undefined = $state(undefined);
+	let scrollRequest = $derived({ match: currentMatch, revision: navigationRevision });
+
+	// Reveal the current match: scroll it into view, and for the non-virtual
+	// (foldable) path, expand EVERY fold enclosing its line first — not just
+	// the innermost one. CodeRenderer's own collapsed-fold line-walk jumps
+	// straight from a collapsed fold's header to its endLine + 1, so a line
+	// nested inside several folds stays out of codeVisibleLines entirely
+	// unless every enclosing fold is expanded, not only the tightest.
+	$effect(() => {
+		void navigationRevision;
+		if (!currentMatch) return;
+		const line = currentMatch.lineIndex;
+
+		if (useVirtualScrolling) {
+			return;
+		}
+
+		const ancestors = foldAncestors(codeFoldModel, line);
+		if (ancestors.length > 0) {
+			let changed = false;
+			const next = new Map(codeFoldState);
+			for (const fold of ancestors) {
+				if (next.get(fold.startLine) !== false) {
+					next.set(fold.startLine, false);
+					changed = true;
+				}
+			}
+			if (changed) {
+				codeFoldState = next;
+			}
+		}
+
+		// The fold-state write above only takes effect in the DOM on the next
+		// microtask (codeVisibleLines is a $derived recomputed through
+		// Svelte's own render cycle, not synchronously within this effect
+		// body) — defer the scroll-into-view query until then.
+		const targetLineNumber = line + 1;
+		queueMicrotask(() => {
+			codeContentElement?.querySelector(`[data-line="${targetLineNumber}"]`)?.scrollIntoView({ block: 'center' });
+		});
+	});
+
 	let codeVisibleLines: CodeVisibleLine[] = $derived.by(() => {
 		const result: CodeVisibleLine[] = [];
 		let i = 0;
@@ -51,9 +134,13 @@
 			const isCollapsed = fold && codeFoldState.get(i) === true;
 
 			if (isCollapsed && fold) {
+				const headerMatches = matchesForLine(i);
 				result.push({
 					lineNumber: i + 1,
-					html: highlightCode(lines[i] + ' ...', language),
+					html:
+						headerMatches.length === 0
+							? highlightCode(lines[i] + ' ...', language)
+							: `${highlightLineWithMatches(lines[i], language, headerMatches, currentRangeForLine(i))} ...`,
 					foldable: true,
 					collapsed: true,
 				});
@@ -80,12 +167,20 @@
 
 <div class="code-renderer">
 	{#if useVirtualScrolling}
-		<LineNumbers lineCount={visibleEnd - visibleStart} />
-		<VirtualScroller {lines} lineHeight={20.8} bufferLines={50}>
+		<VirtualScroller
+			{lines}
+			lineHeight={21}
+			verticalPadding={12}
+			bufferLines={50}
+			scrollToIndex={currentMatch?.lineIndex}
+			{scrollRequest}
+		>
 			{#snippet children(props)}
-				{@const _ = (visibleStart = props.visibleStart, visibleEnd = props.visibleEnd)}
-				<div class="code-content">
-					<pre><code class="hljs">{#each props.visibleLines as line, index}{@html line}{#if index < props.visibleLines.length - 1}{'\n'}{/if}{/each}</code></pre>
+				<div class="virtual-code-lines">
+					<LineNumbers lineCount={props.visibleEnd - props.visibleStart} startLine={props.visibleStart + 1} lineHeight={props.lineHeight} verticalPadding={0} />
+					<div class="code-content" style="padding-top: 0; padding-bottom: 0;">
+						<pre><code class="hljs">{#each props.visibleLines as line, index}<span class="code-line" style={props.rowStyle} data-line={props.visibleStart + index + 1}>{@html highlightedLineHtml(props.visibleStart + index, line)}{#if props.visibleStart + index < lines.length - 1}{'\n'}{/if}</span>{/each}</code></pre>
+					</div>
 				</div>
 			{/snippet}
 		</VirtualScroller>
@@ -113,8 +208,8 @@
 				</div>
 			{/each}
 		</div>
-		<div class="code-content">
-			<pre><code class="hljs">{#each codeVisibleLines as line, index}{@html line.html}{#if index < codeVisibleLines.length - 1}{'\n'}{/if}{/each}</code></pre>
+		<div class="code-content" bind:this={codeContentElement}>
+			<pre><code class="hljs">{#each codeVisibleLines as line, index}<span class="code-line" data-line={line.lineNumber}>{@html line.html}</span>{#if index < codeVisibleLines.length - 1}{'\n'}{/if}{/each}</code></pre>
 		</div>
 	{/if}
 </div>
@@ -130,6 +225,10 @@
 		line-height: 1.6;
 		background: var(--color-bg);
 		overflow: hidden;
+	}
+
+	.virtual-code-lines {
+		display: flex;
 	}
 
 	.gutter {
@@ -195,5 +294,16 @@
 		font-size: inherit;
 		line-height: inherit;
 		color: inherit;
+	}
+
+	:global(.code-content mark.search-match) {
+		background: color-mix(in oklab, var(--color-accent) 35%, transparent);
+		color: inherit;
+		border-radius: 2px;
+	}
+
+	:global(.code-content mark.search-match-current) {
+		background: var(--color-accent);
+		color: var(--color-bg);
 	}
 </style>

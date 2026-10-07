@@ -12,6 +12,45 @@ function isBlank(line: string): boolean {
 	return line.trim().length === 0;
 }
 
+/**
+ * Every fold in `model` whose range strictly contains `line` — that is,
+ * `fold.startLine < line <= fold.endLine` — sorted outermost first (ascending
+ * by `startLine`). A line that is itself a fold's own header line
+ * (`line === fold.startLine`) never counts as contained by that fold: a
+ * fold's header is always visible regardless of its own collapsed state.
+ *
+ * Used by the search-reveal path to expand every enclosing fold, not just
+ * the innermost one: `JsonFoldRenderer` and `CodeRenderer`'s non-virtual
+ * line-walk both jump straight from a collapsed fold's start line to its
+ * `endLine + 1`, skipping everything (including any folds nested inside it)
+ * — so revealing a line nested several folds deep requires expanding every
+ * ancestor, not only the tightest one, or the outer fold's collapsed state
+ * alone keeps the line out of the render entirely.
+ */
+export function foldAncestors(model: Map<number, CodeFoldRange>, line: number): CodeFoldRange[] {
+	const ancestors: CodeFoldRange[] = [];
+	for (const fold of model.values()) {
+		if (fold.startLine < line && line <= fold.endLine) {
+			ancestors.push(fold);
+		}
+	}
+	ancestors.sort((a, b) => a.startLine - b.startLine);
+	return ancestors;
+}
+
+/**
+ * The innermost (tightest) fold containing `line`, or `null` if none. See
+ * `foldAncestors` for the full ancestor chain when a line may be nested
+ * inside multiple folds.
+ */
+export function foldContaining(model: Map<number, CodeFoldRange>, line: number): CodeFoldRange | null {
+	const ancestors = foldAncestors(model, line);
+	if (ancestors.length === 0) {
+		return null;
+	}
+	return ancestors[ancestors.length - 1];
+}
+
 export function buildCodeFoldModel(lines: string[]): Map<number, CodeFoldRange> {
 	const folds = new Map<number, CodeFoldRange>();
 

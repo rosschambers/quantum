@@ -2,6 +2,7 @@
     import { marked } from 'marked';
     import { escapeHtml, highlightCode } from './highlighter';
     import { isMermaidLanguage, isGraphvizLanguage, diagramPlaceholderHtml, type DiagramRenderer } from './mermaid';
+    import { findMatchesInDom } from './search';
     import { slugify } from './types';
     import './markdown.css';
 
@@ -32,9 +33,16 @@
     interface Props {
         content: string;
         fileDirectory?: string;
+        /** Literal, case-insensitive search query. Empty string means inactive. */
+        query?: string;
+        /** Index into this component's own match list that is "current". */
+        currentMatchIndex?: number | null;
+        /** Fired whenever the computed match count changes. */
+        onMatchCount?: (count: number) => void;
+        navigationRevision?: number;
     }
 
-    let { content, fileDirectory }: Props = $props();
+    let { content, fileDirectory, query = '', currentMatchIndex = null, onMatchCount, navigationRevision = 0 }: Props = $props();
 
     function isAbsoluteOrDataUrl(url: string): boolean {
         return /^(?:[a-z][a-z0-9+.-]*:|\/\/)/i.test(url);
@@ -213,6 +221,72 @@
             cancelled = true;
         };
     });
+
+    let matchMarks: HTMLElement[][] = $state.raw([]);
+
+    function clearMarks(marks: HTMLElement[][]): void {
+        const parents = new Set<Node>();
+        for (const mark of marks.flat()) {
+            const parent = mark.parentNode;
+            if (!parent) continue;
+            parents.add(parent);
+            while (mark.firstChild) {
+                parent.insertBefore(mark.firstChild, mark);
+            }
+            parent.removeChild(mark);
+        }
+        for (const parent of parents) parent.normalize();
+    }
+
+    function wrapRanges(root: Element, ranges: Range[]): HTMLElement[][] {
+        const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+        const nodes: Text[] = [];
+        while (walker.nextNode()) nodes.push(walker.currentNode as Text);
+        // Snapshot text offsets before mutation, then split from right to left.
+        // Existing inline elements are never extracted, cloned, or replaced.
+        const segments = ranges.flatMap((range, matchIndex) => nodes
+            .filter((node) => range.intersectsNode(node) && !node.parentElement?.closest('.diagram-block, .diagram-error'))
+            .map((node) => ({
+                node,
+                start: node === range.startContainer ? range.startOffset : 0,
+                end: node === range.endContainer ? range.endOffset : node.length,
+                matchIndex,
+            })));
+        const marks: HTMLElement[][] = ranges.map(() => []);
+        for (const { node, start, end, matchIndex } of segments.reverse()) {
+            if (end <= start) continue;
+            const segment = document.createRange();
+            segment.setStart(node, start);
+            segment.setEnd(node, end);
+            const mark = document.createElement('mark');
+            mark.className = 'search-match';
+            segment.surroundContents(mark);
+            marks[matchIndex].unshift(mark);
+        }
+        return marks;
+    }
+
+    $effect(() => {
+        // Explicit dependency on parsedHtml (not otherwise read in this
+        // effect) so a content/file change re-runs this, not just a query.
+        void parsedHtml;
+        if (!container) return;
+
+        const ranges = findMatchesInDom(container, query);
+        const marks = wrapRanges(container, ranges);
+        matchMarks = marks;
+        onMatchCount?.(ranges.length);
+        // Capture this run's owned marks without reading reactive matchMarks.
+        return () => clearMarks(marks);
+    });
+
+    $effect(() => {
+        void navigationRevision;
+        for (const [index, marks] of matchMarks.entries()) {
+            for (const mark of marks) mark.classList.toggle('search-match-current', index === currentMatchIndex);
+        }
+        if (currentMatchIndex !== null) matchMarks[currentMatchIndex]?.[0]?.scrollIntoView({ block: 'center' });
+    });
 </script>
 
 <div class="markdown-renderer" bind:this={container}>
@@ -225,5 +299,16 @@
         font-size: 15px;
         line-height: 1.7;
         color: var(--color-fg-alt, #666);
+    }
+
+    .markdown-renderer :global(mark.search-match) {
+        background: color-mix(in oklab, var(--color-accent) 35%, transparent);
+        color: inherit;
+        border-radius: 2px;
+    }
+
+    .markdown-renderer :global(mark.search-match-current) {
+        background: var(--color-accent);
+        color: var(--color-bg);
     }
 </style>

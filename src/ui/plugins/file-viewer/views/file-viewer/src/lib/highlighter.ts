@@ -91,3 +91,84 @@ export function escapeHtml(text: string): string {
 	};
 	return text.replace(/[&<>"']/g, (char) => map[char]);
 }
+
+export interface MatchRange {
+	start: number;
+	end: number;
+}
+
+function sameRange(a: MatchRange, b: MatchRange | null): boolean {
+	return !!b && a.start === b.start && a.end === b.end;
+}
+
+/**
+ * Splits `line` into segments at `matches`' boundaries and highlights each
+ * segment INDEPENDENTLY via `highlightCode`, wrapping matched segments in
+ * `<mark class="search-match">` (plus `search-match-current` for the one
+ * equal to `currentMatch`). This is a deliberate per-segment approach rather
+ * than string-splicing `<mark>` into a single whole-line `highlightCode`
+ * result: splicing risks landing inside an already-generated `<span>` and
+ * breaking the markup. The accepted, documented trade-off is that a match
+ * falling inside a multi-character token may highlight that token's syntax
+ * color slightly differently right at the boundary, because each segment is
+ * highlighted without the surrounding line's context — cosmetic only, never
+ * affecting which text is reported as matched.
+ */
+export function highlightLineWithMatches(
+	line: string,
+	language: string | undefined,
+	matches: MatchRange[],
+	currentMatch: MatchRange | null,
+): string {
+	if (matches.length === 0) {
+		return highlightCode(line, language);
+	}
+
+	let html = '';
+	let cursor = 0;
+	for (const match of matches) {
+		if (match.start > cursor) {
+			html += highlightCode(line.slice(cursor, match.start), language);
+		}
+		const matchText = line.slice(match.start, match.end);
+		const cssClass = sameRange(match, currentMatch) ? 'search-match search-match-current' : 'search-match';
+		html += `<mark class="${cssClass}">${escapeHtml(matchText)}</mark>`;
+		cursor = match.end;
+	}
+	if (cursor < line.length) {
+		html += highlightCode(line.slice(cursor), language);
+	}
+	return html;
+}
+
+/**
+ * The plain-text equivalent of `highlightLineWithMatches`: no syntax
+ * highlighting, every non-matched segment is HTML-escaped verbatim, matched
+ * segments are escaped and wrapped in `<mark class="search-match">` (plus
+ * `search-match-current` for the one equal to `currentMatch`).
+ */
+export function highlightPlainLineWithMatches(
+	line: string,
+	matches: MatchRange[],
+	currentMatch: MatchRange | null = null,
+): string {
+	if (matches.length === 0) {
+		return escapeHtml(line);
+	}
+
+	let html = '';
+	let cursor = 0;
+	for (const match of matches) {
+		if (match.start > cursor) {
+			html += escapeHtml(line.slice(cursor, match.start));
+		}
+		const matchText = line.slice(match.start, match.end);
+		const cssClass = sameRange(match, currentMatch) ? 'search-match search-match-current' : 'search-match';
+		html += `<mark class="${cssClass}">${escapeHtml(matchText)}</mark>`;
+		cursor = match.end;
+	}
+	if (cursor < line.length) {
+		html += escapeHtml(line.slice(cursor));
+	}
+	return html;
+}
