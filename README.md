@@ -20,10 +20,12 @@ Quantum runs as a single daemon on Hyprland. It gives you:
 - **System tray** — full D-Bus system tray with nested menus (SNI + dbusmenu).
 - **Clipboard manager** — searchable history with image support, accessible from the launcher.
 
-### Viewer and explorer improvements (unreleased)
+### Viewer and explorer improvements
 
-Implemented and locally verified; installation and verification in the running
-desktop service remain separate deployment steps.
+Integrated and pushed to `main`. On 2026-10-07, Ross reported completing `just switch`
+and accepted the live viewer and explorer walkthrough. The running package's source
+hash was independently matched to the `8b1fcd34` configuration pin; evidence is in the
+implementation plan.
 
 - **Find in file:** Ctrl+F (or Command+F) opens literal, case-insensitive search in
   text, code, JSON, and rendered Markdown. Enter / Shift+Enter move forward / back
@@ -41,7 +43,8 @@ desktop service remain separate deployment steps.
   virtualized file list. Owner lookup reads `/etc/passwd` once per listing;
   concurrent same-path listings share work without caching settled results.
   Shared live updates remain, with stale pane-load results guarded during reload,
-  navigation, and teardown. Residual large-directory delays remain under investigation.
+  navigation, and teardown. Ross accepted scrolling and navigation in the live explorer;
+  earlier mocked-browser timings are historical measurements, not an open blocker.
 
 See [development verification](docs/development.md#viewer-and-explorer-verification)
 for the image security boundary, test commands, and native coverage limits.

@@ -69,10 +69,13 @@ workspace root is `src/ui`, not the repo root).
 
 Implementation and local verification were completed in `.worktrees/qv-improvements`,
 branch `feat/qv-improvements`. Ross subsequently authorized committing, merging to
-`main`, and pushing. The five implementation commits are now integrated into local
-`main`: `69463c3b`, `0661131f`, `8c3973b7`, `4be58c1c`, and `c4033684`.
-Installation and deployment have not occurred.
-This is not an installed-service completion claim; originating inbox items remain open.
+`main`, and pushing. The implementation and documentation commits are integrated and
+pushed: `69463c3b`, `0661131f`, `8c3973b7`, `4be58c1c`, `c4033684`, and `8b1fcd34`.
+Canonical `main` and remote `main` were verified at `8b1fcd34` during this checkpoint.
+Ross reported completing `just switch` and accepted the live walkthrough below.
+This supersedes the earlier deployment-pending and interaction-open status. A separate
+running-process derivation check matched its source hash to the configuration pin,
+as recorded below.
 Durable usage/release notes and reproducible checks are in the repository's existing
 `README.md` and `docs/development.md`.
 
@@ -87,17 +90,18 @@ Durable usage/release notes and reproducible checks are in the repository's exis
   rendered Markdown, with match counts, wrapping navigation, Escape-before-close,
   virtualized-line reveal, and containing-fold expansion that preserves unrelated folds.
   Diagram source/SVG is excluded. Component and native built-bundle checks cover the
-  implemented paths; installed `qv` interaction remains a separate verification step.
+  implemented paths; Ross also accepted the live search walkthrough below.
 - **Images:** native reproduction confirmed the `file://` load failure from a
   `quantum://` page and distinct originating WebView identities. The chosen transport
   uses exact open-file grants owned by the requesting WebView, revoked on new reads,
   navigation, hide, and destruction; no arbitrary file endpoint or new size cap.
   Fit, Actual size in CSS pixels, zoom, pan, and visible load errors are implemented.
   Native built-bundle observations confirmed PNG, JPEG, GIF, WebP, SVG, BMP, ICO, and
-  AVIF loaded, including special-character paths. Pan has component coverage; desktop
-  interaction feel is not certified by the native test.
+  AVIF loaded, including special-character paths. Pan has component coverage and Ross
+  accepted its desktop behavior on large PNG and SVG fixtures; that owner acceptance
+  is separate from the native test.
 
-### Measurements and remaining limits
+### Historical measurements and coverage limits
 
 The 10,000-entry Chromium experiment used mocked IPC, not the installed explorer or
 an integrated backend. These are sample timings, not service performance guarantees:
@@ -111,17 +115,18 @@ an integrated backend. These are sample timings, not service performance guarant
 | Scroll | 67 milliseconds | 17 milliseconds |
 | Selection | 98 milliseconds | 123 milliseconds |
 
-Selection did not improve; residual delays remain open. Task 3's separated real
-listing/IPC/render measurements and installed responsiveness are not replaced by these
-browser numbers. The native host test's 9.05-second suite duration is separate evidence,
-not a comparable explorer startup measurement.
+Selection did not improve in this mocked experiment. These numbers do not supply
+Task 3's separated real listing/IPC/render measurements or prove installed performance.
+Ross subsequently accepted the live explorer experience; the historical timings are
+not an open blocker or a new follow-up task. The native host test's 9.05-second suite
+duration is separate evidence, not a comparable explorer startup measurement.
 
-### Verification and integration hand-off
+### Automated verification and integration
 
 The parent execution's fresh checks passed: recursive frontend build, `quantumd` build,
-full Rust workspace tests, Rust formatting, all frontend suites (viewer 157; explorer
-304; other suites green), workspace/all-target Clippy with warnings denied, and
-`git diff --check`. Exact commands are recorded in the worktree's development guide.
+full Rust workspace tests, Rust formatting, all 1,025 frontend tests (viewer 157;
+explorer 304), workspace/all-target Clippy with warnings denied, and `git diff --check`.
+Exact commands are recorded in the canonical repository's `docs/development.md`.
 Existing modal accessibility warnings outside these features and the Vite chunk-size
 advisory remain non-failing; no Rust full-suite count is inferred.
 
@@ -143,8 +148,38 @@ the overlapping `src/ui/host/src/windows/mod.rs` and
 `src/ui/host/src/windows/panel.rs` changes were temporarily preserved, restored cleanly,
 and checked against their original diffs. They are not included in these commits.
 The commit prohibition in the original task instructions below is superseded by Ross's
-explicit commit/merge/push authorization. Installed-binary verification and deployment
-remain pending; verify the remote branch after the authorized push.
+explicit commit/merge/push authorization. Ross separately authorized committing this
+checkpoint and the configuration pin; no additional activation was performed.
+
+### Live owner acceptance (2026-10-07)
+
+Ross reported that he had already run `just switch`. The parent session opened each
+viewer fixture separately with `qv`, waiting for approval before the next. All passed:
+
+| Fixture or view | Owner-approved behavior |
+| --- | --- |
+| `01-search.md` | Ctrl+F: three `needle` matches; one `hello world` match across inline formatting; zero diagram-only matches; Escape closes search before the viewer. |
+| `02-long-text.txt` | Four matches at lines 20, 550, and twice on 950; scrolling keeps matches fully visible and search reveals them again after manual scrolling. |
+| `03-folds.json` | Enclosing ancestors expand for a match while unrelated folds stay collapsed. |
+| Large PNG, 2400 by 1600, with spaces, `#`, `%`, and an accented character in its name | Fit, Actual size at 100%, zoom, and panning to every corner. |
+| `04-large-image.svg` | The same Fit, Actual size, zoom, and all-corner pan checks. |
+| `05-broken.png` | Visible load error and Escape dismissal. |
+| Explorer, opened at `/tmp` as `plugin/files/files#<timestamp>` | Both lists scroll; fixture-folder and child navigation, Back, Forward, and Alt+Up work. |
+
+Ross's final "cool it all works checkpoint the session" accepts the directory test
+as well as the preceding viewer checks. The manual pack lived under
+`/tmp/opencode/qv-manual-tests/`; it is temporary and may need regeneration, not a
+durable repository artifact. No additional feature work was identified.
+
+Separately, the checkpoint observed `quantum.service` active/running on x1 and resolved
+its executable to `/nix/store/jalif7q6qzzc84msd6fpbqbpkpsdw9mq-quantum-0.1.0/bin/.quantumd-wrapped`.
+Following its Nix derivation through the frontend derivation identified
+`/nix/store/cckgdv2fyihq5awy7h7fcgsv6jsjf8gr-source`. Its `nix hash path` result was
+`sha256-09qkWd1Iw9QNgUKUwtptv1Xj/DEKR6QGkWavt1qBSdw=`, matching the working configuration
+lock's Quantum input for `8b1fcd34df44a8e757ddc6fa3b11ca1b7ea03003`. This establishes the
+running package's source independently of the acceptance report. Configuration commit
+`0c21d38` records that already-activated pin; unrelated staged configuration work was
+excluded, and `just check` passed before the path-scoped commit.
 
 ---
 

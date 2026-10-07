@@ -200,6 +200,27 @@ restore them. Tokens are not filesystem paths, and an image extension alone gran
 no access. Do not replace this with an arbitrary file-read endpoint or disable the
 WebKit sandbox. Explorer thumbnails and Markdown image embedding are separate paths.
 
+Preserve these implementation lessons:
+
+- **Cross-scheme images:** native WebKit rejected `file://` image loads from a
+  `quantum://` page. Keep exact-resource grants tied to the originating WebView;
+  token possession alone is not authorization.
+- **Warm hide is not document replacement:** keep retained-document generations
+  separate from read/grant generations. Revoke grants on hide, but still settle
+  promises in the retained document; dropping their responses leaves them hanging.
+- **Keep serialization off GTK:** serialize large bridge responses with
+  `serde_json` on the blocking worker pool, not the GTK main loop.
+- **Virtual rows need explicit dimensions:** rendered row height and line height
+  must match the virtualizer's arithmetic. Native rows measuring 20 pixels against
+  a 20.8-pixel assumption clipped search results. Assert full match visibility in
+  WebKit, not merely that a matching row exists in the DOM.
+- **Markdown marks must preserve structure:** wrap each matching text-node segment
+  separately so inline elements survive cross-node matches. Track and remove only
+  search-created marks, never authored `<mark>` elements.
+- **Measure the sidebar too:** virtualizing file panes alone leaves a large directory
+  tree expensive. Batch size updates into a path-keyed map rather than searching the
+  entry list for every update.
+
 Run the ordinary checks from the repository root, with dependencies installed:
 
 ```bash
@@ -269,6 +290,24 @@ errors, special-character filenames, foreign/revoked grants, and asynchronous
 hide/navigation/read races. Component tests also cover code search and drag-to-pan.
 Desktop interaction feel and installed-service verification remain separate checks;
 ask before opening desktop windows, and never run repeated desktop test loops.
+
+### Owner acceptance (2026-10-07)
+
+After reporting that he had run `just switch`, Ross approved the live fixtures one
+at a time: Markdown search and Escape priority; four long-text matches with complete
+visibility and reveal after manual scrolling; enclosing JSON fold expansion without
+opening unrelated folds; large PNG and SVG Fit, Actual size, zoom, and all-corner pan;
+and a corrupt image's visible error and Escape dismissal. He then accepted explorer
+scrolling in both lists and child-folder, Back, Forward, and Alt+Up navigation with
+"cool it all works checkpoint the session".
+
+This closes the interaction acceptance checks. A separate derivation/source-hash check
+matched the running package to the `8b1fcd34` configuration pin. That evidence, prior
+automated and isolated native results, and fixture details are recorded in the
+[implementation plan](plans/2026-10-03-file-viewer-improvements.md#execution-status-2026-10-07).
+The `/tmp/opencode/qv-manual-tests/` pack was temporary, not a repository artifact;
+regenerate equivalent fixtures if it is gone. No further work was identified by this
+walkthrough.
 
 ## Quick reference
 
