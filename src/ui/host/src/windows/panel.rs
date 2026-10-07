@@ -269,6 +269,7 @@ impl PanelWindow {
         // dispatcher Arc is consumed here; the bridge keeps its own clone
         // inside the script message handler closure.
         crate::bridge::register_bridge(&webview, dispatcher, runtime.clone(), subs.clone());
+        crate::viewer_image_resources::bind_window(&window, &webview);
 
         // Subscribe to broadcast events and forward them to the WebView as
         // `window.__quantum_notify(channel, payload)` calls.
@@ -381,6 +382,7 @@ impl PanelWindow {
 impl crate::registry::WindowOps for PanelWindow {
     /// Show the panel window.
     fn show(&mut self) {
+        crate::viewer_image_resources::activate_view(&self.webview);
         if self.layer_shell && !self.fullscreen_overlay {
             // Exclusive keyboard so the compositor routes all keystrokes to
             // the panel while it is visible. The fullscreen overlay was
@@ -396,6 +398,7 @@ impl crate::registry::WindowOps for PanelWindow {
 
     /// Hide the panel window.
     fn hide(&mut self) {
+        crate::viewer_image_resources::suspend_view(&self.webview, false);
         if self.layer_shell && !self.fullscreen_overlay {
             // Revert to on-demand keyboard mode before hiding so the next
             // compositor focus isn't redirected to a hidden surface. The
@@ -424,6 +427,7 @@ impl crate::registry::WindowOps for PanelWindow {
             return;
         }
         self.is_destroyed = true;
+        crate::viewer_image_resources::suspend_view(&self.webview, true);
         // Destroying the GTK window unparents the WebView but does NOT
         // terminate its render process: for a view on its own render process
         // (every destroy_on_dismiss view since B1) WebKit keeps the
@@ -456,6 +460,7 @@ impl Drop for PanelWindow {
     /// gtk_window_destroy after an explicit destroy(), which would abort on an
     /// already-freed layer-shell surface.
     fn drop(&mut self) {
+        crate::viewer_image_resources::suspend_view(&self.webview, true);
         if !self.is_destroyed {
             // Only terminate a process this view owns — never a shared
             // (`related-view`) process, which warm siblings depend on.

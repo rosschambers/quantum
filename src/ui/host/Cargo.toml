@@ -19,6 +19,7 @@ webkit6 = "0.4"
 gtk4-layer-shell = "0.4"
 glib = "0.20"
 gio = "0.20"
+libc.workspace = true
 
 [dev-dependencies]
 tokio = { version = "1", features = ["macros", "rt"] }

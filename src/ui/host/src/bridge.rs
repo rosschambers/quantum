@@ -7,7 +7,9 @@ use std::sync::Arc;
 use tokio::runtime::Handle;
 use webkit6::{prelude::*, WebView};
 
+use crate::dispatcher::{DispatchError, DispatchResult};
 use crate::subscriptions::WebviewSubscriptions;
+use crate::viewer_image_resources::{bind_view, prepare_image, PreparedImage};
 use crate::IpcDispatcher;
 
 /// Post-process a serialized JSON string so it is safe to splice into a
@@ -28,6 +30,54 @@ pub struct BridgeMessage {
     pub id: u64,
     pub method: String,
     pub params: Value,
+}
+
+struct ResponseExpressions {
+    completed: String,
+    cancelled: String,
+    #[cfg(test)]
+    serialization_thread: std::thread::ThreadId,
+}
+
+async fn serialize_response(
+    runtime: &Handle,
+    identity: u64,
+    result: DispatchResult,
+) -> ResponseExpressions {
+    let serialization = runtime.spawn_blocking(move || {
+        let completed = match result {
+            Ok(value) => {
+                let payload = serde_json::to_string(&value).unwrap_or_else(|_| "null".into());
+                let payload = json_to_js_expression(&payload);
+                format!("window.__quantum_resolve({identity}, {payload})")
+            }
+            Err(error) => {
+                let payload = serde_json::to_string(&error).unwrap_or_else(|_| "{}".into());
+                let payload = json_to_js_expression(&payload);
+                format!("window.__quantum_reject({identity}, {payload})")
+            }
+        };
+        ResponseExpressions {
+            completed,
+            cancelled: format!(
+                "window.__quantum_reject({identity}, {{\"code\":-32800,\"message\":\"read cancelled because viewer state changed\"}})"
+            ),
+            #[cfg(test)]
+            serialization_thread: std::thread::current().id(),
+        }
+    });
+    serialization.await.unwrap_or_else(|error| {
+        tracing::error!(%error, "bridge response serialization worker failed");
+        // Only this fixed, small emergency response is constructed on GLib.
+        // Arbitrarily large dispatcher success/error payloads never are.
+        let completed = format!("window.__quantum_reject({identity}, {{\"code\":-32603,\"message\":\"response serialization failed\"}})");
+        ResponseExpressions {
+            cancelled: completed.clone(),
+            completed,
+            #[cfg(test)]
+            serialization_thread: std::thread::current().id(),
+        }
+    })
 }
 
 /// Register the bridge message handler on a WebView.
@@ -53,7 +103,8 @@ pub fn register_bridge(
 
     ucm.register_script_message_handler("quantum", None);
 
-    let webview_clone = webview.clone();
+    let webview_weak = webview.downgrade();
+    let resources = bind_view(webview);
 
     ucm.connect_script_message_received(Some("quantum"), move |_ucm, msg| {
         // `msg` is a `javascriptcore::Value` from the JS side. We need to
@@ -94,16 +145,31 @@ pub fn register_bridge(
             return;
         };
 
-        let webview = webview_clone.clone();
+        let webview = webview_weak.clone();
         let id = parsed.id;
+        let is_viewer_read = parsed.method == "file-viewer.read";
+        let document_generation = resources.document_generation();
+        let generation = if is_viewer_read {
+            resources.begin_read()
+        } else {
+            None
+        };
+        let resources = resources.clone();
 
-        // One-shot channel for the JS expression to evaluate once the
-        // dispatcher completes. The receiver is awaited on the GLib main
-        // context, so the GTK thread suspends until the value is ready
-        // rather than busy-polling.
-        let (tx, rx) = tokio::sync::oneshot::channel::<String>();
+        // One-shot channel for the dispatch result and worker-opened descriptor.
+        // GTK ownership is bound only after this reaches the GLib thread.
+        // The GLib receiver yields until the dispatcher and file open complete.
+        let (tx, rx) = tokio::sync::oneshot::channel::<(DispatchResult, Option<PreparedImage>)>();
 
-        if parsed.method == "bridge.subscribe" || parsed.method == "bridge.unsubscribe" {
+        if is_viewer_read && generation.is_none() {
+            let _ = tx.send((
+                Err(DispatchError {
+                    code: -32800,
+                    message: "read cancelled because viewer state changed".to_string(),
+                }),
+                None,
+            ));
+        } else if parsed.method == "bridge.subscribe" || parsed.method == "bridge.unsubscribe" {
             // Webview-local: update this webview's subscription set and resolve
             // the caller's promise WITHOUT dispatching to the global
             // dispatcher. Once seeded the set stays `Some`, so an unsubscribe
@@ -122,45 +188,86 @@ pub fn register_bridge(
             }
             // Resolve so the client's `call` settles. Reuse the same
             // oneshot -> spawn_local evaluation path the dispatched case uses.
-            let _ = tx.send(format!("window.__quantum_resolve({id}, null)"));
+            let _ = tx.send((Ok(Value::Null), None));
         } else {
             let dispatcher = dispatcher.clone();
             let method = parsed.method.clone();
             let params = parsed.params.clone();
 
             runtime.spawn(async move {
-                let result = dispatcher.dispatch(&method, params).await;
-                let js = match result {
-                    Ok(value) => {
-                        let payload =
-                            serde_json::to_string(&value).unwrap_or_else(|_| "null".into());
-                        let payload = json_to_js_expression(&payload);
-                        format!("window.__quantum_resolve({id}, {payload})")
+                let mut result = dispatcher.dispatch(&method, params).await;
+                let mut image = None;
+                if is_viewer_read {
+                    if let Ok(value) = &result {
+                        let value = value.clone();
+                        match tokio::task::spawn_blocking(move || prepare_image(&value)).await {
+                            Ok(Ok(prepared)) => image = prepared,
+                            _ => {
+                                result = Err(DispatchError {
+                                    code: -32000,
+                                    message: "image resource unavailable".to_string(),
+                                })
+                            }
+                        }
                     }
-                    Err(err) => {
-                        let error_json = serde_json::to_string(&serde_json::json!({
-                            "code": err.code,
-                            "message": err.message,
-                        }))
-                        .unwrap_or_else(|_| "{}".into());
-                        let error_json = json_to_js_expression(&error_json);
-                        format!("window.__quantum_reject({id}, {error_json})")
-                    }
-                };
-
+                }
                 // Ignore send failure: the GTK side has gone away.
-                let _ = tx.send(js);
+                let _ = tx.send((result, image));
             });
         }
 
-        // Drive the oneshot on the GLib main context. `spawn_local` yields
-        // to the loop while awaiting, so there is no busy loop on the GTK
-        // thread. A oneshot receiver is executor-agnostic — its waker is
-        // supplied by whoever polls it (here, the GLib executor), so the
-        // sender on the Tokio side correctly wakes this future.
+        // GTK objects and the grant store remain on their owning GLib thread.
+        let response_runtime = runtime.clone();
         glib::MainContext::default().spawn_local(async move {
-            if let Ok(js) = rx.await {
-                webview.evaluate_javascript(&js, None, None, None::<&gio::Cancellable>, |_| {});
+            if let Ok((mut result, mut image)) = rx.await {
+                if !resources.is_document_current(&document_generation) {
+                    return;
+                }
+                if generation
+                    .as_ref()
+                    .is_some_and(|generation| !resources.is_current(generation))
+                {
+                    result = Err(DispatchError {
+                        code: -32800,
+                        message: "read cancelled because viewer state changed".to_string(),
+                    });
+                    image = None;
+                }
+                if let (Ok(value), Some(image)) = (&mut result, image) {
+                    if let Some(uri) = generation
+                        .as_ref()
+                        .and_then(|generation| resources.issue(generation, image))
+                    {
+                        value["uri"] = Value::String(uri);
+                    } else {
+                        result = Err(DispatchError {
+                            code: -32000,
+                            message: "image resource unavailable".to_string(),
+                        });
+                    }
+                }
+                let expressions = serialize_response(&response_runtime, id, result).await;
+                if !resources.is_document_current(&document_generation) {
+                    return;
+                }
+                let Some(webview) = webview.upgrade() else {
+                    return;
+                };
+                let expression = if generation
+                    .as_ref()
+                    .is_some_and(|generation| !resources.is_current(generation))
+                {
+                    &expressions.cancelled
+                } else {
+                    &expressions.completed
+                };
+                webview.evaluate_javascript(
+                    expression,
+                    None,
+                    None,
+                    None::<&gio::Cancellable>,
+                    |_| {},
+                );
             }
         });
     });
@@ -170,6 +277,36 @@ pub fn register_bridge(
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn response_serialization_runs_off_the_glib_owner_thread() {
+        let context = glib::MainContext::new();
+        let owner = std::thread::current().id();
+        let runtime = tokio::runtime::Builder::new_multi_thread()
+            .worker_threads(1)
+            .build()
+            .unwrap();
+        let large_text = format!("{}\u{2028}\u{2029}", "x".repeat(2 * 1024 * 1024));
+        for result in [
+            Ok(json!({"content": large_text})),
+            Err(DispatchError {
+                code: -32000,
+                message: large_text.clone(),
+            }),
+        ] {
+            let expressions = context.block_on(async {
+                assert!(context.is_owner());
+                serialize_response(runtime.handle(), 42, result).await
+            });
+            assert_ne!(
+                expressions.serialization_thread, owner,
+                "large success and error serialization must not run on GLib"
+            );
+            assert!(expressions.completed.contains("\\u2028\\u2029"));
+            assert!(!expressions.completed.contains('\u{2028}'));
+            assert!(expressions.cancelled.contains("-32800"));
+        }
+    }
 
     #[test]
     fn parses_bridge_message() {

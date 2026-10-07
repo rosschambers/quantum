@@ -27,6 +27,9 @@ pub fn register_quantum_scheme_on_default(theme_store: Arc<dyn ThemeStore>) {
 /// - quantum://assets/... -> asset bytes
 pub fn register_quantum_scheme(context: &WebContext, theme_store: Arc<dyn ThemeStore>) {
     context.register_uri_scheme("quantum", move |request: &URISchemeRequest| {
+        if crate::viewer_image_resources::serve_request(request) {
+            return;
+        }
         let Some(uri) = request.uri() else {
             tracing::warn!("quantum:// request with no URI");
             return;

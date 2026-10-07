@@ -255,6 +255,7 @@ pub(crate) fn resolve_view_uri(canonical_name: &str) -> String {
 /// but no page script has run yet. The handler fires on every load, so the
 /// args persist across navigation and reloads.
 pub(crate) fn inject_view_args(webview: &webkit6::WebView, args: Option<serde_json::Value>) {
+    crate::viewer_image_resources::invalidate_view(webview);
     use webkit6::prelude::WebViewExt;
     let json_string = match &args {
         Some(value) => serde_json::to_string(value).unwrap_or_else(|_| "null".into()),

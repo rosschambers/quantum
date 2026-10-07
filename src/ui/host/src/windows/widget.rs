@@ -562,6 +562,7 @@ fn build_webview(
 
     // Register the bridge to wire JS messages to the dispatcher.
     crate::bridge::register_bridge(&webview, dispatcher, runtime.clone(), subs.clone());
+    crate::viewer_image_resources::bind_window(window, &webview);
 
     // Subscribe to broadcast events and forward them to the WebView as
     // `window.__quantum_notify(channel, payload)` calls.
@@ -658,16 +659,21 @@ fn build_webview(
 
 impl crate::registry::WindowOps for WidgetWindow {
     fn show(&mut self) {
+        crate::viewer_image_resources::activate_view(&self.webview);
         self.window.set_visible(true);
     }
 
     fn hide(&mut self) {
+        crate::viewer_image_resources::suspend_view(&self.webview, false);
         self.window.set_visible(false);
     }
 
     fn toggle(&mut self) {
-        let v = self.window.is_visible();
-        self.window.set_visible(!v);
+        if self.window.is_visible() {
+            self.hide();
+        } else {
+            self.show();
+        }
     }
 
     fn destroy(&mut self) {
@@ -675,6 +681,7 @@ impl crate::registry::WindowOps for WidgetWindow {
             return;
         }
         self.is_destroyed = true;
+        crate::viewer_image_resources::suspend_view(&self.webview, true);
         // Terminate the render process before destroying the window ONLY when
         // this widget owns its process: destroying the GTK window alone leaves
         // an isolated WebKitWebProcess resident (see the note in panel.rs), but
@@ -738,6 +745,7 @@ impl Drop for WidgetWindow {
     /// gtk_window_destroy after an explicit destroy(), which would abort on an
     /// already-freed layer-shell surface.
     fn drop(&mut self) {
+        crate::viewer_image_resources::suspend_view(&self.webview, true);
         if !self.is_destroyed {
             // Symmetric with destroy(): terminate only a process this widget
             // owns, never a shared (`related-view`) one warm siblings depend on.

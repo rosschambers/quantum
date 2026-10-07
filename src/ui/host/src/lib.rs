@@ -9,6 +9,7 @@ pub mod registry;
 pub mod scheme;
 pub mod subscriptions;
 pub mod view_catalog;
+pub mod viewer_image_resources;
 pub mod web_process;
 pub mod window_host;
 pub mod windows;
