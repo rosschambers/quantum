@@ -38,6 +38,23 @@ afterEach(() => {
 	clearRowsCache();
 });
 
+function rect(partial: Partial<DOMRect>): DOMRect {
+	return {
+		x: 0,
+		y: 0,
+		width: 0,
+		height: 0,
+		top: 0,
+		left: 0,
+		right: 0,
+		bottom: 0,
+		toJSON() {
+			return this;
+		},
+		...partial,
+	} as DOMRect;
+}
+
 function side(content: string, blob: string, overrides: Partial<FileSide> = {}): FileSide {
 	return { content, blob, mode: '100644', binary: false, too_large: false, ...overrides };
 }
@@ -153,6 +170,14 @@ describe('DiffView', () => {
 	test('a fingerprint change shows the refresh banner, and R refetches', async () => {
 		const changeSet = changeSetFixture();
 		let intervalCallback: (() => void) | undefined;
+		// The overview ruler's remeasure pass schedules itself via the REAL
+		// `requestAnimationFrame`, which jsdom's own polyfill implements on
+		// top of the global `setInterval` — colliding with this test's own
+		// stub of `setInterval` (meant to capture only the poll timer
+		// below). Stubbing `requestAnimationFrame` to a no-op keeps the
+		// ruler's scheduling out of this test's `setInterval` capture.
+		vi.stubGlobal('requestAnimationFrame', (() => 1) as typeof requestAnimationFrame);
+		vi.stubGlobal('cancelAnimationFrame', (() => {}) as typeof cancelAnimationFrame);
 		vi.stubGlobal(
 			'setInterval',
 			((callback: () => void, ms: number) => {
@@ -202,6 +227,11 @@ describe('DiffView', () => {
 		const firstChangeSet = changeSetFixture({ repository_root: '/repository-one' });
 		const secondChangeSet = changeSetFixture({ repository_root: '/repository-two' });
 		let intervalCallback: (() => void) | undefined;
+		// See the matching comment in "a fingerprint change shows the
+		// refresh banner" above: the ruler's own `requestAnimationFrame`
+		// scheduling must not collide with this test's `setInterval` stub.
+		vi.stubGlobal('requestAnimationFrame', (() => 1) as typeof requestAnimationFrame);
+		vi.stubGlobal('cancelAnimationFrame', (() => {}) as typeof cancelAnimationFrame);
 		vi.stubGlobal(
 			'setInterval',
 			((callback: () => void) => {
@@ -268,6 +298,10 @@ describe('DiffView', () => {
 	test('a poll response whose baseline changed while it was in flight (a refresh raced it) is ignored', async () => {
 		const changeSet = changeSetFixture();
 		let intervalCallback: (() => void) | undefined;
+		// See the matching comment in "a fingerprint change shows the
+		// refresh banner" above.
+		vi.stubGlobal('requestAnimationFrame', (() => 1) as typeof requestAnimationFrame);
+		vi.stubGlobal('cancelAnimationFrame', (() => {}) as typeof cancelAnimationFrame);
 		vi.stubGlobal(
 			'setInterval',
 			((callback: () => void) => {
@@ -647,5 +681,247 @@ describe('DiffView', () => {
 
 		const alwaysExpandedCallsAfterBothQueries = buildRowsSpy.mock.calls.filter(isAlwaysExpandedCall).length;
 		expect(alwaysExpandedCallsAfterBothQueries).toBe(alwaysExpandedCallsAfterMount);
+	});
+});
+
+describe('DiffView overview ruler measurement', () => {
+	beforeAll(() => {
+		if (typeof (globalThis as any).ResizeObserver === 'undefined') {
+			(globalThis as any).ResizeObserver = class {
+				observe(): void {}
+				unobserve(): void {}
+				disconnect(): void {}
+			};
+		}
+		if (typeof Element.prototype.scrollIntoView !== 'function') {
+			Element.prototype.scrollIntoView = function (): void {};
+		}
+	});
+
+	// The production code schedules its remeasure pass through
+	// `coalesceToAnimationFrame` (shared with the resize-watch path), whose
+	// `schedule()` assigns `pendingFrame = requestAnimationFrame(wrapped)`
+	// — if `requestAnimationFrame` ran `wrapped` SYNCHRONOUSLY (invoking it
+	// before returning), that inner call's own `pendingFrame = null` would
+	// be clobbered by the outer assignment completing afterward, wedging
+	// the coalescer closed forever. A real browser's `requestAnimationFrame`
+	// never does that (it always defers to the next frame), so this can
+	// never happen in production; deferring by one microtask here keeps
+	// the stub a faithful "soon, but not synchronously" rAF, which
+	// `vi.waitFor`'s real-timer polling below always observes.
+	function stubAnimationFrame(): void {
+		vi.stubGlobal('requestAnimationFrame', ((callback: FrameRequestCallback) => {
+			queueMicrotask(() => callback(0));
+			return 1;
+		}) as typeof requestAnimationFrame);
+		vi.stubGlobal('cancelAnimationFrame', (() => {}) as typeof cancelAnimationFrame);
+	}
+
+	function fileSectionIndexOf(element: Element): number {
+		const section = element.closest('.file-section');
+		if (!section) return -1;
+		return Array.from(document.querySelectorAll('.file-section')).indexOf(section);
+	}
+
+	function stubTrackHeight(height: number): void {
+		vi.spyOn(HTMLElement.prototype, 'clientHeight', 'get').mockImplementation(function (this: HTMLElement) {
+			return this.classList.contains('overview-ruler') ? height : 0;
+		});
+	}
+
+	afterEach(() => {
+		vi.unstubAllGlobals();
+	});
+
+	test('two files of very different heights produce ruler marks proportional to their MEASURED tops, not an equal share per file', async () => {
+		stubAnimationFrame();
+		stubTrackHeight(1000);
+
+		// Entry A: one removed+added pair at index 0 (no leading context).
+		// Entry B: five leading (unfolded — hiddenCount 2 stays under the
+		// collapse threshold) context lines, so its own removed+added pair
+		// sits at index 5. Distinct indices let the stub below tell the
+		// two files' rows apart without needing a real layout engine.
+		const changeSet = changeSetFixture({
+			files: [
+				{ path: 'a.ts', language: 'typescript', base: side('old a\n', 'a-base'), index: side('old a\n', 'a-base'), target: side('new a\n', 'a-target'), untracked: false },
+				{
+					path: 'b.ts',
+					language: 'typescript',
+					base: side(['ctx0', 'ctx1', 'ctx2', 'ctx3', 'ctx4', 'old b'].join('\n'), 'b-base'),
+					index: side(['ctx0', 'ctx1', 'ctx2', 'ctx3', 'ctx4', 'old b'].join('\n'), 'b-base'),
+					target: side(['ctx0', 'ctx1', 'ctx2', 'ctx3', 'ctx4', 'new b'].join('\n'), 'b-target'),
+					untracked: false,
+				},
+			],
+		});
+		mockChangesAndFingerprint(changeSet);
+
+		// INVERTED relative to file order on purpose: file A (entryIndex 0,
+		// which the old equal-share arithmetic would have forced into the
+		// top half, [0, 0.5)) is stubbed near the BOTTOM of the content;
+		// file B (entryIndex 1, forced into the bottom half, [0.5, 1)) is
+		// stubbed near the TOP. Only a real measurement pass — never
+		// `(entryIndex + fraction) / entries.length` — can produce ruler
+		// marks that land in the inverted order this test asserts.
+		const rectSpy = vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function (this: HTMLElement): DOMRect {
+			if (this.classList.contains('pane-content')) return rect({ top: 0, height: 2000 });
+			const fileIndex = fileSectionIndexOf(this);
+			if (fileIndex === 0 && this.dataset.oldIndex === '0') return rect({ top: 1800, height: 20 });
+			if (fileIndex === 0 && this.dataset.newIndex === '0') return rect({ top: 1820, height: 20 });
+			if (fileIndex === 1 && this.dataset.oldIndex === '5') return rect({ top: 100, height: 20 });
+			if (fileIndex === 1 && this.dataset.newIndex === '5') return rect({ top: 120, height: 20 });
+			return rect({ top: 0, height: 0 });
+		});
+
+		try {
+			const { container } = render(DiffView, { props: { source: { kind: 'git', spec: { repository: '/repository' } } } });
+			await vi.waitFor(() => expect(container.querySelectorAll('.diff-file')).toHaveLength(2));
+
+			const mixedMarks = Array.from(container.querySelectorAll('.ruler-mark.kind-mixed')) as HTMLElement[];
+			expect(mixedMarks).toHaveLength(2);
+			const tops = mixedMarks.map((element) => parseFloat(element.style.top)).sort((a, b) => a - b);
+			// B's mark (measured top 100/2000 = 0.05 of the 1000px track = 50px).
+			expect(tops[0]).toBeCloseTo(50, 0);
+			// A's mark (measured top 1800/2000 = 0.9 of the 1000px track = 900px).
+			expect(tops[1]).toBeCloseTo(900, 0);
+		} finally {
+			rectSpy.mockRestore();
+		}
+	});
+
+	test('a staged (collapsed) file\'s marks anchor at its header, since nothing else is rendered', async () => {
+		stubAnimationFrame();
+		stubTrackHeight(1000);
+
+		// Two matching files: the first (unstaged) becomes the auto-selected
+		// CURRENT match and is irrelevant here. The second is staged
+		// (collapsed by default) — its match is never navigated to, so
+		// `ensureMatchVisible`'s "expand on navigation" behavior (a
+		// pre-existing, separate feature) never kicks in and the file
+		// stays genuinely collapsed for this assertion.
+		const changeSet = changeSetFixture({
+			files: [
+				{ path: 'a.ts', language: 'typescript', base: side('old\n', 'a-base'), index: side('needle one\n', 'a-index'), target: side('needle one\n', 'a-index'), untracked: false },
+				{ path: 'b.ts', language: 'typescript', base: side('old\n', 'b-base'), index: side('needle two\n', 'b-index'), target: side('needle two\n', 'b-index'), untracked: false },
+			],
+		});
+		mockChangesAndFingerprint(changeSet);
+
+		const rectSpy = vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function (this: HTMLElement): DOMRect {
+			if (this.classList.contains('pane-content')) return rect({ top: 0, height: 1000 });
+			if (this.classList.contains('file-header') && fileSectionIndexOf(this) === 1) return rect({ top: 400, height: 32 });
+			return rect({ top: 0, height: 0 });
+		});
+
+		try {
+			const { container } = render(DiffView, { props: { source: { kind: 'git', spec: { repository: '/repository' } } } });
+			await vi.waitFor(() => expect(container.querySelectorAll('.diff-file')).toHaveLength(2));
+			// Both files are staged, so both start collapsed.
+			expect(container.querySelectorAll('.diff-root')).toHaveLength(0);
+
+			await fireEvent.keyDown(window, { key: 'f', ctrlKey: true });
+			const input = container.querySelector('.search-bar .search-input') as HTMLInputElement;
+			await fireEvent.input(input, { target: { value: 'needle' } });
+			await vi.waitFor(() => expect(container.querySelector('.match-indicator')?.textContent).toBe('1 of 2'));
+			// Still collapsed: the current match is file a, not file b.
+			expect(container.querySelectorAll('.diff-root')).toHaveLength(1);
+
+			const matchMarks = Array.from(container.querySelectorAll('.ruler-mark.kind-match')) as HTMLElement[];
+			expect(matchMarks).toHaveLength(1);
+			// Header top 400 / content height 1000 * 1000px track = 400px.
+			expect(parseFloat(matchMarks[0].style.top)).toBeCloseTo(400, 0);
+		} finally {
+			rectSpy.mockRestore();
+		}
+	});
+
+	test('a match inside a collapsed region anchors at the .collapsed element', async () => {
+		stubAnimationFrame();
+		stubTrackHeight(1000);
+
+		// Two needles: the first (outside any fold) becomes the
+		// auto-selected CURRENT match and is irrelevant here. The second
+		// sits inside a collapsed context run and is never navigated to,
+		// so it stays genuinely folded for this assertion (navigating to
+		// it would expand it — a separate, pre-existing feature, not what
+		// this test is about).
+		// 'needle one' replaces the first line (a CHANGED line, which never
+		// folds) so it is never hidden; 'needle two' sits in the middle of
+		// ten otherwise-identical lines, which collapses (more than 2
+		// lines would be hidden either side of the kept 3-line context).
+		const sameLines = Array.from({ length: 10 }, (_, index) => (index === 5 ? 'needle two' : `same ${index}`));
+		const oldContent = ['old start', ...sameLines, 'old end'].join('\n');
+		const newContent = ['needle one', ...sameLines, 'new end'].join('\n');
+		const changeSet = changeSetFixture({
+			files: [{ path: 'src/lib.rs', language: 'rust', base: side(oldContent, 'base-blob'), index: side(oldContent, 'base-blob'), target: side(newContent, 'target-blob'), untracked: false }],
+		});
+		mockChangesAndFingerprint(changeSet);
+
+		const rectSpy = vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function (this: HTMLElement): DOMRect {
+			if (this.classList.contains('pane-content')) return rect({ top: 0, height: 1000 });
+			if (this.classList.contains('collapsed')) return rect({ top: 300, height: 26 });
+			return rect({ top: 0, height: 0 });
+		});
+
+		try {
+			const { container } = render(DiffView, { props: { source: { kind: 'git', spec: { repository: '/repository' } } } });
+			await vi.waitFor(() => expect(container.querySelector('.diff-file')).not.toBeNull());
+			// The second needle sits inside a collapsed context run.
+			expect(container.querySelector('.collapsed')).not.toBeNull();
+			expect(container.textContent).not.toContain('needle two');
+
+			await fireEvent.keyDown(window, { key: 'f', ctrlKey: true });
+			const input = container.querySelector('.search-bar .search-input') as HTMLInputElement;
+			await fireEvent.input(input, { target: { value: 'needle' } });
+			await vi.waitFor(() => expect(container.querySelector('.match-indicator')?.textContent).toBe('1 of 2'));
+			// Still folded: the current match is "needle one", not "needle two".
+			expect(container.querySelector('.collapsed')).not.toBeNull();
+
+			const matchMarks = Array.from(container.querySelectorAll('.ruler-mark.kind-match')) as HTMLElement[];
+			expect(matchMarks).toHaveLength(1);
+			// `.collapsed` top 300 / content height 1000 * 1000px track = 300px.
+			expect(parseFloat(matchMarks[0].style.top)).toBeCloseTo(300, 0);
+		} finally {
+			rectSpy.mockRestore();
+		}
+	});
+
+	test('changing only currentMatchIndex does not re-measure', async () => {
+		stubAnimationFrame();
+		stubTrackHeight(1000);
+
+		const changeSet = changeSetFixture({
+			files: [{ path: 'src/lib.rs', language: 'rust', base: side('old\n', 'base-blob'), index: side('old\n', 'base-blob'), target: side('needle one\nneedle two\n', 'target-blob'), untracked: false }],
+		});
+		mockChangesAndFingerprint(changeSet);
+
+		const rectSpy = vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function (this: HTMLElement): DOMRect {
+			if (this.classList.contains('pane-content')) return rect({ top: 0, height: 1000 });
+			return rect({ top: 100, height: 20 });
+		});
+
+		try {
+			const { container } = render(DiffView, { props: { source: { kind: 'git', spec: { repository: '/repository' } } } });
+			await vi.waitFor(() => expect(container.querySelector('.diff-file')).not.toBeNull());
+
+			await fireEvent.keyDown(window, { key: 'f', ctrlKey: true });
+			const input = container.querySelector('.search-bar .search-input') as HTMLInputElement;
+			await fireEvent.input(input, { target: { value: 'needle' } });
+			await vi.waitFor(() => expect(container.querySelector('.match-indicator')?.textContent).toBe('1 of 2'));
+
+			const contentElement = container.querySelector('.pane-content') as HTMLElement;
+			const measureSpy = vi.spyOn(contentElement, 'getBoundingClientRect');
+			measureSpy.mockClear();
+
+			// Advances to the next match: only `currentMatchIndex` changes
+			// (the query, and therefore `globalMatches`, is unchanged).
+			await fireEvent.keyDown(input, { key: 'Enter' });
+			await vi.waitFor(() => expect(container.querySelector('.match-indicator')?.textContent).toBe('2 of 2'));
+
+			expect(measureSpy).not.toHaveBeenCalled();
+		} finally {
+			rectSpy.mockRestore();
+		}
 	});
 });

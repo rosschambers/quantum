@@ -21,6 +21,7 @@
 	import { resolveViewerShortcut } from '../viewerKeymap';
 	import { searchMarks, type RulerMark, type RulerMarkKind } from '../overviewRuler';
 	import { findMatchesInLines } from '../search';
+	import { measureFractions, observeLayout, coalesceToAnimationFrame } from '../measureOffsets';
 	import SearchBar from '../SearchBar.svelte';
 	import OverviewRuler from '../OverviewRuler.svelte';
 	import ChangesSidebar from './ChangesSidebar.svelte';
@@ -62,6 +63,15 @@
 
 	let paneElement: HTMLDivElement | undefined = $state(undefined);
 	let fileSectionElements: (HTMLDivElement | undefined)[] = $state([]);
+	/**
+	 * Wraps every `.file-section` with no overflow of its own, so its
+	 * height is the pane's full (unclipped) content height — the CONTENT
+	 * root the overview ruler measures marks against, the same space
+	 * `scrollTop / scrollHeight` uses for the thumb (design doc, "Folded
+	 * in" ruler section). The pattern `MarkdownRenderer`/`TextRenderer` use
+	 * for their own content roots.
+	 */
+	let contentElement: HTMLDivElement | undefined = $state(undefined);
 
 	function errorMessage(candidate: unknown): string {
 		if (candidate && typeof candidate === 'object' && 'message' in candidate) {
@@ -358,9 +368,6 @@
 		entryIndex: number;
 		side: 'old' | 'new';
 		lineIndex: number;
-		/** Position within the entry's own full row list — used only for the ruler's approximate placement. */
-		rowPosition: number;
-		rowCount: number;
 		range: { start: number; end: number };
 	}
 
@@ -375,8 +382,6 @@
 					entryIndex,
 					side: ref.side,
 					lineIndex: ref.index,
-					rowPosition: lineMatch.lineIndex,
-					rowCount: texts.length,
 					range: lineMatch.range,
 				});
 			}
@@ -418,29 +423,19 @@
 		return searchRangesByEntry.get(entryId);
 	}
 
-	let matchPositions = $derived.by(() => {
-		if (entries.length === 0) return new Float64Array(0);
-		const positions = new Float64Array(globalMatches.length);
-		globalMatches.forEach((match, index) => {
-			const within = match.rowCount > 0 ? (match.rowPosition + 0.5) / match.rowCount : 0.5;
-			positions[index] = (match.entryIndex + within) / entries.length;
-		});
-		return positions;
-	});
-
 	// ================= change marks (overview ruler) =================
 	// One mark per contiguous run of added/removed rows (a replaced block's
 	// removed rows are immediately followed by its added rows with no
 	// context row between them — see rows.ts — so a single run naturally
-	// spans both, hence 'mixed'). Positions are the same coarse
-	// (entryIndex + rowPosition / rowCount) / entries.length arithmetic as
-	// the search marks above, rather than a DOM measurement pass: every
-	// file's rows are walked fully expanded regardless of what is actually
-	// rendered, so there is no guarantee a DOM element exists yet for every
-	// run to measure.
-	function computeChangeMarks(reviewEntries: readonly ReviewEntry[]): RulerMark[] {
-		const marks: RulerMark[] = [];
-		if (reviewEntries.length === 0) return marks;
+	// spans both, hence 'mixed'). This identifies WHICH rows start/end each
+	// run — never a pixel or fraction, which `measureRulerMarks` below
+	// derives from measuring the run's actual rendered anchors. The run
+	// list itself is the DiffView-held anchor list a change mark's `index`
+	// points into (kept in a separate index space from search matches —
+	// `handleMarkActivate` decides which list to index into by the mark's
+	// `kind`).
+	function computeChangeRuns(reviewEntries: readonly ReviewEntry[]): ChangeRun[] {
+		const runs: ChangeRun[] = [];
 		reviewEntries.forEach((entry, entryIndex) => {
 			if (entry.oldSide?.binary || entry.newSide?.binary || entry.oldSide?.too_large || entry.newSide?.too_large) {
 				return;
@@ -448,38 +443,191 @@
 			const oldLines = entry.oldSide?.content !== undefined ? entry.oldSide.content.split('\n') : [];
 			const newLines = entry.newSide?.content !== undefined ? entry.newSide.content.split('\n') : [];
 			const diffItems = cachedLineDiff(entry.oldSide?.blob, entry.newSide?.blob, oldLines, newLines);
-			const rows = cachedExpandedRows(entry.oldSide?.blob, entry.newSide?.blob, entry.language, diffItems, oldLines, newLines).filter((row) => row.kind !== 'recollapse');
-			const rowCount = rows.length;
-			if (rowCount === 0) return;
+			const rows = cachedExpandedRows(entry.oldSide?.blob, entry.newSide?.blob, entry.language, diffItems, oldLines, newLines).filter(
+				(row) => row.kind !== 'recollapse',
+			);
 
-			let runStart: number | null = null;
+			let start: RowTextRef | null = null;
+			let end: RowTextRef | null = null;
 			let hasAdded = false;
 			let hasRemoved = false;
-			const flush = (endRow: number): void => {
-				if (runStart === null) return;
+			const flush = (): void => {
+				if (start === null || end === null) return;
 				const kind: RulerMarkKind = hasAdded && hasRemoved ? 'mixed' : hasAdded ? 'added' : 'removed';
-				const start = (entryIndex + runStart / rowCount) / reviewEntries.length;
-				const extent = (endRow - runStart) / rowCount / reviewEntries.length;
-				marks.push({ start, extent, kind });
-				runStart = null;
+				runs.push({ entryIndex, kind, startRef: start, endRef: end });
+				start = null;
+				end = null;
 				hasAdded = false;
 				hasRemoved = false;
 			};
-			rows.forEach((row, rowIndex) => {
+			for (const row of rows) {
 				if (row.kind === 'added' || row.kind === 'removed') {
-					if (runStart === null) runStart = rowIndex;
+					const ref: RowTextRef = row.kind === 'added' ? { side: 'new', index: row.newIndex } : { side: 'old', index: row.oldIndex };
+					if (start === null) start = ref;
+					end = ref;
 					if (row.kind === 'added') hasAdded = true;
 					else hasRemoved = true;
 				} else {
-					flush(rowIndex);
+					flush();
 				}
-			});
-			flush(rowCount);
+			}
+			flush();
 		});
-		return marks;
+		return runs;
 	}
 
-	let changeMarks = $derived(computeChangeMarks(entries));
+	interface ChangeRun {
+		entryIndex: number;
+		kind: RulerMarkKind;
+		startRef: RowTextRef;
+		endRef: RowTextRef;
+	}
+
+	let changeRuns = $derived(computeChangeRuns(entries));
+
+	/** Fractions along `contentElement`, in the same order as `globalMatches`. */
+	let matchPositions: Float64Array = $state(new Float64Array(0));
+	/** One mark per `changeRuns` entry, same index — populated by `measureRulerMarks`. */
+	let changeMarks: RulerMark[] = $state([]);
+
+	// ================= ruler measurement =================
+	// Both search-match marks and change-run marks are positioned by
+	// MEASURING their anchor elements' real rendered layout against
+	// `contentElement` (the pane's full, unclipped content height) —
+	// never by equal-share arithmetic across files or rows, which drifted
+	// from the thumb whenever files rendered at different heights (the
+	// bug this replaces; `OverviewRuler`'s thumb uses the SAME
+	// `scrollTop / scrollHeight` space).
+	interface RowAnchorMaps {
+		oldIndex: Map<number, Element>;
+		newIndex: Map<number, Element>;
+		collapsedRanges: { firstNewIndex: number; hiddenCount: number; element: Element }[];
+		headerElement: Element | null;
+		fileCollapsed: boolean;
+	}
+
+	/**
+	 * Builds every file's anchor index in one pass each: a SINGLE
+	 * `querySelectorAll` per file section (never a per-mark DOM scan),
+	 * reading the `data-old-index` / `data-new-index` / `data-first-new-index`
+	 * attributes `DiffRows.svelte` renders.
+	 */
+	function buildAnchorMaps(): RowAnchorMaps[] {
+		return entries.map((entry, index) => {
+			const section = fileSectionElements[index];
+			const headerElement = section?.querySelector('.file-header') ?? null;
+			const maps: RowAnchorMaps = {
+				oldIndex: new Map(),
+				newIndex: new Map(),
+				collapsedRanges: [],
+				headerElement,
+				fileCollapsed: isCollapsed(entry),
+			};
+			if (!section || maps.fileCollapsed) {
+				return maps;
+			}
+			const anchors = section.querySelectorAll<HTMLElement>('[data-old-index], [data-new-index], [data-first-new-index]');
+			for (const element of anchors) {
+				if (element.dataset.firstNewIndex !== undefined) {
+					maps.collapsedRanges.push({
+						firstNewIndex: Number(element.dataset.firstNewIndex),
+						hiddenCount: Number(element.dataset.hiddenCount),
+						element,
+					});
+					continue;
+				}
+				if (element.dataset.oldIndex !== undefined) {
+					maps.oldIndex.set(Number(element.dataset.oldIndex), element);
+				}
+				if (element.dataset.newIndex !== undefined) {
+					maps.newIndex.set(Number(element.dataset.newIndex), element);
+				}
+			}
+			return maps;
+		});
+	}
+
+	/**
+	 * Resolves one mark's anchor, in priority order: the rendered row for
+	 * that line; else (new-side only — only context/added lines ever hide
+	 * inside a collapsed region, per `ensureMatchVisible` below) the
+	 * `.collapsed` element whose range contains it; else the file's
+	 * header, when the whole file is collapsed (or its section is not
+	 * mounted).
+	 */
+	function resolveAnchor(maps: readonly RowAnchorMaps[], entryIndex: number, side: 'old' | 'new', lineIndex: number): Element | null {
+		const map = maps[entryIndex];
+		if (!map) return null;
+		if (map.fileCollapsed) return map.headerElement;
+		const direct = side === 'old' ? map.oldIndex.get(lineIndex) : map.newIndex.get(lineIndex);
+		if (direct) return direct;
+		if (side === 'new') {
+			for (const range of map.collapsedRanges) {
+				if (lineIndex >= range.firstNewIndex && lineIndex < range.firstNewIndex + range.hiddenCount) {
+					return range.element;
+				}
+			}
+		}
+		return map.headerElement;
+	}
+
+	/**
+	 * One measurement pass for every mark: a single `measureFractions`
+	 * call covers both the search matches' positions and every change
+	 * run's start position. A run's extent additionally needs its END
+	 * anchor's bottom edge (not just its top), which `measureFractions`
+	 * does not expose — read directly here, still only ever as part of
+	 * this one batched pass, never interleaved with a write.
+	 */
+	function measureRulerMarks(): void {
+		if (!contentElement) return;
+		const maps = buildAnchorMaps();
+		const matchAnchors: Element[] = globalMatches.map(
+			(match) => resolveAnchor(maps, match.entryIndex, match.side, match.lineIndex) ?? contentElement!,
+		);
+		const runStartAnchors: Element[] = changeRuns.map(
+			(run) => resolveAnchor(maps, run.entryIndex, run.startRef.side, run.startRef.index) ?? contentElement!,
+		);
+		const fractions = measureFractions(contentElement, [...matchAnchors, ...runStartAnchors]);
+		matchPositions = fractions.slice(0, matchAnchors.length);
+
+		const rootRect = contentElement.getBoundingClientRect();
+		const marks: RulerMark[] = [];
+		if (rootRect.height > 0) {
+			changeRuns.forEach((run, index) => {
+				const startFraction = fractions[matchAnchors.length + index];
+				const endAnchor = resolveAnchor(maps, run.entryIndex, run.endRef.side, run.endRef.index) ?? contentElement!;
+				const endFraction = (endAnchor.getBoundingClientRect().bottom - rootRect.top) / rootRect.height;
+				marks.push({ start: startFraction, extent: Math.max(0, endFraction - startFraction), kind: run.kind });
+			});
+		}
+		changeMarks = marks;
+	}
+
+	const remeasureFrame = coalesceToAnimationFrame(measureRulerMarks);
+
+	// Re-measure after each search pass or whenever the rendered DOM is
+	// about to change shape (expand/collapse, stage/unstage replacing
+	// entries, or the unified/split layout toggle) — never on a mere
+	// `currentMatchIndex` change, which this effect does not read.
+	$effect(() => {
+		void globalMatches;
+		void changeRuns;
+		void layout;
+		void collapsedOverrides;
+		void expandedKeysByEntry;
+		remeasureFrame.schedule();
+	});
+
+	// A persistent resize watch on the content root, independent of the
+	// effect above, so a layout change (font load, container resize, a
+	// diagram settling) re-measures the SAME marks without waiting for
+	// another search pass or toggle.
+	$effect(() => {
+		if (!contentElement) return;
+		return observeLayout(contentElement, () => remeasureFrame.schedule());
+	});
+
 	let searchRulerMarks = $derived(searchMarks(matchPositions, totalMatches, currentMatchIndex));
 	let rulerMarks = $derived<RulerMark[]>([...changeMarks, ...searchRulerMarks]);
 
@@ -765,24 +913,26 @@
 				{/if}
 				<div class="pane-wrap">
 					<div class="pane" bind:this={paneElement} onscroll={handlePaneScroll}>
-						{#each entries as entry, index (entry.id)}
-							<div class="file-section" bind:this={fileSectionElements[index]}>
-								<DiffFile
-									{entry}
-									{stageable}
-									{layout}
-									collapsed={isCollapsed(entry)}
-									onToggleCollapsed={() => setCollapsed(entry.id, !isCollapsed(entry))}
-									onStage={handleStage}
-									onUnstage={handleUnstage}
-									searchRanges={searchRangesFor(entry.id)}
-									expandedKeys={expandedKeysFor(entry.id)}
-									onExpandedKeysChange={(keys) => {
-										expandedKeysByEntry = new Map(expandedKeysByEntry).set(entry.id, keys);
-									}}
-								/>
-							</div>
-						{/each}
+						<div class="pane-content" bind:this={contentElement}>
+							{#each entries as entry, index (entry.id)}
+								<div class="file-section" bind:this={fileSectionElements[index]}>
+									<DiffFile
+										{entry}
+										{stageable}
+										{layout}
+										collapsed={isCollapsed(entry)}
+										onToggleCollapsed={() => setCollapsed(entry.id, !isCollapsed(entry))}
+										onStage={handleStage}
+										onUnstage={handleUnstage}
+										searchRanges={searchRangesFor(entry.id)}
+										expandedKeys={expandedKeysFor(entry.id)}
+										onExpandedKeysChange={(keys) => {
+											expandedKeysByEntry = new Map(expandedKeysByEntry).set(entry.id, keys);
+										}}
+									/>
+								</div>
+							{/each}
+						</div>
 					</div>
 					<OverviewRuler marks={rulerMarks} scrollElement={paneElement} onMarkActivate={handleMarkActivate} />
 				</div>
