@@ -2,8 +2,9 @@ use crate::use_cases::CursorService;
 use crate::{
     ApplicationError, ClipboardService, CreateTimerSpec, EditChanges, FilesService,
     LaunchActionUseCase, ListProvidersUseCase, OpenViewUseCase, ProcessesService,
-    QueryProviderUseCase, ReloadPluginsUseCase, ReloadThemeUseCase, Result, ScheduleActionUseCase,
-    SearchUseCase, SetThemeUseCase, ShellCaptureUseCase, SubscribeProviderUseCase, TimerService,
+    QueryProviderUseCase, ReloadPluginsUseCase, ReloadThemeUseCase, Result, ReviewService,
+    ScheduleActionUseCase, SearchUseCase, SetThemeUseCase, ShellCaptureUseCase,
+    SubscribeProviderUseCase, TimerService,
 };
 use quantum_domain::{DomainError, WindowMode};
 use serde::de::DeserializeOwned;
@@ -28,6 +29,7 @@ pub struct Dispatcher {
     cursor_service: Arc<CursorService>,
     shell_capture: Arc<ShellCaptureUseCase>,
     clipboard_service: Arc<ClipboardService>,
+    review_service: Arc<ReviewService>,
 }
 
 /// Params for the three `view.*` handlers (`view.toggle`, `view.show`,
@@ -92,6 +94,7 @@ impl Dispatcher {
         cursor_service: Arc<CursorService>,
         shell_capture: Arc<ShellCaptureUseCase>,
         clipboard_service: Arc<ClipboardService>,
+        review_service: Arc<ReviewService>,
     ) -> Self {
         Self {
             search,
@@ -110,6 +113,7 @@ impl Dispatcher {
             cursor_service,
             shell_capture,
             clipboard_service,
+            review_service,
         }
     }
 
@@ -155,6 +159,10 @@ impl Dispatcher {
             "files.sizes" => self.handle_files_sizes(params).await,
             "files.cancel_sizes" => self.handle_files_cancel_sizes(params).await,
             "file-viewer.read" => self.handle_file_viewer_read(params).await,
+            "file-viewer.changes" => self.handle_file_viewer_changes(params).await,
+            "file-viewer.stage" => self.handle_file_viewer_stage(params).await,
+            "file-viewer.unstage" => self.handle_file_viewer_unstage(params).await,
+            "file-viewer.fingerprint" => self.handle_file_viewer_fingerprint(params).await,
             "processes.watch" => self.handle_processes_watch(params).await,
             "processes.unwatch" => self.handle_processes_unwatch(params).await,
             "processes.kill" => self.handle_processes_kill(params).await,
@@ -490,6 +498,50 @@ impl Dispatcher {
         to_json(info)
     }
 
+    async fn handle_file_viewer_changes(&self, params: Option<&RawValue>) -> Result<Value> {
+        let spec: quantum_domain::DiffSpec = parse_params(params, "file-viewer.changes")?;
+        let change_set = self.review_service.changes(&spec).await?;
+        to_json(change_set)
+    }
+
+    async fn handle_file_viewer_stage(&self, params: Option<&RawValue>) -> Result<Value> {
+        #[derive(serde::Deserialize)]
+        struct StageParams {
+            repository_root: String,
+            path: String,
+            blob: Option<String>,
+            mode: String,
+        }
+        let p: StageParams = parse_params(params, "file-viewer.stage")?;
+        self.review_service
+            .stage(&p.repository_root, &p.path, p.blob.as_deref(), &p.mode)
+            .await?;
+        Ok(json!({}))
+    }
+
+    async fn handle_file_viewer_unstage(&self, params: Option<&RawValue>) -> Result<Value> {
+        #[derive(serde::Deserialize)]
+        struct UnstageParams {
+            repository_root: String,
+            path: String,
+        }
+        let p: UnstageParams = parse_params(params, "file-viewer.unstage")?;
+        self.review_service
+            .unstage(&p.repository_root, &p.path)
+            .await?;
+        Ok(json!({}))
+    }
+
+    async fn handle_file_viewer_fingerprint(&self, params: Option<&RawValue>) -> Result<Value> {
+        #[derive(serde::Deserialize)]
+        struct FingerprintParams {
+            repository_root: String,
+        }
+        let p: FingerprintParams = parse_params(params, "file-viewer.fingerprint")?;
+        let fingerprint = self.review_service.fingerprint(&p.repository_root).await?;
+        Ok(json!({ "fingerprint": fingerprint }))
+    }
+
     async fn handle_processes_watch(&self, _params: Option<&RawValue>) -> Result<Value> {
         self.processes_service.watch();
         Ok(json!({}))
@@ -548,15 +600,16 @@ mod tests {
     use async_trait::async_trait;
     use futures::stream::{self, BoxStream, StreamExt};
     use quantum_domain::{
-        Action, ActionOutcome, ApplicationCatalog, ApplicationInfo, CivilNow, ClipboardData,
-        ClipboardEntry, ClipboardError, ClipboardStore, Clock, ContentKind, CursorMonitor,
-        CursorPosition, DirectoryWatcher, DomainError, DriveInfo, EventBus, FileEntry,
-        FileEntryKind, FileOpener, FileOperation, FilePreferences, FileSystemPort, FilesError,
-        KillSignal, Match, MatchScore, NotificationEmitter, PermissionClass, Pin, PinsPort,
-        PreferencesPort, ProcessKiller, ProcessMonitor, ProcessSnapshot, ProcessesError,
-        ProviderId, ProviderRegistry, ProviderSource, Query, RecursiveSizer, ShellExecutor,
-        ShellOutput, SizeUpdate, ThemeStore, Timer, TimerBroadcast, TimerError, TimerNotifier,
-        TimerStore, TimerStoreData, Weekday, WindowHost,
+        Action, ActionOutcome, ApplicationCatalog, ApplicationInfo, ChangeSet, ChangedFile,
+        CivilNow, ClipboardData, ClipboardEntry, ClipboardError, ClipboardStore, Clock,
+        ContentKind, CursorMonitor, CursorPosition, DiffSpec, DirectoryWatcher, DomainError,
+        DriveInfo, EventBus, FileEntry, FileEntryKind, FileOpener, FileOperation, FilePreferences,
+        FileSystemPort, FilesError, KillSignal, Match, MatchScore, NotificationEmitter,
+        PermissionClass, Pin, PinsPort, PreferencesPort, ProcessKiller, ProcessMonitor,
+        ProcessSnapshot, ProcessesError, ProviderId, ProviderRegistry, ProviderSource, Query,
+        RecursiveSizer, RepositoryReview, ReviewError, ShellExecutor, ShellOutput, SizeUpdate,
+        ThemeStore, Timer, TimerBroadcast, TimerError, TimerNotifier, TimerStore, TimerStoreData,
+        Weekday, WindowHost,
     };
     use std::collections::HashMap;
     use std::sync::atomic::{AtomicUsize, Ordering};
@@ -761,6 +814,58 @@ mod tests {
 
     impl TimerBroadcast for FakeTimerBroadcast {
         fn publish(&self, _data: &TimerStoreData) {}
+    }
+
+    /// Repository-review fake for the dispatcher routing tests: `changes()`
+    /// always returns one stageable file at a fixed path, so the routing
+    /// tests have a known path to stage/unstage and the service's own
+    /// staging safety boundary can be exercised against a path outside it.
+    struct FakeRepositoryReview;
+
+    #[async_trait]
+    impl RepositoryReview for FakeRepositoryReview {
+        async fn changes(&self, spec: &DiffSpec) -> std::result::Result<ChangeSet, ReviewError> {
+            Ok(ChangeSet {
+                repository_root: spec.repository.clone(),
+                base_label: spec.base.clone(),
+                target_label: "working tree".to_string(),
+                stageable: true,
+                files: vec![ChangedFile {
+                    path: "a.txt".to_string(),
+                    old_path: None,
+                    language: None,
+                    base: None,
+                    index: None,
+                    target: None,
+                    untracked: false,
+                }],
+            })
+        }
+
+        async fn stage(
+            &self,
+            _repository_root: &str,
+            _path: &str,
+            _blob: Option<&str>,
+            _mode: &str,
+        ) -> std::result::Result<(), ReviewError> {
+            Ok(())
+        }
+
+        async fn unstage(
+            &self,
+            _repository_root: &str,
+            _path: &str,
+        ) -> std::result::Result<(), ReviewError> {
+            Ok(())
+        }
+
+        async fn fingerprint(
+            &self,
+            _repository_root: &str,
+        ) -> std::result::Result<String, ReviewError> {
+            Ok("fixedfingerprint".to_string())
+        }
     }
 
     /// The single directory entry the files fakes report, so the `files.list`
@@ -1096,6 +1201,7 @@ mod tests {
             10_000,
         ));
         let clipboard_service = Arc::new(ClipboardService::new(Arc::new(FakeClipboardStore)));
+        let review_service = Arc::new(ReviewService::new(Arc::new(FakeRepositoryReview)));
         Arc::new(Dispatcher::new(
             search,
             launch_action,
@@ -1113,6 +1219,7 @@ mod tests {
             build_cursor_service(),
             shell_capture,
             clipboard_service,
+            review_service,
         ))
     }
 
@@ -1510,5 +1617,184 @@ mod tests {
             .expect("files.set_preferences");
 
         assert_eq!(resp, Value::Null);
+    }
+
+    #[tokio::test]
+    async fn dispatches_file_viewer_changes() {
+        let dispatcher = build_dispatcher();
+        let params = raw(json!({ "repository": "/repo" }));
+        let resp = dispatcher
+            .dispatch("file-viewer.changes", Some(&params))
+            .await
+            .expect("file-viewer.changes");
+
+        let change_set: ChangeSet = serde_json::from_value(resp).expect("change set");
+        assert_eq!(change_set.repository_root, "/repo");
+        assert_eq!(change_set.base_label, "HEAD");
+        assert!(change_set.stageable);
+        assert_eq!(change_set.files.len(), 1);
+        assert_eq!(change_set.files[0].path, "a.txt");
+    }
+
+    #[tokio::test]
+    async fn file_viewer_changes_missing_params_errors_naming_the_method() {
+        let dispatcher = build_dispatcher();
+        let resp = dispatcher.dispatch("file-viewer.changes", None).await;
+        let error = resp.expect_err("missing params must error");
+        assert!(
+            error.to_string().contains("file-viewer.changes"),
+            "error must name the method, got: {error}"
+        );
+    }
+
+    #[tokio::test]
+    async fn dispatches_file_viewer_stage_for_a_path_in_the_loaded_change_set() {
+        let dispatcher = build_dispatcher();
+
+        // Load the change set first so "a.txt" enters the staging safety
+        // boundary's remembered path set.
+        let changes_params = raw(json!({ "repository": "/repo" }));
+        dispatcher
+            .dispatch("file-viewer.changes", Some(&changes_params))
+            .await
+            .expect("file-viewer.changes");
+
+        let stage_params = raw(json!({
+            "repository_root": "/repo",
+            "path": "a.txt",
+            "blob": "abc123",
+            "mode": "100644",
+        }));
+        let resp = dispatcher
+            .dispatch("file-viewer.stage", Some(&stage_params))
+            .await
+            .expect("file-viewer.stage");
+        assert_eq!(resp, json!({}));
+    }
+
+    #[tokio::test]
+    async fn file_viewer_stage_outside_the_loaded_change_set_returns_not_stageable_code() {
+        let dispatcher = build_dispatcher();
+
+        let changes_params = raw(json!({ "repository": "/repo" }));
+        dispatcher
+            .dispatch("file-viewer.changes", Some(&changes_params))
+            .await
+            .expect("file-viewer.changes");
+
+        let stage_params = raw(json!({
+            "repository_root": "/repo",
+            "path": "never-shown.txt",
+            "blob": "abc123",
+            "mode": "100644",
+        }));
+        let error = dispatcher
+            .dispatch("file-viewer.stage", Some(&stage_params))
+            .await
+            .expect_err("a path outside the loaded change set must be rejected");
+        assert_eq!(error.rpc_code(), -32023);
+    }
+
+    #[tokio::test]
+    async fn dispatches_file_viewer_stage_with_null_blob_for_a_deletion() {
+        let dispatcher = build_dispatcher();
+
+        let changes_params = raw(json!({ "repository": "/repo" }));
+        dispatcher
+            .dispatch("file-viewer.changes", Some(&changes_params))
+            .await
+            .expect("file-viewer.changes");
+
+        let stage_params = raw(json!({
+            "repository_root": "/repo",
+            "path": "a.txt",
+            "blob": null,
+            "mode": "100644",
+        }));
+        let resp = dispatcher
+            .dispatch("file-viewer.stage", Some(&stage_params))
+            .await
+            .expect("file-viewer.stage with a null blob stages a deletion");
+        assert_eq!(resp, json!({}));
+    }
+
+    #[tokio::test]
+    async fn file_viewer_stage_missing_params_errors_naming_the_method() {
+        let dispatcher = build_dispatcher();
+        let resp = dispatcher.dispatch("file-viewer.stage", None).await;
+        let error = resp.expect_err("missing params must error");
+        assert!(
+            error.to_string().contains("file-viewer.stage"),
+            "error must name the method, got: {error}"
+        );
+    }
+
+    #[tokio::test]
+    async fn dispatches_file_viewer_unstage_for_a_path_in_the_loaded_change_set() {
+        let dispatcher = build_dispatcher();
+
+        let changes_params = raw(json!({ "repository": "/repo" }));
+        dispatcher
+            .dispatch("file-viewer.changes", Some(&changes_params))
+            .await
+            .expect("file-viewer.changes");
+
+        let unstage_params = raw(json!({ "repository_root": "/repo", "path": "a.txt" }));
+        let resp = dispatcher
+            .dispatch("file-viewer.unstage", Some(&unstage_params))
+            .await
+            .expect("file-viewer.unstage");
+        assert_eq!(resp, json!({}));
+    }
+
+    #[tokio::test]
+    async fn file_viewer_unstage_outside_the_loaded_change_set_returns_not_stageable_code() {
+        let dispatcher = build_dispatcher();
+
+        let changes_params = raw(json!({ "repository": "/repo" }));
+        dispatcher
+            .dispatch("file-viewer.changes", Some(&changes_params))
+            .await
+            .expect("file-viewer.changes");
+
+        let unstage_params = raw(json!({ "repository_root": "/repo", "path": "never-shown.txt" }));
+        let error = dispatcher
+            .dispatch("file-viewer.unstage", Some(&unstage_params))
+            .await
+            .expect_err("a path outside the loaded change set must be rejected");
+        assert_eq!(error.rpc_code(), -32023);
+    }
+
+    #[tokio::test]
+    async fn file_viewer_unstage_missing_params_errors_naming_the_method() {
+        let dispatcher = build_dispatcher();
+        let resp = dispatcher.dispatch("file-viewer.unstage", None).await;
+        let error = resp.expect_err("missing params must error");
+        assert!(
+            error.to_string().contains("file-viewer.unstage"),
+            "error must name the method, got: {error}"
+        );
+    }
+
+    #[tokio::test]
+    async fn dispatches_file_viewer_fingerprint() {
+        let dispatcher = build_dispatcher();
+        let params = raw(json!({ "repository_root": "/repo" }));
+        let resp = dispatcher
+            .dispatch("file-viewer.fingerprint", Some(&params))
+            .await
+            .expect("file-viewer.fingerprint");
+        assert_eq!(resp, json!({ "fingerprint": "fixedfingerprint" }));
+    }
+
+    #[tokio::test]
+    async fn file_viewer_fingerprint_missing_params_errors_naming_the_method() {
+        let dispatcher = build_dispatcher();
+        let resp = dispatcher.dispatch("file-viewer.fingerprint", None).await;
+        let error = resp.expect_err("missing params must error");
+        assert!(
+            error.to_string().contains("file-viewer.fingerprint"),
+            "error must name the method, got: {error}"
+        );
     }
 }

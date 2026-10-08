@@ -16,8 +16,9 @@ use quantum_application::use_cases::CursorService;
 use quantum_application::{
     ApplicationError, ClipboardService, Dispatcher as AppDispatcher, FilesService,
     LaunchActionUseCase, ListProvidersUseCase, OpenViewUseCase, ProcessesService,
-    QueryProviderUseCase, ReloadPluginsUseCase, ReloadThemeUseCase, ScheduleActionUseCase,
-    SearchUseCase, SetThemeUseCase, ShellCaptureUseCase, SubscribeProviderUseCase, TimerService,
+    QueryProviderUseCase, ReloadPluginsUseCase, ReloadThemeUseCase, ReviewService,
+    ScheduleActionUseCase, SearchUseCase, SetThemeUseCase, ShellCaptureUseCase,
+    SubscribeProviderUseCase, TimerService,
 };
 use quantum_config::{Config, ConfigStore};
 use quantum_cursor::TokioCursorMonitor;
@@ -27,6 +28,7 @@ use quantum_files::{
     preferences_default_store_path, BackgroundSizer, DesktopApplicationCatalog, LocalFileSystem,
     NotifyDirectoryWatcher, PinStore, PreferencesStore, ProcessFileOpener,
 };
+use quantum_git::GitRepositoryReview;
 use quantum_hyprland::HyprlandSocketClient;
 use quantum_ipc::{
     DispatchError, DispatchResult, Dispatcher as IpcDispatcher, EventEnvelope, UnixSocketServer,
@@ -1030,6 +1032,12 @@ async fn setup_daemon(
         event_bus.clone(),
     ));
 
+    // Repository review (qv diff mode) service. `GitRepositoryReview` shells
+    // out to the system `git` binary; like the file explorer, it needs no
+    // pre-subscription — `file-viewer.changes` is called on demand when a
+    // diff window opens.
+    let review_service = Arc::new(ReviewService::new(Arc::new(GitRepositoryReview)));
+
     // Process task-manager service. Each infrastructure adapter is wrapped as
     // its domain port trait object, mirroring the files wiring above. The `/proc`
     // sampler feeds the gated one-hertz monitor; the killer resolves subtrees
@@ -1098,6 +1106,7 @@ async fn setup_daemon(
         cursor_service,
         shell_capture_use_case,
         clipboard_service,
+        review_service,
     ));
     let _ipc_dispatcher = Arc::new(AppDispatcherAdapter::new(dispatcher));
 

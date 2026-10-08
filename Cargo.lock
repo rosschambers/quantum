@@ -2223,6 +2223,7 @@ dependencies = [
  "quantum-cursor",
  "quantum-domain",
  "quantum-files",
+ "quantum-git",
  "quantum-hyprland",
  "quantum-ipc",
  "quantum-plugins",

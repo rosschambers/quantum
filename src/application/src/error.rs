@@ -1,4 +1,4 @@
-use quantum_domain::{DomainError, FilesError, ProcessesError, TimerError};
+use quantum_domain::{DomainError, FilesError, ProcessesError, ReviewError, TimerError};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
@@ -15,6 +15,12 @@ pub enum ApplicationError {
     /// sees the exact file failure (not found, permission denied, and so on).
     #[error(transparent)]
     Files(#[from] FilesError),
+    /// A repository-review (qv diff mode) error. Like `FilesError`,
+    /// `ReviewError` is its own IPC contract (a serde-tagged union with
+    /// plain-string payloads), so it is preserved intact rather than
+    /// flattened into a `DomainError`.
+    #[error(transparent)]
+    Review(#[from] ReviewError),
     #[error("{0}")]
     Unknown(String),
 }
@@ -33,6 +39,7 @@ impl ApplicationError {
             Self::Domain(e) => e.rpc_code(),
             Self::Dispatch { source, .. } => source.rpc_code(),
             Self::Files(e) => Self::files_rpc_code(e),
+            Self::Review(e) => Self::review_rpc_code(e),
             Self::Unknown(_) => -32603,
         }
     }
@@ -49,6 +56,19 @@ impl ApplicationError {
             FilesError::PermissionDenied(_) => -32010,
             FilesError::AlreadyExists(_) => -32011,
             FilesError::Io(_) => -32012,
+        }
+    }
+
+    /// Stable JSON-RPC codes for the repository-review error contract, kept
+    /// in the domain range (`-32000..=-32099`). These are part of the
+    /// public IPC contract and MUST NOT be renumbered once shipped.
+    fn review_rpc_code(error: &ReviewError) -> i32 {
+        match error {
+            ReviewError::NotARepository(_) => -32020,
+            ReviewError::GitUnavailable(_) => -32021,
+            ReviewError::GitFailed(_) => -32022,
+            ReviewError::NotStageable(_) => -32023,
+            ReviewError::Io(_) => -32024,
         }
     }
 }
@@ -195,6 +215,46 @@ mod tests {
         let json = serde_json::to_string(&err).unwrap();
         let back: ApplicationError = serde_json::from_str(&json).unwrap();
         assert_eq!(format!("{}", err), format!("{}", back));
+    }
+
+    #[test]
+    fn review_error_converts_to_application_error() {
+        let review_err = ReviewError::NotStageable("escaped path".to_string());
+        let app_err: ApplicationError = review_err.into();
+        match app_err {
+            ApplicationError::Review(ReviewError::NotStageable(message)) => {
+                assert_eq!(message, "escaped path");
+            }
+            other => panic!("expected ApplicationError::Review, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn review_error_serde_roundtrip() {
+        let err = ApplicationError::Review(ReviewError::GitFailed("exit 128".to_string()));
+        let json = serde_json::to_string(&err).unwrap();
+        let back: ApplicationError = serde_json::from_str(&json).unwrap();
+        assert_eq!(format!("{}", err), format!("{}", back));
+    }
+
+    #[test]
+    fn review_error_codes_stay_in_domain_range_and_match_the_documented_values() {
+        let cases = [
+            (ReviewError::NotARepository("x".to_string()), -32020),
+            (ReviewError::GitUnavailable("x".to_string()), -32021),
+            (ReviewError::GitFailed("x".to_string()), -32022),
+            (ReviewError::NotStageable("x".to_string()), -32023),
+            (ReviewError::Io("x".to_string()), -32024),
+        ];
+        for (error, expected_code) in cases {
+            let code = ApplicationError::Review(error).rpc_code();
+            assert_eq!(code, expected_code);
+            assert!(
+                (-32099..=-32000).contains(&code),
+                "code {} outside domain range",
+                code
+            );
+        }
     }
 
     #[test]

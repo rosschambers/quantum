@@ -18,6 +18,7 @@ quantum-plugins = { path = "../../infrastructure/plugins" }
 quantum-files = { path = "../../infrastructure/files" }
 quantum-processes = { path = "../../infrastructure/processes" }
 quantum-cursor = { path = "../../infrastructure/cursor" }
+quantum-git = { path = "../../infrastructure/git" }
 tokio.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
