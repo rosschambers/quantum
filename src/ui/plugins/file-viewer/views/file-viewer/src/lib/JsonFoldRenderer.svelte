@@ -166,10 +166,17 @@
 		onMatchCount?.(matches.length);
 	});
 
+	// Depends only on lines, never on the search query or current match, so
+	// a keystroke never re-highlights the whole file. Collapsed-line summary
+	// suffixes are appended separately in lineHtml, below, since they are not
+	// part of the cached base text.
+	let baseHighlightedLines = $derived(lines.map((line) => highlightCode(line, 'json')));
+
 	function lineHtml(lineIndex: number, text: string, summary?: string): string {
 		const lineMatches = matchesByLine.get(lineIndex) ?? [];
 		if (lineMatches.length === 0) {
-			return highlightCode(summary !== undefined ? text + summary : text, 'json');
+			const base = summary !== undefined ? highlightCode(text + summary, 'json') : baseHighlightedLines[lineIndex];
+			return base;
 		}
 		const current = currentMatch && currentMatch.lineIndex === lineIndex ? currentMatch.range : null;
 		const highlighted = highlightLineWithMatches(text, 'json', lineMatches, current);

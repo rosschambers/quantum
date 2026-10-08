@@ -2,6 +2,7 @@ import { describe, it, expect, beforeAll, vi } from 'vitest';
 import { render, fireEvent } from '@testing-library/svelte/svelte5';
 import JsonFoldRenderer from './JsonFoldRenderer.svelte';
 import rendererSource from './JsonFoldRenderer.svelte?raw';
+import * as highlighterModule from './highlighter';
 
 beforeAll(() => {
     if (typeof Element.prototype.scrollIntoView !== 'function') {
@@ -151,5 +152,18 @@ describe('JsonFoldRenderer search highlighting', () => {
         await rerender({ query: '', currentMatchIndex: null });
         expect(container.querySelector('[data-line="4"]')).not.toBeNull();
         expect(container.querySelector('[data-line="8"]')).toBeNull();
+    });
+
+    it('reuses cached base highlighting across keystrokes instead of re-highlighting every line', async () => {
+        const items = Array.from({ length: 400 }, (_, index) => (index === 50 || index === 150 ? `needle${index}` : `row ${index}`));
+        const content = JSON.stringify({ items });
+        const spy = vi.spyOn(highlighterModule, 'highlightCode');
+        const { rerender } = render(JsonFoldRenderer, {
+            props: { content, query: '' },
+        });
+        spy.mockClear();
+        await rerender({ query: 'needle' });
+        expect(spy.mock.calls.length).toBeLessThan(20);
+        spy.mockRestore();
     });
 });

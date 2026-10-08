@@ -71,17 +71,17 @@
 		return currentMatch && currentMatch.lineIndex === lineIndex ? currentMatch.range : null;
 	}
 
+	// Depends only on lines/language, never on the search query or current
+	// match, so a keystroke never re-highlights the whole file.
+	let baseHighlightedLines = $derived(lines.map((line) => highlightCode(line, language)));
+
 	function highlightedLineHtml(lineIndex: number, text: string): string {
 		const lineMatches = matchesForLine(lineIndex);
 		if (lineMatches.length === 0) {
-			return highlightCode(text, language);
+			return baseHighlightedLines[lineIndex];
 		}
 		return highlightLineWithMatches(text, language, lineMatches, currentRangeForLine(lineIndex));
 	}
-
-	let highlightedLines = $derived.by(() => {
-		return lines.map((line, index) => highlightedLineHtml(index, line));
-	});
 
 	let codeContentElement: HTMLDivElement | undefined = $state(undefined);
 	let scrollRequest = $derived({ match: currentMatch, revision: navigationRevision });
@@ -148,7 +148,7 @@
 			} else {
 				result.push({
 					lineNumber: i + 1,
-					html: highlightedLines[i],
+					html: highlightedLineHtml(i, lines[i]),
 					foldable: !!fold,
 					collapsed: false,
 				});

@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeAll, vi } from 'vitest';
 import { render, fireEvent } from '@testing-library/svelte/svelte5';
 import CodeRenderer from './CodeRenderer.svelte';
+import * as highlighterModule from './highlighter';
 
 beforeAll(() => {
     if (typeof (globalThis as any).ResizeObserver === 'undefined') {
@@ -85,6 +86,19 @@ describe('CodeRenderer search highlighting (non-virtualized)', () => {
         await rerender({ query: '', currentMatchIndex: null });
         expect(container.querySelector('[data-line="4"]')).not.toBeNull();
         expect(container.querySelector('[data-line="9"]')).toBeNull();
+    });
+
+    it('reuses cached base highlighting across keystrokes instead of re-highlighting every line', async () => {
+        const lines = Array.from({ length: 400 }, (_, index) => (index === 50 || index === 150 ? `const needle${index} = 1;` : `const line${index} = ${index};`));
+        const content = lines.join('\n');
+        const spy = vi.spyOn(highlighterModule, 'highlightCode');
+        const { rerender } = render(CodeRenderer, {
+            props: { content, language: 'javascript', query: '' },
+        });
+        spy.mockClear();
+        await rerender({ query: 'needle' });
+        expect(spy.mock.calls.length).toBeLessThan(20);
+        spy.mockRestore();
     });
 });
 
