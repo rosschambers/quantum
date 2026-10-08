@@ -3,6 +3,7 @@ use crate::cursor::CursorPosition;
 use crate::file_viewer::ViewerFileInfo;
 use crate::files::{ApplicationInfo, FileOperation, FilePreferences, FilesError, Pin};
 use crate::processes::{KillSignal, ProcessSnapshot, ProcessesError};
+use crate::review::{ChangeSet, DiffSpec, ReviewError};
 use crate::timer::{CivilNow, Timer, TimerError, TimerStoreData};
 use crate::{Action, DomainError, DriveInfo, FileEntry, Match, ProviderId, Query};
 use async_trait::async_trait;
@@ -203,6 +204,23 @@ pub struct SizeUpdate {
     pub path: String,
     pub bytes: u64,
     pub complete: bool,
+}
+
+/// Read a repository's changes and stage or unstage whole files (qv diff mode).
+#[async_trait]
+pub trait RepositoryReview: Send + Sync {
+    async fn changes(&self, spec: &DiffSpec) -> Result<ChangeSet, ReviewError>;
+    /// Stage exactly `blob` at `path` (decision D1). `blob: None` stages a deletion.
+    async fn stage(
+        &self,
+        repository_root: &str,
+        path: &str,
+        blob: Option<&str>,
+        mode: &str,
+    ) -> Result<(), ReviewError>;
+    async fn unstage(&self, repository_root: &str, path: &str) -> Result<(), ReviewError>;
+    /// Cheap value that changes whenever the working tree or index changes.
+    async fn fingerprint(&self, repository_root: &str) -> Result<String, ReviewError>;
 }
 
 /// Reads and mutates the filesystem on behalf of the explorer. All methods take
@@ -584,5 +602,21 @@ mod filesystem_port_tests {
     fn explorer_ports_are_object_safe() {
         let _: Option<Arc<dyn PinsPort>> = None;
         let _: Option<Arc<dyn ApplicationCatalog>> = None;
+    }
+}
+
+#[cfg(test)]
+mod review_port_tests {
+    use super::*;
+
+    // Compile-time proof that the repository-review port is object-safe and
+    // can be used behind `Arc<dyn Trait>`. If the trait stopped being
+    // object-safe, this would fail to compile.
+    #[allow(dead_code)]
+    fn assert_object_safe(_review: Arc<dyn RepositoryReview>) {}
+
+    #[test]
+    fn repository_review_port_is_object_safe() {
+        let _: Option<Arc<dyn RepositoryReview>> = None;
     }
 }

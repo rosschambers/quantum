@@ -14,6 +14,7 @@ pub mod notifications;
 pub mod ports;
 pub mod processes;
 pub mod query;
+pub mod review;
 pub mod score;
 pub mod shell_capture;
 pub mod system_tray;
@@ -37,7 +38,7 @@ pub use error::DomainError;
 pub use event_bus::EventEnvelope;
 pub use file_viewer::{
     is_likely_binary, language_for_extension, viewer_file_type_for_extension, ViewerFileInfo,
-    ViewerFileType,
+    ViewerFileType, VIEWER_TEXT_MAX_BYTES,
 };
 pub use files::{
     classify_permissions, content_kind_for_name, ApplicationInfo, ContentKind, DriveInfo,
@@ -51,14 +52,15 @@ pub use ports::{
     ActionOutcome, ApplicationCatalog, ClipboardStore, ClipboardWriter, Clock, CursorMonitor,
     DirectoryWatcher, EventBus, FileOpener, FileSystemPort, HyprlandClient, NotificationEmitter,
     PinsPort, PluginCatalog, PreferencesPort, ProcessKiller, ProcessMonitor, ProviderRegistry,
-    ProviderSource, RecursiveSizer, ShellExecutor, ShellOutput, SizeUpdate, ThemeStore,
-    TimerBroadcast, TimerNotifier, TimerStore, WindowHost, WindowInputRegion,
+    ProviderSource, RecursiveSizer, RepositoryReview, ShellExecutor, ShellOutput, SizeUpdate,
+    ThemeStore, TimerBroadcast, TimerNotifier, TimerStore, WindowHost, WindowInputRegion,
 };
 pub use processes::{
     build_forest, collect_subtree_pids, GlobalStats, KillSignal, ProcessNode, ProcessSnapshot,
     ProcessesError, RawProcess, WindowInfo,
 };
 pub use query::Query;
+pub use review::{ChangeSet, ChangedFile, DiffSpec, FileSide, ReviewError};
 pub use score::MatchScore;
 pub use shell_capture::ShellCaptureResult;
 pub use system_tray::{SystemTrayItem, SystemTrayMenuNode, SystemTrayState};

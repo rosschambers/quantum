@@ -4,6 +4,11 @@
 /// and pure functions for detecting file types and binary content.
 use serde::{Deserialize, Serialize};
 
+/// Maximum file size for text preview, shared by the file explorer's viewer
+/// read path (`quantum-files`) and the repository-review diff path
+/// (`quantum-git`), so both apply the same size cap to the same file.
+pub const VIEWER_TEXT_MAX_BYTES: u64 = 5 * 1024 * 1024;
+
 /// The type of file being viewed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]

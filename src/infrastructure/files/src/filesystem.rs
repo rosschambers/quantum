@@ -10,7 +10,7 @@ use async_trait::async_trait;
 use quantum_domain::{
     classify_permissions, content_kind_for_name, is_likely_binary, language_for_extension,
     viewer_file_type_for_extension, DriveInfo, FileEntry, FileEntryKind, FileOperation,
-    FileSystemPort, FilesError, ViewerFileInfo, ViewerFileType,
+    FileSystemPort, FilesError, ViewerFileInfo, ViewerFileType, VIEWER_TEXT_MAX_BYTES,
 };
 use std::collections::HashMap;
 use std::io::Read;
@@ -441,9 +441,6 @@ fn mounts_blocking() -> Result<Vec<DriveInfo>, FilesError> {
     }
     Ok(drives)
 }
-
-/// Maximum file size for text preview: 5 megabytes.
-const VIEWER_TEXT_MAX_BYTES: u64 = 5 * 1024 * 1024;
 
 /// Maximum size of a single image file that will be embedded as a data URI in
 /// markdown content. Larger images are left as their original relative path.
