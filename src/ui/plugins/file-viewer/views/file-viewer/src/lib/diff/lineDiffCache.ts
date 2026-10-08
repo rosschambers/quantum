@@ -9,6 +9,7 @@
 // entirely and `lineDiff` runs directly: unconditionally correct, just not
 // cached for that case.
 import { lineDiff, type DiffItem } from './lineDiff';
+import { clearHighlightCache } from './highlightCache';
 
 /** Bounds memory: the oldest entry is evicted once the cache is full. */
 const MAX_ENTRIES = 64;
@@ -46,7 +47,21 @@ export function cachedLineDiff(
 	return result;
 }
 
-/** Test-only escape hatch: clears every memoized entry. */
+/**
+ * Test-only escape hatch: clears every memoized entry.
+ *
+ * Also clears the sibling `highlightCache` module's memo. Both caches are
+ * keyed off the same git blob ids and exist for the same reason (avoiding a
+ * recompute storm across `DiffFile`/`ChangesSidebar` re-renders), so any
+ * caller clearing one for test isolation almost certainly needs the other
+ * cleared too — most notably `DiffView.test.ts`, which already calls this
+ * function in its `afterEach` specifically because its fixtures reuse
+ * placeholder blob ids across tests with genuinely different content (see
+ * the comment there). Routing both teardowns through this one entrypoint
+ * keeps that existing test correctly isolated without needing its own
+ * change.
+ */
 export function clearLineDiffCache(): void {
 	cache.clear();
+	clearHighlightCache();
 }

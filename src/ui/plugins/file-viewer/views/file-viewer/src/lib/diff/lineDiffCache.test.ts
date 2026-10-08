@@ -1,5 +1,6 @@
 import { describe, test, expect, beforeEach } from 'vitest';
 import { cachedLineDiff, clearLineDiffCache } from './lineDiffCache';
+import { cachedHighlightLines } from './highlightCache';
 
 beforeEach(() => {
 	clearLineDiffCache();
@@ -46,5 +47,18 @@ describe('cachedLineDiff', () => {
 		// A recently inserted entry is still cached.
 		const stillCached = cachedLineDiff('old-69', 'new-69', ['69'], ['69+1']);
 		expect(stillCached).toBe(results[69]);
+	});
+
+	test('also clears the sibling highlight cache, so a test file that only knows about this one memo (DiffView.test.ts) still gets full isolation', () => {
+		// `DiffView.test.ts` cannot be edited by this change (out of
+		// ownership scope), but it ALREADY calls `clearLineDiffCache()` in
+		// its `afterEach`, exactly because its fixtures reuse placeholder
+		// blob ids across tests with genuinely different content. Routing
+		// the highlight cache's teardown through the same entrypoint keeps
+		// that existing test file correctly isolated without touching it.
+		const first = cachedHighlightLines('const same = 1;', 'typescript', 'blob-1');
+		clearLineDiffCache();
+		const second = cachedHighlightLines('const same = 1;', 'typescript', 'blob-1');
+		expect(second).not.toBe(first);
 	});
 });

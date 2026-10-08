@@ -6,13 +6,11 @@
 	// binary, oversized, and very large diffs; `DiffRows` renders everything
 	// else.
 	import type { ReviewEntry } from './reviewModel';
-	import { lineDiff } from './lineDiff';
 	import { buildRows } from './rows';
-	import { highlightLines } from './highlightLines';
+	import { cachedLineDiff } from './lineDiffCache';
+	import { cachedHighlightLines } from './highlightCache';
 	import { escapeHtml } from '../highlighter';
 	import DiffRows, { type SearchRanges } from './DiffRows.svelte';
-
-	/** Mirrors `DiffRows`' `SearchRanges` shape (see that component for the full doc); redeclared here so this file does not depend on a module export from a `.svelte` file. */
 
 	const LARGE_DIFF_THRESHOLD = 1000;
 
@@ -57,7 +55,7 @@
 	let oldLines = $derived(entry.oldSide?.content !== undefined ? entry.oldSide.content.split('\n') : []);
 	let newLines = $derived(entry.newSide?.content !== undefined ? entry.newSide.content.split('\n') : []);
 
-	let diffItems = $derived(lineDiff(oldLines, newLines));
+	let diffItems = $derived(cachedLineDiff(entry.oldSide?.blob, entry.newSide?.blob, oldLines, newLines));
 	let additions = $derived(diffItems.reduce((sum, item) => (item.type === 'change' ? sum + item.added.length : sum), 0));
 	let deletions = $derived(diffItems.reduce((sum, item) => (item.type === 'change' ? sum + item.removed.length : sum), 0));
 	let changedLineCount = $derived(additions + deletions);
@@ -79,8 +77,8 @@
 	});
 
 	let rows = $derived(buildRows(diffItems, oldLines, newLines, entry.language, effectiveExpandedKeys));
-	let oldTokens = $derived(highlightLines(entry.oldSide?.content ?? '', entry.language));
-	let newTokens = $derived(highlightLines(entry.newSide?.content ?? '', entry.language));
+	let oldTokens = $derived(cachedHighlightLines(entry.oldSide?.content ?? '', entry.language, entry.oldSide?.blob));
+	let newTokens = $derived(cachedHighlightLines(entry.newSide?.content ?? '', entry.language, entry.newSide?.blob));
 
 	function handleExpand(key: string): void {
 		const next = new Set(effectiveExpandedKeys);

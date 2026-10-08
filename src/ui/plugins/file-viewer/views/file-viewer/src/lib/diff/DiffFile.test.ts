@@ -3,13 +3,37 @@ import { render, fireEvent, cleanup } from '@testing-library/svelte/svelte5';
 import DiffFile from './DiffFile.svelte';
 import type { ReviewEntry } from './reviewModel';
 import type { FileSide } from '@quantum/client';
+import * as lineDiffModule from './lineDiff';
+import * as highlightLinesModule from './highlightLines';
+import { clearLineDiffCache } from './lineDiffCache';
+import { clearHighlightCache } from './highlightCache';
 
 afterEach(() => {
 	cleanup();
+	clearLineDiffCache();
+	clearHighlightCache();
+	vi.restoreAllMocks();
 });
 
+/**
+ * Git blob ids are content-addressed: the same content always has the same
+ * blob, different content always has a different blob. A real backend never
+ * hands two different sides the SAME blob with DIFFERENT content, so the
+ * fixture must not either — reusing a literal blob id across distinct
+ * contents (as this file's fixtures used to) silently defeats the blob-keyed
+ * caches in `DiffFile.svelte`, which is exactly the bug Fix 2 depends on a
+ * test catching.
+ */
+function blobFor(content: string): string {
+	let hash = 0;
+	for (let index = 0; index < content.length; index++) {
+		hash = (hash * 31 + content.charCodeAt(index)) | 0;
+	}
+	return `blob-${content.length}-${hash}`;
+}
+
 function side(content: string, overrides: Partial<FileSide> = {}): FileSide {
-	return { content, blob: 'blob', mode: '100644', binary: false, too_large: false, ...overrides };
+	return { content, blob: blobFor(content), mode: '100644', binary: false, too_large: false, ...overrides };
 }
 
 function entry(overrides: Partial<ReviewEntry> = {}): ReviewEntry {
@@ -68,6 +92,25 @@ describe('DiffFile', () => {
 		expect(container.querySelector('.diff-root')).not.toBeNull();
 	});
 
+	test('a large diff (over 1000 changed lines) does not call highlightLines before "Load diff" is clicked', async () => {
+		const oldLines = Array.from({ length: 600 }, (_, index) => `old ${index}`).join('\n');
+		const newLines = Array.from({ length: 600 }, (_, index) => `new ${index}`).join('\n');
+		const highlightSpy = vi.spyOn(highlightLinesModule, 'highlightLines');
+		const { container } = render(DiffFile, {
+			props: {
+				entry: entry({ oldSide: side(oldLines), newSide: side(newLines) }),
+				stageable: false,
+				layout: 'unified',
+			},
+		});
+		expect(container.textContent).toContain('Large diff:');
+		expect(highlightSpy).not.toHaveBeenCalled();
+
+		const loadButton = Array.from(container.querySelectorAll('button')).find((button) => button.textContent?.includes('Load diff'));
+		await fireEvent.click(loadButton!);
+		expect(highlightSpy).toHaveBeenCalled();
+	});
+
 	test('the stage button reads "Stage" for an unstaged entry and "\u2713 Staged" for a staged entry, and is absent when not stageable', async () => {
 		const onStage = vi.fn();
 		const { container, rerender } = render(DiffFile, {
@@ -115,6 +158,18 @@ describe('DiffFile', () => {
 		expect(onToggleCollapsed).toHaveBeenCalledTimes(1);
 	});
 
+	test('pressing Enter or Space on the header calls onToggleCollapsed, same as a click', async () => {
+		const onToggleCollapsed = vi.fn();
+		const { container } = render(DiffFile, {
+			props: { entry: entry({ section: 'staged' }), stageable: true, layout: 'unified', collapsed: false, onToggleCollapsed },
+		});
+		const header = container.querySelector('.file-header') as HTMLElement;
+		await fireEvent.keyDown(header, { key: 'Enter' });
+		expect(onToggleCollapsed).toHaveBeenCalledTimes(1);
+		await fireEvent.keyDown(header, { key: ' ' });
+		expect(onToggleCollapsed).toHaveBeenCalledTimes(2);
+	});
+
 	test('a rename in the same directory shows "oldName \u2192 newName"', () => {
 		const { container } = render(DiffFile, {
 			props: {
@@ -140,6 +195,33 @@ describe('DiffFile', () => {
 		expect(header.textContent).toContain('src/old/');
 		expect(header.textContent).toContain('place.ts \u2192 ');
 		expect(header.textContent).toContain('src/new/');
+	});
+
+	test('re-rendering with a new entry object carrying the same blobs does not recompute the line diff or re-highlight', async () => {
+		const lineDiffSpy = vi.spyOn(lineDiffModule, 'lineDiff');
+		const highlightSpy = vi.spyOn(highlightLinesModule, 'highlightLines');
+
+		const first = entry({ oldSide: side('const same = 1;'), newSide: side('const same = 2;') });
+		const { rerender } = render(DiffFile, {
+			props: { entry: first, stageable: false, layout: 'unified' },
+		});
+		expect(lineDiffSpy).toHaveBeenCalledTimes(1);
+		expect(highlightSpy).toHaveBeenCalledTimes(2); // once per side
+
+		// A brand-new entry object, but carrying the SAME blob ids as before
+		// (the shape a fresh `reviewEntries()` rebuild produces for a file
+		// nothing changed about, after staging/unstaging some OTHER file).
+		const second: ReviewEntry = {
+			...first,
+			oldSide: { ...first.oldSide! },
+			newSide: { ...first.newSide! },
+		};
+		expect(second).not.toBe(first);
+		expect(second.oldSide).not.toBe(first.oldSide);
+
+		await rerender({ entry: second, stageable: false, layout: 'unified' });
+		expect(lineDiffSpy).toHaveBeenCalledTimes(1);
+		expect(highlightSpy).toHaveBeenCalledTimes(2);
 	});
 
 	test('shows the partially staged pill when the entry is partially staged', () => {
