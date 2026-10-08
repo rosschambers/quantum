@@ -94,11 +94,76 @@ impl RepositoryReview for GitRepositoryReview {
         Ok(())
     }
 
-    async fn fingerprint(&self, _repository_root: &str) -> Result<String, ReviewError> {
-        Err(ReviewError::GitFailed(
-            "fingerprint is not yet implemented".to_string(),
-        ))
+    /// A cheap value that changes whenever the working tree or index
+    /// changes, for the "files changed on disk" banner's polling loop.
+    ///
+    /// Deliberately hashes the SORTED SET OF PATHS `git status` lists,
+    /// each followed by its working file's `(modified time in nanoseconds,
+    /// size)`, and nothing else — never the status letters (`index_status`/
+    /// `worktree_status`). Staging a file changes only the index columns of
+    /// its status line, never the path set or the working file itself, so
+    /// qv's own Stage/Unstage buttons must never flip this fingerprint
+    /// (which would show the "changed on disk" banner after the user's own
+    /// click). A missing working file (for example a staged deletion with
+    /// no working-tree copy) contributes a fixed marker instead of
+    /// metadata, so its absence still affects the hash deterministically.
+    ///
+    /// Accepted limitation: an external `git add` that changes no working
+    /// file (for example staging a rename with identical content) changes
+    /// neither the path set nor any working file's metadata, so it is not
+    /// detected until the next manual refresh.
+    async fn fingerprint(&self, repository_root: &str) -> Result<String, ReviewError> {
+        let root_path = Path::new(repository_root);
+        let status_output = run_git(
+            root_path,
+            &["status", "--porcelain=v2", "-z", "--untracked-files=all"],
+            None,
+        )
+        .await?;
+        let entries = parse_status(&status_output);
+
+        let mut paths: Vec<&str> = entries.iter().map(|entry| entry.path.as_str()).collect();
+        paths.sort_unstable();
+
+        let mut hash = FNV_OFFSET_BASIS;
+        for path in paths {
+            hash = fnv1a_update(hash, path.as_bytes());
+            hash = fnv1a_update(hash, &[0]);
+
+            match tokio::fs::metadata(root_path.join(path)).await {
+                Ok(metadata) => {
+                    let modified_nanos = metadata
+                        .modified()
+                        .ok()
+                        .and_then(|time| time.duration_since(std::time::UNIX_EPOCH).ok())
+                        .map(|duration| duration.as_nanos())
+                        .unwrap_or(0);
+                    hash = fnv1a_update(hash, &modified_nanos.to_le_bytes());
+                    hash = fnv1a_update(hash, &metadata.len().to_le_bytes());
+                }
+                Err(_) => {
+                    hash = fnv1a_update(hash, b"missing");
+                }
+            }
+            hash = fnv1a_update(hash, &[0]);
+        }
+
+        Ok(format!("{hash:016x}"))
     }
+}
+
+/// FNV-1a 64-bit hash, implemented inline (no new dependency) for
+/// [`GitRepositoryReview::fingerprint`]. See
+/// <http://www.isthe.com/chongo/tech/comp/fnv/> for the algorithm.
+const FNV_OFFSET_BASIS: u64 = 0xcbf2_9ce4_8422_2325;
+const FNV_PRIME: u64 = 0x0100_0000_01b3;
+
+fn fnv1a_update(mut hash: u64, bytes: &[u8]) -> u64 {
+    for byte in bytes {
+        hash ^= u64::from(*byte);
+        hash = hash.wrapping_mul(FNV_PRIME);
+    }
+    hash
 }
 
 /// `changes()` for `DiffSpec { base: "HEAD", target: None }`: one
