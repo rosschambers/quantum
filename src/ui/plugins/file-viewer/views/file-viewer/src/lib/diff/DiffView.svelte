@@ -598,7 +598,7 @@
 				const startFraction = fractions[matchAnchors.length + index];
 				const endAnchor = resolveAnchor(maps, run.entryIndex, run.endRef.side, run.endRef.index) ?? contentElement!;
 				const endFraction = (endAnchor.getBoundingClientRect().bottom - rootRect.top) / rootRect.height;
-				marks.push({ start: startFraction, extent: Math.max(0, endFraction - startFraction), kind: run.kind });
+				marks.push({ start: startFraction, extent: Math.max(0, endFraction - startFraction), kind: run.kind, index });
 			});
 		}
 		changeMarks = marks;
@@ -631,8 +631,26 @@
 	let searchRulerMarks = $derived(searchMarks(matchPositions, totalMatches, currentMatchIndex));
 	let rulerMarks = $derived<RulerMark[]>([...changeMarks, ...searchRulerMarks]);
 
+	function isChangeMarkKind(kind: RulerMarkKind): boolean {
+		return kind === 'added' || kind === 'removed' || kind === 'mixed';
+	}
+
 	function handleMarkActivate(mark: RulerMark): void {
 		if (mark.index === undefined) return;
+		if (isChangeMarkKind(mark.kind)) {
+			const run = changeRuns[mark.index];
+			if (!run) return;
+			const entry = entries[run.entryIndex];
+			if (entry && isCollapsed(entry)) {
+				setCollapsed(entry.id, false);
+			}
+			queueMicrotask(() => {
+				const maps = buildAnchorMaps();
+				const anchor = resolveAnchor(maps, run.entryIndex, run.startRef.side, run.startRef.index) ?? fileSectionElements[run.entryIndex];
+				anchor?.scrollIntoView({ block: 'center' });
+			});
+			return;
+		}
 		currentMatchIndex = mark.index;
 		navigationRevision++;
 	}

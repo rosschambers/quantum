@@ -924,4 +924,37 @@ describe('DiffView overview ruler measurement', () => {
 			rectSpy.mockRestore();
 		}
 	});
+
+	test('clicking a change mark scrolls its run into view', async () => {
+		stubAnimationFrame();
+		stubTrackHeight(1000);
+
+		const changeSet = changeSetFixture();
+		mockChangesAndFingerprint(changeSet);
+
+		const rectSpy = vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function (this: HTMLElement): DOMRect {
+			if (this.classList.contains('pane-content')) return rect({ top: 0, height: 1000 });
+			if (this.classList.contains('overview-ruler')) return rect({ top: 0, height: 1000 });
+			return rect({ top: 500, height: 20 });
+		});
+
+		try {
+			const { container } = render(DiffView, { props: { source: { kind: 'git', spec: { repository: '/repository' } } } });
+			await vi.waitFor(() => expect(container.querySelector('.diff-file')).not.toBeNull());
+
+			const removedRow = container.querySelector('.row.removed') as HTMLElement;
+			expect(removedRow).not.toBeNull();
+			const scrollSpy = vi.spyOn(removedRow, 'scrollIntoView');
+
+			const mixedMark = container.querySelector('.ruler-mark.kind-mixed') as HTMLElement;
+			expect(mixedMark).not.toBeNull();
+			const ruler = container.querySelector('.overview-ruler') as HTMLElement;
+			const markTop = parseFloat(mixedMark.style.top);
+
+			await fireEvent.click(ruler, { clientY: markTop + 1 });
+			await vi.waitFor(() => expect(scrollSpy).toHaveBeenCalledWith({ block: 'center' }));
+		} finally {
+			rectSpy.mockRestore();
+		}
+	});
 });
