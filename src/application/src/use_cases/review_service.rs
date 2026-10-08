@@ -43,11 +43,18 @@ impl ReviewService {
 
         let mut stageable_paths = self.stageable_paths.lock().await;
         if change_set.stageable {
-            let paths: HashSet<String> = change_set
-                .files
-                .iter()
-                .map(|file| file.path.clone())
-                .collect();
+            // A renamed file's `old_path` must be allowlisted too: undoing
+            // a staged rename (`unstage`) touches both halves, and the
+            // staging safety boundary must accept the old path precisely
+            // because it appeared (as `old_path`) in this same loaded
+            // change set.
+            let mut paths: HashSet<String> = HashSet::new();
+            for file in &change_set.files {
+                paths.insert(file.path.clone());
+                if let Some(old_path) = &file.old_path {
+                    paths.insert(old_path.clone());
+                }
+            }
             stageable_paths.insert(change_set.repository_root.clone(), paths);
         } else {
             // A non-stageable change set clears the remembered set for that
@@ -70,9 +77,17 @@ impl ReviewService {
         self.review.stage(repository_root, path, blob, mode).await
     }
 
-    pub async fn unstage(&self, repository_root: &str, path: &str) -> Result<(), ReviewError> {
+    pub async fn unstage(
+        &self,
+        repository_root: &str,
+        path: &str,
+        old_path: Option<&str>,
+    ) -> Result<(), ReviewError> {
         self.check_stageable(repository_root, path).await?;
-        self.review.unstage(repository_root, path).await
+        if let Some(old_path) = old_path {
+            self.check_stageable(repository_root, old_path).await?;
+        }
+        self.review.unstage(repository_root, path, old_path).await
     }
 
     pub async fn fingerprint(&self, repository_root: &str) -> Result<String, ReviewError> {
@@ -135,7 +150,12 @@ mod tests {
             Ok(())
         }
 
-        async fn unstage(&self, _repository_root: &str, _path: &str) -> Result<(), ReviewError> {
+        async fn unstage(
+            &self,
+            _repository_root: &str,
+            _path: &str,
+            _old_path: Option<&str>,
+        ) -> Result<(), ReviewError> {
             Ok(())
         }
 
@@ -153,6 +173,24 @@ mod tests {
             files: vec![ChangedFile {
                 path: path.to_string(),
                 old_path: None,
+                language: None,
+                base: None,
+                index: None,
+                target: None,
+                untracked: false,
+            }],
+        }
+    }
+
+    fn stageable_change_set_with_rename(root: &str, path: &str, old_path: &str) -> ChangeSet {
+        ChangeSet {
+            repository_root: root.to_string(),
+            base_label: "HEAD".to_string(),
+            target_label: "working tree".to_string(),
+            stageable: true,
+            files: vec![ChangedFile {
+                path: path.to_string(),
+                old_path: Some(old_path.to_string()),
                 language: None,
                 base: None,
                 index: None,
@@ -221,9 +259,40 @@ mod tests {
         service.changes(&diff_spec("/repo")).await.expect("changes");
 
         let error = service
-            .unstage("/repo", "other.txt")
+            .unstage("/repo", "other.txt", None)
             .await
             .expect_err("a path outside the loaded change set must be rejected");
+        assert!(matches!(error, ReviewError::NotStageable(_)));
+    }
+
+    #[tokio::test]
+    async fn unstage_succeeds_for_a_rename_whose_old_path_is_also_in_the_loaded_change_set() {
+        let fake = Arc::new(FakeReview::default());
+        *fake.changes_result.lock().expect("lock") =
+            Some(stageable_change_set_with_rename("/repo", "b.txt", "a.txt"));
+        let service = ReviewService::new(fake);
+
+        service.changes(&diff_spec("/repo")).await.expect("changes");
+
+        service
+            .unstage("/repo", "b.txt", Some("a.txt"))
+            .await
+            .expect("a rename's old_path is allowlisted alongside its path");
+    }
+
+    #[tokio::test]
+    async fn unstage_rejects_an_old_path_outside_the_last_loaded_change_set() {
+        let fake = Arc::new(FakeReview::default());
+        *fake.changes_result.lock().expect("lock") =
+            Some(stageable_change_set_with_rename("/repo", "b.txt", "a.txt"));
+        let service = ReviewService::new(fake);
+
+        service.changes(&diff_spec("/repo")).await.expect("changes");
+
+        let error = service
+            .unstage("/repo", "b.txt", Some("never-shown-old.txt"))
+            .await
+            .expect_err("an old_path outside the loaded change set must be rejected");
         assert!(matches!(error, ReviewError::NotStageable(_)));
     }
 

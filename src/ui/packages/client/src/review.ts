@@ -62,10 +62,15 @@ export interface StageParams {
   mode: string;
 }
 
-/** Params for `file-viewer.unstage`. */
+/**
+ * Params for `file-viewer.unstage`. `old_path` must be supplied whenever
+ * `path` is the new side of a staged rename, so both halves of the rename
+ * are undone together.
+ */
 export interface UnstageParams {
   repository_root: string;
   path: string;
+  old_path?: string;
 }
 
 /** Params for `file-viewer.fingerprint`. */

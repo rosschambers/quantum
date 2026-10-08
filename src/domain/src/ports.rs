@@ -218,7 +218,17 @@ pub trait RepositoryReview: Send + Sync {
         blob: Option<&str>,
         mode: &str,
     ) -> Result<(), ReviewError>;
-    async fn unstage(&self, repository_root: &str, path: &str) -> Result<(), ReviewError>;
+    /// Unstage `path`. `old_path` must be supplied whenever `path` is the
+    /// new side of a staged rename, so BOTH halves of the rename are
+    /// undone: the old path's index entry is restored and the new path's
+    /// is removed. `old_path: None` unstages an ordinary (non-renamed)
+    /// path exactly as before.
+    async fn unstage(
+        &self,
+        repository_root: &str,
+        path: &str,
+        old_path: Option<&str>,
+    ) -> Result<(), ReviewError>;
     /// Cheap value that changes whenever the working tree or index changes.
     async fn fingerprint(&self, repository_root: &str) -> Result<String, ReviewError>;
 }

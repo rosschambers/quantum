@@ -77,15 +77,39 @@ impl RepositoryReview for GitRepositoryReview {
         Ok(())
     }
 
-    async fn unstage(&self, repository_root: &str, path: &str) -> Result<(), ReviewError> {
+    async fn unstage(
+        &self,
+        repository_root: &str,
+        path: &str,
+        old_path: Option<&str>,
+    ) -> Result<(), ReviewError> {
         validate_relative_path(path)?;
+        if let Some(old_path) = old_path {
+            validate_relative_path(old_path)?;
+        }
         verify_repository_root(repository_root).await?;
         let root_path = Path::new(repository_root);
 
-        // A path staged as a brand-new file has no HEAD counterpart to
+        // Bug 1: undoing a staged rename must undo BOTH halves, not just
+        // remove the new path from the index. `old_path` is always still
+        // present in HEAD (only a path that existed there can be the "old"
+        // side of a rename record), so it is always restored with `git
+        // restore --staged`, putting its index entry back exactly as HEAD
+        // has it.
+        if let Some(old_path) = old_path {
+            run_git(root_path, &["restore", "--staged", "--", old_path], None).await?;
+        }
+
+        // A path staged as a brand-new file (or the new side of a rename,
+        // which never has its own HEAD entry) has no HEAD counterpart to
         // restore the index entry from; `git restore --staged` would error
         // on it, so such a path is unstaged with `git rm --cached` instead,
-        // returning it to untracked.
+        // returning it to untracked. `-f` is required here: a renamed file
+        // that was also edited after the `git mv` has index content that
+        // matches neither HEAD (it does not exist there) nor the working
+        // tree (the post-rename edit), which `git rm --cached` otherwise
+        // refuses without `-f` — safe here because `--cached` only ever
+        // touches the index, never the working tree copy.
         let head_reference = format!("HEAD:{path}");
         let exists_in_head = run_git(root_path, &["cat-file", "-e", &head_reference], None)
             .await
@@ -94,7 +118,7 @@ impl RepositoryReview for GitRepositoryReview {
         if exists_in_head {
             run_git(root_path, &["restore", "--staged", "--", path], None).await?;
         } else {
-            run_git(root_path, &["rm", "--cached", "-q", "--", path], None).await?;
+            run_git(root_path, &["rm", "--cached", "-f", "-q", "--", path], None).await?;
         }
 
         Ok(())

@@ -524,10 +524,12 @@ impl Dispatcher {
         struct UnstageParams {
             repository_root: String,
             path: String,
+            #[serde(default)]
+            old_path: Option<String>,
         }
         let p: UnstageParams = parse_params(params, "file-viewer.unstage")?;
         self.review_service
-            .unstage(&p.repository_root, &p.path)
+            .unstage(&p.repository_root, &p.path, p.old_path.as_deref())
             .await?;
         Ok(json!({}))
     }
@@ -817,9 +819,12 @@ mod tests {
     }
 
     /// Repository-review fake for the dispatcher routing tests: `changes()`
-    /// always returns one stageable file at a fixed path, so the routing
-    /// tests have a known path to stage/unstage and the service's own
-    /// staging safety boundary can be exercised against a path outside it.
+    /// always returns two stageable files at fixed paths — a plain file
+    /// ("a.txt") and a renamed one ("renamed.txt", with
+    /// `old_path: "renamed-old.txt"`) — so the routing tests have known
+    /// paths to stage/unstage, a known rename to exercise the `old_path`
+    /// IPC parameter, and the service's own staging safety boundary can be
+    /// exercised against a path (or old_path) outside the loaded set.
     struct FakeRepositoryReview;
 
     #[async_trait]
@@ -830,15 +835,26 @@ mod tests {
                 base_label: spec.base.clone(),
                 target_label: "working tree".to_string(),
                 stageable: true,
-                files: vec![ChangedFile {
-                    path: "a.txt".to_string(),
-                    old_path: None,
-                    language: None,
-                    base: None,
-                    index: None,
-                    target: None,
-                    untracked: false,
-                }],
+                files: vec![
+                    ChangedFile {
+                        path: "a.txt".to_string(),
+                        old_path: None,
+                        language: None,
+                        base: None,
+                        index: None,
+                        target: None,
+                        untracked: false,
+                    },
+                    ChangedFile {
+                        path: "renamed.txt".to_string(),
+                        old_path: Some("renamed-old.txt".to_string()),
+                        language: None,
+                        base: None,
+                        index: None,
+                        target: None,
+                        untracked: false,
+                    },
+                ],
             })
         }
 
@@ -856,6 +872,7 @@ mod tests {
             &self,
             _repository_root: &str,
             _path: &str,
+            _old_path: Option<&str>,
         ) -> std::result::Result<(), ReviewError> {
             Ok(())
         }
@@ -1632,7 +1649,7 @@ mod tests {
         assert_eq!(change_set.repository_root, "/repo");
         assert_eq!(change_set.base_label, "HEAD");
         assert!(change_set.stageable);
-        assert_eq!(change_set.files.len(), 1);
+        assert_eq!(change_set.files.len(), 2);
         assert_eq!(change_set.files[0].path, "a.txt");
     }
 
@@ -1762,6 +1779,54 @@ mod tests {
             .dispatch("file-viewer.unstage", Some(&unstage_params))
             .await
             .expect_err("a path outside the loaded change set must be rejected");
+        assert_eq!(error.rpc_code(), -32023);
+    }
+
+    #[tokio::test]
+    async fn dispatches_file_viewer_unstage_with_old_path_for_a_rename_in_the_loaded_change_set() {
+        let dispatcher = build_dispatcher();
+
+        let changes_params = raw(json!({ "repository": "/repo" }));
+        dispatcher
+            .dispatch("file-viewer.changes", Some(&changes_params))
+            .await
+            .expect("file-viewer.changes");
+
+        let unstage_params = raw(json!({
+            "repository_root": "/repo",
+            "path": "renamed.txt",
+            "old_path": "renamed-old.txt",
+        }));
+        let resp = dispatcher
+            .dispatch("file-viewer.unstage", Some(&unstage_params))
+            .await
+            .expect("file-viewer.unstage with old_path");
+        assert_eq!(resp, json!({}));
+    }
+
+    #[tokio::test]
+    async fn file_viewer_unstage_rejects_an_old_path_outside_the_loaded_change_set() {
+        let dispatcher = build_dispatcher();
+
+        let changes_params = raw(json!({ "repository": "/repo" }));
+        dispatcher
+            .dispatch("file-viewer.changes", Some(&changes_params))
+            .await
+            .expect("file-viewer.changes");
+
+        // "renamed.txt" itself IS in the loaded change set, but this
+        // old_path is not — proving the dispatcher actually parses and
+        // forwards old_path (an unparsed/ignored old_path would let this
+        // succeed on path alone).
+        let unstage_params = raw(json!({
+            "repository_root": "/repo",
+            "path": "renamed.txt",
+            "old_path": "never-shown-old.txt",
+        }));
+        let error = dispatcher
+            .dispatch("file-viewer.unstage", Some(&unstage_params))
+            .await
+            .expect_err("an old_path outside the loaded change set must be rejected");
         assert_eq!(error.rpc_code(), -32023);
     }
 

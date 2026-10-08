@@ -42,6 +42,21 @@ fn cached_name_status(root: &Path) -> Vec<(String, String)> {
         .collect()
 }
 
+fn porcelain_v1_lines(root: &Path) -> Vec<String> {
+    let output = Command::new("git")
+        .arg("-C")
+        .arg(root)
+        .args(["status", "--porcelain"])
+        .output()
+        .expect("git status --porcelain");
+    assert!(output.status.success());
+    String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .map(|line| line.to_string())
+        .filter(|line| !line.is_empty())
+        .collect()
+}
+
 fn unstaged_names(root: &Path) -> Vec<String> {
     let output = Command::new("git")
         .arg("-C")
@@ -193,7 +208,7 @@ async fn stage_an_untracked_file_then_unstage_returns_it_to_untracked() {
     assert!(cached_name_status(&root).contains(&("A".to_string(), "new.txt".to_string())));
 
     review
-        .unstage(root.to_str().expect("utf8 path"), "new.txt")
+        .unstage(root.to_str().expect("utf8 path"), "new.txt", None)
         .await
         .expect("unstage succeeds");
 
@@ -244,12 +259,89 @@ async fn unstage_a_staged_modification_returns_it_to_unstaged() {
 
     let review = GitRepositoryReview;
     review
-        .unstage(root.to_str().expect("utf8 path"), "a.txt")
+        .unstage(root.to_str().expect("utf8 path"), "a.txt", None)
         .await
         .expect("unstage succeeds");
 
     assert!(!cached_names(&root).contains(&"a.txt".to_string()));
     assert!(unstaged_names(&root).contains(&"a.txt".to_string()));
+}
+
+#[tokio::test]
+async fn unstage_a_staged_rename_restores_both_paths_completely() {
+    // Bug 1: unstaging a staged rename must undo BOTH halves. Before the
+    // fix, only the new path's absence-from-HEAD was checked, so `git rm
+    // --cached` removed the new path from the index without ever
+    // restoring the old path — leaving a staged deletion of the old path
+    // behind instead of a clean, fully-unstaged rename.
+    let (_tempdir, root) = repository();
+    std::fs::write(root.join("a.txt"), "original\n").unwrap();
+    git(&root, &["add", "."]);
+    git(&root, &["commit", "-q", "-m", "initial"]);
+    git(&root, &["mv", "a.txt", "b.txt"]);
+    assert_eq!(cached_names(&root), vec!["b.txt".to_string()]);
+
+    let review = GitRepositoryReview;
+    review
+        .unstage(root.to_str().expect("utf8 path"), "b.txt", Some("a.txt"))
+        .await
+        .expect("unstage succeeds");
+
+    assert!(
+        cached_names(&root).is_empty(),
+        "nothing must remain staged after a full rename unstage"
+    );
+
+    let status_lines = porcelain_v1_lines(&root);
+    assert!(
+        status_lines.iter().any(|line| line == " D a.txt"),
+        "a.txt must show as deleted in the worktree only, got: {status_lines:?}"
+    );
+    assert!(
+        status_lines.iter().any(|line| line == "?? b.txt"),
+        "b.txt must show as untracked, got: {status_lines:?}"
+    );
+}
+
+#[tokio::test]
+async fn unstage_a_staged_rename_with_an_edit_behaves_the_same() {
+    // The rename-with-edit variant: the new path's index content (the pure
+    // rename, pre-edit) differs from both HEAD (it does not exist there)
+    // and the working tree (edited after the `git mv`), which makes a bare
+    // `git rm --cached` refuse without `-f`.
+    let (_tempdir, root) = repository();
+    std::fs::write(root.join("a.txt"), "original\n").unwrap();
+    git(&root, &["add", "."]);
+    git(&root, &["commit", "-q", "-m", "initial"]);
+    git(&root, &["mv", "a.txt", "b.txt"]);
+    std::fs::write(root.join("b.txt"), "original\nedited after rename\n").unwrap();
+
+    let review = GitRepositoryReview;
+    review
+        .unstage(root.to_str().expect("utf8 path"), "b.txt", Some("a.txt"))
+        .await
+        .expect("unstage succeeds even when the renamed file was also edited");
+
+    assert!(
+        cached_names(&root).is_empty(),
+        "nothing must remain staged after a full rename-with-edit unstage"
+    );
+
+    let status_lines = porcelain_v1_lines(&root);
+    assert!(
+        status_lines.iter().any(|line| line == " D a.txt"),
+        "a.txt must show as deleted in the worktree only, got: {status_lines:?}"
+    );
+    assert!(
+        status_lines.iter().any(|line| line == "?? b.txt"),
+        "b.txt must show as untracked, got: {status_lines:?}"
+    );
+
+    // The edit the user made after `git mv` must survive on disk.
+    assert_eq!(
+        std::fs::read_to_string(root.join("b.txt")).unwrap(),
+        "original\nedited after rename\n"
+    );
 }
 
 const FAKE_BLOB: &str = "0000000000000000000000000000000000000001";
@@ -310,7 +402,7 @@ async fn staging_with_a_repository_root_that_is_not_its_own_toplevel_is_rejected
     assert!(matches!(error, ReviewError::NotStageable(_)));
 
     let error = review
-        .unstage(&subdirectory, "a.txt")
+        .unstage(&subdirectory, "a.txt", None)
         .await
         .expect_err("unstage must apply the same repository root check");
     assert!(matches!(error, ReviewError::NotStageable(_)));
@@ -356,15 +448,27 @@ async fn control_characters_in_paths_are_rejected_for_both_stage_and_unstage() {
     assert!(matches!(error, ReviewError::NotStageable(_)));
 
     let error = review
-        .unstage(root_str, "a\0b")
+        .unstage(root_str, "a\0b", None)
         .await
         .expect_err("a null byte in the path must be rejected on unstage too");
     assert!(matches!(error, ReviewError::NotStageable(_)));
 
     let error = review
-        .unstage(root_str, "a\nb")
+        .unstage(root_str, "a\nb", None)
         .await
         .expect_err("a newline in the path must be rejected on unstage too");
+    assert!(matches!(error, ReviewError::NotStageable(_)));
+
+    let error = review
+        .unstage(root_str, "a.txt", Some("old\0b"))
+        .await
+        .expect_err("a null byte in old_path must be rejected on unstage too");
+    assert!(matches!(error, ReviewError::NotStageable(_)));
+
+    let error = review
+        .unstage(root_str, "a.txt", Some("old\nb"))
+        .await
+        .expect_err("a newline in old_path must be rejected on unstage too");
     assert!(matches!(error, ReviewError::NotStageable(_)));
 
     assert!(
@@ -396,14 +500,26 @@ async fn escaping_paths_are_rejected_for_both_stage_and_unstage() {
     assert!(matches!(error, ReviewError::NotStageable(_)));
 
     let error = review
-        .unstage(root_str, "../escape")
+        .unstage(root_str, "../escape", None)
         .await
         .expect_err("a parent-dir path must be rejected on unstage too");
     assert!(matches!(error, ReviewError::NotStageable(_)));
 
     let error = review
-        .unstage(root_str, "/etc/passwd")
+        .unstage(root_str, "/etc/passwd", None)
         .await
         .expect_err("an absolute path must be rejected on unstage too");
+    assert!(matches!(error, ReviewError::NotStageable(_)));
+
+    let error = review
+        .unstage(root_str, "a.txt", Some("../escape"))
+        .await
+        .expect_err("a parent-dir old_path must be rejected on unstage too");
+    assert!(matches!(error, ReviewError::NotStageable(_)));
+
+    let error = review
+        .unstage(root_str, "a.txt", Some("/etc/passwd"))
+        .await
+        .expect_err("an absolute old_path must be rejected on unstage too");
     assert!(matches!(error, ReviewError::NotStageable(_)));
 }
