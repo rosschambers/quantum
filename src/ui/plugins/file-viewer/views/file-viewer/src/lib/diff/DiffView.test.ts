@@ -190,6 +190,154 @@ describe('DiffView', () => {
 		}
 	});
 
+	test('a poll tick whose response lands after the polling effect is torn down writes no state', async () => {
+		// Models "teardown before the fingerprint promise resolves": the
+		// repository root changes (a new diff is loaded into the SAME
+		// component instance — the same effect-cleanup path real view
+		// teardown exercises), tearing down the FIRST polling effect
+		// instance and its in-flight request before that request's
+		// response ever arrives. The component stays mounted so the
+		// resulting (lack of) state change is directly observable in the
+		// rendered banner.
+		const firstChangeSet = changeSetFixture({ repository_root: '/repository-one' });
+		const secondChangeSet = changeSetFixture({ repository_root: '/repository-two' });
+		let intervalCallback: (() => void) | undefined;
+		vi.stubGlobal(
+			'setInterval',
+			((callback: () => void) => {
+				intervalCallback = callback;
+				return 1 as unknown as ReturnType<typeof setInterval>;
+			}) as typeof setInterval,
+		);
+		const clearIntervalSpy = vi.fn();
+		vi.stubGlobal('clearInterval', clearIntervalSpy as typeof clearInterval);
+
+		try {
+			let fingerprintCallCount = 0;
+			let resolveStalePoll: ((value: { fingerprint: string }) => void) | undefined;
+			callMock.mockImplementation((method: string, params: any) => {
+				if (method === 'file-viewer.changes') {
+					return Promise.resolve(params.repository === '/repository-two' ? secondChangeSet : firstChangeSet);
+				}
+				if (method === 'file-viewer.fingerprint') {
+					fingerprintCallCount++;
+					if (params.repository_root === '/repository-two') {
+						return Promise.resolve({ fingerprint: 'second-fingerprint-1' });
+					}
+					if (fingerprintCallCount === 1) {
+						return Promise.resolve({ fingerprint: 'first-fingerprint-1' });
+					}
+					// The FIRST repository's poll tick: left hanging so the
+					// repository switch below can tear down its owning
+					// effect before this resolves.
+					return new Promise<{ fingerprint: string }>((resolve) => {
+						resolveStalePoll = resolve;
+					});
+				}
+				return Promise.resolve(undefined);
+			});
+
+			const { container, rerender } = render(DiffView, { props: { source: { kind: 'git', spec: { repository: '/repository-one' } } } });
+			await vi.waitFor(() => expect(container.querySelector('.diff-file')).not.toBeNull());
+			expect(intervalCallback).toBeDefined();
+
+			// Kick off the first repository's poll tick; it hangs.
+			intervalCallback?.();
+			await vi.waitFor(() => expect(resolveStalePoll).toBeDefined());
+
+			// Switch to a different repository: the polling effect's
+			// dependency (the stable root captured at load) changes, so
+			// Svelte tears down THIS effect instance (running its cleanup)
+			// before starting a fresh one for the new root.
+			await rerender({ source: { kind: 'git', spec: { repository: '/repository-two' } } });
+			await vi.waitFor(() => expect(container.textContent).toContain('/repository-two'));
+			expect(clearIntervalSpy).toHaveBeenCalled();
+
+			// The FIRST repository's stale poll response finally arrives,
+			// reporting a fingerprint that would have differed from its
+			// OWN baseline — but its owning effect was already torn down,
+			// so this must write nothing observable.
+			resolveStalePoll?.({ fingerprint: 'first-fingerprint-2' });
+			await vi.waitFor(() => expect(container.querySelector('.banner')).not.toBeNull(), { timeout: 300 }).catch(() => {});
+			expect(container.querySelector('.banner')).toBeNull();
+		} finally {
+			vi.unstubAllGlobals();
+		}
+	});
+
+	test('a poll response whose baseline changed while it was in flight (a refresh raced it) is ignored', async () => {
+		const changeSet = changeSetFixture();
+		let intervalCallback: (() => void) | undefined;
+		vi.stubGlobal(
+			'setInterval',
+			((callback: () => void) => {
+				intervalCallback = callback;
+				return 1 as unknown as ReturnType<typeof setInterval>;
+			}) as typeof setInterval,
+		);
+		vi.stubGlobal('clearInterval', (() => {}) as typeof clearInterval);
+
+		try {
+			let fingerprintCallCount = 0;
+			let resolveStalePoll: ((value: { fingerprint: string }) => void) | undefined;
+			callMock.mockImplementation((method: string) => {
+				if (method === 'file-viewer.changes') return Promise.resolve(changeSet);
+				if (method === 'file-viewer.fingerprint') {
+					fingerprintCallCount++;
+					if (fingerprintCallCount === 1) {
+						return Promise.resolve({ fingerprint: 'fingerprint-1' });
+					}
+					if (fingerprintCallCount === 2) {
+						// The poll tick this test drives: left hanging so a
+						// refresh can land and move the baseline before it
+						// resolves.
+						return new Promise<{ fingerprint: string }>((resolve) => {
+							resolveStalePoll = resolve;
+						});
+					}
+					// The REFRESH's own fingerprint re-fetch (`refresh()`
+					// below), establishing the new baseline immediately.
+					return Promise.resolve({ fingerprint: 'fingerprint-3' });
+				}
+				return Promise.resolve(undefined);
+			});
+
+			const { container } = render(DiffView, { props: { source: { kind: 'git', spec: { repository: '/repository' } } } });
+			await vi.waitFor(() => expect(container.querySelector('.diff-file')).not.toBeNull());
+			expect(intervalCallback).toBeDefined();
+
+			// Kick off the poll tick; it hangs on fingerprintCallCount === 2.
+			intervalCallback?.();
+			await vi.waitFor(() => expect(resolveStalePoll).toBeDefined());
+
+			// A refresh races it, moving the baseline to "fingerprint-3"
+			// while the poll's request for the OLD baseline is still in flight.
+			await fireEvent.keyDown(window, { key: 'R' });
+			await vi.waitFor(() => {
+				expect(callMock.mock.calls.filter(([method]) => method === 'file-viewer.fingerprint')).toHaveLength(3);
+			});
+			// Let the refresh's own promise chain (its `file-viewer.changes`
+			// await, then its `file-viewer.fingerprint` await and the
+			// `baselineFingerprint` assignment) fully settle before the
+			// stale poll resolves, so there is no ambiguity about which
+			// write lands last.
+			for (let flush = 0; flush < 10; flush++) {
+				await Promise.resolve();
+			}
+			expect(container.querySelector('.banner')).toBeNull();
+
+			// The stale poll's response finally arrives, reporting a
+			// fingerprint that differs from the baseline it was ORIGINALLY
+			// compared against ("fingerprint-1") — but that baseline is no
+			// longer current, so this must not raise the banner.
+			resolveStalePoll?.({ fingerprint: 'fingerprint-2' });
+			await vi.waitFor(() => expect(container.querySelector('.banner')).not.toBeNull(), { timeout: 300 }).catch(() => {});
+			expect(container.querySelector('.banner')).toBeNull();
+		} finally {
+			vi.unstubAllGlobals();
+		}
+	});
+
 	test('pair mode renders without a sidebar or staging controls', async () => {
 		callMock.mockImplementation((method: string, params: any) => {
 			if (method === 'file-viewer.read') {

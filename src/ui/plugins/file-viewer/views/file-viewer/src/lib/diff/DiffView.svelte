@@ -162,11 +162,33 @@
 			return;
 		}
 		const root = repositoryRootForPolling;
+		let cancelled = false;
 		const interval = setInterval(() => {
+			// Captured before the request goes out: if a `refresh()` moves
+			// the baseline while this tick's request is still in flight,
+			// the response below is compared against a generation that no
+			// longer matches reality, and must be discarded rather than
+			// used to set (or skip setting) the banner.
+			const requestedBaseline = baselineFingerprint;
 			void (async () => {
 				try {
 					const result = (await client.call('file-viewer.fingerprint', { repository_root: root })) as FingerprintResult;
-					if (baselineFingerprint !== null && result.fingerprint !== baselineFingerprint) {
+					if (cancelled) {
+						// This effect instance (and its interval) was torn
+						// down — by the view closing, or by a new
+						// repository root replacing this one — before this
+						// response arrived; the component may already be
+						// gone, or showing a different diff entirely.
+						return;
+					}
+					if (requestedBaseline === null || requestedBaseline !== baselineFingerprint) {
+						// A refresh landed while this request was in
+						// flight, moving the baseline to a newer
+						// generation this response was never compared
+						// against.
+						return;
+					}
+					if (result.fingerprint !== requestedBaseline) {
 						diskChanged = true;
 					}
 				} catch {
@@ -175,7 +197,10 @@
 				}
 			})();
 		}, 2000);
-		return () => clearInterval(interval);
+		return () => {
+			cancelled = true;
+			clearInterval(interval);
+		};
 	});
 
 	async function refresh(): Promise<void> {
