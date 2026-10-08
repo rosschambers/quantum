@@ -8,13 +8,23 @@
 
 function rectForAnchor(anchor: Element | Range): DOMRect {
     const rect = anchor.getBoundingClientRect();
-    if (rect.width !== 0 || rect.height !== 0 || !(anchor instanceof Element)) {
+    if (rect.width !== 0 || rect.height !== 0) {
         return rect;
     }
     // A zero-size anchor (an empty inline match wrapper, or a collapsed
     // range) carries no usable position of its own: walk up to the nearest
-    // ancestor with real layout and use its rect instead.
-    let ancestor = anchor.parentElement;
+    // ancestor with real layout and use its rect instead. For an Element the
+    // walk starts at its parent; for a Range (which has no `parentElement`
+    // of its own) it starts at the start container — the start container's
+    // parent element when the container is a Text node, since a Text node
+    // itself has no `getBoundingClientRect`.
+    let ancestor: Element | null;
+    if (anchor instanceof Element) {
+        ancestor = anchor.parentElement;
+    } else {
+        const startContainer = anchor.startContainer;
+        ancestor = startContainer instanceof Element ? startContainer : startContainer.parentElement;
+    }
     while (ancestor) {
         const ancestorRect = ancestor.getBoundingClientRect();
         if (ancestorRect.width !== 0 || ancestorRect.height !== 0) {

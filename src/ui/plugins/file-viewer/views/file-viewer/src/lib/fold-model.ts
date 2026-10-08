@@ -76,11 +76,16 @@ export function visibleRowOfLine(
 	while (line < lineCount) {
 		const fold = model.get(line);
 		if (fold && collapsed(line)) {
-			for (let hidden = line; hidden <= fold.endLine; hidden++) {
+            for (let hidden = line; hidden <= fold.endLine; hidden++) {
 				rowOfLine[hidden] = row;
 			}
 			row++;
-			line = fold.endLine + 1;
+			// `fold.endLine + 1` on its own assumes a well-formed fold
+			// (`endLine >= startLine`). A malformed fold with `endLine` before
+			// its own `startLine` (`line`, here) would then not advance past
+			// this same line, looping forever. `Math.max` guarantees the walk
+			// always moves at least one line forward regardless.
+			line = Math.max(line + 1, fold.endLine + 1);
 		} else {
 			rowOfLine[line] = row;
 			row++;

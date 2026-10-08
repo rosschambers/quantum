@@ -103,4 +103,20 @@ describe('visibleRowOfLine', () => {
         expect(Array.from(rowOfLine)).toEqual([0, 1, 2, 3]);
         expect(rowCount).toBe(4);
     });
+
+    test('a malformed fold whose endLine is before its startLine does not loop forever and still terminates with a sensible mapping', () => {
+        // A hand-built model (never produced by buildCodeFoldModel itself)
+        // representing a corrupt fold: endLine before startLine.
+        const model = new Map<number, CodeFoldRange>([[2, { startLine: 2, endLine: 0 }]]);
+        const { rowOfLine, rowCount } = visibleRowOfLine(4, model, () => true);
+        expect(rowOfLine).toHaveLength(4);
+        // Termination alone is the behavioral fix; every line still gets a
+        // row within the final row count, and the walk made forward progress
+        // past the malformed entry instead of looping on it.
+        expect(rowCount).toBeGreaterThan(0);
+        expect(rowCount).toBeLessThanOrEqual(4);
+        for (const row of rowOfLine) {
+            expect(row).toBeLessThan(rowCount);
+        }
+    });
 });

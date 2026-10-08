@@ -56,6 +56,43 @@ describe('measureFractions', () => {
         expect(result[0]).toBeCloseTo(250 / 1000, 10);
     });
 
+    test('falls back to the ancestor of a Range anchor\'s start container when the range itself has zero size', () => {
+        const root = document.createElement('div');
+        vi.spyOn(root, 'getBoundingClientRect').mockReturnValue(rect({ top: 0, height: 1000 }));
+        const parent = document.createElement('span');
+        const textNode = document.createTextNode('needle');
+        parent.appendChild(textNode);
+        root.appendChild(parent);
+        vi.spyOn(parent, 'getBoundingClientRect').mockReturnValue(rect({ top: 400, height: 20 }));
+
+        const range = document.createRange();
+        range.setStart(textNode, 0);
+        range.setEnd(textNode, 0);
+        // jsdom's Range has no `getBoundingClientRect` of its own to spy on
+        // (no layout engine), so it is assigned directly, as a real collapsed
+        // range's rect would be: zero width and height.
+        (range as unknown as { getBoundingClientRect: () => DOMRect }).getBoundingClientRect = () => rect({ top: 0, height: 0, width: 0 });
+
+        const result = measureFractions(root, [range]);
+        expect(result[0]).toBeCloseTo(400 / 1000, 10);
+    });
+
+    test('a collapsed Range whose start container is itself an Element (not Text) falls back directly to it', () => {
+        const root = document.createElement('div');
+        vi.spyOn(root, 'getBoundingClientRect').mockReturnValue(rect({ top: 0, height: 1000 }));
+        const container = document.createElement('div');
+        root.appendChild(container);
+        vi.spyOn(container, 'getBoundingClientRect').mockReturnValue(rect({ top: 250, height: 30 }));
+
+        const range = document.createRange();
+        range.setStart(container, 0);
+        range.setEnd(container, 0);
+        (range as unknown as { getBoundingClientRect: () => DOMRect }).getBoundingClientRect = () => rect({ top: 0, height: 0, width: 0 });
+
+        const result = measureFractions(root, [range]);
+        expect(result[0]).toBeCloseTo(250 / 1000, 10);
+    });
+
     test('returns an empty array when the root has zero height, with no NaN', () => {
         const root = document.createElement('div');
         vi.spyOn(root, 'getBoundingClientRect').mockReturnValue(rect({ top: 0, height: 0 }));
