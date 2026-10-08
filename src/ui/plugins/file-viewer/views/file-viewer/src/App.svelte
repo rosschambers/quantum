@@ -300,9 +300,13 @@
                 </div>
                 <OverviewRuler marks={rulerMarks} scrollElement={codeScrollElement} onMarkActivate={handleMarkActivate} />
             {:else if fileInfo.file_type === 'image' && fileInfo.uri}
-                <ImageRenderer uri={fileInfo.uri} filename={fileInfo.filename} />
+                <div class="renderer-pane">
+                    <ImageRenderer uri={fileInfo.uri} filename={fileInfo.filename} />
+                </div>
             {:else if fileInfo.file_type === 'video' && fileInfo.uri}
-                <VideoRenderer uri={fileInfo.uri} />
+                <div class="renderer-pane">
+                    <VideoRenderer uri={fileInfo.uri} />
+                </div>
             {:else}
                 <div class="renderer-pane">
                     <TextRenderer

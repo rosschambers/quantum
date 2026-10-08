@@ -391,6 +391,16 @@ describe('App overview ruler', () => {
         expect(container.querySelector('.overview-ruler')).toBeNull();
     });
 
+    it.each([
+        { file_type: 'image' as const, rootSelector: '.image-renderer' },
+        { file_type: 'video' as const, rootSelector: '.container' },
+    ])('keeps the $file_type renderer full width by wrapping it in a renderer pane', async ({ file_type, rootSelector }) => {
+        const { container } = await mountFile({ content: '', file_type, uri: 'quantum://fixture/placeholder' });
+        const root = container.querySelector(rootSelector);
+        expect(root).not.toBeNull();
+        expect(root!.parentElement?.classList.contains('renderer-pane')).toBe(true);
+    });
+
     it('clicking a match mark on the ruler navigates to it and scrolls it into view', async () => {
         // Code's non-virtual (short-file) match positions are pure row
         // arithmetic (no async DOM measurement), so the ruler mark for each
