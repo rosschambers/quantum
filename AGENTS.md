@@ -19,6 +19,7 @@ Crates and their allowed dependencies:
 | `src/application`              | `domain`                                   |
 | `src/infrastructure/config`    | `domain`, sibling infrastructure crates    |
 | `src/infrastructure/dbus`      | `domain`, sibling infrastructure crates    |
+| `src/infrastructure/git`       | `domain`, sibling infrastructure crates    |
 | `src/infrastructure/hyprland`  | `domain`, sibling infrastructure crates    |
 | `src/infrastructure/ipc`       | `domain`, sibling infrastructure crates    |
 | `src/infrastructure/plugins`   | `domain`, sibling infrastructure crates    |
@@ -29,7 +30,7 @@ Crates and their allowed dependencies:
 | `src/binaries/quantumctl`      | `domain`, `infrastructure` (ipc client)    |
 | `src/binaries/quantum-dev`     | `domain`, `infrastructure`                 |
 
-Infrastructure is **seven sibling crates**, not one. Sibling infrastructure
+Infrastructure is **eleven sibling crates**, not one. Sibling infrastructure
 crates may depend on each other (for example `providers` on `dbus` and
 `hyprland`); the architecture test in `tests/architecture-test/src/lib.rs`
 explicitly permits sibling-on-sibling infrastructure edges.

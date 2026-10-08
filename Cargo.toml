@@ -13,6 +13,7 @@ members = [
     "src/infrastructure/files",
     "src/infrastructure/processes",
     "src/infrastructure/cursor",
+    "src/infrastructure/git",
     "src/ui/host",
     "src/binaries/quantumd",
     "src/binaries/quantumctl",
