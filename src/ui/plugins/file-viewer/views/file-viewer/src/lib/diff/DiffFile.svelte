@@ -25,6 +25,17 @@
 		onStage?: (entry: ReviewEntry) => void;
 		onUnstage?: (entry: ReviewEntry) => void;
 		searchRanges?: SearchRanges;
+		/**
+		 * Optional external control of which collapsed-region keys are
+		 * expanded, mirroring the `collapsed` prop's own pattern: when
+		 * provided, this is the source of truth and `onExpandedKeysChange`
+		 * reports every toggle instead of this component tracking its own
+		 * state. Lets `DiffView` force-expand the region around a search
+		 * match before scrolling to it. Omitted (the default) preserves the
+		 * original uncontrolled behavior exactly.
+		 */
+		expandedKeys?: ReadonlySet<string>;
+		onExpandedKeysChange?: (keys: Set<string>) => void;
 	}
 
 	let {
@@ -36,6 +47,8 @@
 		onStage,
 		onUnstage,
 		searchRanges,
+		expandedKeys,
+		onExpandedKeysChange,
 	}: Props = $props();
 
 	let isBinary = $derived(!!entry.oldSide?.binary || !!entry.newSide?.binary);
@@ -51,31 +64,42 @@
 	let isLargeDiff = $derived(changedLineCount > LARGE_DIFF_THRESHOLD);
 
 	let loadedLarge = $state(false);
-	let expandedKeys: Set<string> = $state(new Set());
+	let internalExpandedKeys: Set<string> = $state(new Set());
+	let effectiveExpandedKeys = $derived(expandedKeys ?? internalExpandedKeys);
 
 	$effect(() => {
 		// Reset per-file UI state (collapsed-region expansion, the large-diff
 		// load gate) whenever the entry identity changes, so switching files
-		// in a stacked view never leaks another file's expanded regions.
+		// in a stacked view never leaks another file's expanded regions. Only
+		// resets the INTERNAL set — a caller controlling `expandedKeys`
+		// explicitly owns resetting it on entry change itself.
 		void entry.id;
-		expandedKeys = new Set();
+		internalExpandedKeys = new Set();
 		loadedLarge = false;
 	});
 
-	let rows = $derived(buildRows(diffItems, oldLines, newLines, entry.language, expandedKeys));
+	let rows = $derived(buildRows(diffItems, oldLines, newLines, entry.language, effectiveExpandedKeys));
 	let oldTokens = $derived(highlightLines(entry.oldSide?.content ?? '', entry.language));
 	let newTokens = $derived(highlightLines(entry.newSide?.content ?? '', entry.language));
 
 	function handleExpand(key: string): void {
-		const next = new Set(expandedKeys);
+		const next = new Set(effectiveExpandedKeys);
 		next.add(key);
-		expandedKeys = next;
+		if (onExpandedKeysChange) {
+			onExpandedKeysChange(next);
+		} else {
+			internalExpandedKeys = next;
+		}
 	}
 
 	function handleRecollapse(key: string): void {
-		const next = new Set(expandedKeys);
+		const next = new Set(effectiveExpandedKeys);
 		next.delete(key);
-		expandedKeys = next;
+		if (onExpandedKeysChange) {
+			onExpandedKeysChange(next);
+		} else {
+			internalExpandedKeys = next;
+		}
 	}
 
 	function handleHeaderClick(): void {

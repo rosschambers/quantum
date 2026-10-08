@@ -148,4 +148,55 @@ describe('DiffFile', () => {
 		});
 		expect(container.textContent).toContain('partially staged');
 	});
+
+	test('an externally controlled expandedKeys prop is the source of truth, and toggling reports the change via onExpandedKeysChange instead of expanding internally', async () => {
+		const sameLines = Array.from({ length: 10 }, (_, index) => `same ${index}`);
+		const oldContent = ['old start', ...sameLines, 'old end'].join('\n');
+		const newContent = ['new start', ...sameLines, 'new end'].join('\n');
+		const onExpandedKeysChange = vi.fn();
+		const { container, rerender } = render(DiffFile, {
+			props: {
+				entry: entry({ oldSide: side(oldContent), newSide: side(newContent) }),
+				stageable: false,
+				layout: 'unified',
+				expandedKeys: new Set(),
+				onExpandedKeysChange,
+			},
+		});
+		const collapsedRow = container.querySelector('.collapsed') as HTMLElement;
+		expect(collapsedRow).not.toBeNull();
+
+		await fireEvent.click(collapsedRow);
+		expect(onExpandedKeysChange).toHaveBeenCalledTimes(1);
+		const [reportedKeys] = onExpandedKeysChange.mock.calls[0];
+		expect(reportedKeys.size).toBe(1);
+		// Controlled mode: the component must not expand on its own — the
+		// prop (still an empty set) remains the source of truth, so the row
+		// stays collapsed until the caller re-renders with the new keys.
+		expect(container.querySelector('.collapsed')).not.toBeNull();
+
+		await rerender({
+			entry: entry({ oldSide: side(oldContent), newSide: side(newContent) }),
+			stageable: false,
+			layout: 'unified',
+			expandedKeys: reportedKeys,
+			onExpandedKeysChange,
+		});
+		expect(container.querySelector('.collapsed')).toBeNull();
+		expect(container.querySelector('.recollapse')).not.toBeNull();
+	});
+
+	test('expandedKeys is uncontrolled (manages its own state) when the prop is omitted, exactly as before', async () => {
+		const sameLines = Array.from({ length: 10 }, (_, index) => `same ${index}`);
+		const oldContent = ['old start', ...sameLines, 'old end'].join('\n');
+		const newContent = ['new start', ...sameLines, 'new end'].join('\n');
+		const { container } = render(DiffFile, {
+			props: { entry: entry({ oldSide: side(oldContent), newSide: side(newContent) }), stageable: false, layout: 'unified' },
+		});
+		const collapsedRow = container.querySelector('.collapsed') as HTMLElement;
+		expect(collapsedRow).not.toBeNull();
+		await fireEvent.click(collapsedRow);
+		expect(container.querySelector('.collapsed')).toBeNull();
+		expect(container.querySelector('.recollapse')).not.toBeNull();
+	});
 });
