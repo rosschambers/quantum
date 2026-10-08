@@ -11,7 +11,7 @@ use quantum_domain::{
     RepositoryReview, ReviewError, VIEWER_TEXT_MAX_BYTES,
 };
 
-use crate::contents::batch_read_blobs;
+use crate::contents::{batch_read_blobs, BlobEntry};
 use crate::runner::{repository_root as resolve_repository_root, run_git};
 use crate::status::{parse_status, StatusEntry};
 
@@ -186,13 +186,15 @@ async fn changes_against_head(root_path: &Path, root: &str) -> Result<ChangeSet,
     let entries = parse_status(&status_output);
 
     // One batched `git cat-file --batch` call for every blob this change set
-    // needs, rather than one process per file.
+    // needs, rather than one process per file. A gitlink's "blob" id
+    // actually names a commit object (M1: submodules), so it is excluded
+    // here and never fetched at all.
     let mut blob_ids: Vec<String> = Vec::new();
     for entry in &entries {
-        if base_present(entry) {
+        if base_present(entry) && !is_gitlink_mode(&entry.head_mode) {
             blob_ids.push(entry.head_blob.clone());
         }
-        if index_present(entry) {
+        if index_present(entry) && !is_gitlink_mode(&entry.index_mode) {
             blob_ids.push(entry.index_blob.clone());
         }
     }
@@ -201,33 +203,35 @@ async fn changes_against_head(root_path: &Path, root: &str) -> Result<ChangeSet,
     let mut files = Vec::with_capacity(entries.len());
     for entry in &entries {
         let base = if base_present(entry) {
-            Some(file_side_from_blob(
-                &blobs,
-                &entry.head_blob,
-                &entry.head_mode,
-            )?)
+            Some(if is_gitlink_mode(&entry.head_mode) {
+                gitlink_side(&entry.path, &entry.head_blob)
+            } else {
+                file_side_from_blob(&blobs, &entry.head_blob, &entry.head_mode)?
+            })
         } else {
             None
         };
         let index = if index_present(entry) {
-            Some(file_side_from_blob(
-                &blobs,
-                &entry.index_blob,
-                &entry.index_mode,
-            )?)
+            Some(if is_gitlink_mode(&entry.index_mode) {
+                gitlink_side(&entry.path, &entry.index_blob)
+            } else {
+                file_side_from_blob(&blobs, &entry.index_blob, &entry.index_mode)?
+            })
         } else {
             None
         };
         let target = if target_present(entry) {
-            Some(
+            Some(if is_gitlink_mode(&entry.worktree_mode) {
+                gitlink_side(&entry.path, gitlink_reference(entry))
+            } else {
                 read_working_tree_side(
                     root_path,
                     &entry.path,
                     &entry.worktree_mode,
                     entry.untracked,
                 )
-                .await?,
-            )
+                .await?
+            })
         } else {
             None
         };
@@ -375,12 +379,14 @@ async fn changes_for_other_base(
     // Batch-read every blob this change set needs: the base side always
     // comes from a blob; the target side comes from a blob only when
     // comparing two refs (otherwise it is read from the working tree below).
+    // A gitlink's "blob" id actually names a commit object (M1:
+    // submodules), so it is excluded here and never fetched at all.
     let mut blob_ids: Vec<String> = Vec::new();
     for entry in &entries {
-        if entry.src_mode != ZERO_MODE {
+        if entry.src_mode != ZERO_MODE && !is_gitlink_mode(&entry.src_mode) {
             blob_ids.push(entry.src_blob.clone());
         }
-        if !target_from_disk && entry.dst_mode != ZERO_MODE {
+        if !target_from_disk && entry.dst_mode != ZERO_MODE && !is_gitlink_mode(&entry.dst_mode) {
             blob_ids.push(entry.dst_blob.clone());
         }
     }
@@ -389,11 +395,11 @@ async fn changes_for_other_base(
     let mut files = Vec::with_capacity(entries.len());
     for entry in &entries {
         let base = if entry.src_mode != ZERO_MODE {
-            Some(file_side_from_blob(
-                &blobs,
-                &entry.src_blob,
-                &entry.src_mode,
-            )?)
+            Some(if is_gitlink_mode(&entry.src_mode) {
+                gitlink_side(&entry.path, &entry.src_blob)
+            } else {
+                file_side_from_blob(&blobs, &entry.src_blob, &entry.src_mode)?
+            })
         } else {
             None
         };
@@ -403,15 +409,17 @@ async fn changes_for_other_base(
         } else if target_from_disk {
             if entry.dst_mode == ZERO_MODE {
                 None
+            } else if is_gitlink_mode(&entry.dst_mode) {
+                Some(gitlink_side(&entry.path, &entry.dst_blob))
             } else {
                 Some(read_working_tree_side(root_path, &entry.path, &entry.dst_mode, false).await?)
             }
         } else if entry.dst_mode != ZERO_MODE {
-            Some(file_side_from_blob(
-                &blobs,
-                &entry.dst_blob,
-                &entry.dst_mode,
-            )?)
+            Some(if is_gitlink_mode(&entry.dst_mode) {
+                gitlink_side(&entry.path, &entry.dst_blob)
+            } else {
+                file_side_from_blob(&blobs, &entry.dst_blob, &entry.dst_mode)?
+            })
         } else {
             None
         };
@@ -562,6 +570,43 @@ fn target_present(entry: &StatusEntry) -> bool {
     entry.untracked || entry.worktree_mode != "000000"
 }
 
+/// Mode `160000` is a submodule gitlink (M1): its "blob" id names a COMMIT
+/// in the submodule's own history, not a blob in this repository, and must
+/// never be read as file content.
+fn is_gitlink_mode(mode: &str) -> bool {
+    mode == "160000"
+}
+
+/// The commit id to show for a gitlink placeholder: prefer the index's
+/// pinned commit (the one that would actually be staged), falling back to
+/// HEAD's when the index has none (for example a staged deletion).
+fn gitlink_reference(entry: &StatusEntry) -> &str {
+    if !entry.index_blob.is_empty() {
+        &entry.index_blob
+    } else {
+        &entry.head_blob
+    }
+}
+
+/// Build a placeholder `FileSide` for a submodule gitlink (M1): its blob id
+/// names a commit, not a blob, so no content is ever attached — only
+/// `binary: true`, the same signal the viewer already uses for any file it
+/// will not render as text.
+fn gitlink_side(path: &str, commit_id: &str) -> FileSide {
+    tracing::debug!(
+        path = %path,
+        commit = %commit_id,
+        "submodule gitlink encountered; rendering a placeholder instead of commit content"
+    );
+    FileSide {
+        content: None,
+        blob: commit_id.to_string(),
+        mode: "160000".to_string(),
+        binary: true,
+        too_large: false,
+    }
+}
+
 fn language_for_path(path: &str) -> Option<String> {
     Path::new(path)
         .extension()
@@ -569,30 +614,39 @@ fn language_for_path(path: &str) -> Option<String> {
         .and_then(language_for_extension)
 }
 
-/// Build a `FileSide` for a blob side (base or index) from bytes already
-/// fetched by the batched `cat-file --batch` call. `binary`/`too_large`
-/// follow the same rules as the working-tree side.
+/// Build a `FileSide` for a blob side (base or index) from an entry already
+/// resolved by the two-pass batched `cat-file --batch-check`/`--batch` call
+/// (I2): an oversized blob's `content` is `None` (its bytes were never
+/// fetched at all, not fetched and discarded) and reports `too_large`.
 fn file_side_from_blob(
-    blobs: &HashMap<String, Vec<u8>>,
+    blobs: &HashMap<String, BlobEntry>,
     blob_id: &str,
     mode: &str,
 ) -> Result<FileSide, ReviewError> {
-    let bytes = blobs.get(blob_id).ok_or_else(|| {
+    let entry = blobs.get(blob_id).ok_or_else(|| {
         ReviewError::GitFailed(format!("blob {blob_id} missing from cat-file batch"))
     })?;
 
-    let too_large = bytes.len() as u64 > VIEWER_TEXT_MAX_BYTES;
     let mut binary = false;
     let mut content = None;
-    if !too_large {
-        if is_likely_binary(bytes) {
-            binary = true;
-        } else {
-            match std::str::from_utf8(bytes) {
-                Ok(text) => content = Some(text.to_string()),
-                Err(_) => binary = true,
+    match &entry.content {
+        Some(bytes) => {
+            if is_likely_binary(bytes) {
+                binary = true;
+            } else {
+                match std::str::from_utf8(bytes) {
+                    Ok(text) => content = Some(text.to_string()),
+                    Err(_) => binary = true,
+                }
             }
         }
+        None if !entry.too_large => {
+            // Content was deliberately not fetched for a reason other than
+            // size (for example an unexpected non-blob object slipping
+            // through); never claim it is renderable text.
+            binary = true;
+        }
+        None => {}
     }
 
     Ok(FileSide {
@@ -600,7 +654,7 @@ fn file_side_from_blob(
         blob: blob_id.to_string(),
         mode: mode.to_string(),
         binary,
-        too_large,
+        too_large: entry.too_large,
     })
 }
 

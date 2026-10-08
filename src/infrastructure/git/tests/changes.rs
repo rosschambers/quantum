@@ -270,6 +270,131 @@ async fn ref_range_shows_only_the_committed_difference() {
     );
 }
 
+fn rev_parse(root: &std::path::Path, reference: &str) -> String {
+    let output = std::process::Command::new("git")
+        .arg("-C")
+        .arg(root)
+        .arg("rev-parse")
+        .arg(reference)
+        .output()
+        .expect("spawn git rev-parse");
+    assert!(output.status.success());
+    String::from_utf8_lossy(&output.stdout).trim().to_string()
+}
+
+#[tokio::test]
+async fn an_oversized_committed_blob_is_reported_too_large_without_reading_its_full_content() {
+    let (_tempdir, root) = repository();
+
+    // A 6 MiB committed file, over the 5 MiB viewer cap, then modified in
+    // the working tree so the BASE side goes through the committed-blob
+    // (`cat-file --batch`) path this test targets.
+    let large_bytes = vec![b'a'; 6 * 1024 * 1024];
+    std::fs::write(root.join("large.bin"), &large_bytes).unwrap();
+    git(&root, &["add", "."]);
+    git(&root, &["commit", "-q", "-m", "initial"]);
+    std::fs::write(root.join("large.bin"), vec![b'b'; 6 * 1024 * 1024]).unwrap();
+
+    let review = GitRepositoryReview;
+    let spec = DiffSpec {
+        repository: root.to_str().expect("utf8 path").to_string(),
+        base: "HEAD".to_string(),
+        target: None,
+    };
+    let change_set = review.changes(&spec).await.expect("changes succeeds");
+
+    let large = find(&change_set, "large.bin");
+    let base = large.base.as_ref().expect("base present");
+    assert!(
+        base.too_large,
+        "a committed blob over the size cap must be reported too_large"
+    );
+    assert!(
+        base.content.is_none(),
+        "an oversized committed blob's content must never be read into memory"
+    );
+}
+
+#[tokio::test]
+async fn submodule_gitlink_is_never_rendered_as_file_content() {
+    let (_tempdir, root) = repository();
+    std::fs::write(root.join("a.txt"), "first\n").unwrap();
+    git(&root, &["add", "."]);
+    git(&root, &["commit", "-q", "-m", "initial"]);
+
+    // A real nested repository checked out at "sub", recorded as a gitlink
+    // (mode 160000) the way a git submodule would be -- no `.gitmodules`
+    // file is needed; the status/diff machinery only cares about the mode.
+    let sub_root = root.join("sub");
+    std::fs::create_dir(&sub_root).unwrap();
+    git(&sub_root, &["init", "-q"]);
+    git(&sub_root, &["config", "user.name", "Quantum Test"]);
+    git(
+        &sub_root,
+        &["config", "user.email", "quantum-test@example.invalid"],
+    );
+    std::fs::write(sub_root.join("f.txt"), "submodule content\n").unwrap();
+    git(&sub_root, &["add", "."]);
+    git(&sub_root, &["commit", "-q", "-m", "submodule initial"]);
+    let sub_commit = rev_parse(&sub_root, "HEAD");
+
+    git(
+        &root,
+        &[
+            "update-index",
+            "--add",
+            "--cacheinfo",
+            &format!("160000,{sub_commit},sub"),
+        ],
+    );
+    git(&root, &["commit", "-q", "-m", "add gitlink"]);
+
+    // Dirty the submodule's working content without changing its pinned
+    // commit, so the gitlink entry's WORKING TREE side also reports mode
+    // 160000 (exercising the working-tree guard, not just the
+    // committed-blob guard).
+    std::fs::write(sub_root.join("f.txt"), "submodule content, dirtied\n").unwrap();
+
+    let review = GitRepositoryReview;
+    let spec = DiffSpec {
+        repository: root.to_str().expect("utf8 path").to_string(),
+        base: "HEAD".to_string(),
+        target: None,
+    };
+    let change_set = review
+        .changes(&spec)
+        .await
+        .expect("changes succeeds even with a submodule gitlink present");
+
+    let sub_file = find(&change_set, "sub");
+    let base = sub_file.base.as_ref().expect("base present");
+    assert!(
+        base.binary,
+        "a gitlink's base side must never be rendered as text content"
+    );
+    assert!(base.content.is_none());
+
+    let index = sub_file.index.as_ref().expect("index present");
+    assert!(index.binary);
+    assert!(index.content.is_none());
+
+    let target = sub_file.target.as_ref().expect("target present");
+    assert!(
+        target.binary,
+        "a gitlink's working-tree side must never be rendered as text content"
+    );
+    assert!(target.content.is_none());
+
+    for side in [base, index, target] {
+        if let Some(content) = &side.content {
+            assert!(
+                !content.contains("submodule content"),
+                "the submodule's own file content must never leak into any side"
+            );
+        }
+    }
+}
+
 #[tokio::test]
 async fn an_unknown_ref_surfaces_gits_error() {
     let (_tempdir, root) = repository();
