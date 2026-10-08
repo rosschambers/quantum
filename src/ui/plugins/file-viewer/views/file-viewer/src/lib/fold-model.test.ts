@@ -1,5 +1,5 @@
 import { describe, test, expect } from 'vitest';
-import { buildCodeFoldModel, foldContaining, foldAncestors } from './fold-model';
+import { buildCodeFoldModel, foldContaining, foldAncestors, visibleRowOfLine } from './fold-model';
 
 describe('foldContaining', () => {
     test('finds the fold containing a line, not its header', () => {
@@ -56,5 +56,51 @@ describe('foldAncestors', () => {
     test("excludes a fold whose own header is the line itself", () => {
         const model = buildCodeFoldModel(['function f() {', '  return 1;', '}', 'g();']);
         expect(foldAncestors(model, 0)).toEqual([]);
+    });
+});
+
+describe('visibleRowOfLine', () => {
+    test('is the identity mapping when there are no folds', () => {
+        const lines = ['a();', 'b();', 'c();'];
+        const model = buildCodeFoldModel(lines);
+        expect(model.size).toBe(0);
+        const { rowOfLine, rowCount } = visibleRowOfLine(lines.length, model, () => false);
+        expect(Array.from(rowOfLine)).toEqual([0, 1, 2]);
+        expect(rowCount).toBe(3);
+    });
+
+    test('a collapsed fold maps every hidden line to the header row and shifts later rows', () => {
+        const lines = ['function f() {', '  return 1;', '}', 'g();'];
+        const model = buildCodeFoldModel(lines);
+        const { rowOfLine, rowCount } = visibleRowOfLine(lines.length, model, (startLine) => startLine === 0);
+        // Lines 0 and 1 (the header and its hidden body line) both map to row 0.
+        expect(Array.from(rowOfLine)).toEqual([0, 0, 1, 2]);
+        expect(rowCount).toBe(3);
+    });
+
+    test('a nested collapsed fold inside a collapsed outer fold maps to the outermost header row', () => {
+        const lines = [
+            'function outer() {',
+            '  function inner() {',
+            '    return 1;',
+            '  }',
+            '}',
+            'g();',
+        ];
+        const model = buildCodeFoldModel(lines);
+        // Collapsing the outer header (line 0) only; whether the inner fold is
+        // independently "collapsed" never matters because the outer walk never
+        // reaches it.
+        const { rowOfLine, rowCount } = visibleRowOfLine(lines.length, model, (startLine) => startLine === 0);
+        expect(Array.from(rowOfLine)).toEqual([0, 0, 0, 0, 1, 2]);
+        expect(rowCount).toBe(3);
+    });
+
+    test('expanded folds hide nothing', () => {
+        const lines = ['function f() {', '  return 1;', '}', 'g();'];
+        const model = buildCodeFoldModel(lines);
+        const { rowOfLine, rowCount } = visibleRowOfLine(lines.length, model, () => false);
+        expect(Array.from(rowOfLine)).toEqual([0, 1, 2, 3]);
+        expect(rowCount).toBe(4);
     });
 });

@@ -51,6 +51,45 @@ export function foldContaining(model: Map<number, CodeFoldRange>, line: number):
 	return ancestors[ancestors.length - 1];
 }
 
+/**
+ * Maps every source line index to the "visible row" it renders at once folds
+ * collapse. Walks identically to `CodeRenderer.svelte`'s non-virtual render
+ * loop: a collapsed fold contributes exactly one row (its header line) and
+ * every line it hides — including any folds nested inside it, regardless of
+ * their own collapsed state — maps to that same header row, because the walk
+ * jumps straight from the fold's start line to `endLine + 1` without
+ * recursing into what is hidden. An expanded fold hides nothing: its header
+ * is just another row, and the walk continues line by line into its body.
+ *
+ * Used to translate a search match's source line into the row the shared
+ * overview ruler should place its mark at (`rowCenterFraction` takes the row,
+ * not the raw line, so a match inside a collapsed fold marks the header).
+ */
+export function visibleRowOfLine(
+	lineCount: number,
+	model: Map<number, CodeFoldRange>,
+	collapsed: (startLine: number) => boolean,
+): { rowOfLine: Int32Array; rowCount: number } {
+	const rowOfLine = new Int32Array(lineCount);
+	let line = 0;
+	let row = 0;
+	while (line < lineCount) {
+		const fold = model.get(line);
+		if (fold && collapsed(line)) {
+			for (let hidden = line; hidden <= fold.endLine; hidden++) {
+				rowOfLine[hidden] = row;
+			}
+			row++;
+			line = fold.endLine + 1;
+		} else {
+			rowOfLine[line] = row;
+			row++;
+			line++;
+		}
+	}
+	return { rowOfLine, rowCount: row };
+}
+
 export function buildCodeFoldModel(lines: string[]): Map<number, CodeFoldRange> {
 	const folds = new Map<number, CodeFoldRange>();
 
