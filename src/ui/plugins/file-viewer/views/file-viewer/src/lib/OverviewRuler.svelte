@@ -12,7 +12,7 @@
 	 * state, and wires the DOM events (scroll, resize, click) around it.
 	 */
 	import { layoutRulerSegments, thumbGeometry, scrollTopForTrackPosition, hitTestMark, type RulerMark } from './overviewRuler';
-	import { observeLayout } from './measureOffsets';
+	import { observeLayout, coalesceToAnimationFrame } from './measureOffsets';
 
 	interface Props {
 		marks: readonly RulerMark[];
@@ -53,13 +53,18 @@
 			return;
 		}
 
-		const handleScroll = () => measure();
+		// Scroll fires far more often than layout changes, so it shares the
+		// same per-animation-frame coalescing helper as the resize path
+		// (`observeLayout`) rather than measuring synchronously on every event.
+		const scrollFrame = coalesceToAnimationFrame(measure);
+		const handleScroll = () => scrollFrame.schedule();
 		element.addEventListener('scroll', handleScroll, { passive: true });
 		const stopRulerObserver = observeLayout(ruler, measure);
 		const stopScrollObserver = observeLayout(element, measure);
 
 		return () => {
 			element.removeEventListener('scroll', handleScroll);
+			scrollFrame.cancel();
 			stopRulerObserver();
 			stopScrollObserver();
 		};
@@ -77,6 +82,10 @@
 		}
 		const rect = rulerElement.getBoundingClientRect();
 		const y = event.clientY - rect.top;
+		// Hit-testing walks the raw `marks`, never the merged `segments` drawn
+		// above: a merged tick on screen can represent several real marks, and
+		// testing the merged segment's bounds alone would lose which one the
+		// click was closest to, so we always resolve to the nearest real mark.
 		const hit = hitTestMark(marks, y, trackHeight, hitTolerance);
 		if (hit) {
 			onMarkActivate?.(hit);

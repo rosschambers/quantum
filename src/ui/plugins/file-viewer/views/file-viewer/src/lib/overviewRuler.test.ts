@@ -142,6 +142,20 @@ describe('scrollTopForTrackPosition', () => {
         const view = { scrollTop: 0, clientHeight: 200, scrollHeight: 1200 };
         expect(scrollTopForTrackPosition(600, 600, view)).toBe(1000);
     });
+
+    test('returns the current scroll position, finite, when trackHeight is zero', () => {
+        const view = { scrollTop: 123, clientHeight: 200, scrollHeight: 1200 };
+        const result = scrollTopForTrackPosition(300, 0, view);
+        expect(result).toBe(123);
+        expect(Number.isFinite(result)).toBe(true);
+    });
+
+    test('returns the current scroll position, finite, when trackHeight is negative', () => {
+        const view = { scrollTop: 50, clientHeight: 200, scrollHeight: 1200 };
+        const result = scrollTopForTrackPosition(300, -10, view);
+        expect(result).toBe(50);
+        expect(Number.isFinite(result)).toBe(true);
+    });
 });
 
 describe('hitTestMark', () => {

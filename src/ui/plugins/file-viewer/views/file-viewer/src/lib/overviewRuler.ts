@@ -149,6 +149,9 @@ export function thumbGeometry(view: ScrollView, trackHeight: number): { top: num
 }
 
 export function scrollTopForTrackPosition(y: number, trackHeight: number, view: ScrollView): number {
+    if (trackHeight <= 0) {
+        return view.scrollTop;
+    }
     const target = (y / trackHeight) * view.scrollHeight - view.clientHeight / 2;
     const maxScrollTop = Math.max(0, view.scrollHeight - view.clientHeight);
     return Math.min(Math.max(target, 0), maxScrollTop);

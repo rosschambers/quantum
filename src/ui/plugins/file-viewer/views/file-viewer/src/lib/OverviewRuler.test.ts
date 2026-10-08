@@ -26,8 +26,10 @@ function stubTrackHeight(height: number) {
 function makeScrollElement(scrollTop: number, clientHeight: number, scrollHeight: number): HTMLDivElement {
     const element = document.createElement('div');
     Object.defineProperty(element, 'scrollTop', { value: scrollTop, writable: true, configurable: true });
-    Object.defineProperty(element, 'clientHeight', { value: clientHeight, configurable: true });
-    Object.defineProperty(element, 'scrollHeight', { value: scrollHeight, configurable: true });
+    // Accessor properties (rather than plain values) so a test can spy on
+    // `clientHeight`/`scrollHeight` reads with `vi.spyOn(element, 'clientHeight', 'get')`.
+    Object.defineProperty(element, 'clientHeight', { get: () => clientHeight, configurable: true });
+    Object.defineProperty(element, 'scrollHeight', { get: () => scrollHeight, configurable: true });
     return element;
 }
 
@@ -91,9 +93,63 @@ describe('OverviewRuler', () => {
         (scrollElement as any).scrollTop = 600;
         await fireEvent.scroll(scrollElement);
 
-        const thumb = container.querySelector('.ruler-thumb') as HTMLElement;
+        // The scroll handler now coalesces to one measurement per animation
+        // frame (see the `OverviewRuler > coalesces...` tests below), so the
+        // thumb update lands on the next frame rather than synchronously.
         const expected = thumbGeometry({ scrollTop: 600, clientHeight: 200, scrollHeight: 1200 }, 600);
-        expect(thumb.style.top).toBe(`${expected.top}px`);
+        await vi.waitFor(() => {
+            const thumb = container.querySelector('.ruler-thumb') as HTMLElement;
+            expect(thumb.style.top).toBe(`${expected.top}px`);
+        });
+        heightSpy.mockRestore();
+    });
+
+    test('coalesces three scroll events in the same tick into one measurement after one animation frame', async () => {
+        const frameCallbacks: FrameRequestCallback[] = [];
+        let nextFrameId = 1;
+        vi.stubGlobal('requestAnimationFrame', (callback: FrameRequestCallback) => {
+            frameCallbacks.push(callback);
+            return nextFrameId++;
+        });
+        vi.stubGlobal('cancelAnimationFrame', () => {});
+
+        const heightSpy = stubTrackHeight(600);
+        const scrollElement = makeScrollElement(0, 200, 1200);
+        const clientHeightSpy = vi.spyOn(scrollElement, 'clientHeight', 'get');
+        const marks: RulerMark[] = [{ start: 0.1, extent: 0, kind: 'match' }];
+        render(OverviewRuler, { props: { marks, scrollElement } });
+
+        // Discard the mount-time measurement; only count work triggered by scroll.
+        clientHeightSpy.mockClear();
+        frameCallbacks.length = 0;
+
+        await fireEvent.scroll(scrollElement);
+        await fireEvent.scroll(scrollElement);
+        await fireEvent.scroll(scrollElement);
+
+        expect(clientHeightSpy).not.toHaveBeenCalled();
+        expect(frameCallbacks).toHaveLength(1);
+
+        frameCallbacks[0](0);
+        expect(clientHeightSpy).toHaveBeenCalledTimes(1);
+
+        heightSpy.mockRestore();
+    });
+
+    test('teardown cancels a pending scroll-coalescing animation frame', async () => {
+        const cancelledIds: number[] = [];
+        let nextFrameId = 1;
+        vi.stubGlobal('requestAnimationFrame', () => nextFrameId++);
+        vi.stubGlobal('cancelAnimationFrame', (id: number) => cancelledIds.push(id));
+
+        const heightSpy = stubTrackHeight(600);
+        const scrollElement = makeScrollElement(0, 200, 1200);
+        const { unmount } = render(OverviewRuler, { props: { marks: [], scrollElement } });
+
+        await fireEvent.scroll(scrollElement);
+        unmount();
+
+        expect(cancelledIds.length).toBeGreaterThan(0);
         heightSpy.mockRestore();
     });
 
@@ -119,6 +175,30 @@ describe('OverviewRuler', () => {
         await fireEvent.click(root, { clientY: 300 });
         expect(onMarkActivate).toHaveBeenCalledWith(marks[0]);
         expect(scrollElement.scrollTop).toBe(0);
+        heightSpy.mockRestore();
+        rectSpy.mockRestore();
+    });
+
+    test('activates a mark clicked 3px away using the default hitTolerance, but not one 6px away', async () => {
+        const heightSpy = stubTrackHeight(600);
+        const rectSpy = vi
+            .spyOn(HTMLElement.prototype, 'getBoundingClientRect')
+            .mockReturnValue({ top: 0, left: 0, right: 10, bottom: 600, width: 10, height: 600, x: 0, y: 0, toJSON() { return this; } } as DOMRect);
+        const marks: RulerMark[] = [{ start: 0.5, extent: 0, kind: 'match', index: 3 }];
+        const onMarkActivate = vi.fn();
+        const scrollElement = makeScrollElement(0, 200, 1200);
+        // hitTolerance omitted: relies on the component's default of 4.
+        const { container, rerender } = render(OverviewRuler, { props: { marks, scrollElement, onMarkActivate } });
+        const root = container.querySelector('.overview-ruler') as HTMLElement;
+
+        await fireEvent.click(root, { clientY: 303 });
+        expect(onMarkActivate).toHaveBeenCalledWith(marks[0]);
+
+        onMarkActivate.mockClear();
+        await rerender({ marks, scrollElement, onMarkActivate });
+        await fireEvent.click(root, { clientY: 306 });
+        expect(onMarkActivate).not.toHaveBeenCalled();
+
         heightSpy.mockRestore();
         rectSpy.mockRestore();
     });

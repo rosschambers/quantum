@@ -46,31 +46,50 @@ export function measureFractions(root: HTMLElement, anchors: ArrayLike<Element |
 }
 
 /**
+ * Coalesces any number of `schedule()` calls that land in the same tick into
+ * at most one `callback` invocation on the next animation frame. Shared by
+ * `observeLayout`'s resize path and the overview ruler's scroll path, so
+ * both read layout at most once per frame regardless of how many raw events
+ * fired. `cancel()` drops a still-pending frame without running `callback`.
+ */
+export function coalesceToAnimationFrame(callback: () => void): { schedule: () => void; cancel: () => void } {
+    let pendingFrame: number | null = null;
+
+    return {
+        schedule(): void {
+            if (pendingFrame !== null) {
+                return;
+            }
+            pendingFrame = requestAnimationFrame(() => {
+                pendingFrame = null;
+                callback();
+            });
+        },
+        cancel(): void {
+            if (pendingFrame !== null) {
+                cancelAnimationFrame(pendingFrame);
+                pendingFrame = null;
+            }
+        },
+    };
+}
+
+/**
  * Watches `root` for layout changes (content resize, window resize, font
  * load, ...) via a single `ResizeObserver`, coalescing any number of
  * callbacks that land in the same tick into at most one `onChange` per
- * animation frame. Returns a function that disconnects the observer and
- * cancels any frame still pending.
+ * animation frame (via `coalesceToAnimationFrame`). Returns a function that
+ * disconnects the observer and cancels any frame still pending.
  */
 export function observeLayout(root: HTMLElement, onChange: () => void): () => void {
-    let pendingFrame: number | null = null;
-
+    const frame = coalesceToAnimationFrame(onChange);
     const observer = new ResizeObserver(() => {
-        if (pendingFrame !== null) {
-            return;
-        }
-        pendingFrame = requestAnimationFrame(() => {
-            pendingFrame = null;
-            onChange();
-        });
+        frame.schedule();
     });
     observer.observe(root);
 
     return () => {
         observer.disconnect();
-        if (pendingFrame !== null) {
-            cancelAnimationFrame(pendingFrame);
-            pendingFrame = null;
-        }
+        frame.cancel();
     };
 }
