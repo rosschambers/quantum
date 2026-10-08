@@ -188,3 +188,45 @@ export function findMatchesInDom(root: Element, query: string): Range[] {
 
     return ranges;
 }
+
+export interface MatchSegment {
+    node: Text;
+    start: number;
+    end: number;
+    matchIndex: number;
+}
+
+export interface MatchSegments {
+    count: number;
+    segments: MatchSegment[];
+}
+
+/**
+ * Like findMatchesInDom, but returns per-text-node segments computed from the
+ * offsets collectTextSpans already produced, with one ordered two-pointer walk.
+ * Creates no Range objects: WebKit keeps live ranges updated on every DOM
+ * mutation, which made wrapping quadratic in practice (design doc, "Folded in").
+ */
+export function findMatchSegmentsInDom(root: Element, query: string): MatchSegments {
+    if (!query) {
+        return { count: 0, segments: [] };
+    }
+    const { text, spans } = collectTextSpans(root);
+    const matches = findMatches(text, query);
+    const segments: MatchSegment[] = [];
+    let spanIndex = 0;
+    matches.forEach((match, matchIndex) => {
+        while (spanIndex < spans.length && spans[spanIndex].end <= match.start) {
+            spanIndex++;
+        }
+        for (let cursor = spanIndex; cursor < spans.length && spans[cursor].start < match.end; cursor++) {
+            const span = spans[cursor];
+            const start = Math.max(match.start, span.start) - span.start;
+            const end = Math.min(match.end, span.end) - span.start;
+            if (end > start) {
+                segments.push({ node: span.node, start, end, matchIndex });
+            }
+        }
+    });
+    return { count: matches.length, segments };
+}

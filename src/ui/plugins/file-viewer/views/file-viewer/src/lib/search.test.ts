@@ -1,5 +1,5 @@
 import { describe, test, expect } from 'vitest';
-import { findMatches, findMatchesInLines, findMatchesInDom } from './search';
+import { findMatches, findMatchesInLines, findMatchesInDom, findMatchSegmentsInDom } from './search';
 
 describe('findMatches', () => {
     test('maps expanded lowercase characters back to original UTF16 offsets', () => {
@@ -103,5 +103,42 @@ describe('findMatchesInDom', () => {
     test('finds multiple matches in order', () => {
         document.body.innerHTML = '<div id="r"><p>cat cat cat</p></div>';
         expect(findMatchesInDom(document.getElementById('r')!, 'cat')).toHaveLength(3);
+    });
+});
+
+function domFrom(html: string): HTMLElement {
+    const root = document.createElement('div');
+    root.innerHTML = html;
+    return root;
+}
+
+describe('findMatchSegmentsInDom', () => {
+    test('returns one segment per text node a match covers, sharing the match index', () => {
+        const root = domFrom('<p>nee<strong>dle</strong> and needle</p>');
+        const result = findMatchSegmentsInDom(root, 'needle');
+        expect(result.count).toBe(2);
+        expect(result.segments.map((segment) => [segment.node.data.slice(segment.start, segment.end), segment.matchIndex]))
+            .toEqual([['nee', 0], ['dle', 0], ['needle', 1]]);
+    });
+
+    test('never matches across a block boundary and skips diagram source', () => {
+        const root = domFrom('<p>nee</p><p>dle</p><div class="diagram-block">needle</div>');
+        expect(findMatchSegmentsInDom(root, 'needle').count).toBe(0);
+    });
+
+    test('has the same count as findMatchesInDom', () => {
+        const root = domFrom('<h1>Upload</h1><p>up <em>upl</em>oad upload</p><ul><li>UPLOAD</li></ul>');
+        for (const query of ['u', 'up', 'upload', 'oad u']) {
+            expect(findMatchSegmentsInDom(root, query).count).toBe(findMatchesInDom(root, query).length);
+        }
+    });
+
+    test('stays linear: 300 paragraphs with 150 matches finish quickly', () => {
+        const html = Array.from({ length: 300 }, (_, index) => `<p>line ${index}${index % 2 === 0 ? ' token' : ''} <em>tail</em></p>`).join('');
+        const root = domFrom(html);
+        const started = performance.now();
+        const result = findMatchSegmentsInDom(root, 'token');
+        expect(result.count).toBe(150);
+        expect(performance.now() - started).toBeLessThan(500);
     });
 });
