@@ -185,3 +185,113 @@ async fn reports_every_kind_of_change_against_head() {
         );
     }
 }
+
+#[tokio::test]
+async fn base_other_than_head_against_working_tree_is_read_only_and_sees_both_layers() {
+    let (_tempdir, root) = repository();
+
+    std::fs::write(root.join("a.txt"), "first\n").unwrap();
+    git(&root, &["add", "."]);
+    git(&root, &["commit", "-q", "-m", "first commit"]);
+
+    // A second commit, so HEAD~1 is one commit behind HEAD.
+    std::fs::write(root.join("a.txt"), "second\n").unwrap();
+    git(&root, &["commit", "-aq", "-m", "second commit"]);
+
+    // An uncommitted edit on top of HEAD, so the working tree differs from
+    // both HEAD and HEAD~1.
+    std::fs::write(root.join("a.txt"), "second, uncommitted\n").unwrap();
+
+    let review = GitRepositoryReview;
+    let spec = DiffSpec {
+        repository: root.to_str().expect("utf8 path").to_string(),
+        base: "HEAD~1".to_string(),
+        target: None,
+    };
+    let change_set = review.changes(&spec).await.expect("changes succeeds");
+
+    assert!(
+        !change_set.stageable,
+        "a base other than HEAD must never be stageable"
+    );
+    assert_eq!(change_set.base_label, "HEAD~1");
+    assert_eq!(change_set.target_label, "working tree");
+
+    let file = find(&change_set, "a.txt");
+    assert!(file.index.is_none(), "non-HEAD bases report no index side");
+    assert_eq!(
+        file.base.as_ref().expect("base present").content,
+        Some("first\n".to_string()),
+        "base must be HEAD~1's committed content, not HEAD's"
+    );
+    assert_eq!(
+        file.target.as_ref().expect("target present").content,
+        Some("second, uncommitted\n".to_string()),
+        "target must be the uncommitted working tree content, not HEAD's"
+    );
+}
+
+#[tokio::test]
+async fn ref_range_shows_only_the_committed_difference() {
+    let (_tempdir, root) = repository();
+
+    std::fs::write(root.join("a.txt"), "first\n").unwrap();
+    git(&root, &["add", "."]);
+    git(&root, &["commit", "-q", "-m", "first commit"]);
+
+    std::fs::write(root.join("a.txt"), "second\n").unwrap();
+    git(&root, &["commit", "-aq", "-m", "second commit"]);
+
+    // An uncommitted edit that must NOT show up in a ref-range comparison:
+    // a ref range compares two commits only.
+    std::fs::write(root.join("a.txt"), "uncommitted, must not appear\n").unwrap();
+
+    let review = GitRepositoryReview;
+    let spec = DiffSpec {
+        repository: root.to_str().expect("utf8 path").to_string(),
+        base: "HEAD~1".to_string(),
+        target: Some("HEAD".to_string()),
+    };
+    let change_set = review.changes(&spec).await.expect("changes succeeds");
+
+    assert!(!change_set.stageable);
+    assert_eq!(change_set.base_label, "HEAD~1");
+    assert_eq!(change_set.target_label, "HEAD");
+
+    let file = find(&change_set, "a.txt");
+    assert_eq!(
+        file.base.as_ref().expect("base present").content,
+        Some("first\n".to_string())
+    );
+    assert_eq!(
+        file.target.as_ref().expect("target present").content,
+        Some("second\n".to_string()),
+        "target must be HEAD's committed content, not the uncommitted working tree edit"
+    );
+}
+
+#[tokio::test]
+async fn an_unknown_ref_surfaces_gits_error() {
+    let (_tempdir, root) = repository();
+    std::fs::write(root.join("a.txt"), "first\n").unwrap();
+    git(&root, &["add", "."]);
+    git(&root, &["commit", "-q", "-m", "first commit"]);
+
+    let review = GitRepositoryReview;
+    let spec = DiffSpec {
+        repository: root.to_str().expect("utf8 path").to_string(),
+        base: "not-a-real-ref".to_string(),
+        target: None,
+    };
+    let error = review
+        .changes(&spec)
+        .await
+        .expect_err("an unknown ref must fail");
+
+    match error {
+        quantum_domain::ReviewError::GitFailed(message) => {
+            assert!(!message.is_empty(), "the error must carry git's own stderr");
+        }
+        other => panic!("expected GitFailed, got {other:?}"),
+    }
+}

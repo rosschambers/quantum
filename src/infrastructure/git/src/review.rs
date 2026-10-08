@@ -105,7 +105,15 @@ async fn changes_against_head(root_path: &Path, root: &str) -> Result<ChangeSet,
             None
         };
         let target = if target_present(entry) {
-            Some(read_working_tree_side(root_path, &entry.path, entry).await?)
+            Some(
+                read_working_tree_side(
+                    root_path,
+                    &entry.path,
+                    &entry.worktree_mode,
+                    entry.untracked,
+                )
+                .await?,
+            )
         } else {
             None
         };
@@ -132,17 +140,222 @@ async fn changes_against_head(root_path: &Path, root: &str) -> Result<ChangeSet,
     })
 }
 
+/// The all-zero mode/blob sentinels `git diff --raw` uses for "this side does
+/// not exist" (mode) and "read this side from the working tree instead of an
+/// object" (blob, only ever the dst side, only when no second ref was given).
+const ZERO_MODE: &str = "000000";
+const ZERO_BLOB: &str = "0000000000000000000000000000000000000000";
+
 /// `changes()` for every `DiffSpec` other than `{ base: "HEAD", target: None
-/// }`: implemented in a later commit (arbitrary refs and ref ranges, always
-/// read-only).
+/// }`: a committed base compared against either the working tree (no second
+/// ref) or another ref (a ref range such as `qv --diff A..B`). Always
+/// read-only (decision D2: staging is only available when comparing HEAD
+/// against the working tree, which goes through [`changes_against_head`]).
 async fn changes_for_other_base(
-    _root_path: &Path,
-    _root: &str,
-    _spec: &DiffSpec,
+    root_path: &Path,
+    root: &str,
+    spec: &DiffSpec,
 ) -> Result<ChangeSet, ReviewError> {
-    Err(ReviewError::GitFailed(
-        "comparing against a base other than HEAD is not yet implemented".to_string(),
-    ))
+    let mut arguments: Vec<&str> = vec!["diff", "--raw", "-z", "-M", "--no-abbrev", &spec.base];
+    if let Some(target) = spec.target.as_deref() {
+        arguments.push(target);
+    }
+    let diff_output = run_git(root_path, &arguments, None).await?;
+    let mut entries = parse_raw_diff(&diff_output);
+
+    // Only a working-tree comparison (no second ref) can have untracked
+    // files: a ref range compares two commits, where nothing is untracked.
+    let target_from_disk = spec.target.is_none();
+    if target_from_disk {
+        let ls_output = run_git(
+            root_path,
+            &["ls-files", "--others", "--exclude-standard", "-z"],
+            None,
+        )
+        .await?;
+        for path in split_nul_strings(&ls_output) {
+            entries.push(RawDiffEntry {
+                src_mode: ZERO_MODE.to_string(),
+                dst_mode: ZERO_MODE.to_string(),
+                src_blob: ZERO_BLOB.to_string(),
+                dst_blob: ZERO_BLOB.to_string(),
+                status: 'A',
+                path,
+                old_path: None,
+                untracked: true,
+            });
+        }
+    }
+
+    // Batch-read every blob this change set needs: the base side always
+    // comes from a blob; the target side comes from a blob only when
+    // comparing two refs (otherwise it is read from the working tree below).
+    let mut blob_ids: Vec<String> = Vec::new();
+    for entry in &entries {
+        if entry.src_mode != ZERO_MODE {
+            blob_ids.push(entry.src_blob.clone());
+        }
+        if !target_from_disk && entry.dst_mode != ZERO_MODE {
+            blob_ids.push(entry.dst_blob.clone());
+        }
+    }
+    let blobs = batch_read_blobs(root_path, &blob_ids).await?;
+
+    let mut files = Vec::with_capacity(entries.len());
+    for entry in &entries {
+        let base = if entry.src_mode != ZERO_MODE {
+            Some(file_side_from_blob(
+                &blobs,
+                &entry.src_blob,
+                &entry.src_mode,
+            )?)
+        } else {
+            None
+        };
+
+        let target = if entry.untracked {
+            Some(read_working_tree_side(root_path, &entry.path, "", true).await?)
+        } else if target_from_disk {
+            if entry.dst_mode == ZERO_MODE {
+                None
+            } else {
+                Some(read_working_tree_side(root_path, &entry.path, &entry.dst_mode, false).await?)
+            }
+        } else if entry.dst_mode != ZERO_MODE {
+            Some(file_side_from_blob(
+                &blobs,
+                &entry.dst_blob,
+                &entry.dst_mode,
+            )?)
+        } else {
+            None
+        };
+
+        files.push(ChangedFile {
+            path: entry.path.clone(),
+            old_path: entry.old_path.clone(),
+            language: language_for_path(&entry.path),
+            base,
+            index: None,
+            target,
+            untracked: entry.untracked,
+        });
+    }
+
+    files.sort_by(|a, b| a.path.cmp(&b.path));
+
+    let target_label = spec
+        .target
+        .clone()
+        .unwrap_or_else(|| "working tree".to_string());
+
+    Ok(ChangeSet {
+        repository_root: root.to_string(),
+        base_label: spec.base.clone(),
+        target_label,
+        stageable: false,
+        files,
+    })
+}
+
+/// One entry from `git diff --raw -z -M --no-abbrev`.
+struct RawDiffEntry {
+    src_mode: String,
+    dst_mode: String,
+    src_blob: String,
+    dst_blob: String,
+    /// Kept for parity with the raw record and possible future use (for
+    /// example a future "changed/added/deleted" filter); presence/absence
+    /// of each side is derived from mode zero-ness instead, so nothing
+    /// reads this field today.
+    #[allow(dead_code)]
+    status: char,
+    path: String,
+    old_path: Option<String>,
+    /// Set only for the synthetic entries `changes_for_other_base` appends
+    /// from `git ls-files --others`; never produced by `parse_raw_diff`
+    /// itself (`git diff --raw` never reports untracked files).
+    untracked: bool,
+}
+
+/// Parse `git diff --raw -z -M --no-abbrev` output:
+/// `:<srcmode> <dstmode> <srcsha> <dstsha> <status>[score]\0<path>\0`, or for
+/// a rename/copy (`status` starts with `R`/`C`),
+/// `...\0<srcpath>\0<dstpath>\0` — the OLD path first, then the new one.
+fn parse_raw_diff(output: &[u8]) -> Vec<RawDiffEntry> {
+    let chunks: Vec<&[u8]> = output
+        .split(|&byte| byte == 0)
+        .filter(|chunk| !chunk.is_empty())
+        .collect();
+
+    let mut entries = Vec::new();
+    let mut index = 0;
+    while index < chunks.len() {
+        let header = String::from_utf8_lossy(chunks[index]);
+        let Some(rest) = header.strip_prefix(':') else {
+            tracing::warn!(record = %header, "unrecognized git diff --raw record, skipping");
+            index += 1;
+            continue;
+        };
+
+        let mut fields = rest.split(' ');
+        let parsed = (
+            fields.next(),
+            fields.next(),
+            fields.next(),
+            fields.next(),
+            fields.next(),
+        );
+        let (Some(src_mode), Some(dst_mode), Some(src_blob), Some(dst_blob), Some(status_field)) =
+            parsed
+        else {
+            tracing::warn!(record = %header, "malformed git diff --raw header, skipping");
+            index += 1;
+            continue;
+        };
+        let status = status_field.chars().next().unwrap_or('M');
+        let is_rename_or_copy = matches!(status, 'R' | 'C');
+
+        index += 1;
+        let first_path = chunks
+            .get(index)
+            .map(|chunk| String::from_utf8_lossy(chunk).into_owned());
+
+        let (path, old_path) = if is_rename_or_copy {
+            index += 1;
+            let second_path = chunks
+                .get(index)
+                .map(|chunk| String::from_utf8_lossy(chunk).into_owned());
+            (second_path.unwrap_or_default(), first_path)
+        } else {
+            (first_path.unwrap_or_default(), None)
+        };
+
+        entries.push(RawDiffEntry {
+            src_mode: src_mode.to_string(),
+            dst_mode: dst_mode.to_string(),
+            src_blob: src_blob.to_string(),
+            dst_blob: dst_blob.to_string(),
+            status,
+            path,
+            old_path,
+            untracked: false,
+        });
+
+        index += 1;
+    }
+
+    entries
+}
+
+/// Split NUL-separated bytes into non-empty UTF-8 strings (used for
+/// `git ls-files -z` output, which has no header fields at all).
+fn split_nul_strings(output: &[u8]) -> Vec<String> {
+    output
+        .split(|&byte| byte == 0)
+        .filter(|chunk| !chunk.is_empty())
+        .map(|chunk| String::from_utf8_lossy(chunk).into_owned())
+        .collect()
 }
 
 /// Whether a status entry has a HEAD-side file: untracked files and newly
@@ -210,10 +423,15 @@ fn file_side_from_blob(
 /// writing its exact current bytes into the object database (decision D1:
 /// Stage must stage exactly what was displayed, even if the file changes
 /// again before the user clicks Stage).
+///
+/// `worktree_mode` is the mode git already knows for a tracked file;
+/// `untracked` files have none, so their mode is instead derived from the
+/// file's own executable bit (`worktree_mode` is ignored in that case).
 async fn read_working_tree_side(
     root_path: &Path,
     path: &str,
-    entry: &StatusEntry,
+    worktree_mode: &str,
+    untracked: bool,
 ) -> Result<FileSide, ReviewError> {
     let file_path = root_path.join(path);
 
@@ -241,7 +459,7 @@ async fn read_working_tree_side(
         }
     }
 
-    let mode = if entry.untracked {
+    let mode = if untracked {
         let executable = metadata.permissions().mode() & 0o111 != 0;
         if executable {
             "100755".to_string()
@@ -249,7 +467,7 @@ async fn read_working_tree_side(
             "100644".to_string()
         }
     } else {
-        entry.worktree_mode.clone()
+        worktree_mode.to_string()
     };
 
     let path_argument = format!("--path={path}");
