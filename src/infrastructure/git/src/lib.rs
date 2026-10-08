@@ -5,5 +5,10 @@
 //! always tracks whatever git version is installed on the host.
 
 mod runner;
+// Consumed by `review::GitRepositoryReview::changes` (added in the next
+// commit); until then nothing in the crate calls these items outside their
+// own tests, which `-D warnings` would otherwise reject as dead code.
+#[allow(dead_code)]
+mod status;
 
 pub use runner::repository_root;
