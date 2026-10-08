@@ -3,6 +3,7 @@ import { render, fireEvent, cleanup } from '@testing-library/svelte/svelte5';
 import JsonFoldRenderer from './JsonFoldRenderer.svelte';
 import rendererSource from './JsonFoldRenderer.svelte?raw';
 import * as highlighterModule from './highlighter';
+import { rowCenterFraction } from './overviewRuler';
 
 beforeAll(() => {
     if (typeof Element.prototype.scrollIntoView !== 'function') {
@@ -169,5 +170,39 @@ describe('JsonFoldRenderer search highlighting', () => {
         await rerender({ query: 'needle' });
         expect(spy.mock.calls.length).toBeLessThan(20);
         spy.mockRestore();
+    });
+
+    it('reports match positions mapped through visible rows, remapping a collapsed fold to its header row', async () => {
+        const content = '{"a":{"b":{"value":"needle"}}}';
+        const positionCalls: Float64Array[] = [];
+        const onMatchPositions = (positions: Float64Array) => positionCalls.push(positions);
+        const { container, rerender } = render(JsonFoldRenderer, { props: { content, onMatchPositions } });
+        const lines = JSON.stringify(JSON.parse(content), null, 2).split('\n');
+        // Collapse the outer object (line 1, 0-based line index 0).
+        const gutterLine = Array.from(container.querySelectorAll('.gutter-line')).find((line) => line.querySelector('.line-number')?.textContent === '1')!;
+        await fireEvent.click(gutterLine.querySelector('button')!);
+        positionCalls.length = 0;
+        await rerender({ query: 'needle' });
+        await vi.waitFor(() => expect(positionCalls.length).toBeGreaterThan(0));
+        // Everything collapses under the single header row (row 0 of 1).
+        expect(positionCalls.at(-1)).toEqual(new Float64Array([rowCenterFraction(0, 1, { paddingTop: 12, rowHeight: 20.8, paddingBottom: 12 })]));
+
+        positionCalls.length = 0;
+        await fireEvent.click(gutterLine.querySelector('button')!);
+        await vi.waitFor(() => expect(positionCalls.length).toBeGreaterThan(0));
+        const needleLineIndex = lines.findIndex((line) => line.includes('needle'));
+        expect(positionCalls.at(-1)).toEqual(new Float64Array([rowCenterFraction(needleLineIndex, lines.length, { paddingTop: 12, rowHeight: 20.8, paddingBottom: 12 })]));
+    });
+
+    it('never calls onMatchPositions when only currentMatchIndex changes', async () => {
+        const positionCalls: Float64Array[] = [];
+        const onMatchPositions = (positions: Float64Array) => positionCalls.push(positions);
+        const { rerender } = render(JsonFoldRenderer, {
+            props: { content: '{"a":"needle","b":"needle"}', query: 'needle', currentMatchIndex: 0, onMatchPositions },
+        });
+        await vi.waitFor(() => expect(positionCalls.length).toBeGreaterThan(0));
+        positionCalls.length = 0;
+        await rerender({ currentMatchIndex: 1 });
+        expect(positionCalls).toHaveLength(0);
     });
 });

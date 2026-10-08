@@ -98,3 +98,14 @@ describe('VirtualScroller scrollToIndex', () => {
         expect(scroller.scrollTop).toBe(500);
     });
 });
+
+describe('VirtualScroller bindable container', () => {
+    it('reports its own scroll element through the bindable container prop', () => {
+        const values: (HTMLDivElement | undefined)[] = [];
+        const { container } = render(Harness, {
+            props: { lines: makeLines(10), lineHeight: 20, onContainerChange: (value) => values.push(value) },
+        });
+        const scroller = container.querySelector('.virtual-scroller') as HTMLDivElement;
+        expect(values.at(-1)).toBe(scroller);
+    });
+});

@@ -1,7 +1,8 @@
 <script lang="ts">
 	import { highlightCode, highlightLineWithMatches } from './highlighter';
-	import { buildCodeFoldModel, foldAncestors } from './fold-model';
+	import { buildCodeFoldModel, foldAncestors, visibleRowOfLine } from './fold-model';
 	import { findMatchesInLines, type MatchRange } from './search';
+	import { rowCenterFraction } from './overviewRuler';
 	import LineNumbers from './LineNumbers.svelte';
 	import VirtualScroller from './VirtualScroller.svelte';
 
@@ -14,6 +15,13 @@
 		currentMatchIndex?: number | null;
 		/** Fired whenever the computed match count changes. */
 		onMatchCount?: (count: number) => void;
+		/**
+		 * Fired whenever the match positions change (never when only
+		 * currentMatchIndex changes). Positions are fractions along the
+		 * scroll track, in the same order as onMatchCount's count, for the
+		 * shared overview ruler.
+		 */
+		onMatchPositions?: (positions: Float64Array) => void;
 		navigationRevision?: number;
 		/** The scrolling container, exposed for the shared overview ruler. */
 		scrollElement?: HTMLElement | null;
@@ -26,7 +34,7 @@
 		collapsed: boolean;
 	}
 
-	let { content, language, query = '', currentMatchIndex = null, onMatchCount, navigationRevision = 0, scrollElement = $bindable(null) }: Props = $props();
+	let { content, language, query = '', currentMatchIndex = null, onMatchCount, onMatchPositions, navigationRevision = 0, scrollElement = $bindable(null) }: Props = $props();
 
 	let lines = $derived(content.replace(/\n+$/, '').split('\n'));
 	let lineCount = $derived(lines.length);
@@ -63,6 +71,33 @@
 
 	$effect(() => {
 		onMatchCount?.(matches.length);
+	});
+
+	// Positions are pure arithmetic on fixed row heights, never DOM
+	// measurement: virtual rows key straight off the match's own line index
+	// (every line is exactly one row); the non-virtual (foldable) path first
+	// maps each line to its visible row across collapsed folds (Task 8), so
+	// a match inside a collapsed fold marks the header row instead of a
+	// hidden line. Depends only on matches/fold state, never on
+	// currentMatchIndex, so selecting a different match never re-fires this.
+	let matchPositions = $derived.by(() => {
+		if (useVirtualScrolling) {
+			const positions = new Float64Array(matches.length);
+			for (let index = 0; index < matches.length; index++) {
+				positions[index] = rowCenterFraction(matches[index].lineIndex, lineCount, { paddingTop: 12, rowHeight: 21, paddingBottom: 12 });
+			}
+			return positions;
+		}
+		const { rowOfLine, rowCount } = visibleRowOfLine(lineCount, codeFoldModel, (startLine) => codeFoldState.get(startLine) === true);
+		const positions = new Float64Array(matches.length);
+		for (let index = 0; index < matches.length; index++) {
+			positions[index] = rowCenterFraction(rowOfLine[matches[index].lineIndex], rowCount, { paddingTop: 12, rowHeight: 20.8, paddingBottom: 12 });
+		}
+		return positions;
+	});
+
+	$effect(() => {
+		onMatchPositions?.(matchPositions);
 	});
 
 	function matchesForLine(lineIndex: number): MatchRange[] {
@@ -176,6 +211,7 @@
 			bufferLines={50}
 			scrollToIndex={currentMatch?.lineIndex}
 			{scrollRequest}
+			bind:container={scrollElement}
 		>
 			{#snippet children(props)}
 				<div class="virtual-code-lines">

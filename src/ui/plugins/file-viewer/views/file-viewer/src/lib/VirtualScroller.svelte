@@ -28,6 +28,12 @@
 		 */
 		visibleStart?: number;
 		visibleEnd?: number;
+		/**
+		 * Bindable mirror of the scrolling container itself, so a caller can
+		 * forward it onward as the `scrollElement` the shared overview ruler
+		 * tracks for scroll position and thumb geometry.
+		 */
+		container?: HTMLDivElement;
 		children: Snippet<[
 			{ visibleLines: string[]; visibleStart: number; visibleEnd: number; lineHeight: number; rowStyle: string }
 		]>;
@@ -42,10 +48,10 @@
 		scrollRequest,
 		visibleStart: externalVisibleStart = $bindable(undefined),
 		visibleEnd: externalVisibleEnd = $bindable(undefined),
+		container = $bindable(undefined),
 		children
 	}: Props = $props();
 
-	let container: HTMLDivElement | undefined = $state();
 	let scrollTop = $state(0);
 	let containerHeight = $state(0);
 

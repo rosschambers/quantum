@@ -13,12 +13,20 @@
 		scrollToIndex?: number;
 		scrollRequest?: unknown;
 		verticalPadding?: number;
+		/** Reports every value the bindable `container` prop takes on, for tests. */
+		onContainerChange?: (value: HTMLDivElement | undefined) => void;
 	}
 
-	let { lines, lineHeight, bufferLines, scrollToIndex, scrollRequest, verticalPadding }: Props = $props();
+	let { lines, lineHeight, bufferLines, scrollToIndex, scrollRequest, verticalPadding, onContainerChange }: Props = $props();
+
+	let container: HTMLDivElement | undefined = $state(undefined);
+
+	$effect(() => {
+		onContainerChange?.(container);
+	});
 </script>
 
-<VirtualScroller {lines} {lineHeight} {bufferLines} {scrollToIndex} {scrollRequest} {verticalPadding}>
+<VirtualScroller {lines} {lineHeight} {bufferLines} {scrollToIndex} {scrollRequest} {verticalPadding} bind:container>
 	{#snippet children(props)}
 		<div class="harness-content">
 			{#each props.visibleLines as line}

@@ -2,6 +2,8 @@
 	import VirtualScroller from './VirtualScroller.svelte';
 	import { highlightPlainLineWithMatches } from './highlighter';
 	import { findMatchesInLines, type MatchRange } from './search';
+	import { rowCenterFraction } from './overviewRuler';
+	import { measureFractions, observeLayout } from './measureOffsets';
 
 	interface Props {
 		content: string;
@@ -11,12 +13,19 @@
 		currentMatchIndex?: number | null;
 		/** Fired whenever the computed match count changes. */
 		onMatchCount?: (count: number) => void;
+		/**
+		 * Fired whenever the match positions change (never when only
+		 * currentMatchIndex changes). Positions are fractions along the
+		 * scroll track, in the same order as onMatchCount's count, for the
+		 * shared overview ruler.
+		 */
+		onMatchPositions?: (positions: Float64Array) => void;
 		navigationRevision?: number;
 		/** The scrolling container, exposed for the shared overview ruler. */
 		scrollElement?: HTMLElement | null;
 	}
 
-	let { content, query = '', currentMatchIndex = null, onMatchCount, navigationRevision = 0, scrollElement = $bindable(null) }: Props = $props();
+	let { content, query = '', currentMatchIndex = null, onMatchCount, onMatchPositions, navigationRevision = 0, scrollElement = $bindable(null) }: Props = $props();
 
 	let lines = $derived(content.split('\n'));
 	let lineCount = $derived(lines.length);
@@ -45,6 +54,54 @@
 		onMatchCount?.(matches.length);
 	});
 
+	// Virtual rows use fixed-height arithmetic (every line is exactly one
+	// row), computed synchronously with no DOM access. Short (wrapping) text
+	// has no fixed row height per line, so its positions are read from live
+	// layout instead — see the measurement effects below.
+	let virtualMatchPositions = $derived.by(() => {
+		if (!useVirtualScrolling) return null;
+		const positions = new Float64Array(matches.length);
+		for (let index = 0; index < matches.length; index++) {
+			positions[index] = rowCenterFraction(matches[index].lineIndex, lineCount, { paddingTop: 32, rowHeight: 21, paddingBottom: 32 });
+		}
+		return positions;
+	});
+
+	$effect(() => {
+		if (virtualMatchPositions) onMatchPositions?.(virtualMatchPositions);
+	});
+
+	function measureWrappedMatchPositions(): Float64Array {
+		const root = textContentElement;
+		if (!root) return new Float64Array(0);
+		const anchors = matches.map((match) => root.querySelector(`[data-line="${match.lineIndex + 1}"]`) ?? root);
+		return measureFractions(root, anchors);
+	}
+
+	// Short (wrapping) text has no fixed per-line row height, so match
+	// positions come from one batched live-layout read pass instead of
+	// arithmetic — scheduled a frame after each search pass (never
+	// synchronously inside the pass itself, and never on a mere
+	// currentMatchIndex change, since this depends only on `matches`).
+	$effect(() => {
+		if (useVirtualScrolling) return;
+		void matches;
+		const frameId = requestAnimationFrame(() => {
+			onMatchPositions?.(measureWrappedMatchPositions());
+		});
+		return () => cancelAnimationFrame(frameId);
+	});
+
+	// A persistent resize watch on the content root, independent of search
+	// passes, so a layout change (reflow, font load, container resize)
+	// re-measures the SAME matches without waiting for another keystroke.
+	$effect(() => {
+		if (useVirtualScrolling || !textContentElement) return;
+		return observeLayout(textContentElement, () => {
+			onMatchPositions?.(measureWrappedMatchPositions());
+		});
+	});
+
 	function renderedLine(lineIndex: number, text: string): string {
 		const lineMatches = matchesByLine.get(lineIndex) ?? [];
 		const current = currentMatch && currentMatch.lineIndex === lineIndex ? currentMatch.range : null;
@@ -70,7 +127,7 @@
 </script>
 
 {#if useVirtualScrolling}
-	<VirtualScroller {lines} lineHeight={21} verticalPadding={32} bufferLines={50} scrollToIndex={currentMatch?.lineIndex} {scrollRequest}>
+	<VirtualScroller {lines} lineHeight={21} verticalPadding={32} bufferLines={50} scrollToIndex={currentMatch?.lineIndex} {scrollRequest} bind:container={scrollElement}>
 		{#snippet children(props)}
 			<pre class="text-content" style="padding: 0 32px; white-space: pre;">{#each props.visibleLines as line, index}<span class="text-line" style={props.rowStyle} data-line={props.visibleStart + index + 1}>{@html renderedLine(props.visibleStart + index, line)}{#if props.visibleStart + index < lines.length - 1}{'\n'}{/if}</span>{/each}</pre>
 		{/snippet}

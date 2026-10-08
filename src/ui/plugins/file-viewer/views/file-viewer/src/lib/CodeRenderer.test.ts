@@ -3,6 +3,7 @@ import { render, fireEvent, cleanup } from '@testing-library/svelte/svelte5';
 import CodeRenderer from './CodeRenderer.svelte';
 import rendererSource from './CodeRenderer.svelte?raw';
 import * as highlighterModule from './highlighter';
+import { rowCenterFraction } from './overviewRuler';
 
 beforeAll(() => {
     if (typeof (globalThis as any).ResizeObserver === 'undefined') {
@@ -106,6 +107,55 @@ describe('CodeRenderer search highlighting (non-virtualized)', () => {
         spy.mockRestore();
     });
 
+    it('reports match positions mapped through visible rows, remapping a collapsed fold to its header row and splitting after expanding', async () => {
+        const lines = [
+            'function outer() {',
+            '  const a = 1;',
+            '  function inner() {',
+            '    return needle;',
+            '  }',
+            '  return a;',
+            '}',
+        ];
+        const content = lines.join('\n');
+        const positionCalls: Float64Array[] = [];
+        const onMatchPositions = (positions: Float64Array) => positionCalls.push(positions);
+        const { container, rerender } = render(CodeRenderer, {
+            props: { content, language: 'javascript', onMatchPositions },
+        });
+        const gutterLine = Array.from(container.querySelectorAll('.gutter-line')).find((line) => line.querySelector('.line-number')?.textContent === '3')!;
+        await fireEvent.click(gutterLine.querySelector('button')!);
+        positionCalls.length = 0;
+        await rerender({ content, language: 'javascript', query: 'needle', onMatchPositions });
+        await vi.waitFor(() => expect(positionCalls.length).toBeGreaterThan(0));
+        // Indentation-based folding at line index 2 ("function inner() {")
+        // only covers index 3 (the deeper-indented body); the closing brace
+        // at index 4 sits back at the same indent and is never swallowed —
+        // see the identical boundary already exercised by this file's
+        // "expands ALL folds enclosing the current match" test. Collapsed,
+        // line index 3 (needle) therefore maps to row 2 (the header's row),
+        // out of a row count of 6: 0, 1, 2-header(=3 hidden), 4, 5, 6.
+        expect(positionCalls.at(-1)).toEqual(new Float64Array([rowCenterFraction(2, 6, { paddingTop: 12, rowHeight: 20.8, paddingBottom: 12 })]));
+
+        positionCalls.length = 0;
+        await fireEvent.click(gutterLine.querySelector('button')!);
+        await vi.waitFor(() => expect(positionCalls.length).toBeGreaterThan(0));
+        // Expanded: line index 3 now maps to its own row 3, out of 7 rows.
+        expect(positionCalls.at(-1)).toEqual(new Float64Array([rowCenterFraction(3, 7, { paddingTop: 12, rowHeight: 20.8, paddingBottom: 12 })]));
+    });
+
+    it('never calls onMatchPositions when only currentMatchIndex changes', async () => {
+        const positionCalls: Float64Array[] = [];
+        const onMatchPositions = (positions: Float64Array) => positionCalls.push(positions);
+        const { rerender } = render(CodeRenderer, {
+            props: { content: 'cat cat cat', query: 'cat', currentMatchIndex: 0, onMatchPositions },
+        });
+        await vi.waitFor(() => expect(positionCalls.length).toBeGreaterThan(0));
+        positionCalls.length = 0;
+        await rerender({ currentMatchIndex: 1 });
+        expect(positionCalls).toHaveLength(0);
+    });
+
     it('scrolls the gutter together with the code in one shared scroll container', () => {
         const stylesheet = document.createElement('style');
         stylesheet.textContent = rendererSource.split('<style>')[1].split('</style>')[0];
@@ -159,4 +209,20 @@ describe('CodeRenderer search highlighting (virtualized, >500 lines)', () => {
         });
         expect(container.querySelector('mark.search-match')?.textContent).toBe('needle');
     });
+
+    it('reports match positions using fixed virtual row arithmetic (paddingTop/Bottom 12, rowHeight 21)', async () => {
+        const lines = Array.from({ length: 600 }, (_, i) => (i === 550 ? 'const needle = 1;' : `const line${i} = ${i};`));
+        const positionCalls: Float64Array[] = [];
+        render(CodeRenderer, {
+            props: {
+                content: lines.join('\n'),
+                language: 'javascript',
+                query: 'needle',
+                onMatchPositions: (positions: Float64Array) => positionCalls.push(positions),
+            },
+        });
+        await vi.waitFor(() => expect(positionCalls.length).toBeGreaterThan(0));
+        expect(positionCalls.at(-1)).toEqual(new Float64Array([rowCenterFraction(550, 600, { paddingTop: 12, rowHeight: 21, paddingBottom: 12 })]));
+    });
+
 });

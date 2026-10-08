@@ -3,6 +3,7 @@
     import { escapeHtml, highlightCode } from './highlighter';
     import { isMermaidLanguage, isGraphvizLanguage, diagramPlaceholderHtml, type DiagramRenderer } from './mermaid';
     import { findMatchSegmentsInDom, type MatchSegment } from './search';
+    import { measureFractions, observeLayout } from './measureOffsets';
     import { slugify } from './types';
     import './markdown.css';
 
@@ -39,10 +40,17 @@
         currentMatchIndex?: number | null;
         /** Fired whenever the computed match count changes. */
         onMatchCount?: (count: number) => void;
+        /**
+         * Fired whenever the match positions change (never when only
+         * currentMatchIndex changes). Positions are fractions along the
+         * scroll track, in the same order as onMatchCount's count, for the
+         * shared overview ruler.
+         */
+        onMatchPositions?: (positions: Float64Array) => void;
         navigationRevision?: number;
     }
 
-    let { content, fileDirectory, query = '', currentMatchIndex = null, onMatchCount, navigationRevision = 0 }: Props = $props();
+    let { content, fileDirectory, query = '', currentMatchIndex = null, onMatchCount, onMatchPositions, navigationRevision = 0 }: Props = $props();
 
     function isAbsoluteOrDataUrl(url: string): boolean {
         return /^(?:[a-z][a-z0-9+.-]*:|\/\/)/i.test(url);
@@ -215,6 +223,14 @@
                     renderDiagramError(placeholder, renderer, errorMessage(error));
                 }
             }
+
+            // A diagram's rendered SVG almost always changes the document's
+            // flow height, shifting every match below it — re-measure once
+            // the whole render loop has settled rather than leaving the
+            // ruler holding positions from before the diagrams existed.
+            if (!cancelled) {
+                onMatchPositions?.(measureMatchPositions());
+            }
         })();
 
         return () => {
@@ -274,6 +290,36 @@
             for (const mark of marks) mark.classList.toggle('search-match-current', index === currentMatchIndex);
         }
         if (currentMatchIndex !== null) matchMarks[currentMatchIndex]?.[0]?.scrollIntoView({ block: 'center' });
+    });
+
+    // Markdown has no fixed per-line row height (rendered prose reflows), so
+    // match positions come from one batched live-layout read pass instead of
+    // arithmetic, anchored on each match's first mark (`matchMarks[i][0]`).
+    function measureMatchPositions(): Float64Array {
+        if (!container) return new Float64Array(0);
+        const anchors = matchMarks.map((marks) => marks[0] ?? container);
+        return measureFractions(container, anchors);
+    }
+
+    // Scheduled a frame after each search pass (never synchronously inside
+    // the pass itself, and never on a mere currentMatchIndex change, since
+    // this depends only on matchMarks).
+    $effect(() => {
+        void matchMarks;
+        const frameId = requestAnimationFrame(() => {
+            onMatchPositions?.(measureMatchPositions());
+        });
+        return () => cancelAnimationFrame(frameId);
+    });
+
+    // A persistent resize watch on the content root, independent of search
+    // passes, so a layout change re-measures the SAME matches without
+    // waiting for another keystroke.
+    $effect(() => {
+        if (!container) return;
+        return observeLayout(container, () => {
+            onMatchPositions?.(measureMatchPositions());
+        });
     });
 </script>
 

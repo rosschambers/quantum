@@ -1,7 +1,8 @@
 <script lang="ts">
 	import { highlightCode, highlightLineWithMatches } from './highlighter';
-	import { foldAncestors, type CodeFoldRange } from './fold-model';
+	import { foldAncestors, visibleRowOfLine, type CodeFoldRange } from './fold-model';
 	import { findMatchesInLines, type MatchRange } from './search';
+	import { rowCenterFraction } from './overviewRuler';
 
 	interface Props {
 		content: string;
@@ -11,7 +12,17 @@
 		currentMatchIndex?: number | null;
 		/** Fired whenever the computed match count changes. */
 		onMatchCount?: (count: number) => void;
+		/**
+		 * Fired whenever the match positions change (never when only
+		 * currentMatchIndex changes). Positions are fractions along the
+		 * scroll track, in the same order as onMatchCount's count, for the
+		 * shared overview ruler.
+		 */
+		onMatchPositions?: (positions: Float64Array) => void;
 		navigationRevision?: number;
+		/** JSON has no virtualization threshold, so this component's own root
+		 * IS the one scroll container — exposed for the shared overview ruler. */
+		scrollElement?: HTMLElement | null;
 	}
 
 	interface FoldRange {
@@ -29,7 +40,7 @@
 		collapsedSummary?: string;
 	}
 
-	let { content, query = '', currentMatchIndex = null, onMatchCount, navigationRevision = 0 }: Props = $props();
+	let { content, query = '', currentMatchIndex = null, onMatchCount, onMatchPositions, navigationRevision = 0, scrollElement = $bindable(null) }: Props = $props();
 
 	let prettyContent = $derived.by(() => {
 		try {
@@ -101,6 +112,18 @@
 
 	let foldModel = $derived(buildFoldModel(lines));
 
+	// foldAncestors/visibleRowOfLine are typed against fold-model's plain
+	// CodeFoldRange (startLine/endLine only); project this component's own
+	// start/end/count/closingChar FoldRange down to that shape once, rather
+	// than widening either function's signature for one caller.
+	let plainFoldModel: Map<number, CodeFoldRange> = $derived.by(() => {
+		const plain = new Map<number, CodeFoldRange>();
+		for (const [key, value] of foldModel) {
+			plain.set(key, { startLine: value.startLine, endLine: value.endLine });
+		}
+		return plain;
+	});
+
 	let visibleLines: VisibleLine[] = $derived.by(() => {
 		const result: VisibleLine[] = [];
 		let i = 0;
@@ -166,6 +189,25 @@
 		onMatchCount?.(matches.length);
 	});
 
+	// Positions are pure arithmetic on fixed row heights, never DOM
+	// measurement: JSON has no virtualization threshold, so every match's
+	// line first maps to its visible row across collapsed folds (Task 8) —
+	// a match inside a collapsed fold marks the header row instead of a
+	// hidden line. Depends only on matches/fold state, never on
+	// currentMatchIndex, so selecting a different match never re-fires this.
+	let matchPositions = $derived.by(() => {
+		const { rowOfLine, rowCount } = visibleRowOfLine(lines.length, plainFoldModel, (startLine) => foldState.get(startLine) === true);
+		const positions = new Float64Array(matches.length);
+		for (let index = 0; index < matches.length; index++) {
+			positions[index] = rowCenterFraction(rowOfLine[matches[index].lineIndex], rowCount, { paddingTop: 12, rowHeight: 20.8, paddingBottom: 12 });
+		}
+		return positions;
+	});
+
+	$effect(() => {
+		onMatchPositions?.(matchPositions);
+	});
+
 	// Depends only on lines, never on the search query or current match, so
 	// a keystroke never re-highlights the whole file. Collapsed-line summary
 	// suffixes are appended separately in lineHtml, below, since they are not
@@ -198,14 +240,6 @@
 		if (!currentMatch) return;
 		const line = currentMatch.lineIndex;
 
-		// foldAncestors is typed against fold-model's CodeFoldRange
-		// (startLine/endLine only); project this component's own
-		// start/end/count/closingChar FoldRange down to that shape rather
-		// than widening foldAncestors' signature for one caller.
-		const plainFoldModel = new Map<number, CodeFoldRange>();
-		for (const [key, value] of foldModel) {
-			plainFoldModel.set(key, { startLine: value.startLine, endLine: value.endLine });
-		}
 		const ancestors = foldAncestors(plainFoldModel, line);
 		if (ancestors.length > 0) {
 			let changed = false;
@@ -228,7 +262,7 @@
 	});
 </script>
 
-<div class="json-fold-renderer">
+<div class="json-fold-renderer" bind:this={scrollElement}>
 	<div class="json-lines">
 		<div class="gutter">
 			{#each visibleLines as line}
