@@ -476,6 +476,82 @@ describe('DiffView', () => {
 		expect(container.querySelector('.diff-header')).toBeNull();
 	});
 
+	test('git being absent from quantumd\'s PATH shows a full-window error message naming PATH', async () => {
+		callMock.mockImplementation((method: string) => {
+			if (method === 'file-viewer.changes') {
+				return Promise.reject({ code: -32021, message: "git is not available on quantumd's PATH: No such file or directory (os error 2)" });
+			}
+			return Promise.resolve(undefined);
+		});
+		const { container } = render(DiffView, { props: { source: { kind: 'git', spec: { repository: '/repository' } } } });
+		await vi.waitFor(() => {
+			expect(container.querySelector('.error-message')?.textContent).toContain('PATH');
+		});
+		expect(container.querySelector('.diff-header')).toBeNull();
+	});
+
+	test('a failed git invocation shows a full-window error message with its stderr', async () => {
+		callMock.mockImplementation((method: string) => {
+			if (method === 'file-viewer.changes') {
+				return Promise.reject({ code: -32022, message: 'git failed: fatal: ambiguous argument \'HEAD\': unknown revision' });
+			}
+			return Promise.resolve(undefined);
+		});
+		const { container } = render(DiffView, { props: { source: { kind: 'git', spec: { repository: '/repository' } } } });
+		await vi.waitFor(() => {
+			expect(container.querySelector('.error-message')?.textContent).toContain("fatal: ambiguous argument 'HEAD': unknown revision");
+		});
+		expect(container.querySelector('.diff-header')).toBeNull();
+	});
+
+	test('pair mode shows a full-window error message when one side fails to read', async () => {
+		callMock.mockImplementation((method: string, params: any) => {
+			if (method === 'file-viewer.read') {
+				if (params.path === '/missing.ts') {
+					return Promise.reject({ code: -32005, message: 'not found: /missing.ts' });
+				}
+				return Promise.resolve({
+					content: 'content\n',
+					file_type: 'code',
+					filename: params.path,
+					directory: '/',
+					size: 10,
+					language: 'typescript',
+					mime_type: null,
+					uri: null,
+				});
+			}
+			return Promise.resolve(undefined);
+		});
+		const { container } = render(DiffView, { props: { source: { kind: 'pair', left: '/missing.ts', right: '/b.ts' } } });
+		await vi.waitFor(() => {
+			expect(container.querySelector('.error-message')?.textContent).toContain('not found: /missing.ts');
+		});
+		expect(container.querySelector('.diff-header')).toBeNull();
+	});
+
+	test('pair mode of two image files renders the binary placeholder and no staging controls', async () => {
+		callMock.mockImplementation((method: string, params: any) => {
+			if (method === 'file-viewer.read') {
+				return Promise.resolve({
+					content: '',
+					file_type: 'image',
+					filename: params.path,
+					directory: '/',
+					size: 2048,
+					mime_type: 'image/png',
+					uri: `file://${params.path}`,
+				});
+			}
+			return Promise.resolve(undefined);
+		});
+		const { container } = render(DiffView, { props: { source: { kind: 'pair', left: '/a.png', right: '/b.png' } } });
+		await vi.waitFor(() => expect(container.querySelector('.diff-file')).not.toBeNull());
+		expect(container.querySelector('.placeholder')?.textContent).toContain('Binary file changed');
+		expect(container.querySelector('.changes-sidebar')).toBeNull();
+		expect(Array.from(container.querySelectorAll('button')).some((button) => button.textContent?.includes('Stage'))).toBe(false);
+	});
+
 	test('an empty change set shows "No changes" instead of a blank body', async () => {
 		mockChangesAndFingerprint(changeSetFixture({ files: [] }));
 		const { container } = render(DiffView, { props: { source: { kind: 'git', spec: { repository: '/repository' } } } });
