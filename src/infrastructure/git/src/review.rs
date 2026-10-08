@@ -247,6 +247,7 @@ async fn changes_against_head(root_path: &Path, root: &str) -> Result<ChangeSet,
         });
     }
 
+    let mut files = merge_duplicate_untracked_paths(files);
     files.sort_by(|a, b| a.path.cmp(&b.path));
 
     Ok(ChangeSet {
@@ -256,6 +257,44 @@ async fn changes_against_head(root_path: &Path, root: &str) -> Result<ChangeSet,
         stageable: true,
         files,
     })
+}
+
+/// Merge an untracked `ChangedFile` into an already-built ordinary one that
+/// shares its path (Bug 2: `git rm --cached <path>` makes `git status`/
+/// `git diff --raw` report the SAME path twice — once as an ordinary entry
+/// for the staged deletion, `index` absent because the path is gone from
+/// the index, and once as untracked, because the working tree copy is
+/// still physically present — which otherwise surfaces downstream as two
+/// `ChangedFile` records sharing one path and one id).
+///
+/// Both producers of untracked records (`parse_status`'s `?` entries and
+/// `changes_for_other_base`'s synthetic `git ls-files --others` entries)
+/// always emit the untracked record strictly AFTER the ordinary record for
+/// the same path, so a single left-to-right pass is enough: when an
+/// untracked entry's path is already in `files`, it is merged into that
+/// earlier entry instead of being pushed as its own record. The merged
+/// record keeps the ordinary entry's `base` (the committed content) and
+/// `index` (already absent in this scenario), takes its `target` from the
+/// untracked entry's working-tree read, and is no longer flagged
+/// `untracked` — it does have a base side, so it is not a brand-new file.
+fn merge_duplicate_untracked_paths(files: Vec<ChangedFile>) -> Vec<ChangedFile> {
+    let mut index_by_path: HashMap<String, usize> = HashMap::with_capacity(files.len());
+    let mut merged: Vec<ChangedFile> = Vec::with_capacity(files.len());
+
+    for file in files {
+        match index_by_path.get(&file.path) {
+            Some(&existing_index) if file.untracked => {
+                merged[existing_index].target = file.target;
+                merged[existing_index].untracked = false;
+            }
+            _ => {
+                index_by_path.insert(file.path.clone(), merged.len());
+                merged.push(file);
+            }
+        }
+    }
+
+    merged
 }
 
 /// Reject a `mode` that is not one of git's three ordinary file modes
@@ -441,6 +480,7 @@ async fn changes_for_other_base(
         });
     }
 
+    let mut files = merge_duplicate_untracked_paths(files);
     files.sort_by(|a, b| a.path.cmp(&b.path));
 
     let target_label = spec

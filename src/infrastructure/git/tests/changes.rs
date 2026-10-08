@@ -395,6 +395,126 @@ async fn submodule_gitlink_is_never_rendered_as_file_content() {
     }
 }
 
+fn cached_names(root: &std::path::Path) -> Vec<String> {
+    let output = std::process::Command::new("git")
+        .arg("-C")
+        .arg(root)
+        .args(["diff", "--cached", "--name-only"])
+        .output()
+        .expect("git diff --cached --name-only");
+    assert!(output.status.success());
+    String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .map(|line| line.to_string())
+        .filter(|line| !line.is_empty())
+        .collect()
+}
+
+#[tokio::test]
+async fn a_cached_removal_reports_exactly_one_changed_file_against_head() {
+    // Bug 2: `git rm --cached <path>` makes `git status --porcelain=v2`
+    // report the SAME path twice (once as an ordinary staged deletion, once
+    // as untracked) because the working tree copy still exists. That must
+    // never surface as two `ChangedFile` records sharing one path.
+    let (_tempdir, root) = repository();
+    std::fs::write(root.join("tracked.txt"), "committed content\n").unwrap();
+    git(&root, &["add", "."]);
+    git(&root, &["commit", "-q", "-m", "initial"]);
+    git(&root, &["rm", "--cached", "-q", "tracked.txt"]);
+
+    let review = GitRepositoryReview;
+    let spec = DiffSpec {
+        repository: root.to_str().expect("utf8 path").to_string(),
+        base: "HEAD".to_string(),
+        target: None,
+    };
+    let change_set = review.changes(&spec).await.expect("changes succeeds");
+
+    let matches: Vec<&ChangedFile> = change_set
+        .files
+        .iter()
+        .filter(|file| file.path == "tracked.txt")
+        .collect();
+    assert_eq!(
+        matches.len(),
+        1,
+        "a cached removal must report exactly one ChangedFile, got: {:?}",
+        change_set.files
+    );
+
+    let file = matches[0];
+    assert!(
+        file.base.is_some(),
+        "base (committed content) must be present"
+    );
+    assert!(
+        file.index.is_none(),
+        "index must be absent: the path is gone from the index"
+    );
+    let target = file.target.as_ref().expect("target (working tree) present");
+    assert_eq!(target.content, Some("committed content\n".to_string()));
+    assert!(
+        !file.untracked,
+        "merged record must not be flagged untracked: it has a base side"
+    );
+
+    // Staging the displayed target blob must restore it into the index,
+    // and since the content never actually changed, `git diff --cached`
+    // must show nothing after.
+    review
+        .stage(
+            root.to_str().expect("utf8 path"),
+            "tracked.txt",
+            Some(&target.blob),
+            &target.mode,
+        )
+        .await
+        .expect("stage succeeds");
+    assert!(
+        cached_names(&root).is_empty(),
+        "restaging identical content must leave nothing staged"
+    );
+}
+
+#[tokio::test]
+async fn a_cached_removal_reports_exactly_one_changed_file_against_a_non_head_base() {
+    // Same bug, but through `changes_for_other_base` (base is not the
+    // literal string "HEAD"): `git diff --raw <base>` reports the staged
+    // deletion and `git ls-files --others` reports the same path untracked.
+    let (_tempdir, root) = repository();
+    std::fs::write(root.join("tracked.txt"), "committed content\n").unwrap();
+    git(&root, &["add", "."]);
+    git(&root, &["commit", "-q", "-m", "initial"]);
+    let head_commit = rev_parse(&root, "HEAD");
+    git(&root, &["rm", "--cached", "-q", "tracked.txt"]);
+
+    let review = GitRepositoryReview;
+    let spec = DiffSpec {
+        repository: root.to_str().expect("utf8 path").to_string(),
+        base: head_commit,
+        target: None,
+    };
+    let change_set = review.changes(&spec).await.expect("changes succeeds");
+
+    let matches: Vec<&ChangedFile> = change_set
+        .files
+        .iter()
+        .filter(|file| file.path == "tracked.txt")
+        .collect();
+    assert_eq!(
+        matches.len(),
+        1,
+        "a cached removal must report exactly one ChangedFile via the other-base path too, got: {:?}",
+        change_set.files
+    );
+
+    let file = matches[0];
+    assert!(file.base.is_some());
+    assert!(file.index.is_none());
+    assert!(file.target.is_some());
+    assert!(!file.untracked);
+}
+
 #[tokio::test]
 async fn an_unknown_ref_surfaces_gits_error() {
     let (_tempdir, root) = repository();
