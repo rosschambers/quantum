@@ -822,6 +822,25 @@ mod tests {
         );
     }
 
+    #[tokio::test]
+    async fn default_theme_defines_color_error() {
+        // The default theme must define `color-error` (distinct from
+        // `color-warning`), matching the sycamore theme. AGENTS.md documents
+        // `--color-error` as theme-backed for both themes; before this test
+        // the default theme had no such token, so any component relying on
+        // it silently fell back to a hardcoded hex under the default theme.
+        let store = ThemeStore::new(Some("default".to_string()));
+        let tokens = store.resolved_tokens();
+        let color_error = tokens
+            .get("color-error")
+            .expect("default theme must define color-error");
+        assert_ne!(
+            color_error,
+            tokens.get("color-warning").expect("color-warning present"),
+            "color-error must be distinct from color-warning"
+        );
+    }
+
     // The former `embedded_launcher_view_resolves` test was deleted: the
     // launcher moved out of the default theme into the first-party
     // `plugin/launcher/launcher`, so its theme-path assertion no longer

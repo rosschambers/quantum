@@ -573,10 +573,11 @@ broken CI before; do not reintroduce them:
     themes: `--color-bg`, `--color-bg-alt`, `--color-border`, `--color-fg`,
     `--color-fg-alt`, `--color-accent`, `--color-muted`, `--color-surface`,
     `--color-overlay-backdrop`, `--color-shadow`, `--color-divider`,
-    `--color-warning`, `--font-sans`. **Destructive/error color is
-    `--color-error`** (theme-backed) — NOT `--color-danger`, `--color-bad`, or
-    `--color-fg-muted`, which are undefined drift that always falls back to
-    hardcoded hex. Active theme is `sycamore`.
+    `--color-warning`, `--color-error`, `--font-sans`. **Destructive/error
+    color is `--color-error`** (theme-backed in both `default` and `sycamore`)
+    — NOT `--color-danger`, `--color-bad`, or `--color-fg-muted`, which are
+    undefined drift that always falls back to hardcoded hex. Active theme is
+    `sycamore`.
   - **Icons:** no shared Icon package — `Icon.svelte` is copied per plugin
     (hand-drawn 24×24 `currentColor` SVG). Overlays use that SVG set or a Unicode
     entity glyph; **never emoji**. There are no headset/mouse/keyboard glyphs in
