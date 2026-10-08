@@ -36,20 +36,62 @@ impl RepositoryReview for GitRepositoryReview {
 
     async fn stage(
         &self,
-        _repository_root: &str,
-        _path: &str,
-        _blob: Option<&str>,
-        _mode: &str,
+        repository_root: &str,
+        path: &str,
+        blob: Option<&str>,
+        mode: &str,
     ) -> Result<(), ReviewError> {
-        Err(ReviewError::GitFailed(
-            "stage is not yet implemented".to_string(),
-        ))
+        validate_relative_path(path)?;
+        let root_path = Path::new(repository_root);
+
+        match blob {
+            // Decision D1: stage exactly `blob`, regardless of what is on
+            // disk right now. `--cacheinfo <mode>,<blob>,<path>` writes that
+            // triple into the index without touching the working tree.
+            Some(blob_id) => {
+                let cacheinfo = format!("{mode},{blob_id},{path}");
+                run_git(
+                    root_path,
+                    &["update-index", "--add", "--cacheinfo", &cacheinfo],
+                    None,
+                )
+                .await?;
+            }
+            // `blob: None` stages a deletion: remove the path from the index
+            // without requiring it to still exist on disk (`--force-remove`).
+            None => {
+                run_git(
+                    root_path,
+                    &["update-index", "--force-remove", "--", path],
+                    None,
+                )
+                .await?;
+            }
+        }
+
+        Ok(())
     }
 
-    async fn unstage(&self, _repository_root: &str, _path: &str) -> Result<(), ReviewError> {
-        Err(ReviewError::GitFailed(
-            "unstage is not yet implemented".to_string(),
-        ))
+    async fn unstage(&self, repository_root: &str, path: &str) -> Result<(), ReviewError> {
+        validate_relative_path(path)?;
+        let root_path = Path::new(repository_root);
+
+        // A path staged as a brand-new file has no HEAD counterpart to
+        // restore the index entry from; `git restore --staged` would error
+        // on it, so such a path is unstaged with `git rm --cached` instead,
+        // returning it to untracked.
+        let head_reference = format!("HEAD:{path}");
+        let exists_in_head = run_git(root_path, &["cat-file", "-e", &head_reference], None)
+            .await
+            .is_ok();
+
+        if exists_in_head {
+            run_git(root_path, &["restore", "--staged", "--", path], None).await?;
+        } else {
+            run_git(root_path, &["rm", "--cached", "-q", "--", path], None).await?;
+        }
+
+        Ok(())
     }
 
     async fn fingerprint(&self, _repository_root: &str) -> Result<String, ReviewError> {
@@ -138,6 +180,37 @@ async fn changes_against_head(root_path: &Path, root: &str) -> Result<ChangeSet,
         stageable: true,
         files,
     })
+}
+
+/// Refuse to stage or unstage a path that is absolute or escapes the
+/// repository via a `..` component. This is defense in depth underneath the
+/// application-layer safety boundary (a path must also appear in the most
+/// recently loaded stageable change set) — the git layer must independently
+/// never hand an attacker-controlled path straight to `git update-index` or
+/// `git restore`.
+fn validate_relative_path(path: &str) -> Result<(), ReviewError> {
+    if path.is_empty() {
+        return Err(ReviewError::NotStageable(
+            "path must not be empty".to_string(),
+        ));
+    }
+
+    let candidate = Path::new(path);
+    if candidate.is_absolute() {
+        return Err(ReviewError::NotStageable(format!(
+            "{path}: absolute paths are not stageable"
+        )));
+    }
+    if candidate
+        .components()
+        .any(|component| matches!(component, std::path::Component::ParentDir))
+    {
+        return Err(ReviewError::NotStageable(format!(
+            "{path}: paths containing `..` are not stageable"
+        )));
+    }
+
+    Ok(())
 }
 
 /// The all-zero mode/blob sentinels `git diff --raw` uses for "this side does
