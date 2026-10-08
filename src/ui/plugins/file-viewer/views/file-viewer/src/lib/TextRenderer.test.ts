@@ -2,6 +2,7 @@ import { describe, it, expect, beforeAll, vi } from 'vitest';
 import { render } from '@testing-library/svelte/svelte5';
 import TextRenderer from './TextRenderer.svelte';
 import CodeRenderer from './CodeRenderer.svelte';
+import rendererSource from './TextRenderer.svelte?raw';
 
 beforeAll(() => {
     if (typeof (globalThis as any).ResizeObserver === 'undefined') {
@@ -56,6 +57,27 @@ describe('TextRenderer search highlighting (non-virtualized)', () => {
         expect(marks).toHaveLength(3);
         expect(marks[2].classList.contains('search-match-current')).toBe(true);
         expect(marks[0].classList.contains('search-match-current')).toBe(false);
+    });
+
+    it('wraps the content in a scrolling container, for both the plain and the search-active branch', () => {
+        const stylesheet = document.createElement('style');
+        stylesheet.textContent = rendererSource.split('<style>')[1].split('</style>')[0];
+        document.head.appendChild(stylesheet);
+        try {
+            for (const query of ['', 'needle']) {
+                const { container } = render(TextRenderer, {
+                    props: { content: 'find the needle here', query },
+                });
+                const scroller = container.querySelector('.text-scroller');
+                expect(scroller).not.toBeNull();
+                const pre = scroller?.querySelector('pre.text-content');
+                expect(pre).not.toBeNull();
+                expect(getComputedStyle(scroller!).overflow).toBe('auto');
+                expect(getComputedStyle(scroller!).height).toBe('100%');
+            }
+        } finally {
+            stylesheet.remove();
+        }
     });
 });
 

@@ -12,9 +12,11 @@
 		/** Fired whenever the computed match count changes. */
 		onMatchCount?: (count: number) => void;
 		navigationRevision?: number;
+		/** The scrolling container, exposed for the shared overview ruler. */
+		scrollElement?: HTMLElement | null;
 	}
 
-	const { content, query = '', currentMatchIndex = null, onMatchCount, navigationRevision = 0 }: Props = $props();
+	let { content, query = '', currentMatchIndex = null, onMatchCount, navigationRevision = 0, scrollElement = $bindable(null) }: Props = $props();
 
 	let lines = $derived(content.split('\n'));
 	let lineCount = $derived(lines.length);
@@ -73,13 +75,22 @@
 			<pre class="text-content" style="padding: 0 32px; white-space: pre;">{#each props.visibleLines as line, index}<span class="text-line" style={props.rowStyle} data-line={props.visibleStart + index + 1}>{@html renderedLine(props.visibleStart + index, line)}{#if props.visibleStart + index < lines.length - 1}{'\n'}{/if}</span>{/each}</pre>
 		{/snippet}
 	</VirtualScroller>
-{:else if query && matches.length > 0}
-	<pre class="text-content" bind:this={textContentElement}>{#each lines as line, index}<span class="text-line" data-line={index + 1}>{@html renderedLine(index, line)}</span>{#if index < lines.length - 1}{'\n'}{/if}{/each}</pre>
 {:else}
-	<pre class="text-content">{content}</pre>
+	<div class="text-scroller" bind:this={scrollElement}>
+		{#if query && matches.length > 0}
+			<pre class="text-content" bind:this={textContentElement}>{#each lines as line, index}<span class="text-line" data-line={index + 1}>{@html renderedLine(index, line)}</span>{#if index < lines.length - 1}{'\n'}{/if}{/each}</pre>
+		{:else}
+			<pre class="text-content">{content}</pre>
+		{/if}
+	</div>
 {/if}
 
 <style>
+  .text-scroller {
+    height: 100%;
+    overflow: auto;
+  }
+
   .text-content {
     font-family: var(--font-mono);
     font-size: 13px;
