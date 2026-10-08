@@ -2,7 +2,7 @@
     import { marked } from 'marked';
     import { escapeHtml, highlightCode } from './highlighter';
     import { isMermaidLanguage, isGraphvizLanguage, diagramPlaceholderHtml, type DiagramRenderer } from './mermaid';
-    import { findMatchesInDom } from './search';
+    import { findMatchSegmentsInDom, type MatchSegment } from './search';
     import { slugify } from './types';
     import './markdown.css';
 
@@ -238,29 +238,17 @@
         for (const parent of parents) parent.normalize();
     }
 
-    function wrapRanges(root: Element, ranges: Range[]): HTMLElement[][] {
-        const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
-        const nodes: Text[] = [];
-        while (walker.nextNode()) nodes.push(walker.currentNode as Text);
-        // Snapshot text offsets before mutation, then split from right to left.
-        // Existing inline elements are never extracted, cloned, or replaced.
-        const segments = ranges.flatMap((range, matchIndex) => nodes
-            .filter((node) => range.intersectsNode(node) && !node.parentElement?.closest('.diagram-block, .diagram-error'))
-            .map((node) => ({
-                node,
-                start: node === range.startContainer ? range.startOffset : 0,
-                end: node === range.endContainer ? range.endOffset : node.length,
-                matchIndex,
-            })));
-        const marks: HTMLElement[][] = ranges.map(() => []);
-        for (const { node, start, end, matchIndex } of segments.reverse()) {
-            if (end <= start) continue;
-            const segment = document.createRange();
-            segment.setStart(node, start);
-            segment.setEnd(node, end);
+    function wrapSegments(segments: MatchSegment[], count: number): HTMLElement[][] {
+        const marks: HTMLElement[][] = Array.from({ length: count }, () => []);
+        // Right to left, so earlier offsets in the same text node stay valid.
+        for (let index = segments.length - 1; index >= 0; index--) {
+            const { node, start, end, matchIndex } = segments[index];
+            const tail = node.splitText(start);
+            tail.splitText(end - start);
             const mark = document.createElement('mark');
             mark.className = 'search-match';
-            segment.surroundContents(mark);
+            tail.parentNode?.insertBefore(mark, tail);
+            mark.appendChild(tail);
             marks[matchIndex].unshift(mark);
         }
         return marks;
@@ -272,10 +260,10 @@
         void parsedHtml;
         if (!container) return;
 
-        const ranges = findMatchesInDom(container, query);
-        const marks = wrapRanges(container, ranges);
+        const { count, segments } = findMatchSegmentsInDom(container, query);
+        const marks = wrapSegments(segments, count);
         matchMarks = marks;
-        onMatchCount?.(ranges.length);
+        onMatchCount?.(count);
         // Capture this run's owned marks without reading reactive matchMarks.
         return () => clearMarks(marks);
     });

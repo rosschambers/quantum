@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeAll, vi } from 'vitest';
 import { render } from '@testing-library/svelte/svelte5';
+import { tick } from 'svelte';
 import MarkdownRenderer from './MarkdownRenderer.svelte';
 
 vi.mock('mermaid', () => ({ default: {
@@ -177,5 +178,17 @@ describe('MarkdownRenderer search highlighting', () => {
             props: { content: 'Find the needle in the haystack.', query: '' },
         });
         expect(container.querySelector('mark.search-match')).toBeNull();
+    });
+
+    it('wraps many matches without a quadratic node scan', async () => {
+        const content = Array.from({ length: 300 }, (_, index) => `Paragraph ${index}${index % 2 === 0 ? ' token' : ''} *tail*`).join('\n\n');
+        const counts: number[] = [];
+        const { container, rerender } = render(MarkdownRenderer, { content, query: '', onMatchCount: (count: number) => counts.push(count) });
+        const started = performance.now();
+        await rerender({ content, query: 'token', onMatchCount: (count: number) => counts.push(count) });
+        await tick();
+        expect(performance.now() - started).toBeLessThan(1000);
+        expect(counts.at(-1)).toBe(150);
+        expect(container.querySelectorAll('mark.search-match')).toHaveLength(150);
     });
 });
