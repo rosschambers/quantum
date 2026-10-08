@@ -100,7 +100,7 @@ export function collectSelectedCells(selection: Selection, root: HTMLElement): S
 		return [];
 	}
 	const range = selection.getRangeAt(0);
-	if (!root.contains(range.commonAncestorContainer) && root !== range.commonAncestorContainer) {
+	if (!root.contains(range.commonAncestorContainer)) {
 		return [];
 	}
 

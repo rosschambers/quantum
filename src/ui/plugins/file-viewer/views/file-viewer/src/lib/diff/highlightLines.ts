@@ -22,6 +22,11 @@ export interface EmphasisLayer {
 
 const SPAN_TAG_PATTERN = /<span class="([^"]*)">|<\/span>/g;
 
+// `&#x27;` is how highlight.js itself escapes an apostrophe; `&#039;` is
+// kept alongside it because `highlightCode`'s error fallback (../
+// highlighter.ts) calls the project's own `escapeHtml`, which escapes an
+// apostrophe as `&#039;` instead — so this pattern also guards round-trips
+// of that function's own output, not just highlight.js's.
 const ENTITY_PATTERN = /&amp;|&lt;|&gt;|&quot;|&#x27;|&#039;/g;
 const ENTITY_MAP: Record<string, string> = {
 	'&amp;': '&',
