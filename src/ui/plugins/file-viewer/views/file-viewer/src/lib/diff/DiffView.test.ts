@@ -10,6 +10,8 @@ vi.mock('@quantum/client', async (importOriginal) => {
 import DiffView from './DiffView.svelte';
 import type { ChangeSet, ChangedFile, FileSide } from '@quantum/client';
 import { clearLineDiffCache } from './lineDiffCache';
+import { clearRowsCache } from './rowsCache';
+import * as rowsModule from './rows';
 
 beforeAll(() => {
 	if (typeof (globalThis as any).ResizeObserver === 'undefined') {
@@ -27,11 +29,13 @@ beforeAll(() => {
 afterEach(() => {
 	cleanup();
 	callMock.mockReset();
+	vi.restoreAllMocks();
 	// `cachedLineDiff`'s memo is module-scoped (by design — it is meant to
 	// outlive a single component instance), so a later test reusing the
 	// same placeholder blob ids for genuinely different content would
 	// otherwise silently read a stale result cached by an earlier test.
 	clearLineDiffCache();
+	clearRowsCache();
 });
 
 function side(content: string, blob: string, overrides: Partial<FileSide> = {}): FileSide {
@@ -370,5 +374,54 @@ describe('DiffView', () => {
 		await fireEvent.keyDown(window, { key: '[' });
 		expect(pane.scrollTop).toBe(0);
 		expect(container.querySelectorAll('.entry')[0].classList.contains('active')).toBe(true);
+	});
+
+	test('typing two different search queries never recomputes the always-expanded row list for an entry already diffed', async () => {
+		// `ensureMatchVisible` legitimately calls `buildRows` with the
+		// entry's REAL (possibly empty) expanded-keys set whenever
+		// navigation lands on the new side, to decide whether a fold needs
+		// expanding — that call is per-navigation, not per-keystroke-per-
+		// entry, and is unrelated to this fix. Distinguish it from the
+		// always-expanded calls this fix targets (`buildSearchRows` /
+		// the change-marks pass) by probing whether the `expandedKeys`
+		// argument reports `true` for an arbitrary key: only the
+		// always-expanded stand-in does.
+		function isAlwaysExpandedCall(call: unknown[]): boolean {
+			const expandedKeys = call[4] as ReadonlySet<string>;
+			return expandedKeys.has('__never-a-real-key__');
+		}
+
+		const changeSet = changeSetFixture({
+			files: [
+				{ path: 'a.ts', language: 'typescript', base: side('old a\n', 'a-base'), index: side('old a\n', 'a-base'), target: side('new a\n', 'a-target'), untracked: false },
+				{ path: 'b.ts', language: 'typescript', base: side('old b\n', 'b-base'), index: side('old b\n', 'b-base'), target: side('new b\n', 'b-target'), untracked: false },
+			],
+		});
+		mockChangesAndFingerprint(changeSet);
+		const buildRowsSpy = vi.spyOn(rowsModule, 'buildRows');
+		const { container } = render(DiffView, { props: { source: { kind: 'git', spec: { repository: '/repository' } } } });
+		await vi.waitFor(() => expect(container.querySelectorAll('.diff-file')).toHaveLength(2));
+
+		// Mounting already primed the memo (the change-marks pass walks
+		// every entry's always-expanded row list once).
+		const alwaysExpandedCallsAfterMount = buildRowsSpy.mock.calls.filter(isAlwaysExpandedCall).length;
+		expect(alwaysExpandedCallsAfterMount).toBeGreaterThan(0);
+
+		await fireEvent.keyDown(window, { key: 'f', ctrlKey: true });
+		const input = container.querySelector('.search-bar .search-input') as HTMLInputElement;
+
+		await fireEvent.input(input, { target: { value: 'old' } });
+		await vi.waitFor(() => expect(container.querySelector('.match-indicator')?.textContent).not.toBeNull());
+
+		// A second, DIFFERENT query against the SAME entries: the
+		// always-expanded row list does not depend on the query text, only
+		// on each entry's own blobs — so neither keystroke should have
+		// grown the always-expanded call count past what mounting alone
+		// already produced.
+		await fireEvent.input(input, { target: { value: 'new' } });
+		await vi.waitFor(() => expect(container.querySelector('.match-indicator')?.textContent).not.toBeNull());
+
+		const alwaysExpandedCallsAfterBothQueries = buildRowsSpy.mock.calls.filter(isAlwaysExpandedCall).length;
+		expect(alwaysExpandedCallsAfterBothQueries).toBe(alwaysExpandedCallsAfterMount);
 	});
 });

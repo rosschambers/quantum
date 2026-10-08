@@ -29,6 +29,7 @@
 	import { reviewEntries, stagingProgress, applyLocalStage, applyLocalUnstage, type ReviewEntry } from './reviewModel';
 	import { cachedLineDiff } from './lineDiffCache';
 	import { buildRows } from './rows';
+	import { cachedExpandedRows } from './rowsCache';
 	import { pairChangeSet } from './pairChangeSet';
 
 	interface Props {
@@ -38,20 +39,6 @@
 	let { source }: Props = $props();
 
 	const client = createClient();
-
-	/**
-	 * A fake "expanded" set whose `has()` always returns true. Passed to
-	 * `buildRows` so it returns every line as its own `context`/`removed`/
-	 * `added` row — no `collapsed` rows at all — purely as a way to walk a
-	 * file's full row list (for search and the change-marks ruler) without
-	 * caring about any file's actual current collapse state.
-	 */
-	class AlwaysExpandedKeys extends Set<string> {
-		override has(): boolean {
-			return true;
-		}
-	}
-	const ALWAYS_EXPANDED: ReadonlySet<string> = new AlwaysExpandedKeys();
 
 	let isLoading = $state(true);
 	let error: string | null = $state(null);
@@ -327,7 +314,7 @@
 		const oldLines = entry.oldSide?.content !== undefined ? entry.oldSide.content.split('\n') : [];
 		const newLines = entry.newSide?.content !== undefined ? entry.newSide.content.split('\n') : [];
 		const diffItems = cachedLineDiff(entry.oldSide?.blob, entry.newSide?.blob, oldLines, newLines);
-		const rows = buildRows(diffItems, oldLines, newLines, entry.language, ALWAYS_EXPANDED);
+		const rows = cachedExpandedRows(entry.oldSide?.blob, entry.newSide?.blob, entry.language, diffItems, oldLines, newLines);
 		const texts: string[] = [];
 		const refs: RowTextRef[] = [];
 		for (const row of rows) {
@@ -436,7 +423,7 @@
 			const oldLines = entry.oldSide?.content !== undefined ? entry.oldSide.content.split('\n') : [];
 			const newLines = entry.newSide?.content !== undefined ? entry.newSide.content.split('\n') : [];
 			const diffItems = cachedLineDiff(entry.oldSide?.blob, entry.newSide?.blob, oldLines, newLines);
-			const rows = buildRows(diffItems, oldLines, newLines, entry.language, ALWAYS_EXPANDED).filter((row) => row.kind !== 'recollapse');
+			const rows = cachedExpandedRows(entry.oldSide?.blob, entry.newSide?.blob, entry.language, diffItems, oldLines, newLines).filter((row) => row.kind !== 'recollapse');
 			const rowCount = rows.length;
 			if (rowCount === 0) return;
 
