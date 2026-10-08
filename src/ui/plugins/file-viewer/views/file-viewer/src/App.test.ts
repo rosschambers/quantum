@@ -42,8 +42,9 @@ afterEach(() => {
 
 type FixtureFileInfo = {
     content: string;
-    file_type: 'text' | 'code' | 'json' | 'markdown';
+    file_type: 'text' | 'code' | 'json' | 'markdown' | 'image' | 'video';
     language?: string | null;
+    uri?: string | null;
 };
 
 async function mountFile(fixture: FixtureFileInfo) {
@@ -58,7 +59,7 @@ async function mountFile(fixture: FixtureFileInfo) {
                 size: fixture.content.length,
                 language: fixture.language ?? null,
                 mime_type: null,
-                uri: null,
+                uri: fixture.uri ?? null,
             });
         }
         return Promise.resolve(undefined);
@@ -375,5 +376,77 @@ describe('App keyboard handling', () => {
             expect(container.querySelectorAll('mark.search-match')).toHaveLength(1);
         });
         expect(container.querySelector('.diagram-block mark.search-match')).toBeNull();
+    });
+});
+
+describe('App overview ruler', () => {
+    it.each(['markdown', 'json', 'code', 'text'] as const)('reserves the overview ruler strip for %s, even with no active search', async (file_type) => {
+        const content = file_type === 'json' ? '{"a":1}' : 'hello world';
+        const { container } = await mountFile({ content, file_type });
+        expect(container.querySelector('.overview-ruler')).not.toBeNull();
+    });
+
+    it.each(['image', 'video'] as const)('renders no overview ruler for %s', async (file_type) => {
+        const { container } = await mountFile({ content: '', file_type, uri: 'quantum://fixture/placeholder' });
+        expect(container.querySelector('.overview-ruler')).toBeNull();
+    });
+
+    it('clicking a match mark on the ruler navigates to it and scrolls it into view', async () => {
+        // Code's non-virtual (short-file) match positions are pure row
+        // arithmetic (no async DOM measurement), so the ruler mark for each
+        // match is available deterministically, without waiting on a frame.
+        // The track-height stub must be in place BEFORE the ruler's own
+        // mount effect runs its first measurement — OverviewRuler only
+        // re-measures on a later scroll/resize event, so stubbing
+        // afterward would leave it holding a stale trackHeight of 0.
+        const trackHeight = 600;
+        const heightSpy = vi.spyOn(HTMLElement.prototype, 'clientHeight', 'get').mockReturnValue(trackHeight);
+        const rectSpy = vi
+            .spyOn(HTMLElement.prototype, 'getBoundingClientRect')
+            .mockReturnValue({ top: 0, left: 0, right: 10, bottom: trackHeight, width: 10, height: trackHeight, x: 0, y: 0, toJSON() { return this; } } as DOMRect);
+        const reveal = vi.spyOn(Element.prototype, 'scrollIntoView');
+        try {
+            const content = 'cat\ndog\ncat\nbird\ncat';
+            const { container } = await mountFile({ content, file_type: 'code' });
+            await fireEvent.keyDown(window, { key: 'f', ctrlKey: true });
+            await fireEvent.input(container.querySelector('.search-bar input')!, { target: { value: 'cat' } });
+            await vi.waitFor(() => expect(container.querySelector('.match-indicator')?.textContent).toBe('1 of 3'));
+
+            const ruler = container.querySelector('.overview-ruler') as HTMLElement;
+            await vi.waitFor(() => expect(ruler.querySelectorAll('.ruler-mark').length).toBeGreaterThan(0));
+
+            // The third match ("cat" on the fifth, last line) sits near the
+            // bottom of a five-row, no-fold file: row 4 of 5, padding 12,
+            // row height 20.8.
+            const fraction = (12 + 4 * 20.8 + 20.8 / 2) / (12 + 5 * 20.8 + 12);
+            const clickY = Math.round(fraction * trackHeight);
+
+            await fireEvent.click(ruler, { clientY: clickY });
+            await vi.waitFor(() => expect(container.querySelector('.match-indicator')?.textContent).toBe('3 of 3'));
+            await vi.waitFor(() => expect(reveal).toHaveBeenCalled());
+            const revealedElement = reveal.mock.contexts.at(-1) as unknown as Element;
+            expect(revealedElement.getAttribute('data-line')).toBe('5');
+        } finally {
+            heightSpy.mockRestore();
+            rectSpy.mockRestore();
+            reveal.mockRestore();
+        }
+    });
+
+    it('closing search removes the ruler marks but keeps the reserved strip', async () => {
+        // Code's non-virtual match positions are pure row arithmetic, so a
+        // mark appears deterministically without stubbing live DOM layout
+        // (jsdom has no layout engine, so a wrapping-text position —
+        // measured live — would always read back a zero-height rect here).
+        const { container } = await mountFile({ content: 'cat cat cat', file_type: 'code' });
+        await fireEvent.keyDown(window, { key: 'f', ctrlKey: true });
+        await fireEvent.input(container.querySelector('.search-bar input')!, { target: { value: 'cat' } });
+        await vi.waitFor(() => expect(container.querySelector('.match-indicator')?.textContent).toBe('1 of 3'));
+        await vi.waitFor(() => expect(container.querySelectorAll('.ruler-mark').length).toBeGreaterThan(0));
+
+        await fireEvent.keyDown(window, { key: 'Escape' });
+
+        expect(container.querySelector('.overview-ruler')).not.toBeNull();
+        expect(container.querySelectorAll('.ruler-mark')).toHaveLength(0);
     });
 });

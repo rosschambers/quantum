@@ -3,6 +3,7 @@
     import type { ViewerFileInfo } from './lib/types';
     import { selfViewName } from './lib/selfName';
     import { resolveViewerShortcut } from './lib/viewerKeymap';
+    import { searchMarks, type RulerMark } from './lib/overviewRuler';
     import Header from './lib/Header.svelte';
     import MarkdownRenderer from './lib/MarkdownRenderer.svelte';
     import CodeRenderer from './lib/CodeRenderer.svelte';
@@ -13,6 +14,7 @@
     import FormatBanner from './lib/FormatBanner.svelte';
     import JsonFoldRenderer from './lib/JsonFoldRenderer.svelte';
     import SearchBar from './lib/SearchBar.svelte';
+    import OverviewRuler from './lib/OverviewRuler.svelte';
 
     let fileInfo: ViewerFileInfo | null = $state(null);
     let isLoading = $state(true);
@@ -40,9 +42,39 @@
     // clears/restores its highlighting — never left showing stale matches.
     let activeQuery = $derived(searchOpen ? searchQuery : '');
 
+    // The shared overview ruler's search lane. matchPositions comes from
+    // whichever renderer is active (onMatchPositions); searchMarks drops it
+    // entirely whenever its length no longer matches totalMatches (for
+    // example the instant search closes, or between a renderer's own
+    // onMatchCount and onMatchPositions calls), so the ruler never shows
+    // marks for a stale match set.
+    let matchPositions = $state.raw(new Float64Array(0));
+    let rulerMarks = $derived(searchMarks(matchPositions, totalMatches, currentMatchIndex));
+
+    // Each text-like renderer binds its own scroll container here so the
+    // ruler beside it can track scroll position and thumb geometry.
+    // Markdown's scroller is App's own markdownContentElement, above.
+    let codeScrollElement: HTMLElement | null = $state(null);
+    let jsonScrollElement: HTMLElement | null = $state(null);
+    let textScrollElement: HTMLElement | null = $state(null);
+
     function handleMatchCount(count: number): void {
         totalMatches = count;
         currentMatchIndex = count > 0 ? 0 : null;
+    }
+
+    function handleMatchPositions(positions: Float64Array): void {
+        matchPositions = positions;
+    }
+
+    // Reused by every renderer's ruler: a match/current-match mark jumps
+    // straight to that match, reusing the renderer's own existing reveal
+    // path (scrollIntoView, fold expansion, ...) by driving the same
+    // currentMatchIndex/navigationRevision state a keyboard Enter would.
+    function handleMarkActivate(mark: RulerMark): void {
+        if (mark.index === undefined) return;
+        currentMatchIndex = mark.index;
+        navigationRevision++;
     }
 
     function openSearch(): void {
@@ -55,6 +87,7 @@
         searchQuery = '';
         totalMatches = 0;
         currentMatchIndex = null;
+        matchPositions = new Float64Array(0);
     }
 
     function nextMatch(): void {
@@ -220,31 +253,69 @@
         {/if}
         <div class="content-area">
             {#if fileInfo.file_type === 'markdown'}
-                <div class="markdown-layout" class:has-toc={markdownHeadingCount >= 3}>
-                    {#if markdownHeadingCount >= 3}
-                        <TocSidebar content={effectiveContent} contentElement={markdownContentElement} />
-                    {/if}
-                    <div class="markdown-content" bind:this={markdownContentElement}>
-                        <MarkdownRenderer
-                            content={effectiveContent}
-                            fileDirectory={fileInfo?.directory}
-                            query={activeQuery}
-                            {currentMatchIndex}
-                            {navigationRevision}
-                            onMatchCount={handleMatchCount}
-                        />
+                <div class="renderer-pane">
+                    <div class="markdown-layout" class:has-toc={markdownHeadingCount >= 3}>
+                        {#if markdownHeadingCount >= 3}
+                            <TocSidebar content={effectiveContent} contentElement={markdownContentElement} />
+                        {/if}
+                        <div class="markdown-content" bind:this={markdownContentElement}>
+                            <MarkdownRenderer
+                                content={effectiveContent}
+                                fileDirectory={fileInfo?.directory}
+                                query={activeQuery}
+                                {currentMatchIndex}
+                                {navigationRevision}
+                                onMatchCount={handleMatchCount}
+                                onMatchPositions={handleMatchPositions}
+                            />
+                        </div>
                     </div>
                 </div>
+                <OverviewRuler marks={rulerMarks} scrollElement={markdownContentElement} onMarkActivate={handleMarkActivate} />
             {:else if fileInfo.file_type === 'json'}
-                <JsonFoldRenderer content={effectiveContent} query={activeQuery} {currentMatchIndex} {navigationRevision} onMatchCount={handleMatchCount} />
+                <div class="renderer-pane">
+                    <JsonFoldRenderer
+                        content={effectiveContent}
+                        query={activeQuery}
+                        {currentMatchIndex}
+                        {navigationRevision}
+                        onMatchCount={handleMatchCount}
+                        onMatchPositions={handleMatchPositions}
+                        bind:scrollElement={jsonScrollElement}
+                    />
+                </div>
+                <OverviewRuler marks={rulerMarks} scrollElement={jsonScrollElement} onMarkActivate={handleMarkActivate} />
             {:else if fileInfo.file_type === 'code'}
-                <CodeRenderer content={effectiveContent} language={fileInfo.language} query={activeQuery} {currentMatchIndex} {navigationRevision} onMatchCount={handleMatchCount} />
+                <div class="renderer-pane">
+                    <CodeRenderer
+                        content={effectiveContent}
+                        language={fileInfo.language}
+                        query={activeQuery}
+                        {currentMatchIndex}
+                        {navigationRevision}
+                        onMatchCount={handleMatchCount}
+                        onMatchPositions={handleMatchPositions}
+                        bind:scrollElement={codeScrollElement}
+                    />
+                </div>
+                <OverviewRuler marks={rulerMarks} scrollElement={codeScrollElement} onMarkActivate={handleMarkActivate} />
             {:else if fileInfo.file_type === 'image' && fileInfo.uri}
                 <ImageRenderer uri={fileInfo.uri} filename={fileInfo.filename} />
             {:else if fileInfo.file_type === 'video' && fileInfo.uri}
                 <VideoRenderer uri={fileInfo.uri} />
             {:else}
-                <TextRenderer content={effectiveContent} query={activeQuery} {currentMatchIndex} {navigationRevision} onMatchCount={handleMatchCount} />
+                <div class="renderer-pane">
+                    <TextRenderer
+                        content={effectiveContent}
+                        query={activeQuery}
+                        {currentMatchIndex}
+                        {navigationRevision}
+                        onMatchCount={handleMatchCount}
+                        onMatchPositions={handleMatchPositions}
+                        bind:scrollElement={textScrollElement}
+                    />
+                </div>
+                <OverviewRuler marks={rulerMarks} scrollElement={textScrollElement} onMarkActivate={handleMarkActivate} />
             {/if}
         </div>
     {:else}
@@ -330,6 +401,14 @@
         flex: 1;
         min-height: 0;
         background: var(--color-bg, #fff);
+        display: flex;
+        flex-direction: row;
+    }
+
+    .renderer-pane {
+        flex: 1;
+        min-width: 0;
+        height: 100%;
     }
 
     .markdown-layout {
