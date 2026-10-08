@@ -32,3 +32,23 @@ describe('resolveViewerShortcut', () => {
         expect(resolveViewerShortcut(key({ key: 'f' }))).toBeNull();
     });
 });
+
+describe('resolveViewerShortcut diff-mode shortcuts', () => {
+    test('n, p, ], [, s and r/R resolve to their diff-only actions, unconditionally of mode', () => {
+        expect(resolveViewerShortcut(key({ key: 'n' }))).toEqual({ kind: 'next-change' });
+        expect(resolveViewerShortcut(key({ key: 'p' }))).toEqual({ kind: 'previous-change' });
+        expect(resolveViewerShortcut(key({ key: ']' }))).toEqual({ kind: 'next-file' });
+        expect(resolveViewerShortcut(key({ key: '[' }))).toEqual({ kind: 'previous-file' });
+        expect(resolveViewerShortcut(key({ key: 's' }))).toEqual({ kind: 'toggle-stage' });
+        expect(resolveViewerShortcut(key({ key: 'r' }))).toEqual({ kind: 'refresh' });
+        expect(resolveViewerShortcut(key({ key: 'R' }))).toEqual({ kind: 'refresh' });
+    });
+
+    test('none of the diff-only shortcuts fire with Ctrl, Meta, or Alt held', () => {
+        for (const diffKey of ['n', 'p', ']', '[', 's', 'r']) {
+            expect(resolveViewerShortcut(key({ key: diffKey, ctrlKey: true }))).toBeNull();
+            expect(resolveViewerShortcut(key({ key: diffKey, metaKey: true }))).toBeNull();
+            expect(resolveViewerShortcut(key({ key: diffKey, altKey: true }))).toBeNull();
+        }
+    });
+});

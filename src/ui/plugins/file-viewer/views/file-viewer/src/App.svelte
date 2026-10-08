@@ -4,6 +4,7 @@
     import { selfViewName } from './lib/selfName';
     import { resolveViewerShortcut } from './lib/viewerKeymap';
     import { searchMarks, type RulerMark } from './lib/overviewRuler';
+    import DiffView, { type DiffViewSource } from './lib/diff/DiffView.svelte';
     import Header from './lib/Header.svelte';
     import MarkdownRenderer from './lib/MarkdownRenderer.svelte';
     import CodeRenderer from './lib/CodeRenderer.svelte';
@@ -20,6 +21,12 @@
     let isLoading = $state(true);
     let error: string | null = $state(null);
     let path = $state('');
+    // Set (once, from __quantum_args) when this window is a diff/compare
+    // view rather than a single-file view. DiffView is then a self-contained
+    // top-level view — its own loading/error states, header, search, and
+    // keyboard handling — mounted in place of everything below, exactly the
+    // way App itself is self-contained for the {path} case.
+    let diffSource: DiffViewSource | null = $state(null);
     let markdownContentElement: HTMLElement | undefined = $state(undefined);
     let displayContent: string | null = $state(null);
 
@@ -129,6 +136,21 @@
     // superseded/unmounted effect run never writes stale state.
     $effect(() => {
         const args = (window as any).__quantum_args;
+
+        // {diff} / {compare} route entirely to DiffView, which owns its own
+        // loading/error states, search, and keyboard handling — never read a
+        // file here, never register this effect's own keydown listener.
+        if (args?.diff) {
+            diffSource = { kind: 'git', spec: { repository: args.diff.repository, base: args.diff.base ?? 'HEAD', target: args.diff.target ?? null } };
+            isLoading = false;
+            return;
+        }
+        if (args?.compare) {
+            diffSource = { kind: 'pair', left: args.compare.left, right: args.compare.right };
+            isLoading = false;
+            return;
+        }
+
         if (!args?.path) {
             error = 'No file path provided';
             isLoading = false;
@@ -220,7 +242,9 @@
 </script>
 
 <div class="app-container">
-    {#if isLoading}
+    {#if diffSource}
+        <DiffView source={diffSource} />
+    {:else if isLoading}
         <div class="loading">
             <div class="spinner"></div>
             <p>Loading file...</p>

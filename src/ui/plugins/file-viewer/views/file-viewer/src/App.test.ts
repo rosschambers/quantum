@@ -460,3 +460,96 @@ describe('App overview ruler', () => {
         expect(container.querySelectorAll('.ruler-mark')).toHaveLength(0);
     });
 });
+
+describe('App routing', () => {
+    it('routes {path} to the existing file viewer, unchanged', async () => {
+        const { container } = await mountFile({ content: 'hello', file_type: 'text' });
+        expect(container.querySelector('.diff-view')).toBeNull();
+        expect(container.querySelector('header')).not.toBeNull();
+    });
+
+    it('routes {diff} args to DiffView with a git source, defaulting base to HEAD and target to null', async () => {
+        (window as any).__quantum_args = { diff: { repository: '/repository' } };
+        callMock.mockImplementation((method: string) => {
+            if (method === 'file-viewer.changes') {
+                return Promise.resolve({ repository_root: '/repository', base_label: 'HEAD', target_label: 'working tree', stageable: true, files: [] });
+            }
+            return Promise.resolve(undefined);
+        });
+        const { container } = render(App);
+        await vi.waitFor(() => {
+            expect(callMock).toHaveBeenCalledWith('file-viewer.changes', { repository: '/repository', base: 'HEAD', target: null });
+        });
+        await vi.waitFor(() => {
+            expect(container.querySelector('.diff-view')).not.toBeNull();
+        });
+        // App never reads a file nor registers its own path-mode keydown
+        // listener for a diff source.
+        expect(callMock).not.toHaveBeenCalledWith('file-viewer.read', expect.anything());
+    });
+
+    it('routes {compare} args to DiffView with a pair source', async () => {
+        (window as any).__quantum_args = { compare: { left: '/a.ts', right: '/b.ts' } };
+        callMock.mockImplementation((method: string, params: any) => {
+            if (method === 'file-viewer.read') {
+                return Promise.resolve({
+                    content: params.path === '/a.ts' ? 'left' : 'right',
+                    file_type: 'code',
+                    filename: params.path,
+                    directory: '/',
+                    size: 4,
+                    language: 'typescript',
+                    mime_type: null,
+                    uri: null,
+                });
+            }
+            return Promise.resolve(undefined);
+        });
+        const { container } = render(App);
+        await vi.waitFor(() => {
+            expect(callMock).toHaveBeenCalledWith('file-viewer.read', { path: '/a.ts' });
+            expect(callMock).toHaveBeenCalledWith('file-viewer.read', { path: '/b.ts' });
+        });
+        await vi.waitFor(() => {
+            expect(container.querySelector('.diff-view')).not.toBeNull();
+        });
+    });
+
+    it('"n" while the search input is focused in diff mode types into the input instead of navigating', async () => {
+        (window as any).__quantum_args = { diff: { repository: '/repository' } };
+        callMock.mockImplementation((method: string) => {
+            if (method === 'file-viewer.changes') {
+                return Promise.resolve({
+                    repository_root: '/repository',
+                    base_label: 'HEAD',
+                    target_label: 'working tree',
+                    stageable: true,
+                    files: [
+                        {
+                            path: 'a.ts',
+                            language: 'typescript',
+                            base: { content: 'old\n', blob: 'b1', mode: '100644', binary: false, too_large: false },
+                            index: { content: 'old\n', blob: 'b1', mode: '100644', binary: false, too_large: false },
+                            target: { content: 'new\n', blob: 'b2', mode: '100644', binary: false, too_large: false },
+                            untracked: false,
+                        },
+                    ],
+                });
+            }
+            if (method === 'file-viewer.fingerprint') return Promise.resolve({ fingerprint: 'fingerprint-1' });
+            return Promise.resolve(undefined);
+        });
+        const { container } = render(App);
+        await vi.waitFor(() => expect(container.querySelector('.diff-view')).not.toBeNull());
+
+        await fireEvent.keyDown(window, { key: 'f', ctrlKey: true });
+        const input = container.querySelector('.search-bar .search-input') as HTMLInputElement;
+        expect(input).not.toBeNull();
+        input.focus();
+
+        const event = new KeyboardEvent('keydown', { key: 'n', bubbles: true, cancelable: true });
+        await fireEvent(input, event);
+        expect(event.defaultPrevented).toBe(false);
+        expect(document.activeElement).toBe(input);
+    });
+});

@@ -8,7 +8,18 @@ export type ViewerShortcutAction =
     | { kind: 'open-search' }
     | { kind: 'next-match' }
     | { kind: 'previous-match' }
-    | { kind: 'close-search' };
+    | { kind: 'close-search' }
+    // Diff-mode-only shortcuts (qv diff mode design doc, "Keyboard"). Reported
+    // unconditionally by this resolver regardless of which mode is active —
+    // the caller (App.svelte for file mode, DiffView for diff mode) decides
+    // whether the action means anything in its current UI state. None of
+    // these fire with Ctrl, Meta, or Alt held.
+    | { kind: 'next-change' }
+    | { kind: 'previous-change' }
+    | { kind: 'next-file' }
+    | { kind: 'previous-file' }
+    | { kind: 'toggle-stage' }
+    | { kind: 'refresh' };
 
 /** Map a keyboard event to a viewer shortcut action, or null when it is not one. */
 export function resolveViewerShortcut(event: KeyboardEvent): ViewerShortcutAction | null {
@@ -31,5 +42,28 @@ export function resolveViewerShortcut(event: KeyboardEvent): ViewerShortcutActio
         return { kind: 'close-search' };
     }
 
-    return null;
+    // None of the diff-only shortcuts below take Ctrl/Meta — a held control
+    // modifier always falls through to null from here, leaving those
+    // combinations free for the browser/compositor.
+    if (control) {
+        return null;
+    }
+
+    switch (event.key) {
+        case 'n':
+            return { kind: 'next-change' };
+        case 'p':
+            return { kind: 'previous-change' };
+        case ']':
+            return { kind: 'next-file' };
+        case '[':
+            return { kind: 'previous-file' };
+        case 's':
+            return { kind: 'toggle-stage' };
+        case 'r':
+        case 'R':
+            return { kind: 'refresh' };
+        default:
+            return null;
+    }
 }
