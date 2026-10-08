@@ -12,7 +12,7 @@ use quantum_domain::{
 };
 
 use crate::contents::batch_read_blobs;
-use crate::runner::{repository_root, run_git};
+use crate::runner::{repository_root as resolve_repository_root, run_git};
 use crate::status::{parse_status, StatusEntry};
 
 /// Git-backed implementation of the `RepositoryReview` domain port.
@@ -25,7 +25,7 @@ pub struct GitRepositoryReview;
 #[async_trait]
 impl RepositoryReview for GitRepositoryReview {
     async fn changes(&self, spec: &DiffSpec) -> Result<ChangeSet, ReviewError> {
-        let root = repository_root(&spec.repository).await?;
+        let root = resolve_repository_root(&spec.repository).await?;
         let root_path = PathBuf::from(&root);
 
         if spec.base == "HEAD" && spec.target.is_none() {
@@ -42,7 +42,11 @@ impl RepositoryReview for GitRepositoryReview {
         blob: Option<&str>,
         mode: &str,
     ) -> Result<(), ReviewError> {
+        if blob.is_some() {
+            validate_mode(mode)?;
+        }
         validate_relative_path(path)?;
+        verify_repository_root(repository_root).await?;
         let root_path = Path::new(repository_root);
 
         match blob {
@@ -75,6 +79,7 @@ impl RepositoryReview for GitRepositoryReview {
 
     async fn unstage(&self, repository_root: &str, path: &str) -> Result<(), ReviewError> {
         validate_relative_path(path)?;
+        verify_repository_root(repository_root).await?;
         let root_path = Path::new(repository_root);
 
         // A path staged as a brand-new file has no HEAD counterpart to
@@ -114,6 +119,7 @@ impl RepositoryReview for GitRepositoryReview {
     /// neither the path set nor any working file's metadata, so it is not
     /// detected until the next manual refresh.
     async fn fingerprint(&self, repository_root: &str) -> Result<String, ReviewError> {
+        verify_repository_root(repository_root).await?;
         let root_path = Path::new(repository_root);
         let status_output = run_git(
             root_path,
@@ -246,6 +252,46 @@ async fn changes_against_head(root_path: &Path, root: &str) -> Result<ChangeSet,
         stageable: true,
         files,
     })
+}
+
+/// Reject a `mode` that is not one of git's three ordinary file modes
+/// before it ever reaches `git update-index --cacheinfo`. `--cacheinfo`
+/// writes its `mode,blob,path` triple into the index verbatim with no
+/// validation of its own, so an unchecked mode string (for example
+/// `100644,evil` smuggling extra `--cacheinfo` fields, or `160000`
+/// fabricating a submodule entry) would be staged exactly as given.
+fn validate_mode(mode: &str) -> Result<(), ReviewError> {
+    match mode {
+        "100644" | "100755" | "120000" => Ok(()),
+        other => {
+            tracing::warn!(mode = %other, "rejecting unrecognized staging mode");
+            Err(ReviewError::NotStageable(format!(
+                "{other} is not a stageable file mode"
+            )))
+        }
+    }
+}
+
+/// Reject a `repository_root` argument that is not exactly the toplevel
+/// path `git rev-parse --show-toplevel` resolves for it (a trailing slash,
+/// a subdirectory, or any other variant). The frontend always echoes back
+/// the exact `repository_root` string `changes()` returned, which is
+/// already the toplevel, so any mismatch means an untrusted or stale
+/// caller — and the allowlist keyed by that string in the application
+/// layer's `ReviewService` only holds if the key is canonical.
+async fn verify_repository_root(given_root: &str) -> Result<(), ReviewError> {
+    let resolved = resolve_repository_root(given_root).await?;
+    if resolved != given_root {
+        tracing::warn!(
+            given = %given_root,
+            resolved = %resolved,
+            "repository root is not its own git toplevel; rejecting"
+        );
+        return Err(ReviewError::NotStageable(format!(
+            "{given_root} is not a repository toplevel"
+        )));
+    }
+    Ok(())
 }
 
 /// Refuse to stage or unstage a path that is absolute or escapes the
@@ -686,4 +732,31 @@ async fn read_working_tree_symlink(
         binary,
         too_large: false,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn validate_mode_accepts_the_three_valid_modes() {
+        for mode in ["100644", "100755", "120000"] {
+            assert!(
+                validate_mode(mode).is_ok(),
+                "{mode} must be accepted as a valid staging mode"
+            );
+        }
+    }
+
+    #[test]
+    fn validate_mode_rejects_a_mode_with_trailing_garbage() {
+        let error = validate_mode("100644,evil").expect_err("must be rejected");
+        assert!(matches!(error, ReviewError::NotStageable(_)));
+    }
+
+    #[test]
+    fn validate_mode_rejects_a_submodule_mode() {
+        let error = validate_mode("160000").expect_err("must be rejected");
+        assert!(matches!(error, ReviewError::NotStageable(_)));
+    }
 }

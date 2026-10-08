@@ -252,6 +252,87 @@ async fn unstage_a_staged_modification_returns_it_to_unstaged() {
     assert!(unstaged_names(&root).contains(&"a.txt".to_string()));
 }
 
+const FAKE_BLOB: &str = "0000000000000000000000000000000000000001";
+
+#[tokio::test]
+async fn invalid_staging_modes_are_rejected() {
+    let (_tempdir, root) = repository();
+    std::fs::write(root.join("a.txt"), "original\n").unwrap();
+    git(&root, &["add", "."]);
+    git(&root, &["commit", "-q", "-m", "initial"]);
+    std::fs::write(root.join("a.txt"), "modified\n").unwrap();
+
+    let review = GitRepositoryReview;
+    let root_str = root.to_str().expect("utf8 path");
+
+    let error = review
+        .stage(root_str, "a.txt", Some(FAKE_BLOB), "100644,evil")
+        .await
+        .expect_err("a mode with trailing garbage must be rejected");
+    assert!(matches!(error, ReviewError::NotStageable(_)));
+
+    let error = review
+        .stage(root_str, "a.txt", Some(FAKE_BLOB), "160000")
+        .await
+        .expect_err("a submodule mode must be rejected");
+    assert!(matches!(error, ReviewError::NotStageable(_)));
+
+    assert!(
+        cached_names(&root).is_empty(),
+        "an invalid mode must never reach git update-index"
+    );
+}
+
+#[tokio::test]
+async fn staging_with_a_repository_root_that_is_not_its_own_toplevel_is_rejected() {
+    let (_tempdir, root) = repository();
+    std::fs::write(root.join("a.txt"), "original\n").unwrap();
+    git(&root, &["add", "."]);
+    git(&root, &["commit", "-q", "-m", "initial"]);
+    std::fs::write(root.join("a.txt"), "modified\n").unwrap();
+    std::fs::create_dir(root.join("subdirectory")).unwrap();
+
+    let review = GitRepositoryReview;
+    let root_str = root.to_str().expect("utf8 path");
+
+    let trailing_slash = format!("{root_str}/");
+    let error = review
+        .stage(&trailing_slash, "a.txt", Some(FAKE_BLOB), "100644")
+        .await
+        .expect_err("a trailing slash is not the exact toplevel string and must be rejected");
+    assert!(matches!(error, ReviewError::NotStageable(_)));
+
+    let subdirectory = format!("{root_str}/subdirectory");
+    let error = review
+        .stage(&subdirectory, "a.txt", Some(FAKE_BLOB), "100644")
+        .await
+        .expect_err("a subdirectory resolves to the same toplevel and must be rejected");
+    assert!(matches!(error, ReviewError::NotStageable(_)));
+
+    let error = review
+        .unstage(&subdirectory, "a.txt")
+        .await
+        .expect_err("unstage must apply the same repository root check");
+    assert!(matches!(error, ReviewError::NotStageable(_)));
+
+    let error = review
+        .fingerprint(&subdirectory)
+        .await
+        .expect_err("fingerprint must apply the same repository root check");
+    assert!(matches!(error, ReviewError::NotStageable(_)));
+
+    assert!(
+        cached_names(&root).is_empty(),
+        "staging must never proceed when the repository root does not match its toplevel"
+    );
+
+    // The exact root (no trailing slash, no subdirectory) still works.
+    review
+        .stage(root_str, "a.txt", Some(FAKE_BLOB), "100644")
+        .await
+        .expect("the exact repository root must still be accepted");
+}
+
 #[tokio::test]
 async fn escaping_paths_are_rejected_for_both_stage_and_unstage() {
     let (_tempdir, root) = repository();
