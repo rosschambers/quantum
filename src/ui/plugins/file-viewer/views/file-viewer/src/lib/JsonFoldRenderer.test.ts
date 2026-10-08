@@ -1,5 +1,5 @@
-import { describe, it, expect, beforeAll, vi } from 'vitest';
-import { render, fireEvent } from '@testing-library/svelte/svelte5';
+import { describe, it, expect, beforeAll, afterEach, vi } from 'vitest';
+import { render, fireEvent, cleanup } from '@testing-library/svelte/svelte5';
 import JsonFoldRenderer from './JsonFoldRenderer.svelte';
 import rendererSource from './JsonFoldRenderer.svelte?raw';
 import * as highlighterModule from './highlighter';
@@ -8,6 +8,10 @@ beforeAll(() => {
     if (typeof Element.prototype.scrollIntoView !== 'function') {
         Element.prototype.scrollIntoView = function (): void {};
     }
+});
+
+afterEach(() => {
+    cleanup();
 });
 
 const NESTED_JSON = '{"a":{"b":"needle"},"c":1}';

@@ -1,5 +1,5 @@
-import { describe, it, expect, beforeAll, vi } from 'vitest';
-import { render } from '@testing-library/svelte/svelte5';
+import { describe, it, expect, beforeAll, afterEach, vi } from 'vitest';
+import { render, cleanup } from '@testing-library/svelte/svelte5';
 import { tick } from 'svelte';
 import MarkdownRenderer from './MarkdownRenderer.svelte';
 
@@ -12,6 +12,10 @@ beforeAll(() => {
     if (typeof Element.prototype.scrollIntoView !== 'function') {
         Element.prototype.scrollIntoView = function (): void {};
     }
+});
+
+afterEach(() => {
+    cleanup();
 });
 
 describe('MarkdownRenderer search highlighting', () => {

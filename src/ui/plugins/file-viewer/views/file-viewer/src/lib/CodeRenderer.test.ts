@@ -1,5 +1,5 @@
-import { describe, it, expect, beforeAll, vi } from 'vitest';
-import { render, fireEvent } from '@testing-library/svelte/svelte5';
+import { describe, it, expect, beforeAll, afterEach, vi } from 'vitest';
+import { render, fireEvent, cleanup } from '@testing-library/svelte/svelte5';
 import CodeRenderer from './CodeRenderer.svelte';
 import rendererSource from './CodeRenderer.svelte?raw';
 import * as highlighterModule from './highlighter';
@@ -17,6 +17,10 @@ beforeAll(() => {
     if (typeof Element.prototype.scrollIntoView !== 'function') {
         Element.prototype.scrollIntoView = function (): void {};
     }
+});
+
+afterEach(() => {
+    cleanup();
 });
 
 describe('CodeRenderer search highlighting (non-virtualized)', () => {
