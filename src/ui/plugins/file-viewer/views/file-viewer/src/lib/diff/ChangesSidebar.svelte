@@ -7,7 +7,7 @@
 	// old/new content itself, the same way `DiffFile` does, purely to show
 	// the "+N -M" mini stat.
 	import type { ReviewEntry } from './reviewModel';
-	import { lineDiff } from './lineDiff';
+	import { cachedLineDiff } from './lineDiffCache';
 
 	interface Props {
 		entries: ReviewEntry[];
@@ -30,7 +30,7 @@
 	function countChanges(entry: ReviewEntry): { additions: number; deletions: number } {
 		const oldLines = entry.oldSide?.content !== undefined ? entry.oldSide.content.split('\n') : [];
 		const newLines = entry.newSide?.content !== undefined ? entry.newSide.content.split('\n') : [];
-		const items = lineDiff(oldLines, newLines);
+		const items = cachedLineDiff(entry.oldSide?.blob, entry.newSide?.blob, oldLines, newLines);
 		let additions = 0;
 		let deletions = 0;
 		for (const item of items) {
@@ -79,22 +79,22 @@
 {#snippet entryRow(item: IndexedEntry)}
 	{@const current = splitPath(item.entry.path)}
 	<li class="entry" class:active={item.index === activeIndex}>
+		{#if stageable}
+			<input
+				type="checkbox"
+				class="checkbox"
+				class:checked={item.entry.section === 'staged'}
+				checked={item.entry.section === 'staged'}
+				aria-label={`${item.entry.section === 'staged' ? 'Unstage' : 'Stage'} ${current.name}`}
+				onclick={(event) => handleCheckboxClick(event, item.entry)}
+				onkeydown={(event) => handleCheckboxKeydown(event, item.entry)}
+			/>
+		{/if}
 		<button type="button" onclick={() => onSelect(item.index)}>
-			{#if stageable}
-				<span
-					class="checkbox"
-					class:checked={item.entry.section === 'staged'}
-					role="checkbox"
-					aria-checked={item.entry.section === 'staged'}
-					tabindex="0"
-					onclick={(event) => handleCheckboxClick(event, item.entry)}
-					onkeydown={(event) => handleCheckboxKeydown(event, item.entry)}
-				></span>
-			{/if}
 			<span class="status status-{item.entry.status}">{item.entry.status}</span>
 			<span class="filename">{current.name}</span>
 			{#if item.entry.oldPath}
-				<span class="directory">renamed from {splitPath(item.entry.oldPath).name}</span>
+				<span class="directory rename">renamed from {splitPath(item.entry.oldPath).name}</span>
 			{:else}
 				<span class="directory">{current.directory}</span>
 			{/if}
@@ -171,15 +171,24 @@
 		justify-content: space-between;
 	}
 
+	.entry {
+		display: grid;
+		grid-template-columns: auto 1fr;
+		align-items: center;
+		gap: 6px;
+		padding: 0 12px;
+	}
+
 	.entry button {
 		width: 100%;
+		min-width: 0;
 		border: none;
 		background: none;
 		text-align: left;
-		padding: 7px 12px;
+		padding: 7px 0;
 		cursor: pointer;
 		display: grid;
-		grid-template-columns: 14px 14px 1fr auto;
+		grid-template-columns: 14px 1fr auto;
 		gap: 6px;
 		align-items: baseline;
 		color: var(--color-fg-alt);
@@ -196,13 +205,13 @@
 	}
 
 	.checkbox {
+		appearance: none;
+		-webkit-appearance: none;
+		margin: 0;
 		width: 14px;
 		height: 14px;
 		border: 1px solid var(--color-muted);
 		border-radius: 3px;
-		display: inline-flex;
-		align-items: center;
-		justify-content: center;
 		cursor: pointer;
 	}
 
@@ -253,6 +262,13 @@
 		text-overflow: ellipsis;
 		direction: rtl;
 		text-align: left;
+	}
+
+	/* "renamed from <old name>" is an ordinary left-to-right English label,
+	   not a path needing the rtl-ellipsis trick above — same specificity,
+	   declared after `.directory` so it wins the cascade. */
+	.rename {
+		direction: ltr;
 	}
 
 	.dot {
