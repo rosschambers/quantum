@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeAll, vi } from 'vitest';
 import { render, fireEvent } from '@testing-library/svelte/svelte5';
 import CodeRenderer from './CodeRenderer.svelte';
+import rendererSource from './CodeRenderer.svelte?raw';
 import * as highlighterModule from './highlighter';
 
 beforeAll(() => {
@@ -99,6 +100,29 @@ describe('CodeRenderer search highlighting (non-virtualized)', () => {
         await rerender({ query: 'needle' });
         expect(spy.mock.calls.length).toBeLessThan(20);
         spy.mockRestore();
+    });
+
+    it('scrolls the gutter together with the code in one shared scroll container', () => {
+        const stylesheet = document.createElement('style');
+        stylesheet.textContent = rendererSource.split('<style>')[1].split('</style>')[0];
+        document.head.appendChild(stylesheet);
+        try {
+            const { container } = render(CodeRenderer, {
+                props: { content: 'const needle = 1;\nconst other = 2;', language: 'javascript' },
+            });
+            const scroller = container.querySelector('.code-scroller');
+            expect(scroller).not.toBeNull();
+            const gutter = container.querySelector('.gutter')!;
+            const code = container.querySelector('.code-content')!;
+            expect(gutter.closest('.code-scroller')).toBe(scroller);
+            expect(code.closest('.code-scroller')).toBe(scroller);
+            expect(getComputedStyle(scroller!).overflow).toBe('auto');
+            expect(getComputedStyle(scroller!).height).toBe('100%');
+            expect(getComputedStyle(gutter).position).toBe('sticky');
+            expect(getComputedStyle(gutter).left).toBe('0px');
+        } finally {
+            stylesheet.remove();
+        }
     });
 });
 

@@ -15,6 +15,8 @@
 		/** Fired whenever the computed match count changes. */
 		onMatchCount?: (count: number) => void;
 		navigationRevision?: number;
+		/** The scrolling container, exposed for the shared overview ruler. */
+		scrollElement?: HTMLElement | null;
 	}
 
 	interface CodeVisibleLine {
@@ -24,7 +26,7 @@
 		collapsed: boolean;
 	}
 
-	let { content, language, query = '', currentMatchIndex = null, onMatchCount, navigationRevision = 0 }: Props = $props();
+	let { content, language, query = '', currentMatchIndex = null, onMatchCount, navigationRevision = 0, scrollElement = $bindable(null) }: Props = $props();
 
 	let lines = $derived(content.replace(/\n+$/, '').split('\n'));
 	let lineCount = $derived(lines.length);
@@ -185,31 +187,33 @@
 			{/snippet}
 		</VirtualScroller>
 	{:else}
-		<div class="gutter">
-			{#each codeVisibleLines as line}
-				<div class="gutter-line">
-					{#if line.foldable}
-						<button
-							class="fold-marker"
-							class:collapsed={line.collapsed}
-							onclick={() => toggleCodeFold(line.lineNumber - 1)}
-							title={line.collapsed ? 'Expand' : 'Collapse'}
-						>
-							<svg width="8" height="8" viewBox="0 0 8 8">
-								{#if line.collapsed}
-									<polygon points="0,0 8,4 0,8" fill="currentColor" />
-								{:else}
-									<polygon points="0,0 8,0 4,8" fill="currentColor" />
-								{/if}
-							</svg>
-						</button>
-					{/if}
-					<span class="line-number">{line.lineNumber}</span>
-				</div>
-			{/each}
-		</div>
-		<div class="code-content" bind:this={codeContentElement}>
-			<pre><code class="hljs">{#each codeVisibleLines as line, index}<span class="code-line" data-line={line.lineNumber}>{@html line.html}</span>{#if index < codeVisibleLines.length - 1}{'\n'}{/if}{/each}</code></pre>
+		<div class="code-scroller" bind:this={scrollElement}>
+			<div class="gutter">
+				{#each codeVisibleLines as line}
+					<div class="gutter-line">
+						{#if line.foldable}
+							<button
+								class="fold-marker"
+								class:collapsed={line.collapsed}
+								onclick={() => toggleCodeFold(line.lineNumber - 1)}
+								title={line.collapsed ? 'Expand' : 'Collapse'}
+							>
+								<svg width="8" height="8" viewBox="0 0 8 8">
+									{#if line.collapsed}
+										<polygon points="0,0 8,4 0,8" fill="currentColor" />
+									{:else}
+										<polygon points="0,0 8,0 4,8" fill="currentColor" />
+									{/if}
+								</svg>
+							</button>
+						{/if}
+						<span class="line-number">{line.lineNumber}</span>
+					</div>
+				{/each}
+			</div>
+			<div class="code-content" bind:this={codeContentElement}>
+				<pre><code class="hljs">{#each codeVisibleLines as line, index}<span class="code-line" data-line={line.lineNumber}>{@html line.html}</span>{#if index < codeVisibleLines.length - 1}{'\n'}{/if}{/each}</code></pre>
+			</div>
 		</div>
 	{/if}
 </div>
@@ -224,19 +228,29 @@
 		font-size: 13px;
 		line-height: 1.6;
 		background: var(--color-bg);
-		overflow: hidden;
 	}
 
 	.virtual-code-lines {
 		display: flex;
 	}
 
+	.code-scroller {
+		display: flex;
+		width: max-content;
+		min-width: 100%;
+		height: 100%;
+		overflow: auto;
+	}
+
 	.gutter {
+		position: sticky;
+		left: 0;
+		z-index: 1;
+		background: var(--color-bg);
 		border-right: 1px solid var(--color-border);
 		padding: 12px 12px 12px 8px;
 		text-align: right;
 		flex-shrink: 0;
-		overflow: hidden;
 		user-select: none;
 	}
 
@@ -270,7 +284,7 @@
 
 	.code-content {
 		flex: 1;
-		overflow: auto;
+		overflow: visible;
 		padding: 12px 24px;
 	}
 
