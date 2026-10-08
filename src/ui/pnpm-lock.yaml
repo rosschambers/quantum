@@ -83,6 +83,9 @@ importers:
       '@quantum/client':
         specifier: workspace:*
         version: link:../../../../packages/client
+      diff:
+        specifier: ^9.0.0
+        version: 9.0.0
       highlight.js:
         specifier: ^11
         version: 11.12.0
@@ -1314,6 +1317,10 @@ packages:
 
   devalue@5.8.1:
     resolution: {integrity: sha512-4CXDYRBGqN+57wVJkuXBYmpAVUSg3L6JAQa/DFqm238G73E1wuyc/JhGQJzN7vUf/CMphYau2zXbfWzDR5aTEw==}
+
+  diff@9.0.0:
+    resolution: {integrity: sha512-svtcdpS8CgJyqAjEQIXdb3OjhFVVYjzGAPO8WGCmRbrml64SPw/jJD4GoE98aR7r25A0XcgrK3F02yw9R/vhQw==}
+    engines: {node: '>=0.3.1'}
 
   dom-accessibility-api@0.5.16:
     resolution: {integrity: sha512-X7BJ2yElsnOJ30pZF4uIIDfBEVgF4XEBxL9Bxhy6dnrm5hkzqmsWHGTiHqRiITNhMyFLyAiWndIJP7Z1NTteDg==}
@@ -2790,6 +2797,8 @@ snapshots:
       robust-predicates: 3.0.3
 
   devalue@5.8.1: {}
+
+  diff@9.0.0: {}
 
   dom-accessibility-api@0.5.16: {}
 
