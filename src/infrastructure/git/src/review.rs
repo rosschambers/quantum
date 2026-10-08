@@ -1,6 +1,7 @@
 //! `RepositoryReview` domain port implementation, backed by the git CLI.
 
 use std::collections::HashMap;
+use std::os::unix::ffi::OsStrExt;
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 
@@ -130,7 +131,7 @@ impl RepositoryReview for GitRepositoryReview {
             hash = fnv1a_update(hash, path.as_bytes());
             hash = fnv1a_update(hash, &[0]);
 
-            match tokio::fs::metadata(root_path.join(path)).await {
+            match tokio::fs::symlink_metadata(root_path.join(path)).await {
                 Ok(metadata) => {
                     let modified_nanos = metadata
                         .modified()
@@ -565,6 +566,15 @@ fn file_side_from_blob(
 /// `worktree_mode` is the mode git already knows for a tracked file;
 /// `untracked` files have none, so their mode is instead derived from the
 /// file's own executable bit (`worktree_mode` is ignored in that case).
+///
+/// **Never dereferences a symlink (C1).** `symlink_metadata` (not
+/// `metadata`) is used to stat the path, so a symlinked path is identified
+/// as a symlink rather than followed to whatever it points at — which may
+/// sit outside the repository entirely. A symlink's side is built from
+/// `read_link`'s raw bytes (the link target string, exactly as git itself
+/// stores a symlink blob), hashed by piping those bytes to
+/// `git hash-object -w --stdin --no-filters`; the file the link points at
+/// is never opened.
 async fn read_working_tree_side(
     root_path: &Path,
     path: &str,
@@ -573,10 +583,17 @@ async fn read_working_tree_side(
 ) -> Result<FileSide, ReviewError> {
     let file_path = root_path.join(path);
 
-    let metadata = tokio::fs::metadata(&file_path).await.map_err(|error| {
-        tracing::warn!(path = %file_path.display(), %error, "failed to stat working tree file");
-        ReviewError::Io(error.to_string())
-    })?;
+    let metadata = tokio::fs::symlink_metadata(&file_path)
+        .await
+        .map_err(|error| {
+            tracing::warn!(path = %file_path.display(), %error, "failed to stat working tree file");
+            ReviewError::Io(error.to_string())
+        })?;
+
+    if metadata.file_type().is_symlink() || worktree_mode == "120000" {
+        return read_working_tree_symlink(root_path, &file_path).await;
+    }
+
     let size = metadata.len();
     let too_large = size > VIEWER_TEXT_MAX_BYTES;
 
@@ -630,5 +647,43 @@ async fn read_working_tree_side(
         mode,
         binary,
         too_large,
+    })
+}
+
+/// Build the working-tree `FileSide` for a symlink: content is the raw
+/// bytes `read_link` returns (the link target string), mode is always
+/// `120000` whether the symlink is tracked or untracked, and the blob id
+/// comes from feeding those exact bytes to
+/// `git hash-object -w --stdin --no-filters` over stdin — the symlink's
+/// target path is never opened, so bytes from outside the repository (or
+/// from a file the symlink targets) can never leak into the diff or the
+/// object database.
+async fn read_working_tree_symlink(
+    root_path: &Path,
+    file_path: &Path,
+) -> Result<FileSide, ReviewError> {
+    let link_target = tokio::fs::read_link(file_path).await.map_err(|error| {
+        tracing::warn!(path = %file_path.display(), %error, "failed to read symlink target");
+        ReviewError::Io(error.to_string())
+    })?;
+    let target_bytes = link_target.as_os_str().as_bytes().to_vec();
+
+    let hash_output = run_git(
+        root_path,
+        &["hash-object", "-w", "--stdin", "--no-filters"],
+        Some(&target_bytes),
+    )
+    .await?;
+    let blob = String::from_utf8_lossy(&hash_output).trim().to_string();
+
+    let content = String::from_utf8(target_bytes).ok();
+    let binary = content.is_none();
+
+    Ok(FileSide {
+        content,
+        blob,
+        mode: "120000".to_string(),
+        binary,
+        too_large: false,
     })
 }
