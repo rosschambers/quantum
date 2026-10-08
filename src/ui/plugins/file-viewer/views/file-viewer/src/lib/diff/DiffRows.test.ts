@@ -3,6 +3,7 @@ import { render, fireEvent, cleanup } from '@testing-library/svelte/svelte5';
 import DiffRows from './DiffRows.svelte';
 import type { DiffRow } from './rows';
 import type { DiffToken } from './highlightLines';
+import type { SearchRanges } from './DiffRows.svelte';
 
 afterEach(() => {
 	cleanup();
@@ -42,14 +43,14 @@ describe('DiffRows (unified)', () => {
 		expect(renderedRows).toHaveLength(3);
 
 		const contextRow = renderedRows[0];
-		const lineNumbers = contextRow.querySelectorAll('.ln');
+		const lineNumbers = contextRow.querySelectorAll('.line-number');
 		expect(lineNumbers[0].textContent).toBe('1');
 		expect(lineNumbers[1].textContent).toBe('1');
 		expect(contextRow.querySelector('.code')?.textContent).toBe('unchanged');
 
 		const removedRow = renderedRows[1];
 		expect(removedRow.classList.contains('removed')).toBe(true);
-		const removedNumbers = removedRow.querySelectorAll('.ln');
+		const removedNumbers = removedRow.querySelectorAll('.line-number');
 		expect(removedNumbers[0].textContent).toBe('2');
 		expect(removedNumbers[1].textContent).toBe('');
 		const removedCode = removedRow.querySelector('.code') as HTMLElement;
@@ -59,7 +60,7 @@ describe('DiffRows (unified)', () => {
 
 		const addedRow = renderedRows[2];
 		expect(addedRow.classList.contains('added')).toBe(true);
-		const addedNumbers = addedRow.querySelectorAll('.ln');
+		const addedNumbers = addedRow.querySelectorAll('.line-number');
 		expect(addedNumbers[0].textContent).toBe('');
 		expect(addedNumbers[1].textContent).toBe('2');
 		const addedCode = addedRow.querySelector('.code') as HTMLElement;
@@ -158,6 +159,77 @@ describe('DiffRows (unified)', () => {
 		expect(setData).toHaveBeenCalledWith('text/plain', 'context line\nnew text');
 		expect(preventDefaultSpy).toHaveBeenCalled();
 	});
+
+	test('pressing Enter or Space on a collapsed row calls onExpand, same as a click', async () => {
+		const rows: DiffRow[] = [
+			{ kind: 'collapsed', key: 'collapse-0', hiddenCount: 5, firstNewIndex: 0, scopeLine: '' },
+		];
+		const onExpand = vi.fn();
+		const { container } = render(DiffRows, {
+			props: {
+				rows,
+				layout: 'unified',
+				oldTokens: tokensFor(['a', 'b', 'c', 'd', 'e']),
+				newTokens: tokensFor(['a', 'b', 'c', 'd', 'e']),
+				onExpand,
+				onRecollapse: vi.fn(),
+			},
+		});
+
+		const collapsedElement = container.querySelector('.collapsed') as HTMLElement;
+		await fireEvent.keyDown(collapsedElement, { key: 'Enter' });
+		expect(onExpand).toHaveBeenCalledWith('collapse-0');
+		onExpand.mockClear();
+		await fireEvent.keyDown(collapsedElement, { key: ' ' });
+		expect(onExpand).toHaveBeenCalledWith('collapse-0');
+	});
+
+	test('pressing Enter or Space on a recollapse row calls onRecollapse, same as a click', async () => {
+		const rows: DiffRow[] = [{ kind: 'recollapse', key: 'collapse-0', count: 5, position: 'top' }];
+		const onRecollapse = vi.fn();
+		const { container } = render(DiffRows, {
+			props: {
+				rows,
+				layout: 'unified',
+				oldTokens: tokensFor(['a']),
+				newTokens: tokensFor(['a']),
+				onExpand: vi.fn(),
+				onRecollapse,
+			},
+		});
+
+		const recollapseElement = container.querySelector('.recollapse') as HTMLElement;
+		await fireEvent.keyDown(recollapseElement, { key: 'Enter' });
+		expect(onRecollapse).toHaveBeenCalledWith('collapse-0');
+		onRecollapse.mockClear();
+		await fireEvent.keyDown(recollapseElement, { key: ' ' });
+		expect(onRecollapse).toHaveBeenCalledWith('collapse-0');
+	});
+
+	test('renders search-match and search-match-current marks from searchRanges', () => {
+		const rows: DiffRow[] = [{ kind: 'context', oldIndex: 0, newIndex: 0 }];
+		const searchRanges: SearchRanges = {
+			old: new Map(),
+			new: new Map([[0, { ranges: [[0, 6], [7, 11]], currentRange: [7, 11] }]]),
+		};
+		const { container } = render(DiffRows, {
+			props: {
+				rows,
+				layout: 'unified',
+				oldTokens: tokensFor(['needle here']),
+				newTokens: tokensFor(['needle here']),
+				searchRanges,
+				onExpand: vi.fn(),
+				onRecollapse: vi.fn(),
+			},
+		});
+
+		const matches = container.querySelectorAll('.search-match');
+		const current = container.querySelectorAll('.search-match-current');
+		expect(matches.length).toBeGreaterThan(0);
+		expect(current).toHaveLength(1);
+		expect(current[0].textContent).toBe('here');
+	});
 });
 
 describe('DiffRows (split)', () => {
@@ -208,5 +280,130 @@ describe('DiffRows (split)', () => {
 		oldColumn.scrollLeft = 42;
 		await fireEvent.scroll(oldColumn);
 		expect(newColumn.scrollLeft).toBe(42);
+	});
+
+	function twoHunksSeparatedByCollapse(): { rows: DiffRow[]; oldLines: string[]; newLines: string[] } {
+		const sameLines = Array.from({ length: 10 }, (_, index) => `same ${index}`);
+		const rows: DiffRow[] = [
+			{ kind: 'removed', oldIndex: 0, emphasis: null },
+			{ kind: 'added', newIndex: 0, emphasis: null },
+			{ kind: 'collapsed', key: 'collapse-0', hiddenCount: 5, firstNewIndex: 1, scopeLine: '' },
+			{ kind: 'removed', oldIndex: 11, emphasis: null },
+			{ kind: 'added', newIndex: 11, emphasis: null },
+		];
+		return {
+			rows,
+			oldLines: ['removed one', ...sameLines, 'removed two'],
+			newLines: ['added one', ...sameLines, 'added two'],
+		};
+	}
+
+	test('a whole file is ONE pair of columns: a collapsed region between two hunks does not start a new column pair', () => {
+		const { rows, oldLines, newLines } = twoHunksSeparatedByCollapse();
+		const { container } = render(DiffRows, {
+			props: {
+				rows,
+				layout: 'split',
+				oldTokens: tokensFor(oldLines),
+				newTokens: tokensFor(newLines),
+				onExpand: vi.fn(),
+				onRecollapse: vi.fn(),
+			},
+		});
+
+		const oldColumns = container.querySelectorAll('.column.old');
+		const newColumns = container.querySelectorAll('.column.new');
+		expect(oldColumns).toHaveLength(1);
+		expect(newColumns).toHaveLength(1);
+
+		// Both hunks' removed-side code cells live in the SAME old column element.
+		const codeCellsInOldColumn = oldColumns[0].querySelectorAll('.code[data-side="old"]');
+		expect(codeCellsInOldColumn).toHaveLength(2);
+		expect(codeCellsInOldColumn[0].textContent).toBe('removed one');
+		expect(codeCellsInOldColumn[1].textContent).toBe('removed two');
+
+		// Exactly one real `.collapsed` element so copy's data-hidden-lines works once.
+		expect(container.querySelectorAll('.collapsed')).toHaveLength(1);
+	});
+
+	test('scrolling the old column mirrors to the new column across the whole file, past a collapsed region between hunks', async () => {
+		const { rows, oldLines, newLines } = twoHunksSeparatedByCollapse();
+		const { container } = render(DiffRows, {
+			props: {
+				rows,
+				layout: 'split',
+				oldTokens: tokensFor(oldLines),
+				newTokens: tokensFor(newLines),
+				onExpand: vi.fn(),
+				onRecollapse: vi.fn(),
+			},
+		});
+
+		const oldColumn = container.querySelector('.column.old') as HTMLElement;
+		const newColumn = container.querySelector('.column.new') as HTMLElement;
+		oldColumn.scrollLeft = 77;
+		await fireEvent.scroll(oldColumn);
+		expect(newColumn.scrollLeft).toBe(77);
+	});
+
+	test('clicking the collapsed region still calls onExpand when it sits inside the single-column layout', async () => {
+		const { rows, oldLines, newLines } = twoHunksSeparatedByCollapse();
+		const onExpand = vi.fn();
+		const { container } = render(DiffRows, {
+			props: {
+				rows,
+				layout: 'split',
+				oldTokens: tokensFor(oldLines),
+				newTokens: tokensFor(newLines),
+				onExpand,
+				onRecollapse: vi.fn(),
+			},
+		});
+
+		const collapsedElement = container.querySelector('.collapsed') as HTMLElement;
+		await fireEvent.click(collapsedElement);
+		expect(onExpand).toHaveBeenCalledWith('collapse-0');
+	});
+
+	test('copying a side-locked split selection spanning a collapsed region still returns only that side', async () => {
+		const { rows, oldLines, newLines } = twoHunksSeparatedByCollapse();
+		const { container } = render(DiffRows, {
+			props: {
+				rows,
+				layout: 'split',
+				oldTokens: tokensFor(oldLines),
+				newTokens: tokensFor(newLines),
+				onExpand: vi.fn(),
+				onRecollapse: vi.fn(),
+			},
+		});
+
+		const oldColumn = container.querySelector('.column.old') as HTMLElement;
+		await fireEvent.pointerDown(oldColumn);
+
+		const root = container.querySelector('.diff-root') as HTMLElement;
+		const oldCodeCells = oldColumn.querySelectorAll('.code');
+		expect(oldCodeCells).toHaveLength(2);
+
+		const range = document.createRange();
+		range.setStart(oldCodeCells[0].firstChild ?? oldCodeCells[0], 0);
+		const lastNode = oldCodeCells[1].firstChild ?? oldCodeCells[1];
+		range.setEnd(lastNode, lastNode.textContent?.length ?? 0);
+		const selection = window.getSelection()!;
+		selection.removeAllRanges();
+		selection.addRange(range);
+
+		const event = new Event('copy', { bubbles: true, cancelable: true }) as unknown as ClipboardEvent;
+		const setData = vi.fn();
+		Object.defineProperty(event, 'clipboardData', { value: { setData }, configurable: true });
+		root.dispatchEvent(event);
+
+		// Locked to the old side: the new side's cells never survive, but the
+		// collapsed region in between stays, so the clipboard is a
+		// contiguous piece of the real file (the design's copy contract).
+		expect(setData).toHaveBeenCalledWith(
+			'text/plain',
+			'removed one\nsame 0\nsame 1\nsame 2\nsame 3\nsame 4\nremoved two',
+		);
 	});
 });

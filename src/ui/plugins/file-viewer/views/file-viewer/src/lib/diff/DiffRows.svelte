@@ -6,12 +6,12 @@
 	// no diff logic itself — only markup, copy hygiene, and split-view
 	// selection locking / scroll sync.
 	//
-	// `searchRanges` shape (documented here because it is not exported from a
-	// shared module — TypeScript structurally matches it wherever it is
-	// redeclared, e.g. in DiffFile.svelte): per-side maps from a line's
-	// old/new index (the same index space as `oldTokens`/`newTokens`) to that
-	// line's search ranges and, if one of them is the current match, which
-	// range that is.
+	// `searchRanges` shape: per-side maps from a line's old/new index (the
+	// same index space as `oldTokens`/`newTokens`) to that line's search
+	// ranges and, if one of them is the current match, which range that is.
+	// `DiffFile.svelte` and `DiffView.svelte` import the `SearchRanges` /
+	// `LineSearchRanges` types below directly from this component — they are
+	// not redeclared anywhere.
 	import type { DiffRow, SplitViewRow } from './rows';
 	import { toSplitRows } from './rows';
 	import { renderTokens, type DiffToken, type EmphasisLayer } from './highlightLines';
@@ -109,7 +109,7 @@
 		return position === 'top' ? '\u25B4' : '\u25BE';
 	}
 
-	function ln(value: number | ''): string {
+	function lineNumberText(value: number | ''): string {
 		return value === '' ? '' : String(value);
 	}
 
@@ -129,44 +129,24 @@
 		return row.kind === 'context' || row.kind === 'added' ? row.newIndex + 1 : '';
 	}
 
-	let splitBlocks = $derived.by(() => buildSplitBlocks(toSplitRows(rows)));
+	// ONE pair of columns for the whole file (not one per hunk): every row,
+	// in order, lives in BOTH `.column.old` and `.column.new` — context and
+	// change halves render their real content on whichever side has it (an
+	// inert `.half.empty` filler otherwise), and a collapsed/recollapse row
+	// renders its real, clickable label in the old column with a same-height
+	// inert spacer in the new column (never a second `.collapsed`, so
+	// `data-hidden-lines` exists exactly once for `copyText.ts` to read).
+	// Fixed row heights (`.row`, `.half`: `min-height: 20.8px`) keep the two
+	// columns aligned without wrapping. A single scroll-mirroring handler per
+	// column keeps the whole file in horizontal sync, not just one hunk.
+	let splitRows = $derived.by(() => toSplitRows(rows));
 
-	interface PairBlock {
-		type: 'pair';
-		rows: SplitViewRow[];
-	}
-	interface FullBlock {
-		type: 'full';
-		row: SplitViewRow;
-	}
-	type SplitBlock = PairBlock | FullBlock;
+	let oldColumnElement: HTMLDivElement | undefined = $state(undefined);
+	let newColumnElement: HTMLDivElement | undefined = $state(undefined);
 
-	function buildSplitBlocks(splitRows: SplitViewRow[]): SplitBlock[] {
-		const blocks: SplitBlock[] = [];
-		let current: SplitViewRow[] = [];
-		for (const row of splitRows) {
-			if (row.full) {
-				if (current.length > 0) {
-					blocks.push({ type: 'pair', rows: current });
-					current = [];
-				}
-				blocks.push({ type: 'full', row });
-			} else {
-				current.push(row);
-			}
-		}
-		if (current.length > 0) {
-			blocks.push({ type: 'pair', rows: current });
-		}
-		return blocks;
-	}
-
-	let oldColumns: HTMLDivElement[] = $state([]);
-	let newColumns: HTMLDivElement[] = $state([]);
-
-	function mirrorScroll(pairIndex: number, source: Side): void {
-		const from = source === 'old' ? oldColumns[pairIndex] : newColumns[pairIndex];
-		const to = source === 'old' ? newColumns[pairIndex] : oldColumns[pairIndex];
+	function mirrorScroll(source: Side): void {
+		const from = source === 'old' ? oldColumnElement : newColumnElement;
+		const to = source === 'old' ? newColumnElement : oldColumnElement;
 		if (from && to) {
 			to.scrollLeft = from.scrollLeft;
 		}
@@ -229,8 +209,8 @@
 				</div>
 			{:else}
 				<div class="row {row.kind}">
-					<span class="ln" style={`width: calc(${digitWidth}ch + 12px)`}>{ln(oldNumberFor(row))}</span>
-					<span class="ln last" style={`width: calc(${digitWidth}ch + 12px)`}>{ln(newNumberFor(row))}</span>
+					<span class="line-number" style={`width: calc(${digitWidth}ch + 12px)`}>{lineNumberText(oldNumberFor(row))}</span>
+					<span class="line-number last" style={`width: calc(${digitWidth}ch + 12px)`}>{lineNumberText(newNumberFor(row))}</span>
 					<span
 						class="code"
 						data-side={row.kind === 'removed' ? 'old' : 'new'}
@@ -246,87 +226,90 @@
 			{/if}
 		{/each}
 	{:else}
-		{#each splitBlocks as block, blockIndex (blockIndex)}
-			{#if block.type === 'full'}
-				{#if block.row.left?.kind === 'collapsed'}
-					{@const collapsedRow = block.row.left}
-					<div
-						class="collapsed"
-						role="button"
-						tabindex="0"
-						data-hidden-lines={hiddenLinesJson(collapsedRow.firstNewIndex, collapsedRow.hiddenCount)}
-						onclick={() => onExpand(collapsedRow.key)}
-						onkeydown={(event) => handleExpandKey(event, collapsedRow.key)}
-					>
-						<span class="count">{unchangedLabel(collapsedRow.hiddenCount)}</span>
-						{#if collapsedRow.scopeLine}<span class="scope">{@html collapsedRow.scopeLine}</span>{/if}
-					</div>
-				{:else if block.row.left?.kind === 'recollapse'}
-					{@const recollapseRow = block.row.left}
-					<div
-						class="recollapse"
-						role="button"
-						tabindex="0"
-						onclick={() => onRecollapse(recollapseRow.key)}
-						onkeydown={(event) => handleRecollapseKey(event, recollapseRow.key)}
-					>
-						{recollapseArrow(recollapseRow.position)} {expandedLabel(recollapseRow.count)}
-					</div>
-				{/if}
-			{:else}
-				{@const pairIndex = blockIndex}
-				<div class="split-pair">
-					<div
-						class="column old"
-						role="presentation"
-						bind:this={oldColumns[pairIndex]}
-						onpointerdown={() => handlePointerDown('old')}
-						onscroll={() => mirrorScroll(pairIndex, 'old')}
-					>
-						{#each block.rows as splitRow, rowIndex (rowIndex)}
-							{#if splitRow.left}
-								{@const leftRow = splitRow.left}
-								<div class="half {leftRow.kind}">
-									<span class="ln last" style={`width: calc(${digitWidth}ch + 12px)`}>{leftRow.kind === 'added' ? '' : leftRow.oldIndex + 1}</span>
-									<span
-										class="code"
-										data-side="old"
-										data-row-kind={leftRow.kind}
-										>{@html cellHtml('old', leftRow.oldIndex, leftRow.kind as RowKind, leftRow.kind === 'removed' ? leftRow.emphasis : null)}</span
-									>
-								</div>
-							{:else}
-								<div class="half empty"></div>
-							{/if}
-						{/each}
-					</div>
-					<div
-						class="column new"
-						role="presentation"
-						bind:this={newColumns[pairIndex]}
-						onpointerdown={() => handlePointerDown('new')}
-						onscroll={() => mirrorScroll(pairIndex, 'new')}
-					>
-						{#each block.rows as splitRow, rowIndex (rowIndex)}
-							{#if splitRow.right}
-								{@const rightRow = splitRow.right}
-								<div class="half {rightRow.kind}">
-									<span class="ln last" style={`width: calc(${digitWidth}ch + 12px)`}>{rightRow.kind === 'removed' ? '' : rightRow.newIndex + 1}</span>
-									<span
-										class="code"
-										data-side="new"
-										data-row-kind={rightRow.kind}
-										>{@html cellHtml('new', rightRow.newIndex, rightRow.kind as RowKind, rightRow.kind === 'added' ? rightRow.emphasis : null)}</span
-									>
-								</div>
-							{:else}
-								<div class="half empty"></div>
-							{/if}
-						{/each}
-					</div>
-				</div>
-			{/if}
-		{/each}
+		<div class="split-view">
+			<div
+				class="column old"
+				role="presentation"
+				bind:this={oldColumnElement}
+				onpointerdown={() => handlePointerDown('old')}
+				onscroll={() => mirrorScroll('old')}
+			>
+				{#each splitRows as splitRow, rowIndex (rowIndex)}
+					{#if splitRow.full && splitRow.left?.kind === 'collapsed'}
+						{@const collapsedRow = splitRow.left}
+						<div
+							class="collapsed"
+							role="button"
+							tabindex="0"
+							data-hidden-lines={hiddenLinesJson(collapsedRow.firstNewIndex, collapsedRow.hiddenCount)}
+							onclick={() => onExpand(collapsedRow.key)}
+							onkeydown={(event) => handleExpandKey(event, collapsedRow.key)}
+						>
+							<span class="count">{unchangedLabel(collapsedRow.hiddenCount)}</span>
+							{#if collapsedRow.scopeLine}<span class="scope">{@html collapsedRow.scopeLine}</span>{/if}
+						</div>
+					{:else if splitRow.full && splitRow.left?.kind === 'recollapse'}
+						{@const recollapseRow = splitRow.left}
+						<div
+							class="recollapse"
+							role="button"
+							tabindex="0"
+							onclick={() => onRecollapse(recollapseRow.key)}
+							onkeydown={(event) => handleRecollapseKey(event, recollapseRow.key)}
+						>
+							{recollapseArrow(recollapseRow.position)} {expandedLabel(recollapseRow.count)}
+						</div>
+					{:else if splitRow.left}
+						{@const leftRow = splitRow.left}
+						<div class="half {leftRow.kind}">
+							<span class="line-number last" style={`width: calc(${digitWidth}ch + 12px)`}>{leftRow.kind === 'added' ? '' : leftRow.oldIndex + 1}</span>
+							<span
+								class="code"
+								data-side="old"
+								data-row-kind={leftRow.kind}
+								>{@html cellHtml('old', leftRow.oldIndex, leftRow.kind as RowKind, leftRow.kind === 'removed' ? leftRow.emphasis : null)}</span
+							>
+						</div>
+					{:else}
+						<div class="half empty"></div>
+					{/if}
+				{/each}
+			</div>
+			<div
+				class="column new"
+				role="presentation"
+				bind:this={newColumnElement}
+				onpointerdown={() => handlePointerDown('new')}
+				onscroll={() => mirrorScroll('new')}
+			>
+				{#each splitRows as splitRow, rowIndex (rowIndex)}
+					{#if splitRow.full}
+						{@const fullRow = splitRow.left}
+						<!-- Inert spacer mirroring the old column's collapsed/recollapse
+						     label at the same height, so rows stay aligned. Never class
+						     `collapsed` — `copyText.ts` relies on exactly one real
+						     `.collapsed` element (in the old column) for `data-hidden-lines`. -->
+						<div
+							class="spacer {fullRow?.kind === 'collapsed' ? 'spacer-collapsed' : 'spacer-recollapse'}"
+							aria-hidden="true"
+						></div>
+					{:else if splitRow.right}
+						{@const rightRow = splitRow.right}
+						<div class="half {rightRow.kind}">
+							<span class="line-number last" style={`width: calc(${digitWidth}ch + 12px)`}>{rightRow.kind === 'removed' ? '' : rightRow.newIndex + 1}</span>
+							<span
+								class="code"
+								data-side="new"
+								data-row-kind={rightRow.kind}
+								>{@html cellHtml('new', rightRow.newIndex, rightRow.kind as RowKind, rightRow.kind === 'added' ? rightRow.emphasis : null)}</span
+							>
+						</div>
+					{:else}
+						<div class="half empty"></div>
+					{/if}
+				{/each}
+			</div>
+		</div>
 	{/if}
 </div>
 
@@ -368,7 +351,7 @@
 		min-height: 20.8px;
 	}
 
-	.ln {
+	.line-number {
 		flex-shrink: 0;
 		text-align: right;
 		padding: 0 8px 0 4px;
@@ -376,7 +359,7 @@
 		user-select: none;
 	}
 
-	.ln.last {
+	.line-number.last {
 		border-right: 1px solid var(--color-border);
 	}
 
@@ -457,7 +440,7 @@
 		cursor: pointer;
 	}
 
-	.split-pair {
+	.split-view {
 		display: flex;
 	}
 
@@ -478,5 +461,18 @@
 			transparent 0 6px,
 			color-mix(in oklab, var(--color-border) 35%, transparent) 6px 7px
 		);
+	}
+
+	/* Inert new-column counterparts of `.collapsed` / `.recollapse`, matching
+	   their heights exactly so the two columns' rows stay aligned. Never
+	   `.collapsed` (copyText.ts's selector) and never clickable. */
+	.spacer-collapsed {
+		min-height: 26px;
+		margin: 4px 0;
+	}
+
+	.spacer-recollapse {
+		min-height: 18px;
+		margin: 0;
 	}
 </style>
