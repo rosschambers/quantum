@@ -1,0 +1,1864 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>qv diff mode playground</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { height: 100%; }
+  body { font-family: system-ui, sans-serif; background: #141416; color: #ddd; display: flex; overflow: hidden; }
+
+  /* ---------- playground chrome ---------- */
+  #controls { width: 340px; flex-shrink: 0; overflow-y: auto; padding: 16px; background: #1b1b1f; border-right: 1px solid #2a2a30; font-size: 13px; }
+  #controls h1 { font-size: 15px; margin-bottom: 4px; }
+  #controls .sub { color: #888; font-size: 12px; margin-bottom: 14px; line-height: 1.4; }
+  .group { margin-bottom: 16px; padding-bottom: 12px; border-bottom: 1px solid #2a2a30; }
+  .group h2 { font-size: 11px; text-transform: uppercase; letter-spacing: .08em; color: #8a8578; margin-bottom: 8px; }
+  .ctl { margin-bottom: 10px; }
+  .ctl label.name { display: block; color: #bbb; margin-bottom: 4px; font-size: 12px; }
+  .ctl .hint { color: #777; font-size: 11px; margin-top: 3px; line-height: 1.35; }
+  .seg { display: flex; flex-wrap: wrap; gap: 4px; }
+  .seg button, .presets button { background: #26262c; color: #ccc; border: 1px solid #34343c; border-radius: 5px; padding: 4px 8px; font-size: 12px; cursor: pointer; }
+  .seg button:hover, .presets button:hover { background: #303038; }
+  .seg button.on { background: #a6e3a1; color: #1b1b1f; border-color: #a6e3a1; font-weight: 600; }
+  .presets { display: flex; flex-wrap: wrap; gap: 4px; }
+  .presets button.rec { border-color: #a6e3a1; }
+  input[type=range] { width: 100%; accent-color: #a6e3a1; }
+  .rangeval { float: right; color: #a6e3a1; font-family: monospace; font-size: 11px; }
+  .check { display: flex; gap: 6px; align-items: center; color: #bbb; font-size: 12px; cursor: pointer; }
+  .check input { accent-color: #a6e3a1; }
+
+  #main { flex: 1; display: flex; flex-direction: column; min-width: 0; }
+  #stage { flex: 1; overflow: auto; padding: 16px; min-height: 0; }
+  #caption { color: #888; font-size: 12px; margin-bottom: 8px; }
+  #frameWrap { position: relative; }
+  #frame { width: 900px; height: 700px; transform-origin: top left; position: absolute; top: 0; left: 0; border: 1px solid #4a443e; border-radius: 8px; overflow: hidden; box-shadow: 0 14px 40px rgba(0,0,0,.5); }
+  #promptBox { flex-shrink: 0; border-top: 1px solid #2a2a30; background: #1b1b1f; padding: 10px 16px; display: flex; gap: 12px; align-items: flex-start; max-height: 190px; }
+  #prompt { flex: 1; font-size: 12px; line-height: 1.5; color: #ccc; overflow-y: auto; max-height: 170px; white-space: pre-wrap; }
+  #copy { background: #a6e3a1; color: #1b1b1f; border: none; border-radius: 5px; padding: 6px 12px; font-weight: 600; cursor: pointer; flex-shrink: 0; }
+
+  /* ---------- the mocked qv window (sycamore tokens) ---------- */
+  .qv {
+    --color-bg: #292520; --color-bg-alt: #3b3630; --color-border: #4a443e; --color-fg: #e8e4d8;
+    --color-fg-alt: #d8d4c8; --color-accent: #a6e3a1; --color-muted: #8a8578; --color-error: #af4e3c;
+    --color-surface: #3b3630; --color-surface-hover: #4a443e;
+    --font-mono: 'Fira Code', 'JetBrains Mono', monospace;
+    --add: #a6e3a1; --del: #af4e3c; --tint: 14%; --emph: 35%;
+    height: 100%; display: flex; flex-direction: column; background: var(--color-bg); color: var(--color-fg);
+    font-family: system-ui, sans-serif;
+  }
+  .qv header { display: flex; align-items: center; gap: 12px; padding: 12px 16px; border-bottom: 1px solid var(--color-border); height: 44px; flex-shrink: 0; }
+  .qv .badge { font-size: 11px; font-family: var(--font-mono); font-weight: 700; color: var(--color-accent); background: color-mix(in oklab, var(--color-accent) 12%, transparent); padding: 2px 5px; border-radius: 3px; line-height: 1; flex-shrink: 0; }
+  .qv .title { font-family: var(--font-mono); font-size: 13px; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .qv .dir { font-size: 12px; color: var(--color-fg-alt); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; flex: 1; min-width: 0; }
+  .qv .stats { font-family: var(--font-mono); font-size: 12px; white-space: nowrap; color: var(--color-muted); }
+  .qv .stats .a { color: var(--add); } .qv .stats .d { color: var(--del); }
+  .qv .toggle { display: flex; border: 1px solid var(--color-border); border-radius: 5px; overflow: hidden; flex-shrink: 0; }
+  .qv .toggle button { background: none; border: none; color: var(--color-fg-alt); font-size: 11px; padding: 3px 8px; cursor: pointer; }
+  .qv .toggle button.on { background: var(--color-surface); color: var(--color-accent); font-weight: 600; }
+  .qv .close { background: none; border: none; color: var(--color-fg); font-size: 16px; padding: 6px 8px; border-radius: 4px; cursor: pointer; }
+  .qv .close:hover { background: var(--color-surface); }
+
+  .qv .navbar { display: flex; align-items: center; gap: 8px; height: 34px; padding: 0 12px; border-bottom: 1px solid var(--color-border); flex-shrink: 0; font-size: 12px; }
+  .qv .navbar button { background: none; border: 1px solid var(--color-border); color: var(--color-fg-alt); border-radius: 4px; padding: 1px 8px; cursor: pointer; }
+  .qv .navbar select { background: var(--color-bg-alt); color: var(--color-fg); border: 1px solid var(--color-border); border-radius: 4px; padding: 2px 6px; font-family: var(--font-mono); font-size: 12px; max-width: 60%; }
+
+  .qv .body { flex: 1; display: flex; min-height: 0; }
+  .qv .sidebar { width: 220px; flex-shrink: 0; border-right: 1px solid var(--color-border); display: flex; flex-direction: column; overflow: hidden; }
+  .qv .sidebar-title { padding: 12px; font-size: 13px; font-weight: 600; border-bottom: 1px solid var(--color-border); display: flex; justify-content: space-between; }
+  .qv .sidebar-title span { font-weight: 400; color: var(--color-muted); font-size: 12px; }
+  .qv .flist { list-style: none; overflow-y: auto; flex: 1; }
+  .qv .flist button { width: 100%; border: none; background: none; text-align: left; padding: 7px 12px; cursor: pointer; display: grid; grid-template-columns: 14px 1fr auto; gap: 6px; align-items: baseline; color: var(--color-fg-alt); font-size: 13px; }
+  .qv .flist button:hover { background: var(--color-surface); }
+  .qv .flist li.active button { color: var(--color-accent); font-weight: 600; }
+  .qv .flist .fname { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .qv .flist .fdir { display: block; font-size: 11px; color: var(--color-muted); font-weight: 400; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; direction: rtl; text-align: left; }
+  .qv .flist .mini { font-family: var(--font-mono); font-size: 11px; font-weight: 400; }
+  .qv .st { font-family: var(--font-mono); font-size: 11px; font-weight: 700; }
+  .qv .st-M { color: #ffcb6b; } .qv .st-A { color: var(--add); } .qv .st-D { color: var(--del); }
+
+  .qv .pane { flex: 1; position: relative; min-width: 0; }
+  .qv .scroller { position: absolute; inset: 0; overflow: auto; }
+  .qv.ruler-on .scroller { right: 10px; }
+  .qv .ruler { position: absolute; top: 0; bottom: 0; right: 0; width: 10px; border-left: 1px solid var(--color-border); cursor: pointer; }
+  .qv .ruler .tick { position: absolute; left: 2px; right: 2px; min-height: 2px; border-radius: 1px; }
+  .qv .ruler .thumb { position: absolute; left: 0; right: 0; background: color-mix(in oklab, var(--color-fg) 10%, transparent); pointer-events: none; }
+
+  .qv .fhead { position: sticky; top: 0; left: 0; z-index: 2; display: flex; align-items: center; gap: 8px; height: 32px; padding: 0 12px; background: var(--color-bg-alt); border-bottom: 1px solid var(--color-border); border-top: 1px solid var(--color-border); font-family: var(--font-mono); font-size: 12px; cursor: pointer; }
+  .qv .file:first-child .fhead { border-top: none; }
+  .qv .fhead .chev { color: var(--color-muted); font-size: 9px; width: 10px; }
+  .qv .fhead .fpath { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; direction: rtl; text-align: left; }
+  .qv .fhead .fpath .d { color: var(--color-muted); }
+
+  /* code rows: matches CodeRenderer metrics (13px, line-height 1.6) */
+  .qv .rows { font-family: var(--font-mono); font-size: 13px; line-height: 1.6; min-width: 100%; width: max-content; padding: 6px 0; tab-size: 4; }
+  .qv .rows.split { width: 100%; }
+  .qv.wrap .rows { width: 100%; }
+  .qv .row, .qv .half { display: flex; min-height: 20.8px; }
+  .qv .ln { flex-shrink: 0; text-align: right; padding: 0 8px 0 4px; color: color-mix(in srgb, var(--color-muted) 50%, transparent); user-select: none; }
+  .qv .ln.last { border-right: 1px solid var(--color-border); margin-right: 0; }
+  .qv .sign { width: 18px; flex-shrink: 0; text-align: center; user-select: none; color: var(--color-muted); }
+  .qv .code { padding: 0 16px 0 10px; white-space: pre; flex: 1; color: var(--color-fg-alt); }
+  .qv.wrap .code { white-space: pre-wrap; overflow-wrap: anywhere; }
+  .qv .row.add, .qv .half.add { background: color-mix(in oklab, var(--add) var(--tint), transparent); }
+  .qv .row.del, .qv .half.del { background: color-mix(in oklab, var(--del) var(--tint), transparent); }
+  .qv .bar.add { box-shadow: inset 3px 0 0 var(--add); }
+  .qv .bar.del { box-shadow: inset 3px 0 0 var(--del); }
+  .qv .add .sign { color: var(--add); } .qv .del .sign { color: var(--del); }
+  .qv .ix-add { background: color-mix(in oklab, var(--add) var(--emph), transparent); border-radius: 2px; }
+  .qv .ix-del { background: color-mix(in oklab, var(--del) var(--emph), transparent); border-radius: 2px; }
+  .qv.dim-deleted .del .code { opacity: .55; }
+  .qv.plain-changed .add .code, .qv.syntax-off .add .code { color: var(--add); }
+  .qv.plain-changed .del .code, .qv.syntax-off .del .code { color: var(--del); }
+
+  .qv .srow { display: flex; }
+  .qv .half { width: 50%; min-width: 0; }
+  .qv .half + .half { border-left: 1px solid var(--color-border); }
+  .qv .rows.split .code { overflow: hidden; }
+  .qv .half.empty { background: repeating-linear-gradient(135deg, transparent 0 6px, color-mix(in oklab, var(--color-border) 35%, transparent) 6px 7px); }
+
+  .qv .gap { display: flex; align-items: center; gap: 10px; min-height: 26px; margin: 4px 0; padding: 0 12px; background: color-mix(in oklab, var(--color-surface) 70%, transparent); color: var(--color-muted); font-family: var(--font-mono); font-size: 12px; cursor: pointer; white-space: nowrap; overflow: hidden; }
+  .qv .gap:hover { color: var(--color-fg); background: var(--color-surface); }
+  .qv .gap.static { cursor: default; }
+  .qv .gap .raw { color: #89ddff; }
+  .qv .gap .scope { color: var(--color-fg-alt); overflow: hidden; text-overflow: ellipsis; }
+  .qv .gap .scope .hljs-keyword { color: #c792ea; }
+  .qv .gap.recollapse { min-height: 18px; margin: 0; font-size: 11px; background: color-mix(in oklab, var(--color-surface) 40%, transparent); }
+
+  /* ---- review mode ---- */
+  .qv .st-U { color: #89ddff; } .qv .st-R { color: #82aaff; }
+  .qv .pill { font-family: system-ui, sans-serif; font-size: 10px; padding: 1px 6px; border-radius: 8px; border: 1px solid var(--color-border); color: var(--color-muted); white-space: nowrap; }
+  .qv .pill.warn { color: #ffcb6b; border-color: color-mix(in oklab, #ffcb6b 45%, transparent); cursor: default; }
+  .qv .pill.warn[data-fulldiff] { cursor: pointer; }
+  .qv .rbtn { font-family: system-ui, sans-serif; font-size: 11px; padding: 2px 8px; border-radius: 4px; border: 1px solid var(--color-border); background: var(--color-bg); color: var(--color-fg-alt); cursor: pointer; white-space: nowrap; }
+  .qv .rbtn:hover { border-color: var(--color-accent); color: var(--color-accent); }
+  .qv .rbtn.on { color: var(--color-accent); border-color: color-mix(in oklab, var(--color-accent) 45%, transparent); background: color-mix(in oklab, var(--color-accent) 10%, transparent); }
+  .qv .fhead.done .fpath, .qv .fhead.done .stats { opacity: .6; }
+  .qv .rcheck { width: 14px; height: 14px; border: 1px solid var(--color-muted); border-radius: 3px; display: inline-flex; align-items: center; justify-content: center; font-size: 10px; color: var(--color-bg); cursor: pointer; }
+  .qv .rcheck:hover { border-color: var(--color-accent); }
+  .qv .rcheck.on { background: var(--color-accent); border-color: var(--color-accent); }
+  .qv.side-check .flist button { grid-template-columns: 16px 14px 1fr auto; }
+  .qv .flist .ghead { padding: 10px 12px 4px; font-size: 11px; text-transform: uppercase; letter-spacing: .06em; color: var(--color-muted); display: flex; justify-content: space-between; }
+  .qv .flist li.done .fname { opacity: .6; }
+  .qv .dot { display: inline-block; width: 6px; height: 6px; border-radius: 50%; background: #ffcb6b; vertical-align: middle; }
+  .qv .progress { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--color-fg-alt); white-space: nowrap; }
+  .qv .progress .bar { width: 48px; height: 4px; border-radius: 2px; background: var(--color-border); overflow: hidden; }
+  .qv .progress .bar span { display: block; height: 100%; background: var(--color-accent); }
+  .qv .banner { display: flex; align-items: center; gap: 10px; padding: 6px 16px; font-size: 12px; background: color-mix(in oklab, #ffcb6b 14%, var(--color-bg)); border-bottom: 1px solid var(--color-border); color: var(--color-fg); flex-shrink: 0; }
+  .qv .banner.error { background: color-mix(in oklab, var(--color-error) 22%, var(--color-bg)); }
+  .qv .banner button { margin-left: auto; font-size: 11px; padding: 2px 8px; border-radius: 4px; border: 1px solid var(--color-border); background: var(--color-bg); color: var(--color-fg); cursor: pointer; }
+  .qv .keys { display: flex; gap: 14px; align-items: center; height: 24px; padding: 0 12px; border-top: 1px solid var(--color-border); font-size: 11px; color: var(--color-muted); flex-shrink: 0; }
+  .qv kbd { font-family: var(--font-mono); font-size: 10px; padding: 0 4px; margin-right: 2px; border: 1px solid var(--color-border); border-radius: 3px; color: var(--color-fg-alt); }
+  .qv .large { margin: 8px 12px; padding: 10px 12px; border: 1px dashed var(--color-border); border-radius: 6px; color: var(--color-muted); font-size: 12px; display: flex; align-items: center; gap: 10px; }
+  .qv .large button { font-size: 11px; padding: 2px 8px; border-radius: 4px; border: 1px solid var(--color-border); background: var(--color-bg-alt); color: var(--color-fg); cursor: pointer; }
+
+  /* re-collapse gutter bracket: absolutely positioned so it never shifts layout */
+  .qv .row, .qv .srow { position: relative; }
+  .qv .exp-handle { position: absolute; left: 0; top: 0; bottom: 0; width: 5px; background: color-mix(in oklab, var(--color-muted) 35%, transparent); cursor: pointer; z-index: 1; }
+  .qv .exp-handle:hover { background: var(--color-accent); }
+  .qv .rows:hover .exp-handle { background: color-mix(in oklab, var(--color-muted) 55%, transparent); }
+  .qv .rows .exp-handle:hover { background: var(--color-accent); }
+
+  /* copy hygiene: only file text is selectable */
+  .qv { user-select: none; -webkit-user-select: none; }
+  .qv .code { user-select: text; -webkit-user-select: text; }
+  .qv .rows.split.pick-old .half:last-child .code,
+  .qv .rows.split.pick-new .half:first-of-type .code { user-select: none; -webkit-user-select: none; }
+  .qv .code ::selection, .qv .code::selection { background: color-mix(in oklab, #82aaff 40%, transparent); }
+
+  #copied { display: none; margin-top: 10px; background: #1b1b1f; border: 1px solid #2a2a30; border-radius: 6px; padding: 8px 10px; font-size: 12px; max-width: 900px; }
+  #copied .lbl { color: #8a8578; margin-bottom: 4px; }
+  #copied pre { font-family: monospace; color: #e8e4d8; white-space: pre; overflow-x: auto; max-height: 160px; }
+  #copied pre .eol { color: #555; }
+
+  /* highlight-theme.css, verbatim from the file-viewer view */
+  .qv .hljs-keyword, .qv .hljs-selector-tag, .qv .hljs-literal, .qv .hljs-section, .qv .hljs-link { color: #c792ea; }
+  .qv .hljs-string, .qv .hljs-title, .qv .hljs-name, .qv .hljs-type, .qv .hljs-attr, .qv .hljs-quote { color: #c3e88d; }
+  .qv .hljs-number, .qv .hljs-literal, .qv .hljs-regexp { color: #f78c6c; }
+  .qv .hljs-comment, .qv .hljs-quote { color: var(--color-muted); font-style: italic; }
+  .qv .hljs-type, .qv .hljs-class, .qv .hljs-title.class_ { color: #ffcb6b; }
+  .qv .hljs-title.function_ { color: #82aaff; }
+  .qv .hljs-operator, .qv .hljs-symbol { color: #89ddff; }
+  .qv .hljs-property, .qv .hljs-attr, .qv .hljs-variable { color: #f07178; }
+  .qv .hljs-punctuation, .qv .hljs-bullet, .qv .hljs-code { color: var(--color-muted); }
+  .qv .hljs-built_in { color: #82aaff; }
+  .qv .hljs-meta { color: #f78c6c; }
+  .qv .hljs-strong { font-weight: 700; }
+</style>
+</head>
+<body>
+
+<div id="controls">
+  <h1>qv diff mode</h1>
+  <div class="sub">Mocked on the real file-viewer: Header.svelte chrome, CodeRenderer gutter metrics, highlight-theme.css colors, sycamore tokens, 900x700 window from view.toml. Sample change set is real quantum code.</div>
+
+  <div class="group">
+    <h2>Presets</h2>
+    <div class="presets" id="presets"></div>
+  </div>
+
+  <div class="group">
+    <h2>Source</h2>
+    <div class="ctl"><label class="name">Invocation</label>
+      <div class="seg" data-key="mode"><button data-v="git">qv --diff</button><button data-v="pair">qv a.ts b.ts</button></div></div>
+  </div>
+
+  <div class="group">
+    <h2>Layout</h2>
+    <div class="ctl"><label class="name">Default layout</label>
+      <div class="seg" data-key="layout"><button data-v="unified">Unified</button><button data-v="split">Split</button><button data-v="auto">Auto by width</button></div></div>
+    <div class="ctl" id="autoCtl"><label class="name">Auto switches to split at <span class="rangeval" data-out="autoThreshold"></span></label>
+      <input type="range" min="900" max="1600" step="50" data-key="autoThreshold"></div>
+    <div class="ctl"><label class="check"><input type="checkbox" data-key="headerToggle"> Unified / Split toggle in the header</label></div>
+    <div class="ctl"><label class="check"><input type="checkbox" data-key="wrap"> Soft-wrap long lines</label>
+      <div class="hint">Off: unified scrolls sideways; split clips each side (real build would sync-scroll).</div></div>
+    <div class="ctl"><label class="name">Window width <span class="rangeval" data-out="width"></span></label>
+      <input type="range" min="640" max="1600" step="20" data-key="width">
+      <div class="hint">qv opens at 900 wide. Drag to see where split stops being readable.</div></div>
+  </div>
+
+  <div class="group" id="reviewGroup">
+    <h2>Staging (review = stage)</h2>
+    <div class="ctl"><label class="name">Sidebar and file order</label>
+      <div class="seg" data-key="grouping"><button data-v="sections">Unstaged / Staged sections</button><button data-v="single">One list, state badges</button></div>
+      <div class="hint">Sections: a file staged and then edited again (partially staged) shows in BOTH (new edits under Unstaged, the staged part under Staged). One list: a single entry with an "unstaged changes" toggle.</div></div>
+    <div class="ctl"><label class="name">Stage control</label>
+      <div class="seg" data-key="reviewAction"><button data-v="header">File header button</button><button data-v="sidebar">Sidebar checkbox</button><button data-v="both">Both</button></div></div>
+    <div class="ctl"><label class="name">A staged file</label>
+      <div class="seg" data-key="afterReview"><button data-v="collapse">Collapses</button><button data-v="stay">Stays open, dimmed</button></div></div>
+    <div class="ctl"><label class="name">Untracked files</label>
+      <div class="seg" data-key="untrackedStyle"><button data-v="letter">U letter</button><button data-v="tag">A + "untracked" tag</button></div></div>
+    <div class="ctl"><label class="check"><input type="checkbox" data-key="progress"> "n of m staged" progress in the header</label></div>
+    <div class="ctl"><label class="check"><input type="checkbox" data-key="keyHints"> Keyboard hint bar at the bottom</label></div>
+    <div class="ctl"><label class="name">Try it (demo actions, not design choices)</label>
+      <div class="seg"><button id="simulateEdit">Simulate agent edit</button><button id="resetRepository">Reset repository</button></div>
+      <div class="hint">After "Simulate agent edit", try staging highlighter.ts before refreshing: qv refuses to stage content you have not seen. Keys work in the preview: n / p, ] / [, s, R.</div></div>
+  </div>
+
+  <div class="group" id="navGroup">
+    <h2>Multi-file navigation</h2>
+    <div class="ctl"><div class="seg" data-key="fileNav">
+      <button data-v="sidebar-stacked">Sidebar + all files</button>
+      <button data-v="sidebar-single">Sidebar + one file</button>
+      <button data-v="stacked">All files, no sidebar</button>
+      <button data-v="dropdown">Picker bar, one file</button></div>
+      <div class="hint">Click files in the sidebar and file headers (collapse) inside the preview.</div></div>
+  </div>
+
+  <div class="group">
+    <h2>Highlighting</h2>
+    <div class="ctl"><label class="name">Syntax colors</label>
+      <div class="seg" data-key="syntax">
+        <button data-v="full">Everywhere</button><button data-v="dim-deleted">Dim deleted</button>
+        <button data-v="plain-changed">Context only</button><button data-v="off">Off</button></div>
+      <div class="hint">Whole old and new files are tokenized, not hunk fragments, so block comments and strings color correctly.</div></div>
+    <div class="ctl"><label class="name">Change colors</label>
+      <div class="seg" data-key="palette">
+        <button data-v="tokens">Theme tokens</button><button data-v="material">highlight-theme</button><button data-v="blueorange">Blue / orange</button></div>
+      <div class="hint">Theme tokens = --color-accent / --color-error (follows theme switches). highlight-theme = the unused .hljs-addition/.hljs-deletion colors.</div></div>
+    <div class="ctl"><label class="name">Line tint <span class="rangeval" data-out="tint"></span></label>
+      <input type="range" min="0" max="40" step="1" data-key="tint"></div>
+    <div class="ctl"><label class="name">Changed-text emphasis</label>
+      <div class="seg" data-key="intraline"><button data-v="off">Off</button><button data-v="word">Word</button><button data-v="char">Character</button></div></div>
+    <div class="ctl"><label class="name">Emphasis strength <span class="rangeval" data-out="emph"></span></label>
+      <input type="range" min="10" max="70" step="1" data-key="emph"></div>
+  </div>
+
+  <div class="group">
+    <h2>Gutter</h2>
+    <div class="ctl"><label class="name">Change marker</label>
+      <div class="seg" data-key="marker"><button data-v="bar">Edge bar</button><button data-v="sign">+ / - column</button><button data-v="both">Both</button><button data-v="none">Tint only</button></div></div>
+    <div class="ctl"><label class="name">Line numbers</label>
+      <div class="seg" data-key="lineNumbers"><button data-v="both">Old + new</button><button data-v="new">New only</button><button data-v="none">None</button></div></div>
+  </div>
+
+  <div class="group">
+    <h2>Context</h2>
+    <div class="ctl"><label class="name">Unchanged lines around a change</label>
+      <div class="seg" data-key="context"><button data-v="3">3</button><button data-v="5">5</button><button data-v="10">10</button><button data-v="all">Whole file</button></div></div>
+    <div class="ctl"><label class="name">Collapsed-region label</label>
+      <div class="seg" data-key="hunkLabel"><button data-v="count">Line count</button><button data-v="scope">Count + enclosing scope</button><button data-v="raw">Raw @@ header</button></div>
+      <div class="hint">Click a collapsed region in the preview to expand it.</div></div>
+    <div class="ctl"><label class="name">Re-collapse handle on expanded regions</label>
+      <div class="seg" data-key="recollapse"><button data-v="bracket">Gutter strip</button><button data-v="bar">Bar on top</button><button data-v="both">Bars top + bottom</button></div>
+      <div class="hint">Gutter strip runs the full height of the expanded lines, so it never scrolls away. Expand a region, then hover the left edge.</div></div>
+    <div class="ctl"><label class="check"><input type="checkbox" data-key="ruler"> Overview ruler (change map on the right edge)</label></div>
+  </div>
+
+  <div class="group">
+    <h2>Copy</h2>
+    <div class="ctl"><label class="name">Unified selection spanning a change copies</label>
+      <div class="seg" data-key="copyMode"><button data-v="as-selected">Removed + added lines</button><button data-v="new-only">New side only</button></div></div>
+    <div class="ctl"><label class="name">Selection across a collapsed region copies</label>
+      <div class="seg" data-key="copyHidden"><button data-v="include">The hidden lines too</button><button data-v="skip">Only what is visible</button></div>
+      <div class="hint">"Hidden lines too" gives a contiguous piece of the real file. "Only visible" pastes with a silent hole where the region was.</div></div>
+    <div class="ctl">
+      <div class="hint">Always: line numbers, signs, region labels, headers, and split-view filler are never selected or copied. In split view a selection stays on the side it started on. Select text in the preview and press Ctrl+C to see exactly what lands on the clipboard.</div></div>
+  </div>
+</div>
+
+<div id="main">
+  <div id="stage">
+    <div id="caption"></div>
+    <div id="frameWrap"><div id="frame"></div></div>
+    <div id="copied"><div class="lbl"></div><pre></pre></div>
+  </div>
+  <div id="promptBox"><div id="prompt"></div><button id="copy">Copy</button></div>
+</div>
+
+<!-- ===== sample change set (real quantum code) ===== -->
+<script type="text/plain" data-file="rs" data-side="old">
+/// File viewer domain types and detection functions.
+///
+/// Provides types for file previewing: file type classification, file info structure,
+/// and pure functions for detecting file types and binary content.
+use serde::{Deserialize, Serialize};
+
+/// The type of file being viewed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ViewerFileType {
+    /// Markdown file (.md, .mdx, .markdown)
+    Markdown,
+    /// JSON file (.json, .jsonc, .json5)
+    Json,
+    /// Source code file (.ts, .py, .rs, etc.)
+    Code,
+    /// Plain text file (other text that passes binary detection)
+    Text,
+    /// Image file (.png, .jpg, .webp, etc.)
+    Image,
+    /// Video file (.mp4, .webm, .mkv, etc.)
+    Video,
+}
+
+/// Information about a file ready for viewing.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub struct ViewerFileInfo {
+    /// File content (text types) or empty string (media types)
+    pub content: String,
+    /// The detected file type
+    pub file_type: ViewerFileType,
+    /// Language hint for syntax highlighting (for code files)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub language: Option<String>,
+    /// Filename with extension (e.g., "readme.md")
+    pub filename: String,
+    /// Directory path (e.g., "/home/user/docs/")
+    pub directory: String,
+    /// MIME type for media files
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub mime_type: Option<String>,
+    /// File size in bytes
+    pub size: u64,
+    /// file:// URI for media files
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub uri: Option<String>,
+}
+
+/// Detects the file type from a file extension (case-insensitive).
+///
+/// Returns the most specific type based on the extension, or `ViewerFileType::Text`
+/// for unknown extensions.
+pub fn viewer_file_type_for_extension(extension: &str) -> ViewerFileType {
+    let ext_lower = extension.to_lowercase();
+
+    match ext_lower.as_str() {
+        // Markdown
+        "md" | "mdx" | "markdown" => ViewerFileType::Markdown,
+
+        // JSON
+        "json" | "jsonc" | "json5" => ViewerFileType::Json,
+
+        // Code
+        "ts" | "tsx" | "js" | "jsx" | "py" | "rs" | "nix" | "toml" | "yaml" | "yml" | "sh"
+        | "bash" | "zsh" | "sql" | "go" | "html" | "css" | "scss" | "dockerfile" | "lua"
+        | "zig" | "c" | "cpp" | "h" | "hpp" | "java" | "kt" | "swift" | "rb" | "just" => {
+            ViewerFileType::Code
+        }
+
+        // Image
+        "png" | "jpg" | "jpeg" | "gif" | "webp" | "svg" | "bmp" | "ico" | "avif" => {
+            ViewerFileType::Image
+        }
+
+        // Video
+        "mp4" | "webm" | "mkv" | "mov" | "avi" | "ogg" => ViewerFileType::Video,
+
+        // Everything else defaults to text
+        _ => ViewerFileType::Text,
+    }
+}
+
+/// Returns the highlight.js language name for syntax highlighting, if available.
+///
+/// Returns `None` for text and image/video types (which do not need syntax highlighting).
+pub fn language_for_extension(extension: &str) -> Option<String> {
+    let ext_lower = extension.to_lowercase();
+
+    let lang = match ext_lower.as_str() {
+        "ts" | "tsx" => "typescript",
+        "js" | "jsx" => "javascript",
+        "py" => "python",
+        "rs" => "rust",
+        "nix" => "nix",
+        "json" | "jsonc" | "json5" => "json",
+        "yaml" | "yml" => "yaml",
+        "toml" => "toml",
+        "sh" | "bash" | "zsh" => "bash",
+        "sql" => "sql",
+        "go" => "go",
+        "html" => "html",
+        "css" => "css",
+        "scss" => "scss",
+        "dockerfile" => "dockerfile",
+        "lua" => "lua",
+        "zig" => "zig",
+        "c" | "h" => "c",
+        "cpp" | "hpp" => "cpp",
+        "java" => "java",
+        "kt" => "kotlin",
+        "swift" => "swift",
+        "rb" => "ruby",
+        "just" => "makefile",
+        "md" | "mdx" | "markdown" => "markdown",
+        _ => return None,
+    };
+
+    Some(lang.to_string())
+}
+</script>
+<script type="text/plain" data-file="rs" data-side="new">
+/// File viewer domain types and detection functions.
+///
+/// Provides types for file previewing: file type classification, file info structure,
+/// and pure functions for detecting file types and binary content.
+use serde::{Deserialize, Serialize};
+
+/// The type of file being viewed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ViewerFileType {
+    /// Markdown file (.md, .mdx, .markdown)
+    Markdown,
+    /// JSON file (.json, .jsonc, .json5)
+    Json,
+    /// Source code file (.ts, .py, .rs, etc.)
+    Code,
+    /// Plain text file (other text that passes binary detection)
+    Text,
+    /// Image file (.png, .jpg, .webp, etc.)
+    Image,
+    /// Video file (.mp4, .webm, .mkv, etc.)
+    Video,
+    /// Unified diff or patch (.diff, .patch)
+    Diff,
+}
+
+/// Information about a file ready for viewing.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub struct ViewerFileInfo {
+    /// File content (text types) or empty string (media types)
+    pub content: String,
+    /// The detected file type
+    pub file_type: ViewerFileType,
+    /// Language hint for syntax highlighting (for code files)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub language: Option<String>,
+    /// Filename with extension (e.g., "readme.md")
+    pub filename: String,
+    /// Directory path (e.g., "/home/user/docs/")
+    pub directory: String,
+    /// MIME type for media files
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub mime_type: Option<String>,
+    /// File size in bytes
+    pub size: u64,
+    /// file:// URI for media files
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub uri: Option<String>,
+}
+
+/// Detects the file type from a file extension (case-insensitive).
+///
+/// Returns the most specific type based on the extension, or `ViewerFileType::Text`
+/// for unknown extensions.
+pub fn viewer_file_type_for_extension(extension: &str) -> ViewerFileType {
+    let extension_lower = extension.to_ascii_lowercase();
+
+    match extension_lower.as_str() {
+        // Markdown
+        "md" | "mdx" | "markdown" => ViewerFileType::Markdown,
+
+        // JSON
+        "json" | "jsonc" | "json5" => ViewerFileType::Json,
+
+        // Diff
+        "diff" | "patch" => ViewerFileType::Diff,
+
+        // Code
+        "ts" | "tsx" | "js" | "jsx" | "py" | "rs" | "nix" | "toml" | "yaml" | "yml" | "sh"
+        | "bash" | "zsh" | "sql" | "go" | "html" | "css" | "scss" | "dockerfile" | "lua"
+        | "zig" | "c" | "cpp" | "h" | "hpp" | "java" | "kt" | "swift" | "rb" | "just" => {
+            ViewerFileType::Code
+        }
+
+        // Image
+        "png" | "jpg" | "jpeg" | "gif" | "webp" | "svg" | "bmp" | "ico" | "avif" => {
+            ViewerFileType::Image
+        }
+
+        // Video
+        "mp4" | "webm" | "mkv" | "mov" | "avi" | "ogg" => ViewerFileType::Video,
+
+        // Everything else defaults to text
+        _ => ViewerFileType::Text,
+    }
+}
+
+/// Returns the highlight.js language name for syntax highlighting, if available.
+///
+/// Returns `None` for text, image, and video types (which do not need syntax highlighting).
+pub fn language_for_extension(extension: &str) -> Option<String> {
+    let ext_lower = extension.to_lowercase();
+
+    let lang = match ext_lower.as_str() {
+        "ts" | "tsx" => "typescript",
+        "js" | "jsx" => "javascript",
+        "py" => "python",
+        "rs" => "rust",
+        "nix" => "nix",
+        "json" | "jsonc" | "json5" => "json",
+        "yaml" | "yml" => "yaml",
+        "toml" => "toml",
+        "sh" | "bash" | "zsh" => "bash",
+        "sql" => "sql",
+        "go" => "go",
+        "html" => "html",
+        "css" => "css",
+        "scss" => "scss",
+        "dockerfile" => "dockerfile",
+        "lua" => "lua",
+        "zig" => "zig",
+        "c" | "h" => "c",
+        "cpp" | "hpp" => "cpp",
+        "java" => "java",
+        "kt" => "kotlin",
+        "swift" => "swift",
+        "rb" => "ruby",
+        "just" => "makefile",
+        "md" | "mdx" | "markdown" => "markdown",
+        "diff" | "patch" => "diff",
+        _ => return None,
+    };
+
+    Some(lang.to_string())
+}
+</script>
+
+<script type="text/plain" data-file="ts" data-side="old">
+import hljs from 'highlight.js/lib/core';
+import typescript from 'highlight.js/lib/languages/typescript';
+import javascript from 'highlight.js/lib/languages/javascript';
+import python from 'highlight.js/lib/languages/python';
+import rust from 'highlight.js/lib/languages/rust';
+import nix from 'highlight.js/lib/languages/nix';
+import json from 'highlight.js/lib/languages/json';
+import yaml from 'highlight.js/lib/languages/yaml';
+import bash from 'highlight.js/lib/languages/bash';
+import sql from 'highlight.js/lib/languages/sql';
+import go from 'highlight.js/lib/languages/go';
+import css from 'highlight.js/lib/languages/css';
+import markdown from 'highlight.js/lib/languages/markdown';
+import dockerfile from 'highlight.js/lib/languages/dockerfile';
+import xml from 'highlight.js/lib/languages/xml';
+import ini from 'highlight.js/lib/languages/ini';
+
+// Register languages
+hljs.registerLanguage('typescript', typescript);
+hljs.registerLanguage('javascript', javascript);
+hljs.registerLanguage('python', python);
+hljs.registerLanguage('rust', rust);
+hljs.registerLanguage('nix', nix);
+hljs.registerLanguage('json', json);
+hljs.registerLanguage('yaml', yaml);
+hljs.registerLanguage('bash', bash);
+hljs.registerLanguage('sql', sql);
+hljs.registerLanguage('go', go);
+hljs.registerLanguage('css', css);
+hljs.registerLanguage('markdown', markdown);
+hljs.registerLanguage('dockerfile', dockerfile);
+hljs.registerLanguage('xml', xml);
+hljs.registerLanguage('ini', ini);
+hljs.registerLanguage('toml', ini);
+
+/**
+ * Highlights code using highlight.js
+ * @param code The code string to highlight
+ * @param language Optional language hint (typescript, python, rust, etc.)
+ * @returns HTML string with syntax highlighting
+ */
+export function highlightCode(code: string, language?: string): string {
+	if (!code) {
+		return '';
+	}
+
+	try {
+		if (language) {
+			// Use the provided language hint
+			return hljs.highlight(code, { language, ignoreIllegals: true }).value;
+		} else {
+			// Fall back to auto-detection
+			return hljs.highlightAuto(code).value;
+		}
+	} catch {
+		// On error, return the code unhighlighted
+		return escapeHtml(code);
+	}
+}
+</script>
+<script type="text/plain" data-file="ts" data-side="new">
+import hljs from 'highlight.js/lib/core';
+import typescript from 'highlight.js/lib/languages/typescript';
+import javascript from 'highlight.js/lib/languages/javascript';
+import python from 'highlight.js/lib/languages/python';
+import rust from 'highlight.js/lib/languages/rust';
+import nix from 'highlight.js/lib/languages/nix';
+import json from 'highlight.js/lib/languages/json';
+import yaml from 'highlight.js/lib/languages/yaml';
+import bash from 'highlight.js/lib/languages/bash';
+import sql from 'highlight.js/lib/languages/sql';
+import go from 'highlight.js/lib/languages/go';
+import css from 'highlight.js/lib/languages/css';
+import markdown from 'highlight.js/lib/languages/markdown';
+import dockerfile from 'highlight.js/lib/languages/dockerfile';
+import xml from 'highlight.js/lib/languages/xml';
+import ini from 'highlight.js/lib/languages/ini';
+import diff from 'highlight.js/lib/languages/diff';
+
+// Register languages
+hljs.registerLanguage('typescript', typescript);
+hljs.registerLanguage('javascript', javascript);
+hljs.registerLanguage('python', python);
+hljs.registerLanguage('rust', rust);
+hljs.registerLanguage('nix', nix);
+hljs.registerLanguage('json', json);
+hljs.registerLanguage('yaml', yaml);
+hljs.registerLanguage('bash', bash);
+hljs.registerLanguage('sql', sql);
+hljs.registerLanguage('go', go);
+hljs.registerLanguage('css', css);
+hljs.registerLanguage('markdown', markdown);
+hljs.registerLanguage('dockerfile', dockerfile);
+hljs.registerLanguage('xml', xml);
+hljs.registerLanguage('ini', ini);
+hljs.registerLanguage('toml', ini);
+hljs.registerLanguage('diff', diff);
+
+const SUPPORTED_LANGUAGES = hljs.listLanguages();
+
+/**
+ * Highlights code using highlight.js
+ * @param code The code string to highlight
+ * @param language Optional language hint (typescript, python, rust, etc.)
+ * @returns HTML string with syntax highlighting
+ */
+export function highlightCode(code: string, language?: string): string {
+	if (!code) {
+		return '';
+	}
+
+	try {
+		if (language) {
+			// Use the provided language hint
+			return hljs.highlight(code, { language, ignoreIllegals: true }).value;
+		} else {
+			// Fall back to auto-detection across registered languages only
+			return hljs.highlightAuto(code, SUPPORTED_LANGUAGES).value;
+		}
+	} catch {
+		// On error, return the code unhighlighted
+		return escapeHtml(code);
+	}
+}
+</script>
+
+<script type="text/plain" data-file="model" data-side="old"></script>
+<script type="text/plain" data-file="model" data-side="new">
+/**
+ * Pure diff model for the file viewer's diff mode. Turns a flat list of
+ * diff lines into hunks with context, keeping old and new line numbers.
+ */
+export type DiffLineKind = 'context' | 'added' | 'removed';
+
+export interface DiffLine {
+	kind: DiffLineKind;
+	oldNumber: number | null;
+	newNumber: number | null;
+	text: string;
+}
+
+export interface DiffHunk {
+	oldStart: number;
+	newStart: number;
+	lines: DiffLine[];
+}
+
+const DEFAULT_CONTEXT_LINES = 3;
+
+export function buildHunks(lines: DiffLine[], contextLines = DEFAULT_CONTEXT_LINES): DiffHunk[] {
+	const hunks: DiffHunk[] = [];
+	let current: DiffHunk | null = null;
+	let trailingContext = 0;
+
+	for (let index = 0; index < lines.length; index++) {
+		const line = lines[index];
+		if (line.kind !== 'context') {
+			if (!current) {
+				const start = Math.max(0, index - contextLines);
+				current = { oldStart: lines[start].oldNumber ?? 0, newStart: lines[start].newNumber ?? 0, lines: lines.slice(start, index) };
+				hunks.push(current);
+			}
+			current.lines.push(line);
+			trailingContext = 0;
+		} else if (current) {
+			current.lines.push(line);
+			trailingContext++;
+			if (trailingContext >= contextLines * 2) {
+				current = null;
+			}
+		}
+	}
+	return hunks;
+}
+</script>
+
+<script type="text/plain" data-file="rename" data-side="old">
+// The instance-qualified view name of THIS file-viewer window.
+//
+// A multi_instance view is opened as `plugin/file-viewer/file-viewer#<id>`.
+// The host injects that full name as `window.__quantum_view_name`, so a
+// close/hide must target it (not the bare shared name, which would resolve to
+// a different window key and never close this instance). Falls back to the
+// bare canonical name if the host predates the injection.
+export function selfViewName(): string {
+    const injected =
+        typeof window !== 'undefined'
+            ? (window as { __quantum_view_name?: string }).__quantum_view_name
+            : undefined;
+    return injected || 'plugin/file-viewer/file-viewer';
+}
+</script>
+<script type="text/plain" data-file="rename" data-side="new">
+// The instance-qualified view name of THIS file-viewer window.
+//
+// A multi_instance view is opened as `plugin/file-viewer/file-viewer#<id>`.
+// The host injects that full name as `window.__quantum_view_name`, so a
+// close/hide must target it (not the bare shared name, which would resolve to
+// a different window key and never close this instance). Falls back to the
+// bare canonical name if the host predates the injection.
+const BARE_VIEW_NAME = 'plugin/file-viewer/file-viewer';
+
+export function selfViewName(): string {
+    const injected =
+        typeof window !== 'undefined'
+            ? (window as { __quantum_view_name?: string }).__quantum_view_name
+            : undefined;
+    return injected || BARE_VIEW_NAME;
+}
+</script>
+
+<script type="text/plain" data-file="toml" data-side="old">
+kind = "panel"
+width = 900
+height = 700
+destroy_on_dismiss = true
+multi_instance = true
+</script>
+<script type="text/plain" data-file="toml" data-side="new">
+kind = "panel"
+width = 1100
+height = 700
+min_width = 640
+destroy_on_dismiss = true
+multi_instance = true
+</script>
+
+<script type="text/plain" data-file="md" data-side="old">
+# File viewer notes
+
+Scratch notes from the first file-viewer pass. Superseded by
+`docs/plans/2026-08-21-file-viewer-design.md`.
+
+## Open questions
+
+- Should `.patch` files open as text or code?
+- **Diffs** need their own renderer: the highlight.js `diff` grammar loses
+  the underlying language.
+- See [the design](../plans/2026-08-21-file-viewer-design.md).
+</script>
+<script type="text/plain" data-file="md" data-side="new"></script>
+
+<script>
+// ================= state =================
+const DEFAULTS = {
+  mode: 'git', layout: 'unified', autoThreshold: 1200, headerToggle: true, wrap: false, width: 900,
+  fileNav: 'sidebar-stacked', syntax: 'full', palette: 'tokens', tint: 14, intraline: 'word', emph: 35,
+  marker: 'bar', lineNumbers: 'both', context: '3', hunkLabel: 'scope', ruler: true,
+  recollapse: 'both', copyMode: 'new-only', copyHidden: 'include',
+  grouping: 'sections', reviewAction: 'both', afterReview: 'collapse', progress: true, keyHints: true, untrackedStyle: 'letter',
+};
+const state = { ...DEFAULTS };
+const view = { selected: 0, expanded: new Set(), collapsedFiles: new Set(), openedFiles: new Set(), fullDiff: new Set(), largeOpened: new Set(), notice: '' };
+
+const PRESETS = [
+  { name: 'Agent review (recommended)', rec: true, values: { ...DEFAULTS } },
+  { name: 'Delta-style', values: { mode: 'git', layout: 'unified', fileNav: 'stacked', syntax: 'full', intraline: 'word', emph: 45, tint: 18, marker: 'none', lineNumbers: 'both', hunkLabel: 'scope', ruler: false, palette: 'material' } },
+  { name: 'GitHub-style', values: { mode: 'git', layout: 'split', fileNav: 'sidebar-stacked', syntax: 'full', intraline: 'word', emph: 35, tint: 12, marker: 'sign', lineNumbers: 'both', hunkLabel: 'raw', ruler: false, palette: 'material', width: 1300 } },
+  { name: 'Classic patch', values: { mode: 'git', layout: 'unified', fileNav: 'stacked', syntax: 'plain-changed', intraline: 'off', tint: 0, marker: 'sign', lineNumbers: 'none', hunkLabel: 'raw', ruler: false, palette: 'material' } },
+  { name: 'Two-file compare', values: { mode: 'pair', layout: 'split', syntax: 'full', intraline: 'char', emph: 40, tint: 12, marker: 'bar', lineNumbers: 'both', context: 'all', ruler: true, width: 1200 } },
+];
+
+const PALETTES = {
+  tokens: { add: '#a6e3a1', del: '#af4e3c', label: 'the theme tokens --color-accent (added) and --color-error (removed), so they follow theme switches' },
+  material: { add: '#c3e88d', del: '#f07178', label: 'the highlight-theme.css addition/deletion colors (#c3e88d added, #f07178 removed)' },
+  blueorange: { add: '#82aaff', del: '#f78c6c', label: 'a colorblind-safer blue (#82aaff added) and orange (#f78c6c removed)' },
+};
+
+// Simulated repository. stage: unstaged | staged | partial (reviewed, then edited again) | untracked
+const VIEWER_LIB = 'src/ui/plugins/file-viewer/views/file-viewer/src/lib/';
+const FILES = [
+  { id: 'rs', path: 'src/domain/src/file_viewer.rs', lang: 'rust', stage: 'partial' },
+  { id: 'ts', path: VIEWER_LIB + 'highlighter.ts', lang: 'typescript', stage: 'unstaged' },
+  { id: 'model', path: VIEWER_LIB + 'diff-model.ts', lang: 'typescript', stage: 'untracked' },
+  { id: 'rename', path: VIEWER_LIB + 'viewName.ts', oldPath: VIEWER_LIB + 'selfName.ts', lang: 'typescript', stage: 'unstaged' },
+  { id: 'toml', path: 'src/ui/plugins/file-viewer/views/file-viewer/view.toml', lang: 'toml', stage: 'staged' },
+  { id: 'md', path: 'docs/file-viewer-notes.md', lang: 'markdown', stage: 'unstaged' },
+  { id: 'lock', path: 'src/ui/pnpm-lock.yaml', lang: 'plain', stage: 'unstaged' },
+];
+const PARTIAL_LATE_LINE = '        "diff" | "patch" => "diff",';
+
+function generatedLockFile(bumped) {
+  const lines = ['lockfileVersion: \'9.0\'', '', 'packages:', ''];
+  for (let index = 0; index < 500; index++) {
+    const minor = bumped && index % 5 !== 4 ? index % 17 + 1 : index % 17;
+    lines.push(`  /package-${index}@1.${minor}.0:`);
+    lines.push(`    resolution: {integrity: sha512-${(index * 7919 + minor * 104729).toString(36).padEnd(12, 'q')}}`);
+    lines.push(`    engines: {node: '>=18'}`);
+    lines.push('');
+  }
+  return lines;
+}
+
+// ================= helpers =================
+function escapeHtml(text) {
+  return text.replace(/[&<>"']/g, (character) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#039;' }[character]));
+}
+function loadText(id, side) {
+  const element = document.querySelector(`script[data-file="${id}"][data-side="${side}"]`);
+  if (!element) return [];
+  const text = element.textContent.replace(/^\n/, '').replace(/\s+$/, '');
+  return text === '' ? [] : text.split('\n');
+}
+function splitPath(path) {
+  const index = path.lastIndexOf('/');
+  return { directory: index >= 0 ? path.slice(0, index + 1) : '', name: path.slice(index + 1) };
+}
+
+// ================= line diff (LCS) =================
+function lineDiff(oldLines, newLines) {
+  const n = oldLines.length, m = newLines.length;
+  const table = Array.from({ length: n + 1 }, () => new Uint16Array(m + 1));
+  for (let i = n - 1; i >= 0; i--) for (let j = m - 1; j >= 0; j--)
+    table[i][j] = oldLines[i] === newLines[j] ? table[i + 1][j + 1] + 1 : Math.max(table[i + 1][j], table[i][j + 1]);
+  const items = [];
+  let i = 0, j = 0;
+  function change() {
+    const last = items[items.length - 1];
+    if (last && last.type === 'change') return last;
+    const created = { type: 'change', dels: [], adds: [] };
+    items.push(created);
+    return created;
+  }
+  while (i < n && j < m) {
+    if (oldLines[i] === newLines[j]) { items.push({ type: 'equal', o: i, n: j }); i++; j++; }
+    else if (table[i + 1][j] >= table[i][j + 1]) { change().dels.push(i); i++; }
+    else { change().adds.push(j); j++; }
+  }
+  while (i < n) change().dels.push(i++);
+  while (j < m) change().adds.push(j++);
+  return items;
+}
+
+// ================= intra-line diff =================
+function intraLine(oldText, newText, mode) {
+  const split = mode === 'char' ? (s) => s.split('') : (s) => s.match(/\w+|\s+|[^\w\s]/g) || [];
+  const a = split(oldText), b = split(newText);
+  const n = a.length, m = b.length;
+  const table = Array.from({ length: n + 1 }, () => new Uint16Array(m + 1));
+  for (let i = n - 1; i >= 0; i--) for (let j = m - 1; j >= 0; j--)
+    table[i][j] = a[i] === b[j] ? table[i + 1][j + 1] + 1 : Math.max(table[i + 1][j], table[i][j + 1]);
+  const removed = [], added = [];
+  let i = 0, j = 0, oldPosition = 0, newPosition = 0, sharedCharacters = 0;
+  const pushRange = (list, start, end) => {
+    const last = list[list.length - 1];
+    if (last && last[1] === start) last[1] = end; else list.push([start, end]);
+  };
+  while (i < n || j < m) {
+    if (i < n && j < m && a[i] === b[j]) { sharedCharacters += a[i].length; oldPosition += a[i].length; newPosition += b[j].length; i++; j++; }
+    else if (j >= m || (i < n && table[i + 1][j] >= table[i][j + 1])) { pushRange(removed, oldPosition, oldPosition + a[i].length); oldPosition += a[i].length; i++; }
+    else { pushRange(added, newPosition, newPosition + b[j].length); newPosition += b[j].length; j++; }
+  }
+  const similarity = (2 * sharedCharacters) / Math.max(1, oldText.length + newText.length);
+  if (similarity < 0.4) return null;
+  return { del: removed, add: added };
+}
+
+// ================= tokenizer (hljs-class output) =================
+const KEYWORDS = {
+  typescript: new Set('import from export function return if else const let var for while of in new type interface class extends implements try catch finally throw await async as typeof keyof readonly public private protected static'.split(' ')),
+  rust: new Set('use pub fn let mut match if else enum struct impl trait for in while loop return as mod crate self super where const static ref move async await dyn type unsafe'.split(' ')),
+};
+const LITERALS = new Set(['true', 'false', 'null', 'undefined', 'None', 'Some', 'Ok', 'Err', 'Self']);
+
+function identifierClassifier(language) {
+  return (word, line, end) => {
+    if (KEYWORDS[language] && KEYWORDS[language].has(word)) return 'keyword';
+    if (LITERALS.has(word)) return 'literal';
+    if (/^\s*\(/.test(line.slice(end))) return 'title function_';
+    if (/^[A-Z]/.test(word)) return 'title class_';
+    return null;
+  };
+}
+const LANGUAGES = {
+  typescript: { block: ['/*', '*/'], rules: [
+    [/\/\/.*/y, 'comment'], [/'(?:\\.|[^'\\])*'?/y, 'string'], [/"(?:\\.|[^"\\])*"?/y, 'string'], [/`(?:\\.|[^`\\])*`?/y, 'string'],
+    [/\d[\d_]*(?:\.\d+)?/y, 'number'], [/[A-Za-z_$][\w$]*/y, identifierClassifier('typescript')],
+  ] },
+  rust: { block: ['/*', '*/'], rules: [
+    [/\/\/.*/y, 'comment'], [/#!?\[.*?\]/y, 'meta'], [/"(?:\\.|[^"\\])*"?/y, 'string'], [/'(?:\\.|[^'\\])'/y, 'string'],
+    [/'[a-z_]\w*/y, 'symbol'], [/\d[\d_]*(?:\.\d+)?(?:u8|u16|u32|u64|usize|i32|i64|f64)?/y, 'number'],
+    [/[a-z_]\w*!/y, 'built_in'], [/[A-Za-z_]\w*/y, identifierClassifier('rust')],
+  ] },
+  toml: { rules: [
+    [/#.*/y, 'comment'], [/^\s*\[.*\]/y, 'section'], [/^\s*[\w.-]+(?=\s*=)/y, 'attr'],
+    [/"(?:\\.|[^"\\])*"?/y, 'string'], [/\d[\d_]*(?:\.\d+)?/y, 'number'], [/\b(?:true|false)\b/y, 'literal'],
+  ] },
+  plain: { rules: [] },
+  markdown: { rules: [
+    [/^#{1,6} .*/y, 'section'], [/^\s*[-*+](?= )/y, 'bullet'], [/`[^`]*`/y, 'code'],
+    [/\*\*[^*]+\*\*/y, 'strong'], [/\[[^\]]*\]\([^)]*\)/y, 'link'],
+  ] },
+};
+
+function tokenizeLine(line, language, lineState) {
+  const definition = LANGUAGES[language];
+  const tokens = [];
+  let plain = '';
+  const push = (text, cssClass) => {
+    if (!text) return;
+    if (!cssClass) { plain += text; return; }
+    if (plain) { tokens.push({ text: plain, cssClass: null }); plain = ''; }
+    tokens.push({ text, cssClass });
+  };
+  let position = 0;
+  while (position < line.length) {
+    if (lineState.inBlock) {
+      const end = line.indexOf(definition.block[1], position);
+      if (end < 0) { push(line.slice(position), 'comment'); position = line.length; break; }
+      push(line.slice(position, end + 2), 'comment'); position = end + 2; lineState.inBlock = false; continue;
+    }
+    if (definition.block && line.startsWith(definition.block[0], position)) {
+      lineState.inBlock = true; push(definition.block[0], 'comment'); position += 2; continue;
+    }
+    let matched = false;
+    for (const [pattern, cssClass] of definition.rules) {
+      pattern.lastIndex = position;
+      const match = pattern.exec(line);
+      if (match && match[0].length) {
+        const resolved = typeof cssClass === 'function' ? cssClass(match[0], line, position + match[0].length) : cssClass;
+        push(match[0], resolved);
+        position += match[0].length;
+        matched = true;
+        break;
+      }
+    }
+    if (!matched) { push(line[position], null); position++; }
+  }
+  if (plain) tokens.push({ text: plain, cssClass: null });
+  return tokens;
+}
+function tokenizeAll(lines, language) {
+  const lineState = { inBlock: false };
+  return lines.map((line) => tokenizeLine(line, language, lineState));
+}
+
+function classAttribute(cssClass) {
+  const [first, ...rest] = cssClass.split(' ');
+  return ['hljs-' + first, ...rest].join(' ');
+}
+function renderCode(tokens, ranges, useSyntax, emphasisClass) {
+  const inRange = (position) => !!ranges && ranges.some(([start, end]) => position >= start && position < end);
+  let html = '', offset = 0, emphasisOpen = false;
+  for (const token of tokens) {
+    let index = 0;
+    while (index < token.text.length) {
+      const insideRange = inRange(offset + index);
+      let end = index + 1;
+      while (end < token.text.length && inRange(offset + end) === insideRange) end++;
+      const segment = escapeHtml(token.text.slice(index, end));
+      if (insideRange && !emphasisOpen) { html += `<span class="${emphasisClass}">`; emphasisOpen = true; }
+      if (!insideRange && emphasisOpen) { html += '</span>'; emphasisOpen = false; }
+      html += useSyntax && token.cssClass ? `<span class="${classAttribute(token.cssClass)}">${segment}</span>` : segment;
+      index = end;
+    }
+    offset += token.text.length;
+  }
+  if (emphasisOpen) html += '</span>';
+  return html;
+}
+
+// ================= simulated repository =================
+// Each file: head / index / work as line arrays, or null when the file is absent there.
+function initialRepository() {
+  return FILES.map((spec) => {
+    let head, work;
+    if (spec.id === 'lock') { head = generatedLockFile(false); work = generatedLockFile(true); }
+    else {
+      head = loadText(spec.id, 'old');
+      work = loadText(spec.id, 'new');
+    }
+    if (head.length === 0) head = null;
+    if (work.length === 0) work = null;
+    let index = head;
+    if (spec.stage === 'staged') index = work;
+    if (spec.stage === 'partial') index = work.filter((line) => line !== PARTIAL_LATE_LINE);
+    if (spec.stage === 'untracked') index = null;
+    return { ...spec, head, index, work };
+  });
+}
+function cloneRepository(repository) {
+  return repository.map((file) => ({ ...file, head: file.head && [...file.head], index: file.index && [...file.index], work: file.work && [...file.work] }));
+}
+function sameContent(a, b) {
+  if (a === null || b === null) return a === b;
+  return a.length === b.length && a.every((line, index) => line === b[index]);
+}
+let DISK = initialRepository();          // what is really on disk / in git right now
+let SNAPSHOT = cloneRepository(DISK);    // what this qv window loaded (refresh copies DISK in)
+
+const modelCache = new Map();
+function buildModel(id, lang, oldLines, newLines) {
+  const cacheKey = lang + '\u0001' + oldLines.join('\n') + '\u0002' + newLines.join('\n');
+  let cached = modelCache.get(cacheKey);
+  if (!cached) {
+    const items = lineDiff(oldLines, newLines);
+    let additions = 0, deletions = 0;
+    for (const item of items) if (item.type === 'change') { additions += item.adds.length; deletions += item.dels.length; }
+    cached = { items, additions, deletions, oldTokens: tokenizeAll(oldLines, lang), newTokens: tokenizeAll(newLines, lang) };
+    modelCache.set(cacheKey, cached);
+  }
+  return { id, lang, oldLines, newLines, ...cached };
+}
+
+// Turn the snapshot into the entries the view shows (one per diff section).
+function reviewEntries() {
+  const entries = [];
+  for (const file of SNAPSHOT) {
+    const hasStaged = !sameContent(file.head, file.index);
+    const hasUnstaged = !sameContent(file.index, file.work);
+    if (!hasStaged && !hasUnstaged) continue;
+    const isUntracked = file.head === null && file.index === null;
+    const make = (kind, oldLines, newLines) => {
+      const model = buildModel(file.id + ':' + kind, file.lang, oldLines || [], newLines || []);
+      let status = 'M';
+      if (isUntracked && kind !== 'reviewed') status = 'U';
+      else if (oldLines === null) status = 'A';
+      else if (newLines === null) status = 'D';
+      if (file.oldPath && status === 'M') status = 'R';
+      return { ...model, fileId: file.id, path: file.path, oldPath: file.oldPath, status, kind, untracked: isUntracked && kind !== 'reviewed' };
+    };
+    if (state.grouping === 'sections') {
+      if (hasUnstaged) entries.push({ ...make('review', file.index ?? (isUntracked ? null : file.head), file.work), sinceReview: hasStaged, reviewed: false });
+      if (hasStaged) entries.push({ ...make('reviewed', file.head, file.index), reviewed: true });
+    } else if (hasUnstaged && hasStaged && view.fullDiff.has(file.id)) {
+      entries.push({ ...make('review', file.head, file.work), sinceReview: true, showingFull: true, reviewed: false });
+    } else if (hasUnstaged) {
+      entries.push({ ...make('review', file.index ?? (isUntracked ? null : file.head), file.work), sinceReview: hasStaged, reviewed: false });
+    } else {
+      entries.push({ ...make('reviewed', file.head, file.index), reviewed: true });
+    }
+  }
+  if (state.grouping === 'sections') entries.sort((a, b) => Number(a.reviewed) - Number(b.reviewed));
+  return entries;
+}
+let ENTRIES = [];
+let ENTRY_BY_ID = new Map();
+const PAIR_MODEL = buildModel('pair', 'typescript', loadText('ts', 'old'), loadText('ts', 'new'));
+
+// ---- the two git actions, guarded against staging content you have not seen ----
+function stageFile(fileId) {
+  const onDisk = DISK.find((file) => file.id === fileId);
+  const seen = SNAPSHOT.find((file) => file.id === fileId);
+  if (!sameContent(onDisk.work, seen.work)) {
+    view.notice = `Not staged: ${splitPath(seen.path).name} changed on disk after this diff loaded. Refresh (R) and check the new changes first.`;
+    return;
+  }
+  onDisk.index = onDisk.work && [...onDisk.work];
+  seen.index = seen.work && [...seen.work];
+  view.notice = '';
+}
+function unstageFile(fileId) {
+  const onDisk = DISK.find((file) => file.id === fileId);
+  const seen = SNAPSHOT.find((file) => file.id === fileId);
+  onDisk.index = onDisk.head && [...onDisk.head];
+  seen.index = seen.head && [...seen.head];
+  view.notice = '';
+}
+function changedOnDisk() {
+  return DISK.filter((file, index) => !sameContent(file.work, SNAPSHOT[index].work) || !sameContent(file.index, SNAPSHOT[index].index)).length;
+}
+function refreshFromDisk() { SNAPSHOT = cloneRepository(DISK); view.notice = ''; }
+function simulateAgentEdit() {
+  const toml = DISK.find((file) => file.id === 'toml');
+  if (!toml.work.includes('max_instances = 4')) toml.work = [...toml.work, 'max_instances = 4'];
+  const highlighter = DISK.find((file) => file.id === 'ts');
+  highlighter.work = highlighter.work.map((line) => line.replace('// On error, return the code unhighlighted', '// On error, return the code escaped but unhighlighted'));
+}
+
+const SCOPE_PATTERNS = {
+  rust: /^\s*(pub\s+)?(fn|enum|struct|impl|mod|trait)\s/,
+  typescript: /^\s*(export\s+)?(function|class|interface|const|type)\s/,
+  toml: /^\s*\[/,
+  markdown: /^#/,
+  plain: /^\s*\/[\w-]+@/,
+};
+
+function findScope(model, newIndex) {
+  const lines = model.newLines.length ? model.newLines : model.oldLines;
+  const pattern = SCOPE_PATTERNS[model.lang];
+  for (let index = Math.min(newIndex, lines.length - 1); index >= 0; index--) {
+    if (pattern.test(lines[index])) {
+      const text = lines[index].trim();
+      return renderCode(tokenizeLine(text, model.lang, { inBlock: false }), null, true, '');
+    }
+  }
+  return '';
+}
+
+function buildRows(model) {
+  const contextSize = state.context === 'all' ? Infinity : Number(state.context);
+  const groups = [];
+  for (const item of model.items) {
+    const last = groups[groups.length - 1];
+    if (item.type === 'equal') { if (last && last.type === 'run') last.lines.push(item); else groups.push({ type: 'run', lines: [item] }); }
+    else groups.push(item);
+  }
+  const rows = [];
+  groups.forEach((group, groupIndex) => {
+    const isFirst = groupIndex === 0, isLast = groupIndex === groups.length - 1;
+    if (group.type === 'run') {
+      const length = group.lines.length;
+      const keepHead = isFirst ? 0 : Math.min(contextSize, length);
+      const keepTail = isLast ? 0 : Math.min(contextSize, length);
+      const key = model.id + ':' + groupIndex;
+      const hiddenCount = length - keepHead - keepTail;
+      if (contextSize === Infinity || hiddenCount <= 2) {
+        if (isFirst) rows.push({ kind: 'gap', key, hidden: 0, start: true });
+        group.lines.forEach((line) => rows.push({ kind: 'context', o: line.o, n: line.n }));
+        return;
+      }
+      group.lines.slice(0, keepHead).forEach((line) => rows.push({ kind: 'context', o: line.o, n: line.n }));
+      if (view.expanded.has(key)) {
+        // Expanded region: keep it re-collapsible.
+        if (isFirst) rows.push({ kind: 'gap', key: key + ':header', hidden: 0, start: true });
+        const handle = state.recollapse;
+        if (handle === 'bar' || handle === 'both') rows.push({ kind: 'recollapse', key, count: hiddenCount, position: 'top' });
+        group.lines.slice(keepHead, length - keepTail).forEach((line) => rows.push({ kind: 'context', o: line.o, n: line.n, expandedKey: key, expandedCount: hiddenCount }));
+        if (handle === 'both') rows.push({ kind: 'recollapse', key, count: hiddenCount, position: 'bottom' });
+      } else {
+        rows.push({ kind: 'gap', key, hidden: hiddenCount, start: isFirst, end: isLast, hiddenFrom: group.lines[keepHead].n, fileId: model.id });
+      }
+      group.lines.slice(length - keepTail).forEach((line) => rows.push({ kind: 'context', o: line.o, n: line.n }));
+    } else {
+      if (isFirst) rows.push({ kind: 'gap', key: model.id + ':start', hidden: 0, start: true });
+      const pairs = [];
+      if (state.intraline !== 'off' && group.dels.length && group.adds.length) {
+        for (let index = 0; index < Math.min(group.dels.length, group.adds.length); index++)
+          pairs[index] = intraLine(model.oldLines[group.dels[index]], model.newLines[group.adds[index]], state.intraline);
+      }
+      group.dels.forEach((o, index) => rows.push({ kind: 'del', o, ranges: pairs[index] ? pairs[index].del : null }));
+      group.adds.forEach((n, index) => rows.push({ kind: 'add', n, ranges: pairs[index] ? pairs[index].add : null }));
+    }
+  });
+  rows.forEach((row, index) => {
+    if (row.kind !== 'gap') return;
+    let oldStart = null, newStart = null, oldCount = 0, newCount = 0;
+    let lastNew = 0, firstChangeNew = null;
+    for (let next = index + 1; next < rows.length && rows[next].kind !== 'gap'; next++) {
+      const candidate = rows[next];
+      if (candidate.kind === 'recollapse') continue;
+      if (candidate.kind !== 'add') { oldCount++; if (oldStart === null) oldStart = candidate.o; }
+      if (candidate.kind !== 'del') { newCount++; if (newStart === null) newStart = candidate.n; lastNew = candidate.n; }
+      if (firstChangeNew === null && candidate.kind !== 'context') firstChangeNew = candidate.kind === 'add' ? candidate.n : lastNew;
+    }
+    row.hunk = { oldStart: (oldStart ?? -1) + 1, oldCount, newStart: (newStart ?? -1) + 1, newCount };
+    // Scope of the first CHANGED line (more useful than git's "line before the hunk").
+    row.scope = findScope(model, firstChangeNew ?? newStart ?? 0);
+  });
+  return rows;
+}
+
+// ================= rendering =================
+function effectiveLayout() {
+  if (state.layout === 'auto') return state.width >= state.autoThreshold ? 'split' : 'unified';
+  return state.layout;
+}
+function digitsFor(model) { return String(Math.max(model.oldLines.length, model.newLines.length, 1)).length; }
+
+function codeFor(model, side, index, ranges, kind) {
+  const tokens = side === 'old' ? model.oldTokens[index] : model.newTokens[index];
+  const changed = kind === 'add' || kind === 'del';
+  let useSyntax = state.syntax !== 'off';
+  if (state.syntax === 'plain-changed' && changed) useSyntax = false;
+  const emphasis = state.intraline !== 'off' ? ranges : null;
+  return renderCode(tokens, emphasis, useSyntax, kind === 'add' ? 'ix-add' : 'ix-del') || '';
+}
+function signFor(kind) { return kind === 'add' ? '+' : kind === 'del' ? '\u2212' : ''; }
+function markerClass(kind) { return (state.marker === 'bar' || state.marker === 'both') && (kind === 'add' || kind === 'del') ? ' bar' : ''; }
+function showSign() { return state.marker === 'sign' || state.marker === 'both'; }
+
+function lineNumberCells(model, row, width) {
+  const style = `style="width:calc(${width}ch + 12px)"`;
+  const oldNumber = row.kind === 'add' ? '' : row.o + 1;
+  const newNumber = row.kind === 'del' ? '' : row.n + 1;
+  if (state.lineNumbers === 'both') return `<span class="ln" ${style}>${oldNumber}</span><span class="ln last" ${style}>${newNumber}</span>`;
+  if (state.lineNumbers === 'new') return `<span class="ln last" ${style}>${newNumber}</span>`;
+  return '';
+}
+
+function expandHandle(row) {
+  if (!row || !row.expandedKey || state.recollapse !== 'bracket') return '';
+  return `<span class="exp-handle" data-recollapse="${row.expandedKey}" title="Hide ${row.expandedCount} expanded lines"></span>`;
+}
+function recollapseRow(row) {
+  const arrow = row.position === 'top' ? '\u25B4' : '\u25BE';
+  return `<div class="gap recollapse" data-recollapse="${row.key}">${arrow} Hide ${row.count} expanded line${row.count === 1 ? '' : 's'}</div>`;
+}
+
+function unifiedRow(model, row, width) {
+  const side = row.kind === 'del' ? 'old' : 'new';
+  const index = side === 'old' ? row.o : row.n;
+  return `<div class="row ${row.kind}${markerClass(row.kind)}">${expandHandle(row)}${lineNumberCells(model, row, width)}`
+    + (showSign() ? `<span class="sign">${signFor(row.kind)}</span>` : '')
+    + `<span class="code">${codeFor(model, side, index, row.ranges, row.kind)}</span></div>`;
+}
+
+function halfCell(model, row, side, width) {
+  if (!row) return `<div class="half empty"></div>`;
+  const index = side === 'old' ? row.o : row.n;
+  const kind = row.kind;
+  const number = state.lineNumbers === 'none' ? '' : `<span class="ln last" style="width:calc(${width}ch + 12px)">${index + 1}</span>`;
+  return `<div class="half ${kind}${markerClass(kind)}">${number}`
+    + (showSign() ? `<span class="sign">${signFor(kind)}</span>` : '')
+    + `<span class="code">${codeFor(model, side, index, row.ranges, kind)}</span></div>`;
+}
+
+function gapRow(row) {
+  const isRaw = state.hunkLabel === 'raw';
+  const hunkHasLines = row.hunk && row.hunk.oldCount + row.hunk.newCount > 0;
+  if (row.hidden === 0) {
+    if (!isRaw || row.end || !hunkHasLines) return '';
+    return `<div class="gap static"><span class="raw">@@ -${row.hunk.oldStart},${row.hunk.oldCount} +${row.hunk.newStart},${row.hunk.newCount} @@</span><span class="scope">${row.scope}</span></div>`;
+  }
+  const count = `\u2195 ${row.hidden} unchanged line${row.hidden === 1 ? '' : 's'}`;
+  let label = `<span>${count}</span>`;
+  if (isRaw && !row.end && hunkHasLines) label = `<span class="raw">@@ -${row.hunk.oldStart},${row.hunk.oldCount} +${row.hunk.newStart},${row.hunk.newCount} @@</span><span class="scope">${row.scope}</span><span style="margin-left:auto">${count}</span>`;
+  else if (state.hunkLabel === 'scope' && !row.end && row.scope) label += `<span class="scope">${row.scope}</span>`;
+  return `<div class="gap" data-expand="${row.key}" data-file-id="${row.fileId}" data-from="${row.hiddenFrom}" data-count="${row.hidden}">${label}</div>`;
+}
+
+function renderRows(model) {
+  const rows = buildRows(model);
+  const width = digitsFor(model);
+  const layout = effectiveLayout();
+  let html = '';
+  if (layout === 'unified') {
+    for (const row of rows) {
+      if (row.kind === 'gap') html += gapRow(row);
+      else if (row.kind === 'recollapse') html += recollapseRow(row);
+      else html += unifiedRow(model, row, width);
+    }
+    return `<div class="rows">${html}</div>`;
+  }
+  let index = 0;
+  while (index < rows.length) {
+    const row = rows[index];
+    if (row.kind === 'gap') { html += gapRow(row); index++; continue; }
+    if (row.kind === 'recollapse') { html += recollapseRow(row); index++; continue; }
+    if (row.kind === 'context') {
+      html += `<div class="srow">${expandHandle(row)}${halfCell(model, row, 'old', width)}${halfCell(model, row, 'new', width)}</div>`;
+      index++; continue;
+    }
+    const removed = [], added = [];
+    while (index < rows.length && rows[index].kind === 'del') removed.push(rows[index++]);
+    while (index < rows.length && rows[index].kind === 'add') added.push(rows[index++]);
+    for (let pairIndex = 0; pairIndex < Math.max(removed.length, added.length); pairIndex++) {
+      const left = removed[pairIndex] || null, right = added[pairIndex] || null;
+      const classes = (left ? ' has-del' : '') + (right ? ' has-add' : '');
+      html += `<div class="srow${classes}">${halfCell(model, left, 'old', width)}${halfCell(model, right, 'new', width)}</div>`;
+    }
+  }
+  return `<div class="rows split">${html}</div>`;
+}
+
+function statsHtml(additions, deletions) {
+  return `<span class="a">+${additions}</span> <span class="d">\u2212${deletions}</span>`;
+}
+
+function isCollapsed(entry) {
+  if (entry.reviewed && state.afterReview === 'collapse') return !view.openedFiles.has(entry.id);
+  return view.collapsedFiles.has(entry.id);
+}
+function statusLetter(entry) {
+  if (entry.untracked && state.untrackedStyle === 'tag') return `<span class="st st-A">A</span>`;
+  return `<span class="st st-${entry.status}">${entry.status}</span>`;
+}
+function untrackedPill(entry) {
+  return entry.untracked && state.untrackedStyle === 'tag' ? ' <span class="pill">untracked</span>' : '';
+}
+function statusBadge(entry) { return statusLetter(entry) + untrackedPill(entry); }
+function pathHtml(entry) {
+  const { directory, name } = splitPath(entry.path);
+  if (entry.oldPath) {
+    const old = splitPath(entry.oldPath);
+    const sameDirectory = old.directory === directory;
+    return `<bdi><span class="d">${escapeHtml(directory)}</span>${sameDirectory ? `<span class="d">${escapeHtml(old.name)} \u2192 </span>` : ''}${escapeHtml(name)}</bdi>`;
+  }
+  return `<bdi><span class="d">${escapeHtml(directory)}</span>${escapeHtml(name)}</bdi>`;
+}
+function reviewButton(entry, place) {
+  if (state.mode !== 'git') return '';
+  const wanted = state.reviewAction === 'both' || state.reviewAction === place;
+  if (!wanted) return '';
+  if (place === 'sidebar') {
+    return `<span class="rcheck${entry.reviewed ? ' on' : ''}" data-${entry.reviewed ? 'unstage' : 'review'}="${entry.fileId}" title="${entry.reviewed ? 'Unstage (git restore --staged)' : 'Stage (git add)'}">${entry.reviewed ? '\u2713' : ''}</span>`;
+  }
+  return entry.reviewed
+    ? `<button class="rbtn on" data-unstage="${entry.fileId}" title="Unstage (git restore --staged)">\u2713 Staged</button>`
+    : `<button class="rbtn" data-review="${entry.fileId}" title="git add">Stage</button>`;
+}
+
+const LARGE_DIFF_ROWS = 1000;
+function fileSection(model, withHeader) {
+  const entry = model;
+  const collapsed = withHeader && isCollapsed(entry);
+  const sinceReview = entry.sinceReview && state.grouping === 'single'
+    ? `<span class="pill warn" data-fulldiff="${entry.fileId}" title="Toggle between the unstaged changes and all changes since HEAD">${entry.showingFull ? 'all changes since HEAD' : 'unstaged changes'} \u21C4</span>`
+    : (entry.sinceReview ? `<span class="pill warn">partially staged</span>` : '');
+  const header = withHeader
+    ? `<div class="fhead${entry.reviewed ? ' done' : ''}" data-collapse="${model.id}"><span class="chev">${collapsed ? '\u25B6' : '\u25BC'}</span>${statusBadge(entry)}`
+      + `<span class="fpath">${pathHtml(entry)}</span>${sinceReview}<span class="stats">${statsHtml(model.additions, model.deletions)}</span>${reviewButton(entry, 'header')}</div>`
+    : '';
+  let body = '';
+  if (!collapsed) {
+    const rowsCount = model.additions + model.deletions;
+    if (rowsCount > LARGE_DIFF_ROWS && !view.largeOpened.has(model.id)) {
+      body = `<div class="large">Large diff: ${rowsCount.toLocaleString()} changed lines, not rendered yet. <button data-loadlarge="${model.id}">Load diff</button></div>`;
+    } else {
+      body = renderRows(model);
+    }
+  }
+  return `<section class="file" data-file="${model.id}">${header}${body}</section>`;
+}
+
+function sidebarItem(entry, index) {
+  const { directory, name } = splitPath(entry.path);
+  const oldName = entry.oldPath ? `<span class="fdir" style="direction:ltr">renamed from ${escapeHtml(splitPath(entry.oldPath).name)}</span>` : '';
+  return `<li class="${index === view.selected ? 'active' : ''}${entry.reviewed ? ' done' : ''}"><button data-select="${index}">${reviewButton(entry, 'sidebar')}${statusLetter(entry)}`
+    + `<span class="fname">${escapeHtml(name)}${untrackedPill(entry)}${entry.sinceReview ? ' <span class="dot" title="partially staged: edited after staging"></span>' : ''}${oldName || `<span class="fdir"><bdi>${escapeHtml(directory)}</bdi></span>`}</span>`
+    + `<span class="mini stats">${statsHtml(entry.additions, entry.deletions)}</span></button></li>`;
+}
+
+function reviewProgress() {
+  const files = new Set(ENTRIES.map((entry) => entry.fileId));
+  const pending = new Set(ENTRIES.filter((entry) => !entry.reviewed).map((entry) => entry.fileId));
+  return { total: files.size, done: files.size - pending.size };
+}
+
+function renderFrame() {
+  const frame = document.getElementById('frame');
+  const previousScroller = frame.querySelector('.scroller');
+  const previousScroll = previousScroller ? [previousScroller.scrollTop, previousScroller.scrollLeft] : [0, 0];
+  const palette = PALETTES[state.palette];
+  const layout = effectiveLayout();
+  const isGit = state.mode === 'git';
+  ENTRIES = reviewEntries();
+  ENTRY_BY_ID = new Map(ENTRIES.map((entry) => [entry.id, entry]));
+  ENTRY_BY_ID.set('pair', PAIR_MODEL);
+  if (view.selected >= ENTRIES.length) view.selected = Math.max(0, ENTRIES.length - 1);
+  const MODELS = ENTRIES;
+  const totalAdditions = MODELS.reduce((sum, model) => sum + model.additions, 0);
+  const totalDeletions = MODELS.reduce((sum, model) => sum + model.deletions, 0);
+  const progress = reviewProgress();
+  const pendingDisk = changedOnDisk();
+
+  const qvClasses = ['qv', state.wrap ? 'wrap' : '', state.ruler ? 'ruler-on' : '',
+    isGit && (state.reviewAction === 'sidebar' || state.reviewAction === 'both') ? 'side-check' : '',
+    state.syntax === 'dim-deleted' ? 'dim-deleted' : '', state.syntax === 'plain-changed' ? 'plain-changed' : '', state.syntax === 'off' ? 'syntax-off' : ''].join(' ');
+  const style = `--add:${palette.add};--del:${palette.del};--tint:${state.tint}%;--emph:${state.emph}%`;
+
+  const toggle = state.headerToggle
+    ? `<div class="toggle"><button data-layout="unified" class="${layout === 'unified' ? 'on' : ''}">Unified</button><button data-layout="split" class="${layout === 'split' ? 'on' : ''}">Split</button></div>`
+    : '';
+  const header = isGit
+    ? `<header><span class="badge">\u00B1</span><span class="title">HEAD \u2192 working tree</span><span class="dir">~/Documents/exocortex/code/projects/quantum</span>`
+      + (state.progress ? `<span class="progress" title="Files with no unstaged changes"><span class="bar"><span style="width:${progress.total ? (progress.done / progress.total) * 100 : 0}%"></span></span>${progress.done} of ${progress.total} staged</span>` : '')
+      + `<span class="stats">${statsHtml(totalAdditions, totalDeletions)}</span>${toggle}<button class="close">&#x2715;</button></header>`
+    : `<header><span class="badge">\u00B1</span><span class="title">highlighter.ts \u2194 highlighter.ts</span><span class="dir">quantum/\u2026/lib \u2194 .worktrees/diff-mode/\u2026/lib</span>`
+      + `<span class="stats">${statsHtml(PAIR_MODEL.additions, PAIR_MODEL.deletions)}</span>${toggle}<button class="close">&#x2715;</button></header>`;
+
+  let navbar = '', sidebar = '', content = '';
+  if (!isGit) {
+    content = fileSection(PAIR_MODEL, false);
+  } else {
+    const navigation = state.fileNav;
+    if (navigation === 'sidebar-stacked' || navigation === 'sidebar-single') {
+      let items = '';
+      if (state.grouping === 'sections') {
+        const toReview = MODELS.map((entry, index) => [entry, index]).filter(([entry]) => !entry.reviewed);
+        const reviewed = MODELS.map((entry, index) => [entry, index]).filter(([entry]) => entry.reviewed);
+        items += `<li class="ghead">Unstaged <span>${toReview.length}</span></li>` + toReview.map(([entry, index]) => sidebarItem(entry, index)).join('');
+        items += `<li class="ghead">Staged <span>${reviewed.length}</span></li>` + reviewed.map(([entry, index]) => sidebarItem(entry, index)).join('');
+      } else {
+        items = MODELS.map((entry, index) => sidebarItem(entry, index)).join('');
+      }
+      sidebar = `<nav class="sidebar"><div class="sidebar-title">Changes <span>${progress.total} files</span></div><ul class="flist">${items}</ul></nav>`;
+    }
+    if (navigation === 'dropdown') {
+      navbar = `<div class="navbar"><button data-step="-1">\u2039</button><select data-pick>`
+        + MODELS.map((model, index) => `<option value="${index}" ${index === view.selected ? 'selected' : ''}>${model.status}  ${escapeHtml(splitPath(model.path).name)}  (+${model.additions} \u2212${model.deletions})</option>`).join('')
+        + `</select><button data-step="1">\u203A</button><span style="color:var(--color-muted)">${view.selected + 1} of ${MODELS.length}</span></div>`;
+    }
+    if (navigation === 'sidebar-single' || navigation === 'dropdown') content = fileSection(MODELS[view.selected], true);
+    else content = MODELS.map((model) => fileSection(model, true)).join('');
+  }
+
+  let banner = '';
+  if (isGit && view.notice) banner = `<div class="banner error">${escapeHtml(view.notice)}<button data-refresh="1">Refresh (R)</button></div>`;
+  else if (isGit && pendingDisk > 0) banner = `<div class="banner">${pendingDisk} file${pendingDisk === 1 ? '' : 's'} changed on disk since this diff loaded.<button data-refresh="1">Refresh (R)</button></div>`;
+  const keys = state.keyHints
+    ? `<footer class="keys"><span><kbd>n</kbd><kbd>p</kbd> change</span><span><kbd>]</kbd><kbd>[</kbd> file</span>${isGit ? '<span><kbd>s</kbd> stage / unstage</span><span><kbd>R</kbd> refresh</span>' : ''}<span><kbd>Ctrl+F</kbd> search</span><span><kbd>Esc</kbd> close</span></footer>`
+    : '';
+
+  frame.innerHTML = `<div class="${qvClasses}" style="${style}">${header}${banner}${navbar}<div class="body">${sidebar}`
+    + `<div class="pane"><div class="scroller">${content}</div>${state.ruler ? '<div class="ruler"></div>' : ''}</div></div>${keys}</div>`;
+
+  const scroller = frame.querySelector('.scroller');
+  scroller.scrollTop = previousScroll[0];
+  scroller.scrollLeft = previousScroll[1];
+  scroller.addEventListener('scroll', () => { updateRulerThumb(); trackActiveFile(); });
+  drawRuler();
+}
+
+function drawRuler() {
+  const frame = document.getElementById('frame');
+  const ruler = frame.querySelector('.ruler');
+  if (!ruler) return;
+  const scroller = frame.querySelector('.scroller');
+  const height = scroller.scrollHeight || 1;
+  const palette = PALETTES[state.palette];
+  let html = '';
+  frame.querySelectorAll('.row.add, .row.del, .srow.has-add, .srow.has-del').forEach((element) => {
+    const isAdd = element.classList.contains('add') || (element.classList.contains('has-add') && !element.classList.contains('has-del'));
+    const color = element.classList.contains('has-add') && element.classList.contains('has-del') ? '#ffcb6b' : (isAdd ? palette.add : palette.del);
+    html += `<div class="tick" style="top:${(element.offsetTop / height) * 100}%;height:${(element.offsetHeight / height) * 100}%;background:${color}"></div>`;
+  });
+  ruler.innerHTML = html + '<div class="thumb"></div>';
+  updateRulerThumb();
+}
+function updateRulerThumb() {
+  const frame = document.getElementById('frame');
+  const thumb = frame.querySelector('.ruler .thumb');
+  if (!thumb) return;
+  const scroller = frame.querySelector('.scroller');
+  const height = scroller.scrollHeight || 1;
+  thumb.style.top = (scroller.scrollTop / height) * 100 + '%';
+  thumb.style.height = Math.min(100, (scroller.clientHeight / height) * 100) + '%';
+}
+function trackActiveFile() {
+  if (state.mode !== 'git' || state.fileNav !== 'sidebar-stacked') return;
+  const frame = document.getElementById('frame');
+  const scroller = frame.querySelector('.scroller');
+  let active = 0;
+  frame.querySelectorAll('section.file').forEach((section, index) => { if (section.offsetTop <= scroller.scrollTop + 8) active = index; });
+  if (active !== view.selected) {
+    view.selected = active;
+    frame.querySelectorAll('.flist button[data-select]').forEach((button) => button.parentElement.classList.toggle('active', Number(button.dataset.select) === active));
+  }
+}
+
+// ================= interaction inside the preview =================
+function toggleFileCollapse(id) {
+  const entry = ENTRY_BY_ID.get(id);
+  if (entry && entry.reviewed && state.afterReview === 'collapse') {
+    if (view.openedFiles.has(id)) view.openedFiles.delete(id); else view.openedFiles.add(id);
+  } else if (view.collapsedFiles.has(id)) view.collapsedFiles.delete(id);
+  else view.collapsedFiles.add(id);
+}
+function refreshAndRender() { refreshFromDisk(); renderFrame(); updatePrompt(); }
+
+document.getElementById('frame').addEventListener('click', (event) => {
+  const target = event.target.closest('[data-review],[data-unstage],[data-fulldiff],[data-loadlarge],[data-refresh],[data-expand],[data-recollapse],[data-collapse],[data-select],[data-layout],[data-step]');
+  if (target && target.dataset.review) { event.stopPropagation(); stageFile(target.dataset.review); renderFrame(); return; }
+  if (target && target.dataset.unstage) { event.stopPropagation(); unstageFile(target.dataset.unstage); renderFrame(); return; }
+  if (target && target.dataset.fulldiff) {
+    const id = target.dataset.fulldiff;
+    if (view.fullDiff.has(id)) view.fullDiff.delete(id); else view.fullDiff.add(id);
+    renderFrame(); return;
+  }
+  if (target && target.dataset.loadlarge) { view.largeOpened.add(target.dataset.loadlarge); renderFrame(); return; }
+  if (target && target.dataset.refresh) { refreshAndRender(); return; }
+  if (target && target.dataset.recollapse) { view.expanded.delete(target.dataset.recollapse); renderFrame(); return; }
+  const ruler = event.target.closest('.ruler');
+  if (ruler) {
+    const scroller = document.querySelector('#frame .scroller');
+    const rect = ruler.getBoundingClientRect();
+    scroller.scrollTop = ((event.clientY - rect.top) / rect.height) * scroller.scrollHeight - scroller.clientHeight / 2;
+    return;
+  }
+  if (!target) return;
+  if (target.dataset.expand) { view.expanded.add(target.dataset.expand); renderFrame(); }
+  else if (target.dataset.collapse) {
+    toggleFileCollapse(target.dataset.collapse);
+    renderFrame();
+  } else if (target.dataset.select !== undefined) {
+    view.selected = Number(target.dataset.select);
+    if (state.fileNav === 'sidebar-stacked') {
+      renderFrame();
+      const section = document.querySelectorAll('#frame section.file')[view.selected];
+      document.querySelector('#frame .scroller').scrollTop = section.offsetTop;
+    } else {
+      renderFrame();
+      document.querySelector('#frame .scroller').scrollTop = 0;
+    }
+  } else if (target.dataset.layout) { state.layout = target.dataset.layout; updateAll(); }
+  else if (target.dataset.step) {
+    view.selected = (view.selected + Number(target.dataset.step) + ENTRIES.length) % ENTRIES.length;
+    renderFrame();
+  }
+});
+document.getElementById('frame').addEventListener('change', (event) => {
+  if (event.target.matches('[data-pick]')) { view.selected = Number(event.target.value); renderFrame(); }
+});
+
+// ================= keyboard (n/p change, ]/[ file, s review, R refresh) =================
+const CHANGE_SELECTOR = '.row.add, .row.del, .srow.has-add, .srow.has-del';
+document.addEventListener('keydown', (event) => {
+  if (event.target.closest && event.target.closest('#controls, input, select, textarea')) return;
+  if (event.ctrlKey || event.metaKey || event.altKey) return;
+  const scroller = document.querySelector('#frame .scroller');
+  if (!scroller) return;
+  const stickyOffset = 40;
+  const sections = [...scroller.querySelectorAll('section.file')];
+  const isStacked = sections.length > 1;
+  if (event.key === 'n' || event.key === 'p') {
+    const starts = [...scroller.querySelectorAll(CHANGE_SELECTOR)].filter((element) => {
+      const previous = element.previousElementSibling;
+      return !previous || !previous.matches(CHANGE_SELECTOR);
+    });
+    const current = scroller.scrollTop + stickyOffset;
+    const target = event.key === 'n'
+      ? starts.find((element) => element.offsetTop > current + 2)
+      : [...starts].reverse().find((element) => element.offsetTop < current - 2);
+    if (target) scroller.scrollTop = target.offsetTop - stickyOffset;
+  } else if (event.key === ']' || event.key === '[') {
+    const step = event.key === ']' ? 1 : -1;
+    if (isStacked) {
+      let current = 0;
+      sections.forEach((section, index) => { if (section.offsetTop <= scroller.scrollTop + 8) current = index; });
+      const next = Math.min(sections.length - 1, Math.max(0, current + step));
+      scroller.scrollTop = sections[next].offsetTop;
+    } else {
+      view.selected = (view.selected + step + ENTRIES.length) % ENTRIES.length;
+      renderFrame();
+      document.querySelector('#frame .scroller').scrollTop = 0;
+    }
+  } else if (event.key === 's' && state.mode === 'git') {
+    const entry = ENTRIES[view.selected];
+    if (!entry) return;
+    if (entry.reviewed) unstageFile(entry.fileId); else stageFile(entry.fileId);
+    renderFrame();
+  } else if (event.key === 'R' || event.key === 'r') {
+    refreshAndRender();
+  }
+});
+
+// ================= copy hygiene =================
+// Split view: lock the selection to the side the drag started on.
+document.getElementById('frame').addEventListener('mousedown', (event) => {
+  document.querySelectorAll('#frame .rows.split').forEach((rows) => rows.classList.remove('pick-old', 'pick-new'));
+  const half = event.target.closest('.half');
+  if (!half) return;
+  const rows = half.closest('.rows.split');
+  const isLeft = half.parentElement.querySelector('.half') === half;
+  document.querySelectorAll('#frame .rows.split').forEach((each) => each.classList.add(isLeft ? 'pick-old' : 'pick-new'));
+  view.copySide = isLeft ? 'old' : 'new';
+  void rows;
+});
+
+function textOffsetWithin(element, container, offset) {
+  const probe = document.createRange();
+  probe.selectNodeContents(element);
+  probe.setEnd(container, offset);
+  return probe.toString().length;
+}
+
+// Rebuild clipboard text from the selected code cells only: blank lines survive,
+// nothing outside the file text can leak in.
+function selectedCodeText() {
+  const selection = window.getSelection();
+  if (!selection.rangeCount || selection.isCollapsed) return null;
+  const range = selection.getRangeAt(0);
+  const frame = document.getElementById('frame');
+  if (!frame.contains(range.commonAncestorContainer)) return null;
+  const isSplit = !!frame.querySelector('.rows.split');
+  let cells = [...frame.querySelectorAll('.code, .gap[data-expand]')].filter((cell) => range.intersectsNode(cell));
+  // A collapsed region is only part of the copy when it sits BETWEEN selected code.
+  const firstCode = cells.findIndex((cell) => cell.classList.contains('code'));
+  const lastCode = cells.length - 1 - [...cells].reverse().findIndex((cell) => cell.classList.contains('code'));
+  cells = cells.filter((cell, index) => cell.classList.contains('code') || (state.copyHidden === 'include' && index > firstCode && index < lastCode));
+  if (isSplit && view.copySide) {
+    cells = cells.filter((cell) => {
+      if (!cell.classList.contains('code')) return true;
+      const half = cell.closest('.half');
+      const isLeft = half.parentElement.querySelector('.half') === half;
+      return view.copySide === 'old' ? isLeft : !isLeft;
+    });
+  }
+  if (!isSplit && state.copyMode === 'new-only') cells = cells.filter((cell) => !cell.closest('.row.del'));
+  const lines = cells.map((cell) => {
+    if (cell.classList.contains('gap')) {
+      const model = ENTRY_BY_ID.get(cell.dataset.fileId);
+      const from = Number(cell.dataset.from);
+      return model.newLines.slice(from, from + Number(cell.dataset.count)).join('\n');
+    }
+    const text = cell.textContent;
+    let start = 0, end = text.length;
+    if (cell.contains(range.startContainer)) start = textOffsetWithin(cell, range.startContainer, range.startOffset);
+    if (cell.contains(range.endContainer)) end = textOffsetWithin(cell, range.endContainer, range.endOffset);
+    return text.slice(start, end);
+  });
+  return lines.join('\n');
+}
+
+function showCopied(text) {
+  const box = document.getElementById('copied');
+  const lineCount = text.split('\n').length;
+  box.querySelector('.lbl').textContent = `Clipboard received ${lineCount} line${lineCount === 1 ? '' : 's'} (\u21B5 marks each line end):`;
+  box.querySelector('pre').innerHTML = text.split('\n').map((line) => escapeHtml(line) + '<span class="eol">\u21B5</span>').join('\n');
+  box.style.display = 'block';
+}
+
+document.addEventListener('copy', (event) => {
+  const text = selectedCodeText();
+  if (text === null) return;
+  event.clipboardData.setData('text/plain', text);
+  event.preventDefault();
+  showCopied(text);
+});
+
+// ================= controls =================
+function syncControls() {
+  document.querySelectorAll('.seg[data-key]').forEach((group) => {
+    group.querySelectorAll('button').forEach((button) => button.classList.toggle('on', String(state[group.dataset.key]) === button.dataset.v));
+  });
+  document.querySelectorAll('input[type=range][data-key]').forEach((input) => { input.value = state[input.dataset.key]; });
+  document.querySelectorAll('input[type=checkbox][data-key]').forEach((input) => { input.checked = !!state[input.dataset.key]; });
+  const units = { width: 'px', autoThreshold: 'px', tint: '%', emph: '%' };
+  document.querySelectorAll('[data-out]').forEach((output) => { output.textContent = state[output.dataset.out] + (units[output.dataset.out] || ''); });
+  document.getElementById('autoCtl').style.display = state.layout === 'auto' ? '' : 'none';
+  document.getElementById('navGroup').style.opacity = state.mode === 'git' ? '1' : '.35';
+  document.getElementById('reviewGroup').style.opacity = state.mode === 'git' ? '1' : '.35';
+}
+
+document.getElementById('simulateEdit').addEventListener('click', () => { simulateAgentEdit(); renderFrame(); });
+document.getElementById('resetRepository').addEventListener('click', () => {
+  DISK = initialRepository();
+  SNAPSHOT = cloneRepository(DISK);
+  view.notice = '';
+  view.openedFiles.clear(); view.collapsedFiles.clear(); view.fullDiff.clear(); view.largeOpened.clear();
+  renderFrame();
+});
+
+document.querySelectorAll('.seg[data-key]').forEach((group) => {
+  group.addEventListener('click', (event) => {
+    const button = event.target.closest('button');
+    if (!button) return;
+    state[group.dataset.key] = button.dataset.v;
+    updateAll();
+  });
+});
+document.querySelectorAll('input[type=range][data-key]').forEach((input) => {
+  input.addEventListener('input', () => { state[input.dataset.key] = Number(input.value); updateAll(); });
+});
+document.querySelectorAll('input[type=checkbox][data-key]').forEach((input) => {
+  input.addEventListener('change', () => { state[input.dataset.key] = input.checked; updateAll(); });
+});
+
+const presetBox = document.getElementById('presets');
+PRESETS.forEach((preset) => {
+  const button = document.createElement('button');
+  button.textContent = preset.name;
+  if (preset.rec) button.classList.add('rec');
+  button.addEventListener('click', () => {
+    Object.assign(state, DEFAULTS, preset.values);
+    view.expanded.clear(); view.collapsedFiles.clear(); view.selected = 0;
+    updateAll();
+  });
+  presetBox.appendChild(button);
+});
+
+// ================= scaling + prompt =================
+function layoutStage() {
+  const stage = document.getElementById('stage');
+  const available = stage.clientWidth - 32;
+  const scale = Math.min(1, available / state.width);
+  const frame = document.getElementById('frame');
+  frame.style.width = state.width + 'px';
+  frame.style.transform = `scale(${scale})`;
+  const wrap = document.getElementById('frameWrap');
+  wrap.style.width = state.width * scale + 'px';
+  wrap.style.height = 700 * scale + 'px';
+  document.getElementById('caption').textContent =
+    `qv window at ${state.width}\u00D7700 (opens at 900\u00D7700 per view.toml)` + (scale < 1 ? ` \u00B7 scaled to ${Math.round(scale * 100)}% to fit` : '')
+    + ` \u00B7 layout: ${effectiveLayout()}`;
+}
+
+function updatePrompt() {
+  const layout = state.layout === 'auto'
+    ? `unified below ${state.autoThreshold}px window width and split at or above it`
+    : state.layout;
+  const navigation = {
+    'sidebar-stacked': 'a 220px "Changes" sidebar (status letter, filename, directory, +/- counts) beside all files stacked in one scroll, each with a sticky file header that collapses on click; the sidebar entry tracks the file in view and clicking it jumps there',
+    'sidebar-single': 'a 220px "Changes" sidebar (status letter, filename, directory, +/- counts) that selects one file at a time',
+    stacked: 'all files stacked in one scroll with sticky, collapsible file headers and no sidebar',
+    dropdown: 'a picker bar under the header (previous / file select / next, "n of m") showing one file at a time',
+  }[state.fileNav];
+  const syntax = {
+    full: 'syntax colors on every line (context, added, and removed), with the change shown by background tint',
+    'dim-deleted': 'syntax colors on every line, with removed lines dimmed to about 55% opacity',
+    'plain-changed': 'syntax colors on context lines only; changed lines drawn flat in the add/remove color',
+    off: 'no syntax colors; changed lines drawn flat in the add/remove color',
+  }[state.syntax];
+  const marker = { bar: 'a 3px colored edge bar on changed lines', sign: 'a +/- sign column', both: 'both a 3px edge bar and a +/- sign column', none: 'no gutter marker (tint only)' }[state.marker];
+  const numbers = { both: 'old and new line-number columns', new: 'a new-side line-number column only', none: 'no line numbers' }[state.lineNumbers];
+  const label = { count: 'just the hidden line count', scope: 'the hidden line count plus the enclosing scope line (for example the fn or function signature), syntax-highlighted', raw: 'a raw git @@ -a,b +c,d @@ header with the enclosing scope' }[state.hunkLabel];
+
+  const parts = [];
+  parts.push(`Build a diff mode for qv (quantum's file viewer, plugin/file-viewer). These choices came out of the qv-diff playground (docs/playgrounds/qv-diff-playground.html).`);
+  parts.push(`\nSources: \`qv --diff <ref>[..<ref>]\` (git refs, multi-file; primary use is reviewing agent changes) and \`qv <a> <b>\` (two arbitrary files, single pair, no file navigation).`);
+  parts.push(`\nLayout: default ${layout}.` + (state.headerToggle ? ' A Unified / Split segmented toggle sits in the header beside the +/- stats.' : ' No in-viewer layout toggle.')
+    + (state.wrap ? ' Long lines soft-wrap.' : ' Long lines do not wrap (unified scrolls sideways; split sides scroll in sync).')
+    + ` Judged at a ${state.width}px window (qv opens at 900x700).`);
+  parts.push(`\nMulti-file navigation (git mode): ${navigation}.`);
+  parts.push(`\nHighlighting: tokenize the WHOLE old and new file contents with highlight.js (not per-hunk fragments) so multi-line comments and strings color correctly, reusing highlight-theme.css; ${syntax}.`
+    + ` Change colors use ${PALETTES[state.palette].label}. Changed-line background tint ${state.tint}% (color-mix with transparent).`
+    + (state.intraline === 'off' ? ' No intra-line emphasis.' : ` Intra-line emphasis at ${state.intraline} level, ${state.emph}% strength, applied by splitting syntax tokens at the changed ranges (only for paired lines that are at least 40% similar).`));
+  parts.push(`\nGutter: ${marker}; ${numbers}. Gutter metrics match CodeRenderer (13px mono, line-height 1.6, muted 50% numbers, border-right divider).`);
+  parts.push(`\nContext: ${state.context === 'all' ? 'show whole files (no collapsing)' : state.context + ' unchanged lines around each change, with longer unchanged runs collapsed into a clickable expander'} labelled with ${label}.`
+    + (state.ruler ? ' Overview ruler: a 10px change map on the right edge of the scroll pane (ticks per changed line, mixed pairs in amber, a viewport thumb, click to jump).' : ' No overview ruler.'));
+  const handle = {
+    bracket: 'a 5px gutter strip running the full height of the expanded lines (hover highlights it in the accent color; click hides the region again), so the handle never scrolls out of view',
+    bar: 'a slim "\u25B4 Hide N expanded lines" bar at the top of the expanded region (click to hide it again)',
+    both: 'slim "Hide N expanded lines" bars at both the top and bottom of the expanded region (click either to hide it again)',
+  }[state.recollapse];
+  parts.push(`\nRe-collapsing: an expanded region can always be collapsed back, via ${handle}.`);
+  parts.push(`\nCopy hygiene: only file text is selectable. Line numbers, +/- signs, collapsed-region labels and handles, file headers, the sidebar, and split-view filler are user-select: none AND excluded from the clipboard: a copy handler rebuilds text/plain from the selected code cells only, joined by newlines, so blank lines survive and no gutter text leaks in. In split view a selection is locked to the side it started on (old or new); it never interleaves both sides.`
+    + (state.copyMode === 'new-only'
+      ? ' In unified view, a selection spanning a change copies the new side only (removed lines are skipped) so the result is pasteable code.'
+      : ' In unified view, a selection spanning a change copies removed and added lines exactly as selected.')
+    + (state.copyHidden === 'include'
+      ? ' A selection that crosses a collapsed region copies the hidden lines too (filled in from the file), so the clipboard is always a contiguous piece of the real file.'
+      : ' A selection that crosses a collapsed region copies only the visible lines.'));
+  const grouping = state.grouping === 'sections'
+    ? 'the sidebar and the stacked content are split into "Unstaged" (unstaged and untracked changes, index \u2192 working tree) and "Staged" (HEAD \u2192 index) sections; a file staged and then edited again (partially staged) appears in both, its Unstaged entry showing only the changes made after staging, with a "partially staged" tag'
+    : 'one list in file order with per-file state; a partially staged file shows a single entry with an "unstaged changes" tag that toggles between the unstaged changes and all changes since HEAD';
+  const action = { header: 'a "Stage" / "\u2713 Staged" button in each sticky file header', sidebar: 'a checkbox on each sidebar entry', both: 'both a "Stage" / "\u2713 Staged" button in each sticky file header and a checkbox on each sidebar entry' }[state.reviewAction];
+  parts.push(`\nStaging (git mode, only when the newer side is the working tree; committed history and two-file mode stay read-only): staging is how you mark a file as reviewed, and the interface says "staged" everywhere, never "reviewed". Stage runs \`git add -- <path>\` (whole file; deletions and untracked files included); unstage runs \`git restore --staged -- <path>\`. Controls: ${action}, plus the s key to stage or unstage the current file. Layout: ${grouping}.`
+    + ` A staged file ${state.afterReview === 'collapse' ? 'collapses (click its header to reopen)' : 'stays open with a dimmed header'}.`
+    + ` Untracked files are included (respecting .gitignore) and shown as ${state.untrackedStyle === 'letter' ? 'a "U" status letter' : 'an "A" status letter plus an "untracked" tag'}.`
+    + (state.progress ? ' The header shows "n of m staged" with a small progress bar (a file counts as staged when it has no unstaged changes).' : '')
+    + ' SAFETY: Stage must stage exactly the content on screen. Before running git add, compare the file on disk with the content this diff loaded; if it changed, refuse and show an error banner ("Not staged: <file> changed on disk after this diff loaded. Refresh (R) and check the new changes first.").');
+  parts.push(`\nLive changes: watch the repository; when files change on disk, show a banner under the header ("N files changed on disk since this diff loaded" with a Refresh (R) button) and never re-diff automatically, so content does not move while you read.`);
+  parts.push(`\nKeyboard: n / p next and previous change, ] / [ next and previous file, s stage or unstage, R refresh, Ctrl+F search (the existing search bar, searching the diff text), Escape closes.`
+    + (state.keyHints ? ' A 24px hint bar along the bottom lists these keys.' : ''));
+  parts.push(`\nRenames use git rename detection and show as R with "old name \u2192 new name" in the file header and "renamed from" in the sidebar, diffing old content against new. Files whose diff exceeds about 1000 changed lines render as a dashed "Large diff: N changed lines, not rendered yet. [Load diff]" placeholder until clicked.`);
+  parts.push(`\nHeader: the existing qv header with a \u00B1 badge, the ref range ("HEAD \u2192 working tree" for plain qv --diff) or "a \u2194 b", repository path, and total +/- counts.`);
+  document.getElementById('prompt').textContent = parts.join('');
+}
+
+function updateAll() {
+  syncControls();
+  layoutStage();
+  renderFrame();
+  updatePrompt();
+}
+
+document.getElementById('copy').addEventListener('click', () => {
+  navigator.clipboard.writeText(document.getElementById('prompt').textContent).then(() => {
+    const button = document.getElementById('copy');
+    button.textContent = 'Copied!';
+    setTimeout(() => { button.textContent = 'Copy'; }, 1200);
+  });
+});
+window.addEventListener('resize', () => { layoutStage(); });
+
+// Optional URL overrides, for example ?layout=split&width=1300
+for (const [key, value] of new URLSearchParams(location.search)) {
+  if (!(key in DEFAULTS)) continue;
+  if (typeof DEFAULTS[key] === 'number') state[key] = Number(value);
+  else if (typeof DEFAULTS[key] === 'boolean') state[key] = value === 'true';
+  else state[key] = value;
+}
+
+updateAll();
+
+// ?selftest=1 : expand the first region, then select across gutter + code and run a copy.
+// ?actions=edit,stage:ts,refresh : scripted demo actions for headless checks
+for (const action of (new URLSearchParams(location.search).get('actions') || '').split(',').filter(Boolean)) {
+  const [verb, ...rest] = action.split(':');
+  const argument = rest.join(':');
+  if (verb === 'edit') simulateAgentEdit();
+  if (verb === 'stage') stageFile(argument);
+  if (verb === 'unstage') unstageFile(argument);
+  if (verb === 'refresh') refreshFromDisk();
+  if (verb === 'open') view.openedFiles.add(argument);
+  renderFrame();
+}
+
+const selfTestParameters = new URLSearchParams(location.search);
+if (selfTestParameters.get('selftest')) {
+  const firstGap = document.querySelector('#frame .gap[data-expand]');
+  if (firstGap && selfTestParameters.get('expand') !== 'false') firstGap.click();
+  const [from, to] = (selfTestParameters.get('sel') || '20,29').split(',').map(Number);
+  const fileSelector = selfTestParameters.get('file') ? `section.file[data-file="${selfTestParameters.get('file')}"]` : 'section.file:first-child';
+  const codes = [...document.querySelectorAll(`#frame ${fileSelector} .code`)];
+  if (selfTestParameters.get('side')) {
+    const halves = codes[from].closest('.srow').querySelectorAll('.half');
+    halves[selfTestParameters.get('side') === 'new' ? 1 : 0].dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
+  }
+  const range = document.createRange();
+  range.setStart(codes[from].closest('.row, .srow'), 0);
+  range.setEnd(codes[to], codes[to].childNodes.length);
+  const selection = window.getSelection();
+  selection.removeAllRanges();
+  selection.addRange(range);
+  const event = new ClipboardEvent('copy', { clipboardData: new DataTransfer(), cancelable: true, bubbles: true });
+  document.dispatchEvent(event);
+}
+</script>
+</body>
+</html>
