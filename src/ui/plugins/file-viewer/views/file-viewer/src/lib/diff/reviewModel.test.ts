@@ -199,7 +199,7 @@ describe('applyLocalStage / applyLocalUnstage', () => {
 	test('unstaging that same file returns it to untracked with no index side', () => {
 		const changeSet = stageableChangeSet([{ path: 'new.ts', target: side('t1'), untracked: true }]);
 		const staged = applyLocalStage(changeSet, 'new.ts');
-		const unstaged = applyLocalUnstage(staged, 'new.ts');
+		const unstaged = applyLocalUnstage(staged, 'new.ts')!;
 		expect(unstaged.files[0].index).toBeUndefined();
 		expect(unstaged.files[0].untracked).toBe(true);
 		const entries = reviewEntries(unstaged);
@@ -222,7 +222,7 @@ describe('applyLocalStage / applyLocalUnstage', () => {
 		const changeSet = stageableChangeSet([
 			{ path: 'lib.rs', base: side('b1'), index: side('b2'), target: side('b2'), untracked: false },
 		]);
-		const unstaged = applyLocalUnstage(changeSet, 'lib.rs');
+		const unstaged = applyLocalUnstage(changeSet, 'lib.rs')!;
 		expect(unstaged.files[0].index?.blob).toBe('b1');
 		const entries = reviewEntries(unstaged);
 		expect(entries).toHaveLength(1);
@@ -235,5 +235,27 @@ describe('applyLocalStage / applyLocalUnstage', () => {
 		]);
 		const result = applyLocalStage(changeSet, 'other.rs');
 		expect(result.files[0]).toEqual(changeSet.files[0]);
+	});
+
+	test('unstaging a staged rename returns null, signalling that a refetch is required', () => {
+		// One local record cannot represent what git does on this unstage:
+		// the old path comes back (as untracked or back to its own prior
+		// state) and the new path becomes untracked, which is two paths'
+		// worth of change from a `ChangedFile` keyed on a single path. The
+		// caller must refetch instead of mutating its local mirror.
+		const changeSet = stageableChangeSet([
+			{ path: 'renamed.ts', old_path: 'original.ts', base: side('b1'), index: side('b2'), target: side('b2'), untracked: false },
+		]);
+		const result = applyLocalUnstage(changeSet, 'renamed.ts');
+		expect(result).toBeNull();
+	});
+
+	test('unstaging a non-renamed file still returns the updated change set', () => {
+		const changeSet = stageableChangeSet([
+			{ path: 'lib.rs', base: side('b1'), index: side('b2'), target: side('b2'), untracked: false },
+		]);
+		const result = applyLocalUnstage(changeSet, 'lib.rs');
+		expect(result).not.toBeNull();
+		expect(result!.files[0].index?.blob).toBe('b1');
 	});
 });

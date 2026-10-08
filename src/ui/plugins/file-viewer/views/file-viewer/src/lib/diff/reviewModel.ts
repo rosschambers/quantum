@@ -166,11 +166,25 @@ export function applyLocalStage(changeSet: ChangeSet, path: string): ChangeSet {
  * `git rm --cached`) now holds after unstaging: the index reverts to the
  * base side, or is removed and the file returns to untracked when there is
  * no base.
+ *
+ * Returns `null` when the file carries `old_path` (a staged rename),
+ * signalling that the caller must refetch instead of trusting this local
+ * mirror. Unstaging a rename restores the OLD path too — the backend
+ * passes `old_path` through to the unstage call to do exactly that — so
+ * the result is a change spanning two paths (the old path reappearing,
+ * the new path's entry going untracked). A single `ChangedFile` is keyed
+ * on one path and cannot represent that; mutating it locally would either
+ * drop the old path's reappearance or leave the new path in a state git
+ * never produces.
  */
-export function applyLocalUnstage(changeSet: ChangeSet, path: string): ChangeSet {
-	return updateFile(changeSet, path, (file) => ({
-		...file,
-		index: file.base ? cloneSide(file.base) : undefined,
-		untracked: file.base ? file.untracked : true,
+export function applyLocalUnstage(changeSet: ChangeSet, path: string): ChangeSet | null {
+	const file = changeSet.files.find((candidate) => candidate.path === path);
+	if (file?.old_path) {
+		return null;
+	}
+	return updateFile(changeSet, path, (current) => ({
+		...current,
+		index: current.base ? cloneSide(current.base) : undefined,
+		untracked: current.base ? current.untracked : true,
 	}));
 }
