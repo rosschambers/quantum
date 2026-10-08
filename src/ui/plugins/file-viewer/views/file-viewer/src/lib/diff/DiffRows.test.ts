@@ -206,6 +206,52 @@ describe('DiffRows (unified)', () => {
 		expect(onRecollapse).toHaveBeenCalledWith('collapse-0');
 	});
 
+	test('tags unified rows with data-old-index / data-new-index for the overview ruler to anchor on', () => {
+		const rows: DiffRow[] = [
+			{ kind: 'context', oldIndex: 0, newIndex: 0 },
+			{ kind: 'removed', oldIndex: 1, emphasis: null },
+			{ kind: 'added', newIndex: 1, emphasis: null },
+		];
+		const { container } = render(DiffRows, {
+			props: {
+				rows,
+				layout: 'unified',
+				oldTokens: tokensFor(['unchanged', 'old text']),
+				newTokens: tokensFor(['unchanged', 'new text']),
+				onExpand: vi.fn(),
+				onRecollapse: vi.fn(),
+			},
+		});
+
+		const renderedRows = container.querySelectorAll('.row');
+		expect((renderedRows[0] as HTMLElement).dataset.oldIndex).toBe('0');
+		expect((renderedRows[0] as HTMLElement).dataset.newIndex).toBe('0');
+		// Removed rows have no new-side line at all.
+		expect((renderedRows[1] as HTMLElement).dataset.oldIndex).toBe('1');
+		expect((renderedRows[1] as HTMLElement).dataset.newIndex).toBeUndefined();
+		// Added rows have no old-side line at all.
+		expect((renderedRows[2] as HTMLElement).dataset.oldIndex).toBeUndefined();
+		expect((renderedRows[2] as HTMLElement).dataset.newIndex).toBe('1');
+	});
+
+	test('tags a collapsed row with data-first-new-index and data-hidden-count, alongside data-hidden-lines', () => {
+		const rows: DiffRow[] = [{ kind: 'collapsed', key: 'collapse-0', hiddenCount: 5, firstNewIndex: 3, scopeLine: '' }];
+		const { container } = render(DiffRows, {
+			props: {
+				rows,
+				layout: 'unified',
+				oldTokens: tokensFor(['a', 'b', 'c', 'd', 'e']),
+				newTokens: tokensFor(['a', 'b', 'c', 'd', 'e']),
+				onExpand: vi.fn(),
+				onRecollapse: vi.fn(),
+			},
+		});
+		const collapsedElement = container.querySelector('.collapsed') as HTMLElement;
+		expect(collapsedElement.dataset.firstNewIndex).toBe('3');
+		expect(collapsedElement.dataset.hiddenCount).toBe('5');
+		expect(collapsedElement.dataset.hiddenLines).toBeDefined();
+	});
+
 	test('renders search-match and search-match-current marks from searchRanges', () => {
 		const rows: DiffRow[] = [{ kind: 'context', oldIndex: 0, newIndex: 0 }];
 		const searchRanges: SearchRanges = {
@@ -405,5 +451,32 @@ describe('DiffRows (split)', () => {
 			'text/plain',
 			'removed one\nsame 0\nsame 1\nsame 2\nsame 3\nsame 4\nremoved two',
 		);
+	});
+
+	test('tags split halves with data-old-index / data-new-index, and the collapsed region with data-first-new-index / data-hidden-count', () => {
+		const { rows, oldLines, newLines } = twoHunksSeparatedByCollapse();
+		const { container } = render(DiffRows, {
+			props: {
+				rows,
+				layout: 'split',
+				oldTokens: tokensFor(oldLines),
+				newTokens: tokensFor(newLines),
+				onExpand: vi.fn(),
+				onRecollapse: vi.fn(),
+			},
+		});
+
+		const oldColumn = container.querySelector('.column.old') as HTMLElement;
+		const newColumn = container.querySelector('.column.new') as HTMLElement;
+		const oldHalves = oldColumn.querySelectorAll('.half');
+		const newHalves = newColumn.querySelectorAll('.half');
+		expect((oldHalves[0] as HTMLElement).dataset.oldIndex).toBe('0');
+		expect((newHalves[0] as HTMLElement).dataset.newIndex).toBe('0');
+		expect((oldHalves[1] as HTMLElement).dataset.oldIndex).toBe('11');
+		expect((newHalves[1] as HTMLElement).dataset.newIndex).toBe('11');
+
+		const collapsedElement = container.querySelector('.collapsed') as HTMLElement;
+		expect(collapsedElement.dataset.firstNewIndex).toBe('1');
+		expect(collapsedElement.dataset.hiddenCount).toBe('5');
 	});
 });

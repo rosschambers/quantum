@@ -113,6 +113,19 @@
 		return value === '' ? '' : String(value);
 	}
 
+	// `data-old-index` / `data-new-index`: the row/half's position in each
+	// side's own line-index space, read by the overview ruler (DiffView.svelte)
+	// to anchor a search match or change-run endpoint on the actual rendered
+	// element instead of an equal-share arithmetic guess. Returns `undefined`
+	// for a side the row has no line on (removed has no new index, added has
+	// no old index), which Svelte renders as the attribute being absent.
+	function oldIndexOf(row: DiffRow): number | undefined {
+		return row.kind === 'context' || row.kind === 'removed' ? row.oldIndex : undefined;
+	}
+	function newIndexOf(row: DiffRow): number | undefined {
+		return row.kind === 'context' || row.kind === 'added' ? row.newIndex : undefined;
+	}
+
 	// Unified row number text: context/added show the new index, removed
 	// shows blank on the new column; context/removed show the old index,
 	// added shows blank on the old column.
@@ -197,6 +210,8 @@
 					role="button"
 					tabindex="0"
 					data-hidden-lines={hiddenLinesJson(row.firstNewIndex, row.hiddenCount)}
+					data-first-new-index={row.firstNewIndex}
+					data-hidden-count={row.hiddenCount}
 					onclick={() => onExpand(row.key)}
 					onkeydown={(event) => handleExpandKey(event, row.key)}
 				>
@@ -208,7 +223,7 @@
 					{recollapseArrow(row.position)} {expandedLabel(row.count)}
 				</div>
 			{:else}
-				<div class="row {row.kind}">
+				<div class="row {row.kind}" data-old-index={oldIndexOf(row)} data-new-index={newIndexOf(row)}>
 					<span class="line-number" style={`width: calc(${digitWidth}ch + 12px)`}>{lineNumberText(oldNumberFor(row))}</span>
 					<span class="line-number last" style={`width: calc(${digitWidth}ch + 12px)`}>{lineNumberText(newNumberFor(row))}</span>
 					<span
@@ -242,6 +257,8 @@
 							role="button"
 							tabindex="0"
 							data-hidden-lines={hiddenLinesJson(collapsedRow.firstNewIndex, collapsedRow.hiddenCount)}
+							data-first-new-index={collapsedRow.firstNewIndex}
+							data-hidden-count={collapsedRow.hiddenCount}
 							onclick={() => onExpand(collapsedRow.key)}
 							onkeydown={(event) => handleExpandKey(event, collapsedRow.key)}
 						>
@@ -261,7 +278,7 @@
 						</div>
 					{:else if splitRow.left}
 						{@const leftRow = splitRow.left}
-						<div class="half {leftRow.kind}">
+						<div class="half {leftRow.kind}" data-old-index={oldIndexOf(leftRow)} data-new-index={newIndexOf(leftRow)}>
 							<span class="line-number last" style={`width: calc(${digitWidth}ch + 12px)`}>{leftRow.kind === 'added' ? '' : leftRow.oldIndex + 1}</span>
 							<span
 								class="code"
@@ -295,7 +312,7 @@
 						></div>
 					{:else if splitRow.right}
 						{@const rightRow = splitRow.right}
-						<div class="half {rightRow.kind}">
+						<div class="half {rightRow.kind}" data-old-index={oldIndexOf(rightRow)} data-new-index={newIndexOf(rightRow)}>
 							<span class="line-number last" style={`width: calc(${digitWidth}ch + 12px)`}>{rightRow.kind === 'removed' ? '' : rightRow.newIndex + 1}</span>
 							<span
 								class="code"
