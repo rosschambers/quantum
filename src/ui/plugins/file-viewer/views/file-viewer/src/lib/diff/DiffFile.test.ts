@@ -224,6 +224,19 @@ describe('DiffFile', () => {
 		expect(highlightSpy).toHaveBeenCalledTimes(2);
 	});
 
+	test('the deletions count renders a real minus sign, not a literal backslash escape', () => {
+		const { container } = render(DiffFile, {
+			props: {
+				entry: entry({ oldSide: side('old one\nold two'), newSide: side('new one') }),
+				stageable: false,
+				layout: 'unified',
+			},
+		});
+		const stats = container.querySelector('.stats') as HTMLElement;
+		expect(stats.textContent).toContain('\u2212');
+		expect(stats.textContent).not.toContain('\\u2212');
+	});
+
 	test('shows the partially staged pill when the entry is partially staged', () => {
 		const { container } = render(DiffFile, {
 			props: { entry: entry({ partiallyStaged: true }), stageable: true, layout: 'unified' },

@@ -187,6 +187,16 @@ describe('ChangesSidebar', () => {
 		}
 	});
 
+	test('the mini-stats deletions count renders a real minus sign, not a literal backslash escape', () => {
+		const entries: ReviewEntry[] = [entry({ path: 'src/a.ts', section: 'unstaged' })];
+		const { container } = render(ChangesSidebar, {
+			props: { entries, stageable: true, activeIndex: 0, onSelect: vi.fn() },
+		});
+		const miniStats = container.querySelector('.mini-stats') as HTMLElement;
+		expect(miniStats.textContent).toContain('\u2212');
+		expect(miniStats.textContent).not.toContain('\\u2212');
+	});
+
 	test('a partially staged entry shows a partial dot', () => {
 		const entries: ReviewEntry[] = [entry({ path: 'src/a.ts', section: 'unstaged', partiallyStaged: true })];
 		const { container } = render(ChangesSidebar, {

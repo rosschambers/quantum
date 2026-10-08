@@ -101,7 +101,7 @@
 			{#if item.entry.partiallyStaged}
 				<span class="dot" title="partially staged: edited after staging"></span>
 			{/if}
-			<span class="mini-stats">+{item.additions} \u2212{item.deletions}</span>
+			<span class="mini-stats">+{item.additions} &#x2212;{item.deletions}</span>
 		</button>
 	</li>
 {/snippet}

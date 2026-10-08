@@ -160,7 +160,7 @@
 		<span class="status status-{entry.status}">{entry.status}</span>
 		<span class="path">{@html pathHtml}</span>
 		{#if entry.partiallyStaged}<span class="pill">partially staged</span>{/if}
-		<span class="stats"><span class="additions">+{additions}</span> <span class="deletions">\u2212{deletions}</span></span>
+		<span class="stats"><span class="additions">+{additions}</span> <span class="deletions">&#x2212;{deletions}</span></span>
 		{#if stageable}
 			<button type="button" class="stage-button" class:staged={entry.section === 'staged'} onclick={handleStageClick}>
 				{entry.section === 'staged' ? '\u2713 Staged' : 'Stage'}
