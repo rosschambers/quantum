@@ -388,8 +388,13 @@ broken CI before; do not reintroduce them:
   resolution — packaging owns half the fix.** `SoundPlayer::detect()`
   (`src/infrastructure/providers/src/timer_notifier.rs`) probes PATH for
   `canberra-gtk-play` (preferred) then `paplay`, and `play` is fire-and-forget
-  (`let _ = ...spawn()`) — every failure is swallowed, so a broken sound is
-  SILENT, never logged. Two ways it silently breaks, both hit on NixOS
+  (`let _ = spawn_and_reap(...)`) — every failure is swallowed, so a broken sound
+  is SILENT, never logged. **Every spawned player must be reaped:** dropping a
+  `std::process::Child` does not wait for it, so a bare `spawn()` left one zombie
+  `canberra-gtk-play` per chime under the long-lived daemon (14 had piled up by
+  2026-10-08). `spawn_and_reap` waits on a short-lived thread; any new external
+  process quantumd fires and forgets must do the same. Low-urgency notifications
+  play no sound at all (`should_play_sound` in `notifications.rs`). Two ways it silently breaks, both hit on NixOS
   2026-08-05 (the notification chime AND the timer sound were inaudible):
   - **quantumd as a user service does NOT inherit the login shell's PATH.** If
     `canberra-gtk-play` is only in a user profile (home-manager) and not on the

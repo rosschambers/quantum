@@ -50,6 +50,24 @@ fn resolve_sound_file(stem: &str, data_dirs: Option<&str>) -> Option<PathBuf> {
         .find(|candidate| candidate.exists())
 }
 
+/// Spawn `command` without blocking, and reap it once it exits.
+///
+/// Dropping a `std::process::Child` neither waits for nor reaps it, so a
+/// player that was only `spawn()`ed stays a zombie for as long as quantumd
+/// runs: one leaked process per chime. A short-lived thread blocks on
+/// `wait()` instead; it works whether or not a tokio runtime is current.
+/// Returns the child's process id.
+fn spawn_and_reap(command: &mut Command) -> std::io::Result<u32> {
+    let mut child = command.spawn()?;
+    let process_id = child.id();
+    std::thread::Builder::new()
+        .name("sound-player-reaper".to_string())
+        .spawn(move || {
+            let _ = child.wait();
+        })?;
+    Ok(process_id)
+}
+
 /// Fire-and-forget completion-sound player. Wraps an optional external player
 /// binary discovered in `PATH`. When no player is available every `play` call
 /// is a no-op.
@@ -105,16 +123,17 @@ impl SoundPlayer {
         };
         match command {
             "canberra-gtk-play" => {
-                let _ = Command::new("canberra-gtk-play")
-                    .arg("-i")
-                    .arg(Self::canberra_event(sound))
-                    .spawn();
+                let _ = spawn_and_reap(
+                    Command::new("canberra-gtk-play")
+                        .arg("-i")
+                        .arg(Self::canberra_event(sound)),
+                );
             }
             "paplay" => {
                 let data_dirs = std::env::var("XDG_DATA_DIRS").ok();
                 if let Some(path) = resolve_sound_file(Self::file_stem(sound), data_dirs.as_deref())
                 {
-                    let _ = Command::new("paplay").arg(path).spawn();
+                    let _ = spawn_and_reap(Command::new("paplay").arg(path));
                 }
             }
             _ => {}
@@ -215,6 +234,34 @@ mod tests {
         });
 
         notifier.notify_complete(&timer).await;
+    }
+
+    /// The process state letter from `/proc/<pid>/stat` (the field after the
+    /// parenthesised command name), or `None` once the process is fully gone.
+    fn process_state(process_id: u32) -> Option<char> {
+        let stat = std::fs::read_to_string(format!("/proc/{process_id}/stat")).ok()?;
+        let after_name = &stat[stat.rfind(')')? + 1..];
+        after_name.trim_start().chars().next()
+    }
+
+    #[test]
+    fn spawned_player_is_reaped_after_it_exits() {
+        // A spawned child that is never waited on stays a zombie (state `Z`)
+        // until its parent exits; quantumd is long-lived, so every chime used
+        // to leak one. After the player exits it must vanish from /proc.
+        let process_id = spawn_and_reap(&mut Command::new("true")).expect("spawn true");
+
+        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        let mut last_state = process_state(process_id);
+        while last_state.is_some() && std::time::Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(20));
+            last_state = process_state(process_id);
+        }
+
+        assert_eq!(
+            last_state, None,
+            "player process {process_id} was not reaped (state {last_state:?})"
+        );
     }
 
     #[test]
