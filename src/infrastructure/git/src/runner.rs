@@ -45,17 +45,22 @@ pub(crate) async fn run_git(
     let mut child = match command.spawn() {
         Ok(child) => child,
         Err(error) => {
-            tracing::warn!(%error, ?arguments, "git is not available on quantumd's PATH");
-            return Err(ReviewError::GitUnavailable(error.to_string()));
+            let kind = error.kind();
+            let message = error.to_string();
+            tracing::warn!(%message, ?arguments, "failed to spawn git");
+            return Err(classify_spawn_error(kind, message));
         }
     };
 
     if let Some(bytes) = stdin {
         use tokio::io::AsyncWriteExt;
-        let mut stdin_handle = child
-            .stdin
-            .take()
-            .expect("stdin was requested as piped above");
+        let mut stdin_handle = match child.stdin.take() {
+            Some(handle) => handle,
+            None => {
+                tracing::warn!(?arguments, "git stdin was not available");
+                return Err(ReviewError::Io("git stdin was not available".to_string()));
+            }
+        };
         if let Err(error) = stdin_handle.write_all(bytes).await {
             tracing::warn!(%error, ?arguments, "failed to write to git's stdin");
             return Err(ReviewError::Io(error.to_string()));
@@ -82,6 +87,19 @@ pub(crate) async fn run_git(
     Ok(output.stdout)
 }
 
+/// Classify a `Command::spawn` failure (M2): only `ErrorKind::NotFound` (the
+/// case where the `git` binary itself is missing from quantumd's PATH) maps
+/// to [`ReviewError::GitUnavailable`] — every other spawn failure (for
+/// example a permissions problem) maps to [`ReviewError::Io`] instead, so it
+/// is never misreported as "git is not installed".
+fn classify_spawn_error(kind: std::io::ErrorKind, message: String) -> ReviewError {
+    if kind == std::io::ErrorKind::NotFound {
+        ReviewError::GitUnavailable(message)
+    } else {
+        ReviewError::Io(message)
+    }
+}
+
 /// Resolve the git repository root containing `directory` via
 /// `git rev-parse --show-toplevel`.
 ///
@@ -98,5 +116,28 @@ pub async fn repository_root(directory: &str) -> Result<String, ReviewError> {
             Err(ReviewError::NotARepository(directory.to_string()))
         }
         Err(error) => Err(error),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn not_found_spawn_error_maps_to_git_unavailable() {
+        let error = classify_spawn_error(std::io::ErrorKind::NotFound, "no such file".to_string());
+        assert!(matches!(error, ReviewError::GitUnavailable(_)));
+    }
+
+    #[test]
+    fn permission_denied_spawn_error_maps_to_io_not_git_unavailable() {
+        let error = classify_spawn_error(
+            std::io::ErrorKind::PermissionDenied,
+            "permission denied".to_string(),
+        );
+        assert!(
+            matches!(error, ReviewError::Io(_)),
+            "only ErrorKind::NotFound must map to GitUnavailable; everything else is Io"
+        );
     }
 }

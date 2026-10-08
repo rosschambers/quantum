@@ -334,6 +334,46 @@ async fn staging_with_a_repository_root_that_is_not_its_own_toplevel_is_rejected
 }
 
 #[tokio::test]
+async fn control_characters_in_paths_are_rejected_for_both_stage_and_unstage() {
+    let (_tempdir, root) = repository();
+    std::fs::write(root.join("a.txt"), "original\n").unwrap();
+    git(&root, &["add", "."]);
+    git(&root, &["commit", "-q", "-m", "initial"]);
+
+    let review = GitRepositoryReview;
+    let root_str = root.to_str().expect("utf8 path");
+
+    let error = review
+        .stage(root_str, "a\0b", Some(FAKE_BLOB), "100644")
+        .await
+        .expect_err("a null byte in the path must be rejected");
+    assert!(matches!(error, ReviewError::NotStageable(_)));
+
+    let error = review
+        .stage(root_str, "a\nb", Some(FAKE_BLOB), "100644")
+        .await
+        .expect_err("a newline in the path must be rejected");
+    assert!(matches!(error, ReviewError::NotStageable(_)));
+
+    let error = review
+        .unstage(root_str, "a\0b")
+        .await
+        .expect_err("a null byte in the path must be rejected on unstage too");
+    assert!(matches!(error, ReviewError::NotStageable(_)));
+
+    let error = review
+        .unstage(root_str, "a\nb")
+        .await
+        .expect_err("a newline in the path must be rejected on unstage too");
+    assert!(matches!(error, ReviewError::NotStageable(_)));
+
+    assert!(
+        cached_names(&root).is_empty(),
+        "a path with a control character must never reach git"
+    );
+}
+
+#[tokio::test]
 async fn escaping_paths_are_rejected_for_both_stage_and_unstage() {
     let (_tempdir, root) = repository();
     std::fs::write(root.join("a.txt"), "original\n").unwrap();

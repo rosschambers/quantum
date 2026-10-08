@@ -310,6 +310,12 @@ fn validate_relative_path(path: &str) -> Result<(), ReviewError> {
             "path must not be empty".to_string(),
         ));
     }
+    if path.contains('\0') || path.contains('\n') {
+        tracing::warn!("rejecting a stageable path containing a control character");
+        return Err(ReviewError::NotStageable(
+            "path contains a disallowed control character".to_string(),
+        ));
+    }
 
     let candidate = Path::new(path);
     if candidate.is_absolute() {
