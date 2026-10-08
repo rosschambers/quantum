@@ -100,18 +100,54 @@ describe('reviewEntries', () => {
 		]);
 	});
 
-	test('a tracked file with no index side (a staged deletion) falls back to base as the Unstaged old side', () => {
-		// A tracked file can only have an absent index side via `git rm
-		// --cached` (a staged deletion), so this always also produces a
-		// Staged `D` entry; the Unstaged entry's old side falls back to base.
-		const file: ChangedFile = { path: 'weird.ts', base: side('b1'), target: side('b2'), untracked: false };
+	test('a plain `git rm` (base present, index and target absent) produces exactly one entry: Staged D', () => {
+		// The file has left both the index and the working tree, so there is
+		// nothing left to show as Unstaged — the old buggy fallback to
+		// `base` as the Unstaged old side fabricated a phantom Unstaged
+		// entry here; `index` and `target` are both absent, which
+		// `sameSide` correctly treats as equal.
+		const file: ChangedFile = { path: 'gone.ts', base: side('b1'), untracked: false };
+		const entries = reviewEntries(stageableChangeSet([file]));
+		expect(entries).toHaveLength(1);
+		expect(entries[0]).toMatchObject({ section: 'staged', status: 'D' });
+	});
+
+	test('a merged `git rm --cached` record (base and target present, index absent) produces a Staged D and an Unstaged A with distinct ids', () => {
+		// The backend reports `git rm --cached` (removed from the index but
+		// still present on disk) as ONE ChangedFile with no index side. That
+		// single record must still resolve to two entries: the index losing
+		// `base` (Staged D), and the working tree gaining back from nothing
+		// (Unstaged A, old side undefined — never a fallback to base).
+		const file: ChangedFile = { path: 'cached.ts', base: side('b1'), target: side('b2'), untracked: false };
 		const entries = reviewEntries(stageableChangeSet([file]));
 		expect(entries).toHaveLength(2);
-		const unstaged = entries.find((entry) => entry.section === 'unstaged')!;
-		expect(unstaged).toMatchObject({ status: 'M', partiallyStaged: true });
-		expect(unstaged.oldSide?.blob).toBe('b1');
+
 		const staged = entries.find((entry) => entry.section === 'staged')!;
 		expect(staged.status).toBe('D');
+		expect(staged.oldSide?.blob).toBe('b1');
+		expect(staged.newSide).toBeUndefined();
+
+		const unstaged = entries.find((entry) => entry.section === 'unstaged')!;
+		expect(unstaged.status).toBe('A');
+		expect(unstaged.oldSide).toBeUndefined();
+		expect(unstaged.newSide?.blob).toBe('b2');
+
+		expect(staged.id).not.toBe(unstaged.id);
+	});
+
+	test('every entry id is unique across a change set containing every state', () => {
+		const files: ChangedFile[] = [
+			{ path: 'partial.ts', base: side('b1'), index: side('b2'), target: side('b3'), untracked: false },
+			{ path: 'untracked.ts', target: side('t1'), untracked: true },
+			{ path: 'renamed.ts', old_path: 'original.ts', base: side('r1'), index: side('r1'), target: side('r2'), untracked: false },
+			{ path: 'deleted.ts', base: side('d1'), index: side('d1'), untracked: false },
+			{ path: 'added.ts', index: side('a1'), target: side('a1'), untracked: false },
+			{ path: 'gone.ts', base: side('g1'), untracked: false },
+			{ path: 'cached.ts', base: side('c1'), target: side('c2'), untracked: false },
+		];
+		const entries = reviewEntries(stageableChangeSet(files));
+		const ids = entries.map((entry) => entry.id);
+		expect(new Set(ids).size).toBe(ids.length);
 	});
 
 	test('non-stageable sets produce exactly one entry per file, sorted by path', () => {

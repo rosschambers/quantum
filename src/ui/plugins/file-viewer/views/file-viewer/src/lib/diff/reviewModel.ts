@@ -91,11 +91,18 @@ function sortEntries(a: ReviewEntry, b: ReviewEntry): number {
 /**
  * Turns a `ChangeSet` into the entries the sidebar and file list show.
  * Stageable sets split each changed file into up to two entries (Unstaged:
- * index → target, or base → target when a tracked file has no index side,
- * or empty → target when untracked; Staged: base → index), each only when
- * its two sides differ by blob id. Non-stageable sets show exactly one
- * entry per file (base → target) — git already only lists files that
- * differ, so every file gets an entry there.
+ * index → target, or empty → target when untracked; Staged: base → index),
+ * each only when its two sides differ by blob id. The Unstaged old side is
+ * ALWAYS `index` (never a fallback to `base`): a tracked file with no index
+ * side is a staged deletion (`git rm --cached`, index absent, or plain
+ * `git rm`, index and target both absent) and the Unstaged comparison must
+ * see that absence directly — comparing against `base` instead papers over
+ * it and fabricates a phantom Unstaged entry whenever the working tree
+ * still matches `base` (plain `git rm`), or reports the wrong status
+ * (`M` instead of `A`) when the working tree still has the file (`git rm
+ * --cached`). Non-stageable sets show exactly one entry per file (base →
+ * target) — git already only lists files that differ, so every file gets
+ * an entry there.
  */
 export function reviewEntries(changeSet: ChangeSet): ReviewEntry[] {
 	if (!changeSet.stageable) {
@@ -105,8 +112,8 @@ export function reviewEntries(changeSet: ChangeSet): ReviewEntry[] {
 	const entries: ReviewEntry[] = [];
 	for (const file of changeSet.files) {
 		const hasStaged = !sameSide(file.base, file.index);
-		const unstagedOldSide = file.untracked ? undefined : file.index ?? file.base;
-		const hasUnstaged = file.untracked || !sameSide(unstagedOldSide, file.target);
+		const unstagedOldSide = file.untracked ? undefined : file.index;
+		const hasUnstaged = file.untracked || !sameSide(file.index, file.target);
 
 		if (hasUnstaged) {
 			entries.push(makeEntry(file, 'unstaged', unstagedOldSide, file.target, hasStaged));
