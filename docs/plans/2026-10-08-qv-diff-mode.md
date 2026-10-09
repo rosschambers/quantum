@@ -1,5 +1,33 @@
 # qv Diff Mode, Search Performance, and Scrollbar Markers — Implementation Plan
 
+## Execution status (2026-10-09)
+
+**Complete, live on x1, and accepted by Ross** in a guided walkthrough covering the overview,
+staging with the changed-on-disk banner, Ctrl+F on a large Markdown file, and copy with split
+view. Final pins: quantum `e97f9dcc`, config `6e941bd`. The tasks below are the original plan;
+where the built code differs, this section wins.
+
+Deviations and additions found in review or live use:
+
+- **Security:** working-tree reads and hashing never follow symlinks (git's model: the content is
+  the link target). Staging validates `mode` (100644, 100755, or 120000) and requires the exact
+  repository toplevel. Oversized committed blobs and submodule (gitlink) entries are skipped
+  before they are read.
+- **Unstage takes `old_path`** so that unstaging a staged rename restores both paths. The
+  frontend refetches after this one case. A `git rm --cached` file is reported as ONE changed
+  file, not two.
+- **The fingerprint** hashes the sorted changed-path set plus working-file metadata, never the
+  status letters, so qv's own staging does not trigger the banner. The banner text carries no
+  count.
+- **Ruler marks are measured** against the scroll content (rows carry `data-old-index`,
+  `data-new-index`, `data-first-new-index`, and `data-hidden-count`), not computed as equal
+  per-file shares. Clicking a change mark jumps to that change.
+- **Split view** uses one pair of columns per file, so horizontal scroll stays in sync across hunks.
+- **Live-use fixes:** client bridge reply routing for several clients on one page (`5c2ea9bb`; the
+  "Loading changes" hang); a final newline no longer counts as an extra line; the header reads
+  "N staged · M partly"; read errors show the real message instead of "[object Object]"; the
+  sidebar's Unstaged and Staged groups collapse.
+
 > **For OpenCode:** REQUIRED SUB-SKILL: Use superpowers:executing-plans (or subagent-driven-development) to implement this plan task-by-task.
 
 **Goal:** Add a git-aware, syntax-highlighted diff mode with file staging to qv, fix the quadratic Ctrl+F slowdown, add search-match markers on a shared overview ruler, and fix three small bugs found along the way.

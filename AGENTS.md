@@ -489,6 +489,18 @@ broken CI before; do not reintroduce them:
   reliably under Svelte 5 runes mode.
 - All Svelte views consume IPC through `@quantum/client`. Never reach into
   `window.__quantum_*` directly from view code.
+  **One page may hold several clients** (a view and a child component each
+  calling `createClient()`), and each numbers its requests from 1, while the host
+  replies through one window-level `__quantum_resolve`/`__quantum_reject`. The
+  bridge transport (`src/ui/packages/client/src/bridge.ts`) therefore rewrites
+  each request to a page-unique wire id and routes the reply back to its sender.
+  Before that fix every reply went to the first client, so the qv diff view sat
+  on "Loading changes" forever with no request visible in the daemon log. View
+  tests mock `@quantum/client` per component and cannot catch transport bugs:
+  reproduce them with headless Chromium and a stub
+  `window.webkit.messageHandlers.quantum` that answers via `__quantum_resolve`.
+  The client rejects with a plain `{ code, message }` object, not an `Error`;
+  format it with the file viewer's `lib/errorMessage.ts`, never `String(error)`.
 - **WebKit's default browser context menu is suppressed on every view**
   (`suppress_browser_context_menu` in `src/ui/host/src/windows/mod.rs`, called
   from both WebView builders) — back/forward/reload are meaningless in a
