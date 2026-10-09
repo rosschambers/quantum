@@ -622,6 +622,24 @@ broken CI before; do not reintroduce them:
   NEW viewer window every call rather than replacing the current one. When an
   agent wants to show the user a file for review (a plan, a config, a diff),
   open it with `qv` rather than dumping text in chat.
+  **Diff mode** (design: `docs/plans/2026-10-08-qv-diff-mode-design.md`). `qv <a> <b>`
+  compares two files (args `{compare: {left, right}}`); `qv --diff [<ref>|<a>..<b>]`
+  reviews a git repository from `$PWD` (args `{diff: {repository, base, target}}`,
+  default `HEAD` → working tree). The `qv` wrapper lives in the config repo
+  (`modules/features/home/quantum.nix`) and builds its JSON with `jq`. Rendering is
+  `lib/diff/DiffView.svelte`: whole-file highlight.js tokenization split per line,
+  word-level emphasis, collapsed context with re-collapse bars, Unstaged/Staged
+  sections, and the shared `OverviewRuler` (also used for Ctrl+F match markers in
+  every renderer). Git runs in the `quantum-git` infrastructure crate behind the
+  domain `RepositoryReview` port, exposed as `file-viewer.changes` /
+  `file-viewer.stage` / `file-viewer.unstage` (`old_path` for renames) /
+  `file-viewer.fingerprint` (error codes -32020..-32024). **Staging is the viewer's
+  only write action**, and only when the base is `HEAD` and the target is the working
+  tree. Stage records exactly the blob that was displayed (`git update-index
+  --cacheinfo`), so an edit made after loading stays unstaged. The interface says
+  "staged", never "reviewed". The daemon needs `git` on its own PATH (the wrapper in
+  the config repo adds it; same service-PATH trap as the sound players). Symlinks are
+  never followed when reading or hashing working-tree files.
 - **View arg passing: `window.__quantum_args`.** Views that accept arguments
   (file-viewer, and any future view that takes open-time parameters) read
   `(window as any).__quantum_args` in their Svelte `onMount`. The value is
