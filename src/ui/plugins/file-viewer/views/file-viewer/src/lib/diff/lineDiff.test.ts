@@ -1,5 +1,5 @@
 import { describe, test, expect } from 'vitest';
-import { lineDiff } from './lineDiff';
+import { lineDiff, splitContentLines } from './lineDiff';
 
 describe('lineDiff', () => {
 	test('identical arrays produce only equal items', () => {
@@ -40,5 +40,29 @@ describe('lineDiff', () => {
 
 	test('empty arrays produce no items', () => {
 		expect(lineDiff([], [])).toEqual([]);
+	});
+});
+
+describe('splitContentLines', () => {
+	test('treats a final newline as a terminator, not an extra empty line', () => {
+		expect(splitContentLines('one\ntwo\n')).toEqual(['one', 'two']);
+	});
+
+	test('keeps a last line that has no newline', () => {
+		expect(splitContentLines('one\ntwo')).toEqual(['one', 'two']);
+	});
+
+	test('keeps intentional blank lines, including a blank last line', () => {
+		expect(splitContentLines('one\n\ntwo\n\n')).toEqual(['one', '', 'two', '']);
+	});
+
+	test('returns no lines for absent or empty content', () => {
+		expect(splitContentLines(undefined)).toEqual([]);
+		expect(splitContentLines('')).toEqual([]);
+	});
+
+	test('counts one removed line for a one-line deleted file', () => {
+		const items = lineDiff(splitContentLines('gone\n'), splitContentLines(undefined));
+		expect(items).toEqual([{ type: 'change', removed: [0], added: [] }]);
 	});
 });

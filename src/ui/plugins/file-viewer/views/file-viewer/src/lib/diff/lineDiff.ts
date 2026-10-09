@@ -64,3 +64,16 @@ export function lineDiff(oldLines: readonly string[], newLines: readonly string[
 
 	return items;
 }
+
+/**
+ * Split file content into lines the way git counts them: a final newline ends
+ * the last line rather than starting an empty one, so "gone\n" is ONE line.
+ * Absent or empty content has no lines.
+ */
+export function splitContentLines(content: string | undefined): string[] {
+	if (!content) {
+		return [];
+	}
+	const body = content.endsWith('\n') ? content.slice(0, -1) : content;
+	return body.split('\n');
+}

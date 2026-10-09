@@ -14,6 +14,7 @@
 </script>
 
 <script lang="ts">
+	import { splitContentLines } from './lineDiff';
 	import { createClient } from '@quantum/client';
 	import type { ChangeSet, FingerprintResult } from '@quantum/client';
 	import type { ViewerFileInfo } from '../types';
@@ -282,8 +283,8 @@
 		let additions = 0;
 		let deletions = 0;
 		for (const entry of entries) {
-			const oldLines = entry.oldSide?.content !== undefined ? entry.oldSide.content.split('\n') : [];
-			const newLines = entry.newSide?.content !== undefined ? entry.newSide.content.split('\n') : [];
+			const oldLines = splitContentLines(entry.oldSide?.content);
+			const newLines = splitContentLines(entry.newSide?.content);
 			const items = cachedLineDiff(entry.oldSide?.blob, entry.newSide?.blob, oldLines, newLines);
 			for (const item of items) {
 				if (item.type === 'change') {
@@ -346,8 +347,8 @@
 		if (entry.oldSide?.content === undefined && entry.newSide?.content === undefined) {
 			return { texts: [], refs: [] };
 		}
-		const oldLines = entry.oldSide?.content !== undefined ? entry.oldSide.content.split('\n') : [];
-		const newLines = entry.newSide?.content !== undefined ? entry.newSide.content.split('\n') : [];
+		const oldLines = splitContentLines(entry.oldSide?.content);
+		const newLines = splitContentLines(entry.newSide?.content);
 		const diffItems = cachedLineDiff(entry.oldSide?.blob, entry.newSide?.blob, oldLines, newLines);
 		const rows = cachedExpandedRows(entry.oldSide?.blob, entry.newSide?.blob, entry.language, diffItems, oldLines, newLines);
 		const texts: string[] = [];
@@ -440,8 +441,8 @@
 			if (entry.oldSide?.binary || entry.newSide?.binary || entry.oldSide?.too_large || entry.newSide?.too_large) {
 				return;
 			}
-			const oldLines = entry.oldSide?.content !== undefined ? entry.oldSide.content.split('\n') : [];
-			const newLines = entry.newSide?.content !== undefined ? entry.newSide.content.split('\n') : [];
+			const oldLines = splitContentLines(entry.oldSide?.content);
+			const newLines = splitContentLines(entry.newSide?.content);
 			const diffItems = cachedLineDiff(entry.oldSide?.blob, entry.newSide?.blob, oldLines, newLines);
 			const rows = cachedExpandedRows(entry.oldSide?.blob, entry.newSide?.blob, entry.language, diffItems, oldLines, newLines).filter(
 				(row) => row.kind !== 'recollapse',
@@ -664,8 +665,8 @@
 		}
 		if (match.side !== 'new') return;
 
-		const oldLines = entry.oldSide?.content !== undefined ? entry.oldSide.content.split('\n') : [];
-		const newLines = entry.newSide?.content !== undefined ? entry.newSide.content.split('\n') : [];
+		const oldLines = splitContentLines(entry.oldSide?.content);
+		const newLines = splitContentLines(entry.newSide?.content);
 		const diffItems = cachedLineDiff(entry.oldSide?.blob, entry.newSide?.blob, oldLines, newLines);
 		const currentlyExpanded = expandedKeysFor(entry.id);
 		const rows = buildRows(diffItems, oldLines, newLines, entry.language, currentlyExpanded);

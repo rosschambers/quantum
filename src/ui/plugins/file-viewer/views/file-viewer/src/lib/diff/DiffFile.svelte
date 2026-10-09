@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { splitContentLines } from './lineDiff';
 	// One file's sticky header plus its rows, for diff mode. Computes the
 	// line diff and whole-file highlighting itself from `entry.oldSide` /
 	// `entry.newSide` content, so a caller only ever hands this component a
@@ -52,8 +53,8 @@
 	let isBinary = $derived(!!entry.oldSide?.binary || !!entry.newSide?.binary);
 	let isTooLarge = $derived(!!entry.oldSide?.too_large || !!entry.newSide?.too_large);
 
-	let oldLines = $derived(entry.oldSide?.content !== undefined ? entry.oldSide.content.split('\n') : []);
-	let newLines = $derived(entry.newSide?.content !== undefined ? entry.newSide.content.split('\n') : []);
+	let oldLines = $derived(splitContentLines(entry.oldSide?.content));
+	let newLines = $derived(splitContentLines(entry.newSide?.content));
 
 	let diffItems = $derived(cachedLineDiff(entry.oldSide?.blob, entry.newSide?.blob, oldLines, newLines));
 	let additions = $derived(diffItems.reduce((sum, item) => (item.type === 'change' ? sum + item.added.length : sum), 0));

@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { splitContentLines } from './lineDiff';
 	// The 220px "Changes" sidebar for diff mode: lists every `ReviewEntry`,
 	// grouped into Unstaged/Staged when the change set is stageable, with a
 	// checkbox per entry that stages/unstages without selecting it. A
@@ -28,8 +29,8 @@
 	}
 
 	function countChanges(entry: ReviewEntry): { additions: number; deletions: number } {
-		const oldLines = entry.oldSide?.content !== undefined ? entry.oldSide.content.split('\n') : [];
-		const newLines = entry.newSide?.content !== undefined ? entry.newSide.content.split('\n') : [];
+		const oldLines = splitContentLines(entry.oldSide?.content);
+		const newLines = splitContentLines(entry.newSide?.content);
 		const items = cachedLineDiff(entry.oldSide?.blob, entry.newSide?.blob, oldLines, newLines);
 		let additions = 0;
 		let deletions = 0;
@@ -92,15 +93,19 @@
 		{/if}
 		<button type="button" onclick={() => onSelect(item.index)}>
 			<span class="status status-{item.entry.status}">{item.entry.status}</span>
-			<span class="filename">{current.name}</span>
-			{#if item.entry.oldPath}
-				<span class="directory rename">renamed from {splitPath(item.entry.oldPath).name}</span>
-			{:else}
-				<span class="directory">{current.directory}</span>
-			{/if}
-			{#if item.entry.partiallyStaged}
-				<span class="dot" title="partially staged: edited after staging"></span>
-			{/if}
+			<span class="name-block">
+				<span class="name-line">
+					<span class="filename">{current.name}</span>
+					{#if item.entry.partiallyStaged}
+						<span class="dot" title="partially staged: edited after staging"></span>
+					{/if}
+				</span>
+				{#if item.entry.oldPath}
+					<span class="directory rename">renamed from {splitPath(item.entry.oldPath).name}</span>
+				{:else}
+					<span class="directory">{current.directory}</span>
+				{/if}
+			</span>
 			<span class="mini-stats">+{item.additions} &#x2212;{item.deletions}</span>
 		</button>
 	</li>
@@ -280,7 +285,19 @@
 		vertical-align: middle;
 	}
 
+	.name-block {
+		min-width: 0;
+	}
+
+	.name-line {
+		display: flex;
+		align-items: center;
+		gap: 6px;
+		min-width: 0;
+	}
+
 	.mini-stats {
+		white-space: nowrap;
 		font-family: var(--font-mono);
 		font-size: 11px;
 		font-weight: 400;
