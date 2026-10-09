@@ -2,6 +2,7 @@
     import { createClient } from '@quantum/client';
     import type { ViewerFileInfo } from './lib/types';
     import { selfViewName } from './lib/selfName';
+    import { errorMessage } from './lib/errorMessage';
     import { resolveViewerShortcut } from './lib/viewerKeymap';
     import { searchMarks, type RulerMark } from './lib/overviewRuler';
     import DiffView, { type DiffViewSource } from './lib/diff/DiffView.svelte';
@@ -168,8 +169,7 @@
                 isLoading = false;
             } catch (err) {
                 if (cancelled) return;
-                const errorMessage = err instanceof Error ? err.message : String(err);
-                error = `Failed to read file: ${errorMessage}`;
+                error = `Failed to read file: ${errorMessage(err)}`;
                 isLoading = false;
             }
         })();

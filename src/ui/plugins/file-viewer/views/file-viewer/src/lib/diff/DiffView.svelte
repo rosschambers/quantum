@@ -15,6 +15,7 @@
 
 <script lang="ts">
 	import { splitContentLines } from './lineDiff';
+	import { errorMessage } from '../errorMessage';
 	import { createClient } from '@quantum/client';
 	import type { ChangeSet, FingerprintResult } from '@quantum/client';
 	import type { ViewerFileInfo } from '../types';
@@ -74,21 +75,6 @@
 	 */
 	let contentElement: HTMLDivElement | undefined = $state(undefined);
 
-	function errorMessage(candidate: unknown): string {
-		if (candidate && typeof candidate === 'object' && 'message' in candidate) {
-			const message = (candidate as { message: unknown }).message;
-			if (typeof message === 'string' && message.trim() !== '') {
-				return message;
-			}
-		}
-		if (candidate instanceof Error) {
-			return candidate.message;
-		}
-		if (typeof candidate === 'string' && candidate.trim() !== '') {
-			return candidate;
-		}
-		return 'Request failed';
-	}
 
 	function isWorkingTreeTarget(spec: DiffSpec): boolean {
 		return spec.target === undefined || spec.target === null;

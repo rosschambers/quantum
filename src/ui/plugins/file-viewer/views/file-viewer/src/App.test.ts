@@ -76,6 +76,19 @@ async function mountFile(fixture: FixtureFileInfo) {
     return result;
 }
 
+describe('App read errors', () => {
+    it('shows the backend error message, not "[object Object]"', async () => {
+        (window as any).__quantum_args = { path: '/tmp/missing.md' };
+        // The client rejects with a plain { code, message } object, not an Error.
+        callMock.mockImplementation(() => Promise.reject({ code: -32005, message: 'not found: /tmp/missing.md' }));
+
+        const { container } = render(App);
+
+        await vi.waitFor(() => expect(container.querySelector('.error-message')).not.toBeNull());
+        expect(container.querySelector('.error-message')?.textContent).toBe('Failed to read file: not found: /tmp/missing.md');
+    });
+});
+
 describe('App keyboard handling', () => {
     it.each(['.search-close', '.search-previous', '.search-next'])('preserves native Enter activation on focused %s', async (selector) => {
         const { container } = await mountFile({ content: 'needle needle needle', file_type: 'text' });
