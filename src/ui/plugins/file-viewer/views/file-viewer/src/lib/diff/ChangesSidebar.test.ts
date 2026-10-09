@@ -54,9 +54,33 @@ describe('ChangesSidebar', () => {
 		const { container } = render(ChangesSidebar, {
 			props: { entries, stageable: true, activeIndex: 0, onSelect: vi.fn() },
 		});
-		const headings = Array.from(container.querySelectorAll('.group-heading')).map((element) => element.textContent?.trim());
+		const headings = Array.from(container.querySelectorAll('.group-heading .group-label')).map((element) => `${element.textContent?.replace(/[\u25B6\u25BC]/g, '').trim()} ${element.nextElementSibling?.textContent}`);
 		expect(headings.some((text) => text?.startsWith('Unstaged') && text.includes('2'))).toBe(true);
 		expect(headings.some((text) => text?.startsWith('Staged') && text.includes('1'))).toBe(true);
+	});
+
+	test('clicking a group heading collapses and expands that group only', async () => {
+		const entries: ReviewEntry[] = [
+			entry({ path: 'src/a.ts', section: 'unstaged' }),
+			entry({ path: 'src/b.ts', section: 'unstaged' }),
+			entry({ path: 'src/c.ts', section: 'staged' }),
+		];
+		const { container } = render(ChangesSidebar, {
+			props: { entries, stageable: true, activeIndex: 0, onSelect: vi.fn() },
+		});
+		const unstagedToggle = container.querySelector<HTMLButtonElement>('.group-heading button[data-group="unstaged"]');
+		expect(unstagedToggle?.getAttribute('aria-expanded')).toBe('true');
+		expect(container.querySelectorAll('.entry')).toHaveLength(3);
+
+		await fireEvent.click(unstagedToggle!);
+		expect(unstagedToggle?.getAttribute('aria-expanded')).toBe('false');
+		const visibleNames = Array.from(container.querySelectorAll('.entry .filename')).map((element) => element.textContent);
+		expect(visibleNames).toEqual(['c.ts']);
+		// The heading keeps its count while collapsed.
+		expect(unstagedToggle?.textContent).toContain('2');
+
+		await fireEvent.click(unstagedToggle!);
+		expect(container.querySelectorAll('.entry')).toHaveLength(3);
 	});
 
 	test('a non-stageable set renders a flat list with no group headings and no checkboxes', () => {

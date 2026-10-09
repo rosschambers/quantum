@@ -509,8 +509,8 @@ describe('DiffView', () => {
 			return Promise.resolve(undefined);
 		});
 
-		const unstageButton = Array.from(container.querySelectorAll('button')).find((button) => button.textContent?.includes('Staged'));
-		expect(unstageButton).toBeDefined();
+		const unstageButton = container.querySelector<HTMLButtonElement>('.diff-file .stage-button.staged');
+		expect(unstageButton).not.toBeNull();
 		await fireEvent.click(unstageButton!);
 
 		await vi.waitFor(() => {

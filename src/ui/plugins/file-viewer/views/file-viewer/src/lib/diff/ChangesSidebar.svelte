@@ -48,6 +48,21 @@
 	);
 	let unstagedEntries = $derived(indexedEntries.filter((item) => item.entry.section === 'unstaged'));
 	let stagedEntries = $derived(indexedEntries.filter((item) => item.entry.section === 'staged'));
+
+	type SidebarGroup = 'unstaged' | 'staged';
+	// Sidebar groups the reader has folded away. Purely a navigation aid: the
+	// files themselves stay in the main pane.
+	let collapsedGroups: Set<SidebarGroup> = $state(new Set());
+
+	function toggleGroup(group: SidebarGroup): void {
+		const next = new Set(collapsedGroups);
+		if (next.has(group)) {
+			next.delete(group);
+		} else {
+			next.add(group);
+		}
+		collapsedGroups = next;
+	}
 	let fileCount = $derived(new Set(entries.map((entry) => entry.fileId)).size);
 
 	function splitPath(path: string): { directory: string; name: string } {
@@ -76,6 +91,20 @@
 		}
 	}
 </script>
+
+{#snippet groupHeading(group: SidebarGroup, label: string, count: number)}
+	<li class="group-heading">
+		<button
+			type="button"
+			data-group={group}
+			aria-expanded={!collapsedGroups.has(group)}
+			onclick={() => toggleGroup(group)}
+		>
+			<span class="group-label"><span class="chevron">{collapsedGroups.has(group) ? '\u25B6' : '\u25BC'}</span>{label}</span>
+			<span>{count}</span>
+		</button>
+	</li>
+{/snippet}
 
 {#snippet entryRow(item: IndexedEntry)}
 	{@const current = splitPath(item.entry.path)}
@@ -115,14 +144,18 @@
 	<div class="sidebar-title">Changes <span class="count">{fileCount} files</span></div>
 	<ul class="file-list">
 		{#if stageable}
-			<li class="group-heading">Unstaged <span>{unstagedEntries.length}</span></li>
-			{#each unstagedEntries as item (item.entry.id)}
-				{@render entryRow(item)}
-			{/each}
-			<li class="group-heading">Staged <span>{stagedEntries.length}</span></li>
-			{#each stagedEntries as item (item.entry.id)}
-				{@render entryRow(item)}
-			{/each}
+			{@render groupHeading('unstaged', 'Unstaged', unstagedEntries.length)}
+			{#if !collapsedGroups.has('unstaged')}
+				{#each unstagedEntries as item (item.entry.id)}
+					{@render entryRow(item)}
+				{/each}
+			{/if}
+			{@render groupHeading('staged', 'Staged', stagedEntries.length)}
+			{#if !collapsedGroups.has('staged')}
+				{#each stagedEntries as item (item.entry.id)}
+					{@render entryRow(item)}
+				{/each}
+			{/if}
 		{:else}
 			{#each indexedEntries as item (item.entry.id)}
 				{@render entryRow(item)}
@@ -166,14 +199,33 @@
 		padding: 0;
 	}
 
-	.group-heading {
+	.group-heading button {
+		width: 100%;
+		border: none;
+		background: none;
+		cursor: pointer;
 		padding: 10px 12px 4px;
+		font-family: inherit;
 		font-size: 11px;
 		text-transform: uppercase;
 		letter-spacing: 0.06em;
 		color: var(--color-muted);
 		display: flex;
 		justify-content: space-between;
+	}
+
+	.group-heading button:hover {
+		color: var(--color-fg);
+	}
+
+	.group-label {
+		display: flex;
+		align-items: center;
+		gap: 6px;
+	}
+
+	.chevron {
+		font-size: 8px;
 	}
 
 	.entry {
