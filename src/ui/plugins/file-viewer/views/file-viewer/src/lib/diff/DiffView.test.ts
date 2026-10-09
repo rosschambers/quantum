@@ -102,6 +102,33 @@ describe('DiffView', () => {
 		expect(container.textContent).toContain('src/lib.rs');
 	});
 
+	test('the header counts every file with anything staged and how many are only partly staged', async () => {
+		mockChangesAndFingerprint(
+			changeSetFixture({
+				files: [
+					// Partly staged: staged once, then edited again.
+					{ path: 'partial.rs', base: side('a\n', 'p1'), index: side('b\n', 'p2'), target: side('c\n', 'p3'), untracked: false },
+					// Fully staged.
+					{ path: 'done.rs', base: side('a\n', 'd1'), index: side('b\n', 'd2'), target: side('b\n', 'd2'), untracked: false },
+					// Nothing staged.
+					{ path: 'todo.rs', base: side('a\n', 't1'), index: side('a\n', 't1'), target: side('b\n', 't2'), untracked: false },
+				],
+			}),
+		);
+		const { container } = render(DiffView, { props: { source: { kind: 'git', spec: { repository: '/repository' } } } });
+
+		await vi.waitFor(() => expect(container.querySelector('.progress')).not.toBeNull());
+		expect(container.querySelector('.progress')?.textContent?.replace(/\s+/g, ' ').trim()).toBe('2 staged · 1 partly');
+	});
+
+	test('the header omits the partly count when nothing is partly staged', async () => {
+		mockChangesAndFingerprint(changeSetFixture());
+		const { container } = render(DiffView, { props: { source: { kind: 'git', spec: { repository: '/repository' } } } });
+
+		await vi.waitFor(() => expect(container.querySelector('.progress')).not.toBeNull());
+		expect(container.querySelector('.progress')?.textContent?.replace(/\s+/g, ' ').trim()).toBe('0 staged');
+	});
+
 	test('stage calls IPC with the displayed blob and moves the file to Staged without a refetch', async () => {
 		const changeSet = changeSetFixture({
 			files: [

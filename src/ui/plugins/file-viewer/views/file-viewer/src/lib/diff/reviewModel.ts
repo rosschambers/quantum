@@ -126,18 +126,21 @@ export function reviewEntries(changeSet: ChangeSet): ReviewEntry[] {
 }
 
 /** A file counts as done ("staged") when it has no Unstaged entry left. */
-export function stagingProgress(entries: readonly ReviewEntry[]): { staged: number; total: number } {
+export function stagingProgress(entries: readonly ReviewEntry[]): { staged: number; partly: number; total: number } {
 	const files = new Set(entries.map((entry) => entry.fileId));
+	const filesWithStagedWork = new Set(
+		entries.filter((entry) => entry.section === 'staged').map((entry) => entry.fileId),
+	);
 	const filesWithUnstagedWork = new Set(
 		entries.filter((entry) => entry.section === 'unstaged').map((entry) => entry.fileId),
 	);
-	let staged = 0;
-	for (const fileId of files) {
-		if (!filesWithUnstagedWork.has(fileId)) {
-			staged++;
+	let partly = 0;
+	for (const fileId of filesWithStagedWork) {
+		if (filesWithUnstagedWork.has(fileId)) {
+			partly++;
 		}
 	}
-	return { staged, total: files.size };
+	return { staged: filesWithStagedWork.size, partly, total: files.size };
 }
 
 function updateFile(changeSet: ChangeSet, path: string, updater: (file: ChangedFile) => ChangedFile): ChangeSet {

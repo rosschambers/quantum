@@ -881,9 +881,9 @@
 			<span class="title">{headerTitle}</span>
 			<span class="dir">{headerSubtitle}</span>
 			{#if stageable}
-				<span class="progress" title="Files with no unstaged changes">
+				<span class="progress" title={`${progress.staged} of ${progress.total} changed files have staged changes; ${progress.partly} of those were edited again after staging`}>
 					<span class="bar"><span style={`width:${progress.total ? (progress.staged / progress.total) * 100 : 0}%`}></span></span>
-					{progress.staged} of {progress.total} staged
+					{progress.staged} staged{#if progress.partly > 0}&nbsp;&#xB7; {progress.partly} partly{/if}
 				</span>
 			{/if}
 			<span class="stats"><span class="additions">+{totals.additions}</span> <span class="deletions">&#x2212;{totals.deletions}</span></span>

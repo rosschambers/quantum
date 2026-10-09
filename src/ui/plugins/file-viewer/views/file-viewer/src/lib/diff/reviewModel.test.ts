@@ -169,7 +169,7 @@ describe('reviewEntries', () => {
 });
 
 describe('stagingProgress', () => {
-	test('counts a file as staged only when it has no Unstaged entry', () => {
+	test('counts every file with anything staged, and separately those still partly unstaged', () => {
 		const entries = reviewEntries(
 			stageableChangeSet([
 				{ path: 'partial.ts', base: side('b1'), index: side('b2'), target: side('b3'), untracked: false },
@@ -177,11 +177,11 @@ describe('stagingProgress', () => {
 				{ path: 'todo.ts', base: side('d1'), index: side('d1'), target: side('d2'), untracked: false },
 			]),
 		);
-		expect(stagingProgress(entries)).toEqual({ staged: 1, total: 3 });
+		expect(stagingProgress(entries)).toEqual({ staged: 2, partly: 1, total: 3 });
 	});
 
 	test('an empty entry list has zero of zero', () => {
-		expect(stagingProgress([])).toEqual({ staged: 0, total: 0 });
+		expect(stagingProgress([])).toEqual({ staged: 0, partly: 0, total: 0 });
 	});
 });
 
