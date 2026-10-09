@@ -1,5 +1,5 @@
 <script lang="ts">
-    import { createClient } from '@quantum/client';
+    import { createClient, onShown } from '@quantum/client';
     import Icon, { type IconName } from './lib/Icon.svelte';
 
     type PowerProfile = 'power_saver' | 'balanced' | 'performance';
@@ -21,20 +21,38 @@
     });
 
     /**
-     * Capability + active-profile snapshot, plus live updates.
+     * Re-read the capability + active-profile snapshot. Called at mount and
+     * again each time the warm view is reshown, so a stale snapshot can never
+     * survive a hide/show cycle even if a `power_profile.event` was missed
+     * while hidden.
      */
-    $effect(() => {
+    function refresh(): void {
         client
             .call('provider.query', { id: 'power_profile' })
             .then((r: unknown) => {
                 if (r) state = r as PowerProfileState;
             })
             .catch(() => {});
+    }
+
+    /**
+     * Capability + active-profile snapshot, plus live updates.
+     *
+     * This view is warm (`destroy_on_dismiss = false`): the component mounts
+     * once and is hidden/reshown thereafter, so this effect runs a single
+     * time. The `power_profile.event` subscription keeps the displayed profile
+     * live even while hidden, and `onShown` re-queries on every reshow as a
+     * belt-and-braces refresh.
+     */
+    $effect(() => {
+        refresh();
         const off = client.subscribe('power_profile.event', (p: unknown) => {
             state = p as PowerProfileState;
         });
+        const offShown = onShown(refresh);
         return () => {
             off?.();
+            offShown();
             client.close();
         };
     });

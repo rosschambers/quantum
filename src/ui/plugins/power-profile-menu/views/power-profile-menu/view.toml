@@ -1,2 +1,11 @@
 kind = "overlay"
-destroy_on_dismiss = true
+# Warm view: kept resident and reshown on open instead of destroyed, so the
+# menu opens instantly (no per-open WebKitWebProcess spawn). Safe to warm
+# because this view is stateless across opens — it holds no per-open
+# confirmation state and its `power_profile.event` subscription keeps the
+# displayed active profile live while hidden. Contrast power-menu (armed
+# two-click confirmation + scheduled-jobs list) and sound-menu (audio provider
+# session), which carry per-open state and stay destroy_on_dismiss. The memory
+# cost is this view's small DOM/JS heap folded into the shared render process,
+# bounded by the WebContext MemoryPressureSettings (see web_process.rs).
+destroy_on_dismiss = false

@@ -1,2 +1,10 @@
 kind = "overlay"
-destroy_on_dismiss = true
+# Warm view: kept resident and reshown on open instead of destroyed, so the
+# power menu opens instantly (no per-open WebKitWebProcess spawn). This view
+# carries per-open state (a two-click "armed" confirmation and a global delay),
+# so warming is only safe because App.svelte resets that state on every reshow
+# via onShown (see resetForShow) — clearing the armed tile and delay and
+# refreshing the scheduled-jobs list. Do not warm a stateful overlay without an
+# onShown reset. Memory cost is this view's small DOM/JS heap folded into the
+# shared render process, bounded by the WebContext MemoryPressureSettings.
+destroy_on_dismiss = false

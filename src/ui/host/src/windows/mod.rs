@@ -334,6 +334,36 @@ pub(crate) fn inject_view_name(webview: &webkit6::WebView, name: &str) {
     });
 }
 
+/// Notify a warm (reused) view that it has just been shown again.
+///
+/// A `destroy_on_dismiss = false` view is hidden on dismiss and reshown on the
+/// next open rather than reconstructed, so its frontend `$effect` open logic
+/// runs only once — at first mount — and never re-fires on a subsequent open.
+/// A view that must reset per-open state (clear a pending confirmation, refresh
+/// a snapshot, re-open a provider session) listens for this by registering
+/// `onShown` from `@quantum/client`, which wraps the `quantum:shown` window
+/// event dispatched here.
+///
+/// This is a no-op for `destroy_on_dismiss = true` (cold) views: they are
+/// reconstructed on every open, so their mount logic already runs each time and
+/// no listener is attached. Firing the event on them is harmless.
+///
+/// Dispatched synchronously in [`crate::registry::WindowOps::show`]; evaluated
+/// even if no listener is attached (a bare `window.dispatchEvent` is cheap and
+/// side-effect-free).
+pub(crate) fn dispatch_view_shown(webview: &webkit6::WebView) {
+    use webkit6::prelude::WebViewExt;
+    let js = "window.dispatchEvent(new CustomEvent('quantum:shown'));";
+    WebViewExt::evaluate_javascript(
+        webview,
+        js,
+        None,
+        None,
+        gtk4::gio::Cancellable::NONE,
+        |_| {},
+    );
+}
+
 #[cfg(test)]
 mod tests {
     use super::resolve_view_uri;

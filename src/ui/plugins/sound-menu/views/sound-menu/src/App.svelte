@@ -1,5 +1,5 @@
 <script lang="ts">
-    import { createClient, openContextMenu, type MenuItem } from '@quantum/client';
+    import { createClient, openContextMenu, onShown, type MenuItem } from '@quantum/client';
     import { AUDIO_PROVIDER, AUDIO_CHANNEL } from './lib/channels';
     import type { AudioState, AudioStream } from './lib/types';
     import DeviceRow from './lib/DeviceRow.svelte';
@@ -36,20 +36,37 @@
         });
     }
 
-    $effect(() => {
+    /**
+     * Open the audio provider session and pull a fresh snapshot.
+     *
+     * This view is warm (`destroy_on_dismiss = false`): it mounts once and is
+     * hidden/reshown thereafter, and `close()` sends `close_session` on every
+     * dismiss to stop the provider polling sink-inputs while the window is
+     * invisible. So the session must be re-opened on every reshow, not only at
+     * first mount, or the device and stream lists would be stale (and no live
+     * updates would arrive, the session being closed). Run at mount and on each
+     * reshow via `onShown`.
+     */
+    function openSession(): void {
         client
             .call('provider.query', { id: AUDIO_PROVIDER })
             .then((result: unknown) => {
                 if (result) state = result as AudioState;
             })
             .catch(() => {});
+        sendFireAndForget({ command: 'open_session' });
+    }
+
+    $effect(() => {
         const off = client.subscribe(AUDIO_CHANNEL, (payload: unknown) => {
             state = payload as AudioState;
         });
-        sendFireAndForget({ command: 'open_session' });
+        openSession();
+        const offShown = onShown(openSession);
         return () => {
             sendFireAndForget({ command: 'close_session' });
             off?.();
+            offShown();
             client.close();
         };
     });

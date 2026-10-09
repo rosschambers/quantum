@@ -9,13 +9,23 @@
 //! bluetooth, notification center, files, task manager) — can ride a single
 //! shared render process instead of one process each.
 //!
-//! Overlays are hidden and reused on dismiss, never destroyed (destroying a
-//! layer-shell window segfaults; see `WindowRegistry::handle`), so their
-//! renderer stays resident for the session either way. Sharing therefore keeps
-//! every resident overlay renderer in the one shared process rather than paying
-//! a whole separate process per overlay type. The `share_process` parameter is
-//! retained so a future session-safe teardown could isolate genuinely
-//! destroyed views again.
+//! Views split into two lifetimes by the `destroy_on_dismiss` descriptor flag,
+//! and `share_process` follows that split:
+//!
+//! - **Warm views** (`destroy_on_dismiss = false`: bar, clock, timers, toast,
+//!   launcher, and the power, power-profile, and sound menus) are hidden and
+//!   reused on dismiss, so their renderer stays resident for the session. They
+//!   set `share_process = true` and ride the one shared render process instead
+//!   of paying a whole separate process each. A warm view that carries per-open
+//!   state resets it on reshow via the `quantum:shown` event
+//!   (`dispatch_view_shown`); see the power-menu and sound-menu views.
+//! - **Cold views** (`destroy_on_dismiss = true`: wifi, bluetooth, notification
+//!   center, files, task manager, file viewer, timer create) are DESTROYED on
+//!   dismiss — since the B1 renderer-reclaim work, destroying a plain
+//!   `gtk4::Window` is safe (the old layer-shell segfault was
+//!   `GtkApplicationWindow`-specific). They set `share_process = false` so they
+//!   own an isolated render process that `terminate_web_process` can kill on
+//!   teardown, returning the renderer memory to the OS.
 //!
 //! The anchor is a single hidden `WebView` created lazily on the first
 //! shared-process request and cached in a `thread_local!` for the lifetime of

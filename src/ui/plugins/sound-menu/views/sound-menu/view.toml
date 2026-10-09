@@ -1,2 +1,11 @@
 kind = "overlay"
-destroy_on_dismiss = true
+# Warm view: kept resident and reshown on open instead of destroyed, so the
+# sound menu opens instantly (no per-open WebKitWebProcess spawn). This view
+# owns an audio provider SESSION (open_session/close_session), so warming is
+# only safe because App.svelte re-opens the session and re-queries on every
+# reshow via onShown (see openSession), and sends close_session on dismiss so
+# the provider stops polling sink-inputs while hidden. Do not warm a
+# session-owning overlay without that onShown re-open. Memory cost is this
+# view's small DOM/JS heap folded into the shared render process, bounded by
+# the WebContext MemoryPressureSettings.
+destroy_on_dismiss = false

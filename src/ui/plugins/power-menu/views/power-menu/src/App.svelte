@@ -1,5 +1,5 @@
 <script lang="ts">
-    import { createClient } from '@quantum/client';
+    import { createClient, onShown } from '@quantum/client';
     import type { IconName } from './lib/Icon.svelte';
     import ActionTile from './lib/ActionTile.svelte';
     import DelayPicker from './lib/DelayPicker.svelte';
@@ -36,8 +36,28 @@
     let scheduled: ScheduledJob[] = $state([]);
 
     /**
-     * Capability snapshot + live updates. Also kicks off the initial
-     * scheduled-jobs fetch.
+     * Reset all per-open state and re-fetch the scheduled-jobs snapshot.
+     *
+     * This view is warm (`destroy_on_dismiss = false`): the component mounts
+     * once and is hidden/reshown thereafter, so any state left behind on
+     * dismiss would still be present on the next open. Two of those are
+     * unacceptable: a tile left `armed` from a previous open would let a single
+     * stray click confirm a destructive action, and a global delay left set
+     * would silently apply to the next action. Clear both, and refresh the
+     * scheduled list (it can change while hidden — a job fires or another
+     * surface schedules one). Run at mount and on every reshow via `onShown`.
+     */
+    function resetForShow(): void {
+        clearDisarm();
+        armed = null;
+        delaySecs = 0;
+        void refreshScheduled();
+    }
+
+    /**
+     * Capability snapshot + live updates. Also resets per-open state and kicks
+     * off the initial scheduled-jobs fetch, then repeats that reset on every
+     * warm reshow.
      */
     $effect(() => {
         client
@@ -49,9 +69,11 @@
         const off = client.subscribe('system_power.event', (p: unknown) => {
             state = p as SystemPowerState;
         });
-        void refreshScheduled();
+        resetForShow();
+        const offShown = onShown(resetForShow);
         return () => {
             off?.();
+            offShown();
             if (disarmTimeout !== null) clearTimeout(disarmTimeout);
             client.close();
         };

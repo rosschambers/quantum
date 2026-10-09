@@ -36,8 +36,19 @@ vi.mock('@quantum/client', () => ({
         },
         close: vi.fn(),
     }),
+    // Mirror the real onShown: register a window listener for `quantum:shown`
+    // so a test can fire the host's re-show signal and assert the view resets.
+    onShown: (callback: () => void) => {
+        const handler = (): void => callback();
+        window.addEventListener('quantum:shown', handler);
+        return () => window.removeEventListener('quantum:shown', handler);
+    },
     __esModule: true,
 }));
+
+function fireShown(): void {
+    window.dispatchEvent(new CustomEvent('quantum:shown'));
+}
 
 import App from './App.svelte';
 
@@ -223,5 +234,39 @@ describe('PowerMenu App', () => {
                 (params as { name?: string })?.name === 'widgets/power-menu',
         );
         expect(hidden).toBe(true);
+    });
+
+    it('disarms a pending confirmation when reshown (warm reset)', async () => {
+        // The view is warm: after arming shutdown and dismissing without
+        // confirming, a later reshow must clear the armed tile so a stray
+        // second click cannot confirm a destructive action from a fresh open.
+        const { container } = render(App);
+        await settle();
+        const shutdown = container.querySelector('[data-command="shutdown"]') as HTMLElement;
+        await fireEvent.click(shutdown); // arm
+        await tick();
+        expect(shutdown.classList.contains('armed')).toBe(true);
+
+        fireShown(); // simulate hide then reshow
+        await tick();
+        await tick();
+
+        expect(shutdown.classList.contains('armed')).toBe(false);
+    });
+
+    it('refreshes the scheduled jobs list when reshown (warm reset)', async () => {
+        render(App);
+        await settle();
+        const scheduledCallsAfterMount = mockCallSpy.mock.calls.filter(
+            ([method]) => method === 'action.scheduled',
+        ).length;
+
+        fireShown();
+        await settle();
+
+        const scheduledCallsAfterShown = mockCallSpy.mock.calls.filter(
+            ([method]) => method === 'action.scheduled',
+        ).length;
+        expect(scheduledCallsAfterShown).toBeGreaterThan(scheduledCallsAfterMount);
     });
 });

@@ -75,10 +75,31 @@ vi.mock('@quantum/client', () => ({
     openContextMenu: (_event: MouseEvent, items: MenuItem[]) => {
         capturedMenuItems = items;
     },
+    // Mirror the real onShown: register a window listener for `quantum:shown`
+    // so a test can fire the host's re-show signal and assert the view
+    // re-opens its provider session.
+    onShown: (callback: () => void) => {
+        const handler = (): void => callback();
+        window.addEventListener('quantum:shown', handler);
+        return () => window.removeEventListener('quantum:shown', handler);
+    },
     __esModule: true,
 }));
 
 import App from './App.svelte';
+
+function fireShown(): void {
+    window.dispatchEvent(new CustomEvent('quantum:shown'));
+}
+
+function countCommand(command: string): number {
+    return mockCallSpy.mock.calls.filter(
+        ([method, parameters]) =>
+            method === 'action.invoke' &&
+            (parameters as { action?: { data?: { payload?: { command?: string } } } }).action?.data
+                ?.payload?.command === command,
+    ).length;
+}
 
 beforeEach(() => {
     mockCallSpy = vi.fn();
@@ -133,6 +154,41 @@ describe('SoundMenu App shell', () => {
                 data: { kind: 'audio', payload: { command: 'open_session' } },
             },
         });
+    });
+
+    it('re-opens the provider session when reshown (warm reset)', async () => {
+        // The view is warm: on dismiss it sends close_session, so a later
+        // reshow must re-open the session or the device/stream lists go stale.
+        render(App);
+        await settle();
+        const openSessionsAfterMount = countCommand('open_session');
+        expect(openSessionsAfterMount).toBe(1);
+
+        // Simulate dismiss (sends close_session) then reshow.
+        await fireEvent.keyDown(document, { key: 'Escape' });
+        await tick();
+        fireShown();
+        await settle();
+
+        expect(countCommand('open_session')).toBeGreaterThan(openSessionsAfterMount);
+    });
+
+    it('re-queries the audio provider when reshown (warm reset)', async () => {
+        render(App);
+        await settle();
+        const queriesAfterMount = mockCallSpy.mock.calls.filter(
+            ([method, parameters]) =>
+                method === 'provider.query' && (parameters as { id?: string })?.id === 'audio',
+        ).length;
+
+        fireShown();
+        await settle();
+
+        const queriesAfterShown = mockCallSpy.mock.calls.filter(
+            ([method, parameters]) =>
+                method === 'provider.query' && (parameters as { id?: string })?.id === 'audio',
+        ).length;
+        expect(queriesAfterShown).toBeGreaterThan(queriesAfterMount);
     });
 
     it('Escape closes the session and hides by the canonical view name, in that order', async () => {

@@ -394,6 +394,10 @@ impl crate::registry::WindowOps for PanelWindow {
         // Focus the WebView so typing immediately reaches the input.
         self.webview.grab_focus();
         self.visible = true;
+        // Notify a warm (reused) view that it has been shown again so it can
+        // reset per-open state. A no-op for cold (destroy_on_dismiss) views,
+        // which are reconstructed on every open and attach no listener.
+        crate::windows::dispatch_view_shown(&self.webview);
     }
 
     /// Hide the panel window.
