@@ -15,6 +15,75 @@ declare global {
   }
 }
 
+interface PendingRoute {
+  originalId: number;
+  deliver: (response: JsonRpcResponse) => void;
+}
+
+/** Bridge state shared by every transport on one page. */
+interface PageRegistry {
+  nextWireId: number;
+  pending: Map<number, PendingRoute>;
+  notificationListeners: Set<((notification: JsonRpcNotification) => void)[]>;
+  /** Fallback for replies to ids this page never routed (legacy callers). */
+  unrouted: Set<(response: JsonRpcResponse) => void>;
+}
+
+/**
+ * The page-wide registry, created on first use together with the window-level
+ * handlers the host calls. The Rust side splices JSON directly into a JS
+ * expression, so the handlers receive structured values — no JSON.parse needed.
+ * Kept on `window` so each page (and each test's fake window) has its own.
+ */
+function pageRegistry(): PageRegistry {
+  const host = window as Window & { __quantum_bridge_registry?: PageRegistry };
+  if (host.__quantum_bridge_registry) {
+    return host.__quantum_bridge_registry;
+  }
+  const registry: PageRegistry = {
+    nextWireId: 0,
+    pending: new Map(),
+    notificationListeners: new Set(),
+    unrouted: new Set(),
+  };
+  host.__quantum_bridge_registry = registry;
+
+  function route(id: number, build: (originalId: number) => JsonRpcResponse): void {
+    const target = registry.pending.get(id);
+    if (target) {
+      registry.pending.delete(id);
+      target.deliver(build(target.originalId));
+      return;
+    }
+    const response = build(id);
+    registry.unrouted.forEach((deliver) => deliver(response));
+  }
+
+  window.__quantum_resolve = (id: number, result: unknown) => {
+    route(id, (originalId) => ({ jsonrpc: '2.0', id: originalId, result }));
+  };
+
+  window.__quantum_reject = (id: number, error: { code?: number; message?: string; data?: unknown }) => {
+    const errorObj = error ?? {};
+    route(id, (originalId) => ({
+      jsonrpc: '2.0',
+      id: originalId,
+      error: {
+        code: errorObj.code ?? -32603,
+        message: errorObj.message ?? 'Internal error',
+        data: errorObj.data,
+      },
+    }));
+  };
+
+  window.__quantum_notify = (channel: string, payload: unknown) => {
+    const notification: JsonRpcNotification = { channel, payload };
+    registry.notificationListeners.forEach((callbacks) => callbacks.forEach((cb) => cb(notification)));
+  };
+
+  return registry;
+}
+
 export function createBridgeTransport(): Transport | null {
   if (typeof window === 'undefined' || !window.webkit?.messageHandlers?.quantum) {
     return null;
@@ -22,47 +91,24 @@ export function createBridgeTransport(): Transport | null {
 
   const responseCallbacks: ((response: JsonRpcResponse) => void)[] = [];
   const notificationCallbacks: ((notification: JsonRpcNotification) => void)[] = [];
+  const registry = pageRegistry();
+  registry.notificationListeners.add(notificationCallbacks);
 
-  // Install global handlers for receiving responses and notifications.
-  // The Rust side splices JSON directly into a JS expression, so these
-  // callbacks receive structured values — no JSON.parse needed.
-  if (!window.__quantum_resolve) {
-    window.__quantum_resolve = (id: number, result: unknown) => {
-      const response: JsonRpcResponse = {
-        jsonrpc: '2.0',
-        id,
-        result,
-      };
-      responseCallbacks.forEach((cb) => cb(response));
-    };
+  function deliver(response: JsonRpcResponse): void {
+    responseCallbacks.forEach((cb) => cb(response));
   }
-
-  if (!window.__quantum_reject) {
-    window.__quantum_reject = (id: number, error: { code?: number; message?: string; data?: unknown }) => {
-      const errorObj = error ?? {};
-      const response: JsonRpcResponse = {
-        jsonrpc: '2.0',
-        id,
-        error: {
-          code: errorObj.code ?? -32603,
-          message: errorObj.message ?? 'Internal error',
-          data: errorObj.data,
-        },
-      };
-      responseCallbacks.forEach((cb) => cb(response));
-    };
-  }
-
-  if (!window.__quantum_notify) {
-    window.__quantum_notify = (channel: string, payload: unknown) => {
-      const notification: JsonRpcNotification = { channel, payload };
-      notificationCallbacks.forEach((cb) => cb(notification));
-    };
-  }
+  registry.unrouted.add(deliver);
 
   return {
     send(request: JsonRpcRequest): void {
-      window.webkit!.messageHandlers!.quantum!.postMessage(JSON.stringify(request));
+      // Several clients can live on one page (a view plus its child
+      // components), each numbering requests from 1, while the host echoes the
+      // id back to ONE window-level handler. Rewrite the id to a page-unique
+      // wire id and remember who sent it, so the reply reaches its sender
+      // under the sender's own id.
+      const wireId = ++registry.nextWireId;
+      registry.pending.set(wireId, { originalId: request.id, deliver });
+      window.webkit!.messageHandlers!.quantum!.postMessage(JSON.stringify({ ...request, id: wireId }));
     },
 
     onResponse(callback: (response: JsonRpcResponse) => void): () => void {

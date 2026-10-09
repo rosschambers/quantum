@@ -57,6 +57,51 @@ describe('bridge transport', () => {
     });
   });
 
+  it('routes each reply to the transport that sent the request when a page has several clients', () => {
+    // Two clients on one page (App plus a child component) both number their
+    // requests from 1. The single window-level reply handler must deliver each
+    // reply to its own sender, under that sender's original id.
+    const first = createBridgeTransport();
+    const second = createBridgeTransport();
+    if (!first || !second) throw new Error('transport unavailable');
+
+    const firstReceived: any[] = [];
+    const secondReceived: any[] = [];
+    first.onResponse((m) => firstReceived.push(m));
+    second.onResponse((m) => secondReceived.push(m));
+
+    first.send({ jsonrpc: '2.0', id: 1, method: 'first.method', params: {} });
+    second.send({ jsonrpc: '2.0', id: 1, method: 'second.method', params: {} });
+
+    const post = (globalThis as any).window.webkit.messageHandlers.quantum.postMessage;
+    const [firstWire, secondWire] = post.mock.calls.map((call: unknown[]) => JSON.parse(call[0] as string));
+    expect(firstWire.id).not.toBe(secondWire.id);
+
+    (globalThis as any).window.__quantum_resolve(secondWire.id, { from: 'second' });
+    (globalThis as any).window.__quantum_reject(firstWire.id, { code: -32000, message: 'first failed' });
+
+    expect(secondReceived).toEqual([{ jsonrpc: '2.0', id: 1, result: { from: 'second' } }]);
+    expect(firstReceived).toEqual([
+      { jsonrpc: '2.0', id: 1, error: { code: -32000, message: 'first failed', data: undefined } },
+    ]);
+  });
+
+  it('delivers notifications to every transport on the page', () => {
+    const first = createBridgeTransport();
+    const second = createBridgeTransport();
+    if (!first || !second) throw new Error('transport unavailable');
+
+    const firstReceived: any[] = [];
+    const secondReceived: any[] = [];
+    first.onNotification((n) => firstReceived.push(n));
+    second.onNotification((n) => secondReceived.push(n));
+
+    (globalThis as any).window.__quantum_notify('files.event', { event: 'changed' });
+
+    expect(firstReceived).toEqual([{ channel: 'files.event', payload: { event: 'changed' } }]);
+    expect(secondReceived).toEqual([{ channel: 'files.event', payload: { event: 'changed' } }]);
+  });
+
   it('preserves U+2028 in resolved payload (no JSON.parse round-trip)', () => {
     const transport = createBridgeTransport();
     expect(transport).not.toBeNull();
