@@ -1,8 +1,11 @@
 <script lang="ts">
 	import { splitContentLines } from './lineDiff';
-	// The 220px "Changes" sidebar for diff mode: lists every `ReviewEntry`,
+	// The 260px "Changes" sidebar for diff mode: lists every `ReviewEntry`,
 	// grouped into Unstaged/Staged when the change set is stageable, with a
-	// checkbox per entry that stages/unstages without selecting it. A
+	// checkbox per entry that stages/unstages without selecting it. With
+	// `view: 'tree'` each group shows its files as a folder tree (foldable
+	// folders, a folder checkbox that stages everything below it); the
+	// default `'list'` is the flat list. A
 	// `ReviewEntry` carries no additions/deletions counts (reviewModel.ts
 	// only carries blobs and sides), so this component diffs each entry's
 	// old/new content itself, the same way `DiffFile` does, purely to show
@@ -121,6 +124,10 @@
 	let activeEntryId = $derived(entries[activeIndex]?.id);
 
 	function handleFolderCheckbox(event: Event, group: TreeGroup, folder: FolderNode): void {
+		// preventDefault keeps the native checked state from flipping: the
+		// visual is class-driven and the model only changes when the parent
+		// re-renders with new entries, so the DOM must not drift ahead of it.
+		event.preventDefault();
 		event.stopPropagation();
 		const below = entriesUnder(folder);
 		if (group === 'staged') {
@@ -182,7 +189,7 @@
 
 {#snippet entryRow(item: IndexedEntry, depth: number | null = null)}
 	{@const current = splitPath(item.entry.path)}
-	<li class="entry" class:tree={depth !== null} class:stageable class:active={item.index === activeIndex}>
+	<li class="entry" class:tree={depth !== null} class:stageable={depth !== null && stageable} class:active={item.index === activeIndex}>
 		{#if stageable}
 			<input
 				type="checkbox"
@@ -230,7 +237,7 @@
 				class="checkbox"
 				class:checked={group === 'staged'}
 				checked={group === 'staged'}
-				aria-label={`${group === 'staged' ? 'Unstage' : 'Stage'} everything in ${row.folder.name}`}
+				aria-label={`${group === 'staged' ? 'Unstage' : 'Stage'} everything in ${row.folder.path}`}
 				onclick={(event) => handleFolderCheckbox(event, group, row.folder)}
 				onkeydown={(event) => handleFolderCheckboxKeydown(event, group, row.folder)}
 			/>
@@ -243,7 +250,7 @@
 			style={`padding-left: ${row.depth * 16}px`}
 			onclick={() => toggleFolder(group, row.folder)}
 		>
-			<span class="chevron">{row.expanded ? '\u25BC' : '\u25B6'}</span>
+			<span class="chevron" aria-hidden="true">{row.expanded ? '\u25BC' : '\u25B6'}</span>
 			<span class="folder-name"><bdi>{row.folder.name}/</bdi></span>
 		</button>
 	</li>
@@ -251,7 +258,7 @@
 
 {#snippet groupBody(group: TreeGroup, items: IndexedEntry[])}
 	{#if view === 'tree'}
-		{#each treeRows(group, items) as row (row.kind === 'folder' ? `folder:${row.folder.path}` : row.entry.id)}
+		{#each treeRows(group, items) as row (row.kind === 'folder' ? `folder|${row.folder.path}` : `file|${row.entry.id}`)}
 			{#if row.kind === 'folder'}
 				{@render folderRow(group, row)}
 			{:else}
@@ -273,6 +280,7 @@
 			<button
 				type="button"
 				class="view-toggle"
+				aria-label="Tree view"
 				aria-pressed={view === 'tree'}
 				title={view === 'tree' ? 'Show as list (t)' : 'Show as tree (t)'}
 				onclick={onToggleView}

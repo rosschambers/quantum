@@ -303,6 +303,7 @@ describe('ChangesSidebar tree view', () => {
 		// Index 1 is calendarQueryKeys.ts (entries are passed in display order).
 		const { container } = render(ChangesSidebar, { props: { entries: treeEntries(), stageable: true, activeIndex: 1, onSelect: vi.fn(), view: 'tree' } });
 		const folder = container.querySelector<HTMLButtonElement>('.folder-row button[data-group="unstaged"][data-folder="src/Murmur8.Web/lib"]');
+		expect(folder?.closest('.folder-row')?.classList.contains('active')).toBe(false);
 		await fireEvent.click(folder!);
 		expect(folder?.closest('.folder-row')?.classList.contains('active')).toBe(true);
 	});
@@ -360,5 +361,59 @@ describe('ChangesSidebar tree view', () => {
 		const { container } = render(ChangesSidebar, { props: { entries, stageable: false, activeIndex: 0, onSelect: vi.fn(), view: 'tree' } });
 		expect(container.querySelectorAll('.folder-row')).not.toHaveLength(0);
 		expect(container.querySelectorAll('.checkbox')).toHaveLength(0);
+	});
+
+	test('the view toggle has the constant accessible name "Tree view" in both views', () => {
+		const tree = render(ChangesSidebar, { props: { entries: treeEntries(), stageable: true, activeIndex: 0, onSelect: vi.fn(), view: 'tree', onToggleView: vi.fn() } });
+		expect(tree.container.querySelector('.view-toggle')?.getAttribute('aria-label')).toBe('Tree view');
+		const list = render(ChangesSidebar, { props: { entries: treeEntries(), stageable: true, activeIndex: 0, onSelect: vi.fn(), view: 'list', onToggleView: vi.fn() } });
+		expect(list.container.querySelector('.view-toggle')?.getAttribute('aria-label')).toBe('Tree view');
+	});
+
+	test('the list view toggle is unpressed and hints at the tree', () => {
+		const { container } = render(ChangesSidebar, { props: { entries: treeEntries(), stageable: true, activeIndex: 0, onSelect: vi.fn(), view: 'list', onToggleView: vi.fn() } });
+		const toggle = container.querySelector<HTMLButtonElement>('.sidebar-title .view-toggle');
+		expect(toggle?.getAttribute('aria-pressed')).toBe('false');
+		expect(toggle?.getAttribute('title')).toBe('Show as tree (t)');
+	});
+
+	test('the view toggle is absent when onToggleView is not given', () => {
+		const { container } = render(ChangesSidebar, { props: { entries: treeEntries(), stageable: true, activeIndex: 0, onSelect: vi.fn(), view: 'tree' } });
+		expect(container.querySelector('.view-toggle')).toBeNull();
+	});
+
+	test('clicking an Unstaged folder checkbox leaves its DOM checked state unchanged when the model does not change', async () => {
+		const onStageMany = vi.fn();
+		const { container } = render(ChangesSidebar, { props: { entries: treeEntries(), stageable: true, activeIndex: 0, onSelect: vi.fn(), onStageMany, view: 'tree' } });
+		const checkbox = container
+			.querySelector<HTMLButtonElement>('.folder-row button[data-group="unstaged"][data-folder="src/Murmur8.Web/lib"]')!
+			.closest('.folder-row')!
+			.querySelector<HTMLInputElement>('.checkbox')!;
+		await fireEvent.click(checkbox);
+		expect(onStageMany).toHaveBeenCalledTimes(1);
+		expect(checkbox.checked).toBe(false);
+	});
+
+	test('a folder checkbox is labelled with the full folder path, not the compacted display name', () => {
+		const { container } = render(ChangesSidebar, { props: { entries: treeEntries(), stageable: true, activeIndex: 0, onSelect: vi.fn(), view: 'tree' } });
+		const apiCheckbox = container
+			.querySelector<HTMLButtonElement>('.folder-row button[data-group="unstaged"][data-folder="src/Murmur8.Web/lib/api"]')!
+			.closest('.folder-row')!
+			.querySelector<HTMLInputElement>('.checkbox');
+		expect(apiCheckbox?.getAttribute('aria-label')).toBe('Stage everything in src/Murmur8.Web/lib/api');
+		const stagedCheckbox = container.querySelector<HTMLButtonElement>('.folder-row button[data-group="staged"]')!.closest('.folder-row')!.querySelector<HTMLInputElement>('.checkbox');
+		expect(stagedCheckbox?.getAttribute('aria-label')).toBe('Unstage everything in src/Murmur8.Web/lib/realtime');
+	});
+
+	test('the folder chevron is hidden from assistive technology', () => {
+		const { container } = render(ChangesSidebar, { props: { entries: treeEntries(), stageable: true, activeIndex: 0, onSelect: vi.fn(), view: 'tree' } });
+		expect(container.querySelector('.folder-row .chevron')?.getAttribute('aria-hidden')).toBe('true');
+	});
+
+	test('only tree file rows carry the stageable class; list rows keep their markup', () => {
+		const list = render(ChangesSidebar, { props: { entries: treeEntries(), stageable: true, activeIndex: 0, onSelect: vi.fn() } });
+		expect(list.container.querySelectorAll('.entry.stageable')).toHaveLength(0);
+		const tree = render(ChangesSidebar, { props: { entries: treeEntries(), stageable: true, activeIndex: 0, onSelect: vi.fn(), view: 'tree' } });
+		expect(tree.container.querySelectorAll('.entry.tree.stageable')).not.toHaveLength(0);
 	});
 });
