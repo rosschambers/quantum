@@ -320,4 +320,45 @@ describe('ChangesSidebar tree view', () => {
 	test('the sidebar is 260px wide', () => {
 		expect(sidebarSource).toMatch(/\.changes-sidebar\s*\{[^}]*width:\s*260px/);
 	});
+
+	test('an Unstaged folder checkbox stages every file below it, in tree order, without selecting', async () => {
+		const onStageMany = vi.fn();
+		const onSelect = vi.fn();
+		const onStage = vi.fn();
+		const { container } = render(ChangesSidebar, { props: { entries: treeEntries(), stageable: true, activeIndex: 0, onSelect, onStage, onStageMany, view: 'tree' } });
+		const folderButton = container.querySelector('.folder-row button[data-group="unstaged"][data-folder="src/Murmur8.Web/lib"]');
+		const checkbox = folderButton!.closest('.folder-row')!.querySelector<HTMLInputElement>('.checkbox');
+		await fireEvent.click(checkbox!);
+		expect(onStageMany).toHaveBeenCalledTimes(1);
+		expect(onStageMany.mock.calls[0][0].map((item: ReviewEntry) => item.id)).toEqual([
+			'src/Murmur8.Web/lib/api/calendarQueryKeys.ts:unstaged',
+			'src/Murmur8.Web/lib/realtime/EventsContext.tsx:unstaged',
+		]);
+		expect(onSelect).not.toHaveBeenCalled();
+		expect(onStage).not.toHaveBeenCalled();
+	});
+
+	test('a Staged folder checkbox unstages every file below it', async () => {
+		const onUnstageMany = vi.fn();
+		const { container } = render(ChangesSidebar, { props: { entries: treeEntries(), stageable: true, activeIndex: 0, onSelect: vi.fn(), onUnstageMany, view: 'tree' } });
+		const folderButton = container.querySelector('.folder-row button[data-group="staged"]');
+		const checkbox = folderButton!.closest('.folder-row')!.querySelector<HTMLInputElement>('.checkbox');
+		await fireEvent.click(checkbox!);
+		expect(onUnstageMany.mock.calls[0][0].map((item: ReviewEntry) => item.id)).toEqual(['src/Murmur8.Web/lib/realtime/EventsContext.tsx:staged']);
+	});
+
+	test('Space on a folder checkbox stages like a click', async () => {
+		const onStageMany = vi.fn();
+		const { container } = render(ChangesSidebar, { props: { entries: treeEntries(), stageable: true, activeIndex: 0, onSelect: vi.fn(), onStageMany, view: 'tree' } });
+		const checkbox = container.querySelector<HTMLInputElement>('.folder-row .checkbox');
+		await fireEvent.keyDown(checkbox!, { key: ' ' });
+		expect(onStageMany).toHaveBeenCalledTimes(1);
+	});
+
+	test('a non-stageable tree has no checkboxes', () => {
+		const entries = treeEntries().filter((item) => item.section === 'unstaged').map((item) => ({ ...item, section: 'none' as const, id: `${item.path}:none` }));
+		const { container } = render(ChangesSidebar, { props: { entries, stageable: false, activeIndex: 0, onSelect: vi.fn(), view: 'tree' } });
+		expect(container.querySelectorAll('.folder-row')).not.toHaveLength(0);
+		expect(container.querySelectorAll('.checkbox')).toHaveLength(0);
+	});
 });
