@@ -19,6 +19,8 @@ export type ViewerShortcutAction =
     | { kind: 'next-file' }
     | { kind: 'previous-file' }
     | { kind: 'toggle-stage' }
+    // Switches the diff Changes sidebar between tree and flat list.
+    | { kind: 'toggle-tree' }
     | { kind: 'refresh' };
 
 /** Map a keyboard event to a viewer shortcut action, or null when it is not one. */
@@ -60,6 +62,8 @@ export function resolveViewerShortcut(event: KeyboardEvent): ViewerShortcutActio
             return { kind: 'previous-file' };
         case 's':
             return { kind: 'toggle-stage' };
+        case 't':
+            return { kind: 'toggle-tree' };
         case 'r':
         case 'R':
             return { kind: 'refresh' };
