@@ -29,7 +29,21 @@ const MURMUR8_PATHS = [
 	'tests/Murmur8.Worker.Tests/Notifications/NotificationSchedulerTests.cs',
 ];
 
-const EDGE_PATHS = ['src/zeta.ts', 'src/alpha/one.ts', 'src-old.ts', 'src.ts', 'a/b/c/deep.ts', 'a.ts', 'README.md', 'Zed/x.ts', 'zed.ts'];
+const EDGE_PATHS = [
+	'src/zeta.ts',
+	'src/alpha/one.ts',
+	'src-old.ts',
+	'src.ts',
+	'a/b/c/deep.ts',
+	'a.ts',
+	'README.md',
+	'Zed/x.ts',
+	'zed.ts',
+	'a',
+	'a/b',
+	'caf\u00e9/x.ts',
+	'cafe\u0301/y.ts',
+];
 
 function describeRows(rows: TreeRow[]): string[] {
 	return rows.map((row) =>
@@ -123,6 +137,35 @@ describe('changeTree', () => {
 		const tree = buildChangeTree(entries);
 		const tests = tree.folders.find((folder) => folder.name === 'tests');
 		expect(entriesUnder(tests!).map((item) => item.path)).toEqual(MURMUR8_PATHS.filter((path) => path.startsWith('tests/')).sort(compareTreePaths));
+	});
+
+	test('compareTreePaths returns a negative, positive, or zero sign on simple pairs', () => {
+		expect(compareTreePaths('a.ts', 'b.ts')).toBeLessThan(0);
+		expect(compareTreePaths('b.ts', 'a.ts')).toBeGreaterThan(0);
+		expect(compareTreePaths('src/a.ts', 'src/a.ts')).toBe(0);
+	});
+
+	test('compareTreePaths puts a file before a folder of the same name', () => {
+		expect(compareTreePaths('a', 'a/b')).toBeLessThan(0);
+		expect(compareTreePaths('a/b', 'a')).toBeGreaterThan(0);
+	});
+
+	test('canonically equal names order by code unit, not by input order', () => {
+		expect(compareTreePaths('cafe\u0301/y.ts', 'caf\u00e9/x.ts')).toBeLessThan(0);
+		const entries = Object.freeze([entry('caf\u00e9/x.ts'), entry('cafe\u0301/y.ts')]);
+		expect(fileOrder(flattenChangeTree(buildChangeTree(entries), new Set()))).toEqual(['cafe\u0301/y.ts', 'caf\u00e9/x.ts']);
+	});
+
+	test('buildChangeTree of no entries has no folders, no files, and flattens to no rows', () => {
+		const tree = buildChangeTree(Object.freeze([]));
+		expect(tree.folders).toEqual([]);
+		expect(tree.files).toEqual([]);
+		expect(flattenChangeTree(tree, new Set())).toEqual([]);
+	});
+
+	test('collapsing an interior member of a compacted chain hides nothing', () => {
+		const tree = buildChangeTree(Object.freeze([entry('a/b/c/deep.ts')]));
+		expect(describeRows(flattenChangeTree(tree, new Set(['a'])))).toEqual(['a/b/c/', '  deep.ts']);
 	});
 
 	test('sortEntriesForTree keeps Unstaged before Staged and tree order within each', () => {

@@ -37,13 +37,28 @@ function baseName(path: string): string {
 	return path.slice(path.lastIndexOf('/') + 1);
 }
 
+/**
+ * Orders two names: locale order, then code-unit order when the locale calls them equal but they differ
+ * (for example NFC and NFD spellings of the same accented letter). Returns 0 only for identical strings.
+ */
+function compareNames(left: string, right: string): number {
+	const order = left.localeCompare(right);
+	if (order !== 0) {
+		return order;
+	}
+	if (left === right) {
+		return 0;
+	}
+	return left < right ? -1 : 1;
+}
+
 /** Orders two paths the way the tree reads them: segment by segment, folders and files mixed. */
 export function compareTreePaths(left: string, right: string): number {
 	const leftSegments = left.split('/');
 	const rightSegments = right.split('/');
 	const sharedLength = Math.min(leftSegments.length, rightSegments.length);
 	for (let index = 0; index < sharedLength; index++) {
-		const order = leftSegments[index].localeCompare(rightSegments[index]);
+		const order = compareNames(leftSegments[index], rightSegments[index]);
 		if (order !== 0) {
 			return order;
 		}
@@ -81,7 +96,10 @@ function toFolderNode(folder: MutableFolder, name: string, sortName: string): Fo
 	};
 }
 
-/** Groups one section's entries into a folder tree whose single-child folder chains are compacted. */
+/**
+ * Groups one section's entries into a folder tree whose single-child folder chains are compacted.
+ * Expects repository-relative paths with non-empty segments (no leading or trailing slash).
+ */
 export function buildChangeTree(entries: readonly ReviewEntry[]): FolderNode {
 	const root: MutableFolder = { name: '', path: '', folders: new Map(), files: [] };
 	for (const entry of entries) {
@@ -100,12 +118,24 @@ export function buildChangeTree(entries: readonly ReviewEntry[]): FolderNode {
 	return toFolderNode(root, '', '');
 }
 
+/** Orders siblings by name, then a file before a folder of the same name (matching `compareTreePaths`). */
+function compareChildren(left: TreeChild, right: TreeChild): number {
+	const order = compareNames(left.sortName, right.sortName);
+	if (order !== 0) {
+		return order;
+	}
+	if (left.kind === right.kind) {
+		return 0;
+	}
+	return left.kind === 'file' ? -1 : 1;
+}
+
 function orderedChildren(folder: FolderNode): TreeChild[] {
 	const children: TreeChild[] = [
 		...folder.folders.map((child): TreeChild => ({ kind: 'folder', folder: child, sortName: child.sortName })),
 		...folder.files.map((entry): TreeChild => ({ kind: 'file', entry, sortName: baseName(entry.path) })),
 	];
-	return children.sort((left, right) => left.sortName.localeCompare(right.sortName));
+	return children.sort(compareChildren);
 }
 
 /** Flattens a tree into display rows; a folder whose path is in `collapsedPaths` hides its descendants. */
