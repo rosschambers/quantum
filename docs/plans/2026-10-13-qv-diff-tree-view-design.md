@@ -1,10 +1,12 @@
 # qv diff mode: folder tree view for the Changes sidebar
 
-**Status:** implemented 2026-10-13 (`96b725fa`..`dadc94f8`); approved by Ross the same day. Additions
-beyond this design, from code review: a staging queue and live target resolution for folder staging,
-checkboxes no longer count as text fields for shortcuts, and `t` in the key hints.
-**Decided in:** `docs/playgrounds/2026-10-13-qv-diff-tree-view.html` (Ross's settled prompt is quoted in
-"Settled choices"). Builds on `docs/plans/2026-10-08-qv-diff-mode-design.md`.
+**Status:** design approved by Ross 2026-10-13; implemented the same day (`96b725fa`..`dadc94f8`),
+awaiting the manual walkthrough on x1 after the next `just switch`. Additions beyond this design, from
+code review: a staging queue and live target resolution for folder staging, checkboxes no longer count
+as text fields for shortcuts, `t` in the key hints, and a code-unit tie-break after `localeCompare`
+(see section 1).
+**Decided in:** `docs/playgrounds/2026-10-13-qv-diff-tree-view.html`; "Settled choices" restates Ross's
+settled prompt from it. Builds on `docs/plans/2026-10-08-qv-diff-mode-design.md`.
 
 ## Goal
 
@@ -26,7 +28,7 @@ From the playground, verbatim in substance:
 | Main pane order | Follows the sidebar, so `]` and `[` walk the tree |
 | Folder row | Chevron and name only; click folds and unfolds |
 | Folder staging | A folder checkbox stages or unstages every file under it |
-| File row in tree mode | One line: status, name, partly-staged dot, `+N −M`; no directory line |
+| File row in tree mode | One line: status, name, partly-staged dot, `+N −M`; no directory line (a renamed file keeps its "renamed from" line) |
 | Indent | 16px per level, no guide lines |
 | Sidebar width | 260px (from 220px), in both views |
 
@@ -46,8 +48,10 @@ client-type change: folder staging reuses `file-viewer.stage` / `file-viewer.uns
 ### 1. `changeTree.ts` (new, pure, no Svelte)
 
 - `compareTreePaths(left: string, right: string): number`: compares paths segment by segment
-  (split on `/`) with `localeCompare`; the first differing segment decides. This is exactly the
-  depth-first order of a mixed-alphabetical tree.
+  (split on `/`) with `localeCompare`, falling back to code-unit order when `localeCompare` calls two
+  different names equal (for example NFC and NFD accents); the first differing segment decides, and a
+  file sorts before a same-named folder. This is exactly the depth-first order of a mixed-alphabetical
+  tree.
 - `buildChangeTree(entries: ReviewEntry[]): FolderNode`: groups one section's entries into folders,
   then compacts every chain of folders that has no files and a single child folder into one node
   whose `name` is the joined segments (`Murmur8.Application/Calendar`) and whose `path` is the full
