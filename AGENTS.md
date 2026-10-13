@@ -499,6 +499,14 @@ broken CI before; do not reintroduce them:
   tests mock `@quantum/client` per component and cannot catch transport bugs:
   reproduce them with headless Chromium and a stub
   `window.webkit.messageHandlers.quantum` that answers via `__quantum_resolve`.
+  The same stub renders a built view for a visual check jsdom cannot give (layout,
+  truncation): serve a copy of the view's `dist/` over `python3 -m http.server`
+  (module scripts do not load from `file://`), inject `__quantum_args`, the stub and
+  theme tokens into `index.html`, and screenshot with `chromium --headless=new
+  --virtual-time-budget=5000 --screenshot`. Two traps hit on 2026-10-13: the bridge
+  posts a JSON *string* (`JSON.parse` it), and a fixture must OMIT absent optional
+  fields (a missing `FileSide`) rather than send `null`, as serde does, or the view
+  throws reading `.blob`. Escape `</` inside any JSON spliced into a `<script>`.
   The client rejects with a plain `{ code, message }` object, not an `Error`;
   format it with the file viewer's `lib/errorMessage.ts`, never `String(error)`.
 - **WebKit's default browser context menu is suppressed on every view**
@@ -561,6 +569,11 @@ broken CI before; do not reintroduce them:
   `just frontend-build`) BEFORE building `quantumd`; a brand-new plugin may need
   a SECOND `cargo build` to be embedded, because its `rerun-if-changed` paths
   are only registered once the build script has first seen the directory.
+  To prove a nix build (config repo, `just build`) carries a view change, grep a
+  unique new string with `grep -a` in `<quantum-0.1.0>/bin/.quantumd-wrapped`: the
+  `bin/quantumd` there is a 1.6 KB makeWrapper script, and the service's
+  `quantum-with-sound/bin/quantumd` is a second wrapper around it. A grep of
+  either wrapper finds nothing and looks like a stale build.
 - **Overlay windows share one house style — match wifi-menu, do not invent.**
   Every first-party overlay (`kind = "overlay"`, `destroy_on_dismiss = true`)
   follows the wifi-menu shell. When adding one, clone that pattern exactly:
