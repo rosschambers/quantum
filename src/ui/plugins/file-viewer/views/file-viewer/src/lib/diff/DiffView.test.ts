@@ -712,6 +712,36 @@ describe('DiffView', () => {
 		expect(container.querySelectorAll('.folder-row').length).toBeGreaterThan(0);
 	});
 
+	test('a folder checkbox stages its files one by one in tree order and stops at the first failure', async () => {
+		const file = (path: string, letter: string): ChangedFile => ({
+			path,
+			language: 'typescript',
+			base: side(`old ${letter}\n`, `${letter}-base`),
+			index: side(`old ${letter}\n`, `${letter}-base`),
+			target: side(`new ${letter}\n`, `${letter}-target`),
+			untracked: false,
+		});
+		const changeSet = changeSetFixture({ files: [file('lib/c.ts', 'c'), file('lib/a.ts', 'a'), file('lib/b.ts', 'b')] });
+		mockChangesAndFingerprint(changeSet);
+		const { container } = render(DiffView, { props: { source: { kind: 'git', spec: { repository: '/repository' } } } });
+		await vi.waitFor(() => expect(container.querySelectorAll('.diff-file')).toHaveLength(3));
+
+		const stagedPaths: string[] = [];
+		callMock.mockImplementation((method: string, params: { path: string }) => {
+			if (method === 'file-viewer.stage') {
+				stagedPaths.push(params.path);
+				return params.path === 'lib/b.ts' ? Promise.reject({ code: -32022, message: 'index.lock exists' }) : Promise.resolve({});
+			}
+			return Promise.resolve(undefined);
+		});
+
+		const folderButton = container.querySelector('.folder-row button[data-group="unstaged"][data-folder="lib"]');
+		await fireEvent.click(folderButton!.closest('.folder-row')!.querySelector('.checkbox')!);
+
+		await vi.waitFor(() => expect(container.querySelector('.banner.error')?.textContent).toContain('index.lock exists'));
+		expect(stagedPaths).toEqual(['lib/a.ts', 'lib/b.ts']);
+	});
+
 	test('typing two different search queries never recomputes the always-expanded row list for an entry already diffed', async () => {
 		// `ensureMatchVisible` legitimately calls `buildRows` with the
 		// entry's REAL (possibly empty) expanded-keys set whenever

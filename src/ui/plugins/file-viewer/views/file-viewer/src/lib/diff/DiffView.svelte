@@ -225,8 +225,8 @@
 		}
 	}
 
-	async function handleStage(entry: ReviewEntry): Promise<void> {
-		if (!changeSet) return;
+	async function handleStage(entry: ReviewEntry): Promise<boolean> {
+		if (!changeSet) return false;
 		try {
 			await client.call('file-viewer.stage', {
 				repository_root: changeSet.repository_root,
@@ -236,13 +236,15 @@
 			});
 			changeSet = applyLocalStage(changeSet, entry.path);
 			stagingError = null;
+			return true;
 		} catch (stageError) {
 			stagingError = errorMessage(stageError);
+			return false;
 		}
 	}
 
-	async function handleUnstage(entry: ReviewEntry): Promise<void> {
-		if (!changeSet) return;
+	async function handleUnstage(entry: ReviewEntry): Promise<boolean> {
+		if (!changeSet) return false;
 		try {
 			await client.call('file-viewer.unstage', {
 				repository_root: changeSet.repository_root,
@@ -259,8 +261,25 @@
 				changeSet = updated;
 			}
 			stagingError = null;
+			return true;
 		} catch (unstageError) {
 			stagingError = errorMessage(unstageError);
+			return false;
+		}
+	}
+
+	// Folder checkbox: one file at a time in tree order, stopping at the first
+	// failure so the banner shows it and nothing after it is attempted. Files
+	// already staged stay staged; the sidebar shows the honest half-done state.
+	async function handleStageMany(targets: ReviewEntry[]): Promise<void> {
+		for (const entry of targets) {
+			if (!(await handleStage(entry))) return;
+		}
+	}
+
+	async function handleUnstageMany(targets: ReviewEntry[]): Promise<void> {
+		for (const entry of targets) {
+			if (!(await handleUnstage(entry))) return;
 		}
 	}
 
@@ -949,6 +968,8 @@
 						onUnstage={handleUnstage}
 						view={sidebarView}
 						onToggleView={() => void toggleSidebarView()}
+						onStageMany={(targets) => void handleStageMany(targets)}
+						onUnstageMany={(targets) => void handleUnstageMany(targets)}
 					/>
 				{/if}
 				<div class="pane-wrap">
