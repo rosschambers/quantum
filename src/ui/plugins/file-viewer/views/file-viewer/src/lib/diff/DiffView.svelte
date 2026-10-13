@@ -14,7 +14,9 @@
 </script>
 
 <script lang="ts">
+	import { tick } from 'svelte';
 	import { splitContentLines } from './lineDiff';
+	import { sortEntriesForTree, type SidebarView } from './changeTree';
 	import { errorMessage } from '../errorMessage';
 	import { createClient } from '@quantum/client';
 	import type { ChangeSet, FingerprintResult } from '@quantum/client';
@@ -47,6 +49,7 @@
 	let error: string | null = $state(null);
 	let changeSet: ChangeSet | null = $state(null);
 	let layout: 'unified' | 'split' = $state('unified');
+	let sidebarView: SidebarView = $state('tree');
 	let activeIndex = $state(0);
 	let collapsedOverrides: Map<string, boolean> = $state(new Map());
 	let expandedKeysByEntry: Map<string, Set<string>> = $state(new Map());
@@ -261,7 +264,13 @@
 		}
 	}
 
-	let entries = $derived(changeSet ? reviewEntries(changeSet) : []);
+	// Tree view reads the pane in the sidebar's tree order, so ] and [ and the
+	// scroll-tracked active file walk the tree. Pair mode has no sidebar and
+	// keeps its order.
+	let entries = $derived.by(() => {
+		const reviewed = changeSet ? reviewEntries(changeSet) : [];
+		return sidebarView === 'tree' && source.kind === 'git' ? sortEntriesForTree(reviewed) : reviewed;
+	});
 	let stageable = $derived(changeSet?.stageable ?? false);
 	let progress = $derived(stagingProgress(entries));
 
@@ -742,6 +751,18 @@
 		selectEntry(Math.min(entries.length - 1, Math.max(0, activeIndex + step)));
 	}
 
+	async function toggleSidebarView(): Promise<void> {
+		const activeId = entries[activeIndex]?.id;
+		sidebarView = sidebarView === 'tree' ? 'list' : 'tree';
+		if (activeId === undefined) return;
+		const nextIndex = entries.findIndex((entry) => entry.id === activeId);
+		if (nextIndex < 0) return;
+		activeIndex = nextIndex;
+		// The keyed file sections move on the next render; scroll after they have.
+		await tick();
+		selectEntry(nextIndex);
+	}
+
 	function handlePaneScroll(): void {
 		if (!paneElement) return;
 		let active = 0;
@@ -837,6 +858,11 @@
 					event.preventDefault();
 					toggleActiveStage();
 					break;
+				case 'toggle-tree':
+					if (inField || source.kind !== 'git') return;
+					event.preventDefault();
+					void toggleSidebarView();
+					break;
 				case 'refresh':
 					if (inField || source.kind !== 'git') return;
 					event.preventDefault();
@@ -914,7 +940,16 @@
 		{:else}
 			<div class="body">
 				{#if source.kind === 'git'}
-					<ChangesSidebar {entries} {stageable} {activeIndex} onSelect={selectEntry} onStage={handleStage} onUnstage={handleUnstage} />
+					<ChangesSidebar
+						{entries}
+						{stageable}
+						{activeIndex}
+						onSelect={selectEntry}
+						onStage={handleStage}
+						onUnstage={handleUnstage}
+						view={sidebarView}
+						onToggleView={() => void toggleSidebarView()}
+					/>
 				{/if}
 				<div class="pane-wrap">
 					<div class="pane" bind:this={paneElement} onscroll={handlePaneScroll}>

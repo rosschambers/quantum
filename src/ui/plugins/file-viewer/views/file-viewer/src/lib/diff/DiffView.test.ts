@@ -661,6 +661,57 @@ describe('DiffView', () => {
 		expect(container.querySelectorAll('.entry')[0].classList.contains('active')).toBe(true);
 	});
 
+	function treeOrderFixture(): ChangeSet {
+		const file = (path: string, letter: string): ChangedFile => ({
+			path,
+			language: 'typescript',
+			base: side(`old ${letter}\n`, `${letter}-base`),
+			index: side(`old ${letter}\n`, `${letter}-base`),
+			target: side(`new ${letter}\n`, `${letter}-target`),
+			untracked: false,
+		});
+		return changeSetFixture({ files: [file('src/zeta.ts', 'z'), file('src/alpha/one.ts', 'o'), file('src-old.ts', 'd'), file('src.ts', 's')] });
+	}
+
+	function panePaths(container: HTMLElement): string[] {
+		return Array.from(container.querySelectorAll('.diff-file .path')).map((element) => element.textContent?.replace(/\s+/g, '') ?? '');
+	}
+
+	test('opens in tree view with the pane in tree order, and t switches both to the list', async () => {
+		mockChangesAndFingerprint(treeOrderFixture());
+		const { container } = render(DiffView, { props: { source: { kind: 'git', spec: { repository: '/repository' } } } });
+		await vi.waitFor(() => expect(container.querySelectorAll('.diff-file')).toHaveLength(4));
+
+		expect(container.querySelectorAll('.folder-row').length).toBeGreaterThan(0);
+		expect(panePaths(container)).toEqual(['src/alpha/one.ts', 'src/zeta.ts', 'src-old.ts', 'src.ts']);
+
+		await fireEvent.keyDown(window, { key: 't' });
+		await vi.waitFor(() => expect(container.querySelectorAll('.folder-row')).toHaveLength(0));
+		expect(panePaths(container)).toEqual(['src-old.ts', 'src.ts', 'src/alpha/one.ts', 'src/zeta.ts']);
+	});
+
+	test('t keeps the active file active across the switch', async () => {
+		mockChangesAndFingerprint(treeOrderFixture());
+		const { container } = render(DiffView, { props: { source: { kind: 'git', spec: { repository: '/repository' } } } });
+		await vi.waitFor(() => expect(container.querySelectorAll('.diff-file')).toHaveLength(4));
+
+		await fireEvent.keyDown(window, { key: ']' }); // tree order: second file, src/zeta.ts
+		await fireEvent.keyDown(window, { key: 't' });
+		await vi.waitFor(() => expect(container.querySelectorAll('.folder-row')).toHaveLength(0));
+		expect(container.querySelector('.entry.active .filename')?.textContent).toBe('zeta.ts');
+	});
+
+	test('t is ignored while typing in an input', async () => {
+		mockChangesAndFingerprint(treeOrderFixture());
+		const { container } = render(DiffView, { props: { source: { kind: 'git', spec: { repository: '/repository' } } } });
+		await vi.waitFor(() => expect(container.querySelectorAll('.diff-file')).toHaveLength(4));
+
+		const input = document.createElement('input');
+		container.appendChild(input);
+		await fireEvent.keyDown(input, { key: 't' });
+		expect(container.querySelectorAll('.folder-row').length).toBeGreaterThan(0);
+	});
+
 	test('typing two different search queries never recomputes the always-expanded row list for an entry already diffed', async () => {
 		// `ensureMatchVisible` legitimately calls `buildRows` with the
 		// entry's REAL (possibly empty) expanded-keys set whenever
