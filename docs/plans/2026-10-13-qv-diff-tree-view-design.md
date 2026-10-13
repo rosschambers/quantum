@@ -1,6 +1,8 @@
 # qv diff mode: folder tree view for the Changes sidebar
 
-**Status:** design, awaiting Ross's approval (2026-10-13).
+**Status:** implemented 2026-10-13 (`96b725fa`..`dadc94f8`); approved by Ross the same day. Additions
+beyond this design, from code review: a staging queue and live target resolution for folder staging,
+checkboxes no longer count as text fields for shortcuts, and `t` in the key hints.
 **Decided in:** `docs/playgrounds/2026-10-13-qv-diff-tree-view.html` (Ross's settled prompt is quoted in
 "Settled choices"). Builds on `docs/plans/2026-10-08-qv-diff-mode-design.md`.
 

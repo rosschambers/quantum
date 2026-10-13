@@ -652,6 +652,16 @@ broken CI before; do not reintroduce them:
   "staged", never "reviewed". The daemon needs `git` on its own PATH (the wrapper in
   the config repo adds it; same service-PATH trap as the sound players). Symlinks are
   never followed when reading or hashing working-tree files.
+  **The Changes sidebar opens as a folder tree** (design:
+  `docs/plans/2026-10-13-qv-diff-tree-view-design.md`): one tree per Unstaged/Staged
+  group, single-child folder chains compacted, folders and files mixed alphabetically
+  (`lib/diff/changeTree.ts`, pure). `t` or the title button switches to the flat list.
+  In tree view the main pane is re-sorted into the same order (`sortEntriesForTree`), so
+  `]`/`[` and scroll tracking walk the tree. A folder checkbox stages or unstages every
+  file under it one at a time and stops at the first failure. Every stage/unstage goes
+  through one promise queue (`enqueueStaging`) and a folder loop re-resolves each target
+  by id in the live entries, so double clicks, `s` mid-loop and a refresh mid-loop cannot
+  collide on git's index lock or stage a stale blob.
 - **View arg passing: `window.__quantum_args`.** Views that accept arguments
   (file-viewer, and any future view that takes open-time parameters) read
   `(window as any).__quantum_args` in their Svelte `onMount`. The value is
