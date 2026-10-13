@@ -452,6 +452,15 @@ describe('DiffView', () => {
 		await vi.waitFor(() => expect(container.querySelector('.diff-file')).not.toBeNull());
 		expect(container.querySelector('.changes-sidebar')).toBeNull();
 		expect(Array.from(container.querySelectorAll('button')).some((button) => button.textContent?.includes('Stage'))).toBe(false);
+		// No sidebar, so no tree toggle hint either.
+		expect(container.querySelector('footer.keys')?.textContent).not.toContain('tree / list');
+	});
+
+	test('the key hints list t for the tree toggle in a git diff', async () => {
+		mockChangesAndFingerprint(changeSetFixture());
+		const { container } = render(DiffView, { props: { source: { kind: 'git', spec: { repository: '/repository' } } } });
+		await vi.waitFor(() => expect(container.querySelector('footer.keys')).not.toBeNull());
+		expect(container.querySelector('footer.keys')?.textContent?.replace(/\s+/g, ' ')).toContain('t tree / list');
 	});
 
 	test('"n" scrolls the pane to the next change block', async () => {

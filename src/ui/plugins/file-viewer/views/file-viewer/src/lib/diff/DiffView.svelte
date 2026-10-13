@@ -1036,6 +1036,9 @@
 		<footer class="keys">
 			<span><kbd>n</kbd><kbd>p</kbd> change</span>
 			<span><kbd>]</kbd><kbd>[</kbd> file</span>
+			{#if source.kind === 'git'}
+				<span><kbd>t</kbd> tree / list</span>
+			{/if}
 			{#if stageable}
 				<span><kbd>s</kbd> stage / unstage</span>
 				<span><kbd>R</kbd> refresh</span>
