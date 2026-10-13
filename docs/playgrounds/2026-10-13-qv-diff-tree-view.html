@@ -1,0 +1,393 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>qv diff: changed-files tree view</title>
+<style>
+	:root {
+		--color-bg: #292520; --color-bg-alt: #3b3630; --color-border: #4a443e; --color-fg: #e8e4d8;
+		--color-fg-alt: #d8d4c8; --color-accent: #a6e3a1; --color-muted: #8a8578; --color-error: #af4e3c;
+		--color-surface: #3b3630; --font-mono: ui-monospace, "JetBrains Mono", monospace;
+	}
+	* { box-sizing: border-box; }
+	body { margin: 0; background: #1d1a17; color: var(--color-fg); font-family: system-ui, sans-serif; }
+	.layout { display: grid; grid-template-columns: 300px 1fr; gap: 16px; padding: 16px; min-height: 100vh; }
+	.controls { background: #24201c; border: 1px solid var(--color-border); border-radius: 8px; padding: 12px; font-size: 13px; align-self: start; position: sticky; top: 16px; }
+	.controls h1 { font-size: 14px; margin: 0 0 4px; }
+	.controls p.hint { color: var(--color-muted); font-size: 12px; margin: 0 0 12px; }
+	.control { margin-bottom: 12px; }
+	.control label.title { display: block; font-weight: 600; margin-bottom: 4px; }
+	.control .why { color: var(--color-muted); font-size: 11px; margin-top: 3px; }
+	.segmented { display: flex; flex-wrap: wrap; gap: 4px; }
+	.segmented button { background: var(--color-bg); color: var(--color-fg-alt); border: 1px solid var(--color-border); border-radius: 4px; padding: 3px 8px; font-size: 12px; cursor: pointer; }
+	.segmented button.on { background: var(--color-accent); color: #1d1a17; border-color: var(--color-accent); }
+	.presets { display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 12px; }
+	.presets button { background: none; border: 1px dashed var(--color-muted); color: var(--color-fg-alt); border-radius: 4px; padding: 3px 8px; font-size: 12px; cursor: pointer; }
+	.stage-area { display: flex; flex-direction: column; gap: 12px; }
+	.frame-label { color: var(--color-muted); font-size: 12px; }
+	/* The real qv window: header bar + body (sidebar + pane). */
+	.window { background: var(--color-bg); border: 1px solid var(--color-border); border-radius: 8px; overflow: hidden; height: 620px; display: flex; flex-direction: column; }
+	.diff-header { display: flex; align-items: center; gap: 10px; padding: 8px 12px; border-bottom: 1px solid var(--color-border); font-size: 13px; }
+	.diff-header .badge { font-family: var(--font-mono); color: var(--color-accent); }
+	.diff-header .title { font-weight: 600; }
+	.diff-header .dir { color: var(--color-muted); font-size: 12px; }
+	.diff-header .progress { margin-left: auto; color: var(--color-muted); font-size: 12px; display: flex; align-items: center; gap: 6px; }
+	.diff-header .progress .bar { width: 48px; height: 4px; background: var(--color-border); border-radius: 2px; overflow: hidden; display: inline-block; }
+	.diff-header .progress .bar span { display: block; height: 100%; background: var(--color-accent); }
+	.diff-header .stats { font-family: var(--font-mono); font-size: 12px; }
+	.additions { color: var(--color-accent); } .deletions { color: var(--color-error); }
+	.toggle { display: flex; border: 1px solid var(--color-border); border-radius: 4px; overflow: hidden; }
+	.toggle button { background: none; border: none; color: var(--color-muted); padding: 3px 8px; font-size: 12px; cursor: pointer; }
+	.toggle button.on { background: var(--color-surface); color: var(--color-fg); }
+	.body { flex: 1; display: flex; min-height: 0; }
+	/* ChangesSidebar.svelte, copied. */
+	.changes-sidebar { flex-shrink: 0; border-right: 1px solid var(--color-border); display: flex; flex-direction: column; overflow: hidden; }
+	.sidebar-title { padding: 12px; font-size: 13px; font-weight: 600; border-bottom: 1px solid var(--color-border); display: flex; justify-content: space-between; align-items: center; gap: 6px; }
+	.sidebar-title .count { font-weight: 400; color: var(--color-muted); font-size: 12px; margin-left: auto; }
+	.view-toggle { background: none; border: 1px solid var(--color-border); border-radius: 4px; color: var(--color-muted); cursor: pointer; font-size: 12px; width: 22px; height: 20px; padding: 0; line-height: 1; }
+	.view-toggle:hover { color: var(--color-fg); }
+	.file-list { list-style: none; overflow-y: auto; flex: 1; margin: 0; padding: 0 0 8px; }
+	.group-heading button { width: 100%; border: none; background: none; cursor: pointer; padding: 10px 12px 4px; font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--color-muted); display: flex; justify-content: space-between; }
+	.group-label { display: flex; align-items: center; gap: 6px; } .chevron { font-size: 8px; display: inline-block; width: 8px; }
+	.entry { display: grid; grid-template-columns: auto 1fr; align-items: center; gap: 6px; padding: 0 12px; }
+	.entry button.row { width: 100%; min-width: 0; border: none; background: none; text-align: left; padding: 7px 0; cursor: pointer; display: grid; grid-template-columns: 14px 1fr auto; gap: 6px; align-items: baseline; color: var(--color-fg-alt); font-size: 13px; }
+	.entry.tree-file button.row { padding: 4px 0; }
+	.entry button.row:hover { background: var(--color-surface); }
+	.entry.active button.row { color: var(--color-accent); font-weight: 600; }
+	.checkbox { appearance: none; margin: 0; width: 14px; height: 14px; border: 1px solid var(--color-muted); border-radius: 3px; cursor: pointer; background: none; position: relative; }
+	.checkbox.checked { background: var(--color-accent); border-color: var(--color-accent); }
+	.checkbox.mixed { background: linear-gradient(var(--color-accent), var(--color-accent)) center / 8px 2px no-repeat; border-color: var(--color-accent); }
+	.checkbox.placeholder { visibility: hidden; }
+	.status { font-family: var(--font-mono); font-size: 11px; font-weight: 700; }
+	.status-M { color: #ffcb6b; } .status-A { color: var(--color-accent); } .status-D { color: var(--color-error); } .status-U { color: #89ddff; } .status-R { color: #82aaff; }
+	.filename { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+	.directory { display: block; font-size: 11px; color: var(--color-muted); font-weight: 400; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; direction: rtl; text-align: left; }
+	.dot { display: inline-block; width: 6px; height: 6px; border-radius: 50%; background: #ffcb6b; vertical-align: middle; flex-shrink: 0; }
+	.name-block { min-width: 0; } .name-line { display: flex; align-items: center; gap: 6px; min-width: 0; }
+	.mini-stats { white-space: nowrap; font-family: var(--font-mono); font-size: 11px; font-weight: 400; color: var(--color-muted); }
+	/* New: folder rows. */
+	.folder { display: grid; grid-template-columns: auto 1fr; align-items: center; gap: 6px; padding: 0 12px; }
+	.folder button.row { width: 100%; min-width: 0; border: none; background: none; text-align: left; padding: 4px 0; cursor: pointer; display: grid; grid-template-columns: 14px 1fr auto; gap: 6px; align-items: baseline; color: var(--color-muted); font-size: 12px; }
+	.folder button.row:hover { color: var(--color-fg); }
+	.folder .folder-name { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; direction: rtl; text-align: left; }
+	.folder .chevron { color: var(--color-muted); }
+	.guide { border-left: 1px solid var(--color-border); }
+	.indent { display: flex; height: 100%; align-self: stretch; }
+	.indent span { display: inline-block; height: 100%; }
+	/* Pane: file headers in the order the pane renders them. */
+	.pane { flex: 1; overflow-y: auto; padding: 10px 14px; min-width: 0; }
+	.pane .file-header { font-family: var(--font-mono); font-size: 12px; padding: 6px 8px; border: 1px solid var(--color-border); border-radius: 4px; margin-bottom: 6px; background: var(--color-bg-alt); color: var(--color-fg-alt); display: flex; gap: 8px; white-space: nowrap; overflow: hidden; }
+	.pane .file-header .section { color: var(--color-muted); }
+	.pane .order-note { color: var(--color-muted); font-size: 12px; margin-bottom: 8px; }
+	.prompt-box { background: #24201c; border: 1px solid var(--color-border); border-radius: 8px; padding: 12px; }
+	.prompt-box pre { white-space: pre-wrap; font-family: var(--font-mono); font-size: 12px; margin: 0 0 8px; color: var(--color-fg-alt); }
+	.prompt-box button { background: var(--color-accent); color: #1d1a17; border: none; border-radius: 4px; padding: 4px 10px; cursor: pointer; font-size: 12px; }
+	.cost { font-size: 12px; color: var(--color-muted); }
+	.cost b { color: var(--color-fg); }
+</style>
+</head>
+<body>
+<div class="layout">
+	<aside class="controls">
+		<h1>qv diff: changed-files tree</h1>
+		<p class="hint">Real sidebar (ChangesSidebar.svelte, sycamore colours), real 13-file murmur8 change from 2026-10-13 with 4 files staged and one partly staged. Click folders to fold, checkboxes to stage, rows to select.</p>
+		<div class="presets" id="presets"></div>
+		<div id="controlList"></div>
+		<p class="cost" id="cost"></p>
+	</aside>
+	<main class="stage-area">
+		<div class="frame-label">qv --diff in code/projects/murmur8 (window cropped to 620px tall)</div>
+		<div class="window" id="window"></div>
+		<div class="prompt-box">
+			<pre id="prompt"></pre>
+			<button type="button" id="copy">Copy</button>
+		</div>
+	</main>
+</div>
+<script>
+const FILES = [
+	{ path: '.github/workflows/runner-watchdog.yml', status: 'M', add: 8, del: 3, state: 'staged' },
+	{ path: 'src/Murmur8.Application/AI/ToolExecutor.cs', status: 'M', add: 20, del: 11, state: 'staged' },
+	{ path: 'src/Murmur8.Application/Calendar/Commands/SetCalendarNotificationRules/SetCalendarNotificationRulesCommandHandler.cs', status: 'M', add: 4, del: 3, state: 'unstaged' },
+	{ path: 'src/Murmur8.Application/Calendar/EventHandlers/NotifyCalendarNotificationRulesUpdated.cs', status: 'A', add: 21, del: 0, state: 'unstaged' },
+	{ path: 'src/Murmur8.Application/Calendar/Events/CalendarEvents.cs', status: 'M', add: 7, del: 0, state: 'unstaged' },
+	{ path: 'src/Murmur8.Web/lib/api/calendarQueryKeys.ts', status: 'M', add: 4, del: 2, state: 'unstaged' },
+	{ path: 'src/Murmur8.Web/lib/realtime/EventsContext.tsx', status: 'M', add: 10, del: 0, state: 'unstaged' },
+	{ path: 'src/Murmur8.Worker/Notifications/NotificationScheduler.cs', status: 'M', add: 19, del: 0, state: 'partly' },
+	{ path: 'tests/Murmur8.Application.Tests/AI/ToolExecutorTests.cs', status: 'M', add: 65, del: 4, state: 'staged' },
+	{ path: 'tests/Murmur8.Application.Tests/Calendar/Commands/SetCalendarNotificationRulesCommandHandlerTests.cs', status: 'M', add: 10, del: 4, state: 'unstaged' },
+	{ path: 'tests/Murmur8.Application.Tests/Calendar/NotifyCalendarNotificationRulesUpdatedTests.cs', status: 'A', add: 30, del: 0, state: 'unstaged' },
+	{ path: 'tests/Murmur8.Worker.Tests/Notifications/NotificationSchedulerRuleTests.cs', status: 'M', add: 43, del: 0, state: 'unstaged' },
+	{ path: 'tests/Murmur8.Worker.Tests/Notifications/NotificationSchedulerTests.cs', status: 'M', add: 5, del: 4, state: 'unstaged' },
+];
+
+const CONTROLS = [
+	{ key: 'view', title: 'Starting view', options: [['tree', 'Tree'], ['list', 'Flat list']],
+	  why: 'Requested: tree on by default. The toggle switches back to today\u2019s flat list.' },
+	{ key: 'togglePlace', title: 'Where the toggle lives', options: [['sidebar', 'Icon in sidebar title'], ['header', 'Tree | List next to Unified | Split']],
+	  why: 'Both also get a key (t).' },
+	{ key: 'sections', title: 'Unstaged / Staged with a tree', options: [['perSection', 'A tree inside each section'], ['merged', 'One tree, checkbox shows state']],
+	  why: 'Per section keeps today\u2019s groups and the "stage moves it down" feel. Merged shows each file once.' },
+	{ key: 'compact', title: 'Single-child folder chains', options: [['on', 'Compact (src/Murmur8.Application/AI)'], ['off', 'One row per folder']],
+	  why: 'Compact cuts rows a lot on deep .NET paths.' },
+	{ key: 'order', title: 'Order inside a folder', options: [['foldersFirst', 'Folders first'], ['mixed', 'Alphabetical, mixed']],
+	  why: 'The main pane follows the sidebar order either way, so ] and [ walk the tree.' },
+	{ key: 'folderInfo', title: 'Folder row shows', options: [['none', 'Name only'], ['count', 'File count'], ['stats', 'Summed +N \u2212M']] },
+	{ key: 'folderCheckbox', title: 'Stage a whole folder', options: [['off', 'No'], ['on', 'Folder checkbox']],
+	  why: 'Extra scope: stages every file under it (each by its displayed blob).' },
+	{ key: 'fileRow', title: 'File row in tree mode', options: [['single', 'Name only (one line)'], ['double', 'Keep directory line']],
+	  why: 'The tree already shows the folder, so the second line is redundant.' },
+	{ key: 'indent', title: 'Indent per level', options: [['8', '8px'], ['12', '12px'], ['16', '16px']] },
+	{ key: 'guides', title: 'Indent guide lines', options: [['on', 'On'], ['off', 'Off']] },
+	{ key: 'width', title: 'Sidebar width', options: [['220', '220px (today)'], ['260', '260px'], ['300', '300px']],
+	  why: 'Wider fits deep names but takes diff width.' },
+];
+const DEFAULTS = { view: 'tree', togglePlace: 'sidebar', sections: 'perSection', compact: 'on', order: 'foldersFirst', folderInfo: 'none', folderCheckbox: 'off', fileRow: 'single', indent: '12', guides: 'on', width: '220' };
+const PRESETS = {
+	'Recommended': { ...DEFAULTS },
+	'VS Code-like': { ...DEFAULTS, compact: 'on', order: 'foldersFirst', folderInfo: 'none', guides: 'on', indent: '8', togglePlace: 'sidebar' },
+	'GitHub PR-like': { ...DEFAULTS, sections: 'merged', compact: 'on', folderInfo: 'none', guides: 'off', width: '260' },
+	'Rich folders': { ...DEFAULTS, folderInfo: 'stats', folderCheckbox: 'on', width: '260' },
+	'Today (flat)': { ...DEFAULTS, view: 'list' },
+};
+
+const state = { ...DEFAULTS };
+let collapsed = new Set();
+let collapsedGroups = new Set();
+let activeId = null;
+const fileState = Object.fromEntries(FILES.map((file) => [file.path, file.state]));
+
+function entries() {
+	// reviewModel.ts: a partly staged file yields an Unstaged AND a Staged entry.
+	const list = [];
+	for (const file of FILES) {
+		const fileStateValue = fileState[file.path];
+		if (fileStateValue === 'unstaged' || fileStateValue === 'partly') list.push({ ...file, section: 'unstaged', partly: fileStateValue === 'partly' });
+		if (fileStateValue === 'staged' || fileStateValue === 'partly') list.push({ ...file, section: 'staged', partly: fileStateValue === 'partly' });
+	}
+	return list.map((entry) => ({ ...entry, id: entry.path + ':' + entry.section }));
+}
+
+function buildTree(list) {
+	const root = { name: '', path: '', folders: new Map(), files: [] };
+	for (const entry of list) {
+		const parts = entry.path.split('/');
+		let node = root;
+		for (let index = 0; index < parts.length - 1; index++) {
+			const name = parts[index];
+			if (!node.folders.has(name)) node.folders.set(name, { name, path: (node.path ? node.path + '/' : '') + name, folders: new Map(), files: [] });
+			node = node.folders.get(name);
+		}
+		node.files.push(entry);
+	}
+	if (state.compact === 'on') compactNode(root);
+	return root;
+}
+function compactNode(node) {
+	for (const [key, child] of [...node.folders]) {
+		let current = child;
+		while (current.files.length === 0 && current.folders.size === 1) {
+			const only = [...current.folders.values()][0];
+			current = { name: current.name + '/' + only.name, path: only.path, folders: only.folders, files: only.files };
+		}
+		node.folders.delete(key);
+		node.folders.set(current.name, current);
+		compactNode(current);
+	}
+}
+function folderTotals(node) {
+	let count = node.files.length, add = 0, del = 0, staged = 0;
+	for (const file of node.files) { add += file.add; del += file.del; if (file.section === 'staged') staged++; }
+	for (const child of node.folders.values()) { const totals = folderTotals(child); count += totals.count; add += totals.add; del += totals.del; staged += totals.staged; }
+	return { count, add, del, staged };
+}
+function childrenInOrder(node) {
+	const folders = [...node.folders.values()].map((folder) => ({ kind: 'folder', name: folder.name, node: folder }));
+	const files = node.files.map((file) => ({ kind: 'file', name: file.path.split('/').pop(), entry: file }));
+	const byName = (left, right) => left.name.localeCompare(right.name);
+	if (state.order === 'foldersFirst') return [...folders.sort(byName), ...files.sort(byName)];
+	return [...folders, ...files].sort(byName);
+}
+// Flatten into rows (the task-manager tree.ts pattern) and collect pane order.
+function flatten(node, depth, scope, rows, paneOrder) {
+	for (const child of childrenInOrder(node)) {
+		if (child.kind === 'folder') {
+			const key = scope + '|' + child.node.path;
+			rows.push({ kind: 'folder', depth, node: child.node, key, open: !collapsed.has(key) });
+			if (!collapsed.has(key)) flatten(child.node, depth + 1, scope, rows, paneOrder);
+			else collectFiles(child.node, paneOrder);
+		} else {
+			rows.push({ kind: 'file', depth, entry: child.entry });
+			paneOrder.push(child.entry);
+		}
+	}
+}
+function collectFiles(node, paneOrder) { for (const child of childrenInOrder(node)) { if (child.kind === 'folder') collectFiles(child.node, paneOrder); else paneOrder.push(child.entry); } }
+
+function splitPath(path) { const index = path.lastIndexOf('/'); return index >= 0 ? { directory: path.slice(0, index + 1), name: path.slice(index + 1) } : { directory: '', name: path }; }
+function escapeHtml(text) { return text.replace(/[&<>"]/g, (character) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[character])); }
+
+function indentHtml(depth) {
+	if (depth === 0) return '';
+	const width = Number(state.indent);
+	let html = '<span class="indent">';
+	for (let level = 0; level < depth; level++) html += `<span style="width:${width}px" class="${state.guides === 'on' ? 'guide' : ''}"></span>`;
+	return html + '</span>';
+}
+
+function fileRowHtml(entry, depth, inTree) {
+	const current = splitPath(entry.path);
+	const checked = entry.section === 'staged';
+	const showDirectory = !inTree || state.fileRow === 'double';
+	return `<li class="entry ${inTree ? 'tree-file' : ''} ${entry.id === activeId ? 'active' : ''}" style="grid-template-columns:auto auto 1fr">
+		<input type="checkbox" class="checkbox ${checked ? 'checked' : ''}" data-stage="${escapeHtml(entry.id)}">
+		${inTree ? indentHtml(depth) : '<span></span>'}
+		<button class="row" type="button" data-select="${escapeHtml(entry.id)}">
+			<span class="status status-${entry.status}">${entry.status}</span>
+			<span class="name-block"><span class="name-line"><span class="filename">${escapeHtml(current.name)}</span>${entry.partly ? '<span class="dot" title="partially staged: edited after staging"></span>' : ''}</span>
+			${showDirectory ? `<span class="directory">${escapeHtml(current.directory)}</span>` : ''}</span>
+			<span class="mini-stats">+${entry.add} \u2212${entry.del}</span>
+		</button></li>`;
+}
+
+function folderRowHtml(row) {
+	const totals = folderTotals(row.node);
+	let info = '';
+	if (state.folderInfo === 'count') info = `${totals.count}`;
+	if (state.folderInfo === 'stats') info = `+${totals.add} \u2212${totals.del}`;
+	let checkbox = '<span class="checkbox placeholder"></span>';
+	if (state.folderCheckbox === 'on') {
+		const all = totals.staged === totals.count, none = totals.staged === 0;
+		checkbox = `<span class="checkbox ${all ? 'checked' : ''} ${!all && !none ? 'mixed' : ''}" data-stage-folder="${escapeHtml(row.key)}"></span>`;
+	}
+	return `<li class="folder" style="grid-template-columns:auto auto 1fr">${checkbox}${indentHtml(row.depth)}
+		<button class="row" type="button" data-folder="${escapeHtml(row.key)}">
+			<span class="chevron">${row.open ? '\u25BC' : '\u25B6'}</span>
+			<span class="folder-name"><bdi>${escapeHtml(row.node.name)}/</bdi></span>
+			<span class="mini-stats">${info}</span>
+		</button></li>`;
+}
+
+function groupHeadingHtml(group, label, count) {
+	return `<li class="group-heading"><button type="button" data-group="${group}"><span class="group-label"><span class="chevron">${collapsedGroups.has(group) ? '\u25B6' : '\u25BC'}</span>${label}</span><span>${count}</span></button></li>`;
+}
+
+function render() {
+	const list = entries();
+	const fileCount = new Set(list.map((entry) => entry.path)).size;
+	const sortedList = (section) => list.filter((entry) => entry.section === section).sort((left, right) => left.path.localeCompare(right.path));
+	let listHtml = '';
+	let paneOrder = [];
+	let rowCount = 0;
+	if (state.view === 'list') {
+		for (const section of ['unstaged', 'staged']) {
+			const sectionEntries = sortedList(section);
+			listHtml += groupHeadingHtml(section, section === 'unstaged' ? 'Unstaged' : 'Staged', sectionEntries.length);
+			if (!collapsedGroups.has(section)) for (const entry of sectionEntries) { listHtml += fileRowHtml(entry, 0, false); rowCount++; }
+			paneOrder.push(...sectionEntries);
+		}
+	} else if (state.sections === 'perSection') {
+		for (const section of ['unstaged', 'staged']) {
+			const sectionEntries = sortedList(section);
+			listHtml += groupHeadingHtml(section, section === 'unstaged' ? 'Unstaged' : 'Staged', sectionEntries.length);
+			const rows = [], order = [];
+			flatten(buildTree(sectionEntries), 0, section, rows, order);
+			paneOrder.push(...order);
+			if (!collapsedGroups.has(section)) for (const row of rows) { listHtml += row.kind === 'folder' ? folderRowHtml(row) : fileRowHtml(row.entry, row.depth, true); rowCount++; }
+		}
+	} else {
+		// Merged: one entry per file; a partly staged file shows once with its dot; checkbox = staged.
+		const byPath = new Map();
+		for (const entry of list) { const existing = byPath.get(entry.path); if (!existing || entry.section === 'unstaged') byPath.set(entry.path, { ...entry, section: fileState[entry.path] === 'staged' ? 'staged' : 'unstaged', id: entry.path }); }
+		const rows = [], order = [];
+		flatten(buildTree([...byPath.values()]), 0, 'all', rows, order);
+		paneOrder = order;
+		for (const row of rows) { listHtml += row.kind === 'folder' ? folderRowHtml(row) : fileRowHtml(row.entry, row.depth, true); rowCount++; }
+	}
+	if (activeId === null && paneOrder.length) activeId = paneOrder[0].id;
+
+	const stagedCount = FILES.filter((file) => fileState[file.path] !== 'unstaged').length;
+	const partlyCount = FILES.filter((file) => fileState[file.path] === 'partly').length;
+	const totalAdd = FILES.reduce((sum, file) => sum + file.add, 0), totalDel = FILES.reduce((sum, file) => sum + file.del, 0);
+	const sidebarToggle = state.togglePlace === 'sidebar' ? `<button class="view-toggle" type="button" data-toggle-view title="${state.view === 'tree' ? 'Show as list (t)' : 'Show as tree (t)'}">${state.view === 'tree' ? '\u2261' : '\u2514'}</button>` : '';
+	const headerToggle = state.togglePlace === 'header' ? `<div class="toggle"><button type="button" class="${state.view === 'tree' ? 'on' : ''}" data-set-view="tree">Tree</button><button type="button" class="${state.view === 'list' ? 'on' : ''}" data-set-view="list">List</button></div>` : '';
+
+	document.getElementById('window').innerHTML = `
+		<header class="diff-header">
+			<span class="badge">\u00B1</span><span class="title">murmur8</span><span class="dir">HEAD \u2192 working tree</span>
+			<span class="progress"><span class="bar"><span style="width:${(stagedCount / FILES.length) * 100}%"></span></span>${stagedCount} staged \u00B7 ${partlyCount} partly</span>
+			<span class="stats"><span class="additions">+${totalAdd}</span> <span class="deletions">\u2212${totalDel}</span></span>
+			${headerToggle}
+			<div class="toggle"><button class="on" type="button">Unified</button><button type="button">Split</button></div>
+		</header>
+		<div class="body">
+			<nav class="changes-sidebar" style="width:${state.width}px">
+				<div class="sidebar-title"><span>Changes</span><span class="count">${fileCount} files</span>${sidebarToggle}</div>
+				<ul class="file-list">${listHtml}</ul>
+			</nav>
+			<div class="pane">
+				<div class="order-note">Main pane, file sections in render order (follows the sidebar):</div>
+				${paneOrder.map((entry, index) => `<div class="file-header" style="${entry.id === activeId ? 'border-color:var(--color-accent)' : ''}"><span class="section">${index + 1}.</span><span class="status status-${entry.status}">${entry.status}</span>${escapeHtml(entry.path)}${state.sections === 'perSection' || state.view === 'list' ? `<span class="section">${entry.section}</span>` : ''}</div>`).join('')}
+			</div>
+		</div>`;
+	document.getElementById('cost').innerHTML = `Visible sidebar rows: <b>${rowCount}</b> (flat list today: <b>${list.length}</b>, two lines each). Diff width lost vs today: <b>${Number(state.width) - 220}px</b>.`;
+	renderControls();
+	updatePrompt();
+}
+
+function renderControls() {
+	document.getElementById('controlList').innerHTML = CONTROLS.map((control) => `
+		<div class="control"><label class="title">${control.title}</label>
+		<div class="segmented">${control.options.map(([value, label]) => `<button type="button" class="${state[control.key] === value ? 'on' : ''}" data-control="${control.key}" data-value="${value}">${label}</button>`).join('')}</div>
+		${control.why ? `<div class="why">${control.why}</div>` : ''}</div>`).join('');
+}
+
+function label(key) { const control = CONTROLS.find((item) => item.key === key); return control.options.find(([value]) => value === state[key])[1]; }
+function updatePrompt() {
+	const lines = [
+		'qv diff mode: add a folder tree view to the Changes sidebar (ChangesSidebar.svelte), switchable to the existing flat list.',
+		`- Starting view: ${state.view === 'tree' ? 'tree, on by default' : 'flat list'}; toggle with the key t and ${state.togglePlace === 'sidebar' ? 'an icon button in the sidebar title' : 'a Tree | List segmented control in the diff header next to Unified | Split'}.`,
+		`- Sections: ${state.sections === 'perSection' ? 'keep the Unstaged and Staged groups, each with its own tree (a partly staged file appears in both, as today)' : 'one tree for the whole change set; each file once, its checkbox shows staged, the amber dot shows partly staged'}.`,
+		`- Folder chains with a single child folder: ${state.compact === 'on' ? 'compacted into one row (for example src/Murmur8.Application/AI)' : 'one row per folder level'}.`,
+		`- Order inside a folder: ${state.order === 'foldersFirst' ? 'folders first, then files, each alphabetical' : 'folders and files mixed alphabetically'}. The main pane renders file sections in the same order as the sidebar, so ] and [ walk the tree.`,
+		`- Folder rows: chevron plus name${state.folderInfo === 'count' ? ', with the number of files under it' : state.folderInfo === 'stats' ? ', with the summed +N \u2212M of the files under it' : ', nothing else'}; click folds and unfolds.`,
+		`- Folder staging: ${state.folderCheckbox === 'on' ? 'a folder checkbox stages or unstages every file under it (mixed state shown when only some are staged)' : 'none; files are staged one at a time as today'}.`,
+		`- File rows in tree mode: ${state.fileRow === 'single' ? 'one line (status, name, partly-staged dot, +N \u2212M); no directory line' : 'keep the directory line under the name'}.`,
+		`- Indent ${state.indent}px per level, indent guide lines ${state.guides}. Sidebar width ${state.width}px.`,
+	];
+	document.getElementById('prompt').textContent = lines.join('\n');
+}
+
+document.getElementById('presets').innerHTML = Object.keys(PRESETS).map((name) => `<button type="button" data-preset="${name}">${name}</button>`).join('');
+document.addEventListener('click', (event) => {
+	const target = event.target.closest('[data-control],[data-preset],[data-folder],[data-group],[data-select],[data-stage],[data-stage-folder],[data-toggle-view],[data-set-view],#copy');
+	if (!target) return;
+	if (target.dataset.control) { state[target.dataset.control] = target.dataset.value; collapsed = new Set(); }
+	else if (target.dataset.preset) { Object.assign(state, PRESETS[target.dataset.preset]); collapsed = new Set(); }
+	else if (target.dataset.folder) { collapsed.has(target.dataset.folder) ? collapsed.delete(target.dataset.folder) : collapsed.add(target.dataset.folder); }
+	else if (target.dataset.group) { collapsedGroups.has(target.dataset.group) ? collapsedGroups.delete(target.dataset.group) : collapsedGroups.add(target.dataset.group); }
+	else if (target.dataset.select) { activeId = target.dataset.select; }
+	else if (target.dataset.stage) {
+		event.preventDefault();
+		const [path, section] = target.dataset.stage.includes(':') ? target.dataset.stage.split(':') : [target.dataset.stage, null];
+		const current = fileState[path];
+		fileState[path] = (section === 'staged' || current === 'staged') ? 'unstaged' : 'staged';
+		activeId = null;
+	}
+	else if (target.dataset.stageFolder) {
+		const folderPath = target.dataset.stageFolder.split('|')[1];
+		const inside = FILES.filter((file) => file.path.startsWith(folderPath + '/'));
+		const allStaged = inside.every((file) => fileState[file.path] === 'staged');
+		for (const file of inside) fileState[file.path] = allStaged ? 'unstaged' : 'staged';
+		activeId = null;
+	}
+	else if ('toggleView' in target.dataset) { state.view = state.view === 'tree' ? 'list' : 'tree'; }
+	else if (target.dataset.setView) { state.view = target.dataset.setView; }
+	else if (target.id === 'copy') { navigator.clipboard.writeText(document.getElementById('prompt').textContent); target.textContent = 'Copied!'; setTimeout(() => (target.textContent = 'Copy'), 1200); return; }
+	render();
+});
+document.addEventListener('keydown', (event) => { if (event.key === 't' && !event.ctrlKey && !event.metaKey) { state.view = state.view === 'tree' ? 'list' : 'tree'; render(); } });
+render();
+</script>
+</body>
+</html>
