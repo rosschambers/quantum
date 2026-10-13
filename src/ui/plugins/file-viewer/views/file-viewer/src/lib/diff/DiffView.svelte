@@ -225,7 +225,18 @@
 		}
 	}
 
-	async function handleStage(entry: ReviewEntry): Promise<boolean> {
+	// Every stage and unstage goes through this queue, so two git index writes
+	// never overlap on index.lock. A folder loop occupies one slot: its body calls
+	// the unqueued stageEntry / unstageEntry, never the queued handlers.
+	let stagingQueue: Promise<unknown> = Promise.resolve();
+
+	function enqueueStaging<T>(work: () => Promise<T>): Promise<T> {
+		const run = stagingQueue.then(work, work);
+		stagingQueue = run.catch(() => undefined);
+		return run;
+	}
+
+	async function stageEntry(entry: ReviewEntry): Promise<boolean> {
 		if (!changeSet) return false;
 		try {
 			await client.call('file-viewer.stage', {
@@ -243,7 +254,7 @@
 		}
 	}
 
-	async function handleUnstage(entry: ReviewEntry): Promise<boolean> {
+	async function unstageEntry(entry: ReviewEntry): Promise<boolean> {
 		if (!changeSet) return false;
 		try {
 			await client.call('file-viewer.unstage', {
@@ -268,19 +279,36 @@
 		}
 	}
 
+	function handleStage(entry: ReviewEntry): Promise<boolean> {
+		return enqueueStaging(() => stageEntry(entry));
+	}
+
+	function handleUnstage(entry: ReviewEntry): Promise<boolean> {
+		return enqueueStaging(() => unstageEntry(entry));
+	}
+
 	// Folder checkbox: one file at a time in tree order, stopping at the first
 	// failure so the banner shows it and nothing after it is attempted. Files
 	// already staged stay staged; the sidebar shows the honest half-done state.
-	async function handleStageMany(targets: ReviewEntry[]): Promise<void> {
-		for (const entry of targets) {
-			if (!(await handleStage(entry))) return;
-		}
+	// Each target is looked up by id at the moment it runs: a refresh that lands
+	// mid-loop may have replaced its blob, and a file that already moved to the
+	// other section (a second click on the same checkbox) is skipped.
+	function runStagingLoop(targets: ReviewEntry[], stageOne: (entry: ReviewEntry) => Promise<boolean>): Promise<void> {
+		return enqueueStaging(async () => {
+			for (const target of targets) {
+				const current = entries.find((entry) => entry.id === target.id);
+				if (current === undefined) continue;
+				if (!(await stageOne(current))) return;
+			}
+		});
 	}
 
-	async function handleUnstageMany(targets: ReviewEntry[]): Promise<void> {
-		for (const entry of targets) {
-			if (!(await handleUnstage(entry))) return;
-		}
+	function handleStageMany(targets: ReviewEntry[]): Promise<void> {
+		return runStagingLoop(targets, stageEntry);
+	}
+
+	function handleUnstageMany(targets: ReviewEntry[]): Promise<void> {
+		return runStagingLoop(targets, unstageEntry);
 	}
 
 	// Tree view reads the pane in the sidebar's tree order, so ] and [ and the
@@ -778,8 +806,12 @@
 		if (nextIndex < 0) return;
 		activeIndex = nextIndex;
 		// The keyed file sections move on the next render; scroll after they have.
+		// Look the index up again after the tick: a key pressed in between may have
+		// moved activeIndex, and the scroll must follow the file, not the stale slot.
 		await tick();
-		selectEntry(nextIndex);
+		const settledIndex = entries.findIndex((entry) => entry.id === activeId);
+		if (settledIndex < 0) return;
+		selectEntry(settledIndex);
 	}
 
 	function handlePaneScroll(): void {
@@ -828,7 +860,8 @@
 				}
 			}
 
-			const inField = target instanceof Element && target.closest('input, textarea, select, [contenteditable]:not([contenteditable="false"])') !== null;
+			// Checkboxes are not text fields: a sidebar checkbox keeps focus after a click, and the file shortcuts must keep working from it.
+			const inField = target instanceof Element && target.closest('input:not([type="checkbox"]), textarea, select, [contenteditable]:not([contenteditable="false"])') !== null;
 
 			switch (action.kind) {
 				case 'open-search':

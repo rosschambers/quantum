@@ -90,6 +90,39 @@ function mockChangesAndFingerprint(changeSet: ChangeSet, fingerprint = 'fingerpr
 	});
 }
 
+function changedFile(path: string, letter: string): ChangedFile {
+	return {
+		path,
+		language: 'typescript',
+		base: side(`old ${letter}\n`, `${letter}-base`),
+		index: side(`old ${letter}\n`, `${letter}-base`),
+		target: side(`new ${letter}\n`, `${letter}-target`),
+		untracked: false,
+	};
+}
+
+/** A file whose change is fully staged: the index already holds the target content. */
+function stagedFile(path: string, letter: string): ChangedFile {
+	return {
+		path,
+		language: 'typescript',
+		base: side(`old ${letter}\n`, `${letter}-base`),
+		index: side(`new ${letter}\n`, `${letter}-index`),
+		target: side(`new ${letter}\n`, `${letter}-index`),
+		untracked: false,
+	};
+}
+
+/** Three unstaged files in one folder, listed out of tree order on purpose. */
+function folderChangeSet(): ChangeSet {
+	return changeSetFixture({ files: [changedFile('lib/c.ts', 'c'), changedFile('lib/a.ts', 'a'), changedFile('lib/b.ts', 'b')] });
+}
+
+function folderCheckbox(container: HTMLElement, group: 'unstaged' | 'staged', folder: string): HTMLInputElement {
+	const button = container.querySelector(`.folder-row button[data-group="${group}"][data-folder="${folder}"]`);
+	return button!.closest('.folder-row')!.querySelector('.checkbox') as HTMLInputElement;
+}
+
 describe('DiffView', () => {
 	test('renders entries from a fixture ChangeSet, with a Changes sidebar and a DiffFile per entry', async () => {
 		mockChangesAndFingerprint(changeSetFixture());
@@ -662,15 +695,9 @@ describe('DiffView', () => {
 	});
 
 	function treeOrderFixture(): ChangeSet {
-		const file = (path: string, letter: string): ChangedFile => ({
-			path,
-			language: 'typescript',
-			base: side(`old ${letter}\n`, `${letter}-base`),
-			index: side(`old ${letter}\n`, `${letter}-base`),
-			target: side(`new ${letter}\n`, `${letter}-target`),
-			untracked: false,
+		return changeSetFixture({
+			files: [changedFile('src/zeta.ts', 'z'), changedFile('src/alpha/one.ts', 'o'), changedFile('src-old.ts', 'd'), changedFile('src.ts', 's')],
 		});
-		return changeSetFixture({ files: [file('src/zeta.ts', 'z'), file('src/alpha/one.ts', 'o'), file('src-old.ts', 'd'), file('src.ts', 's')] });
 	}
 
 	function panePaths(container: HTMLElement): string[] {
@@ -696,6 +723,7 @@ describe('DiffView', () => {
 		await vi.waitFor(() => expect(container.querySelectorAll('.diff-file')).toHaveLength(4));
 
 		await fireEvent.keyDown(window, { key: ']' }); // tree order: second file, src/zeta.ts
+		expect(container.querySelector('.entry.active .filename')?.textContent).toBe('zeta.ts');
 		await fireEvent.keyDown(window, { key: 't' });
 		await vi.waitFor(() => expect(container.querySelectorAll('.folder-row')).toHaveLength(0));
 		expect(container.querySelector('.entry.active .filename')?.textContent).toBe('zeta.ts');
@@ -713,16 +741,7 @@ describe('DiffView', () => {
 	});
 
 	test('a folder checkbox stages its files one by one in tree order and stops at the first failure', async () => {
-		const file = (path: string, letter: string): ChangedFile => ({
-			path,
-			language: 'typescript',
-			base: side(`old ${letter}\n`, `${letter}-base`),
-			index: side(`old ${letter}\n`, `${letter}-base`),
-			target: side(`new ${letter}\n`, `${letter}-target`),
-			untracked: false,
-		});
-		const changeSet = changeSetFixture({ files: [file('lib/c.ts', 'c'), file('lib/a.ts', 'a'), file('lib/b.ts', 'b')] });
-		mockChangesAndFingerprint(changeSet);
+		mockChangesAndFingerprint(folderChangeSet());
 		const { container } = render(DiffView, { props: { source: { kind: 'git', spec: { repository: '/repository' } } } });
 		await vi.waitFor(() => expect(container.querySelectorAll('.diff-file')).toHaveLength(3));
 
@@ -735,11 +754,148 @@ describe('DiffView', () => {
 			return Promise.resolve(undefined);
 		});
 
-		const folderButton = container.querySelector('.folder-row button[data-group="unstaged"][data-folder="lib"]');
-		await fireEvent.click(folderButton!.closest('.folder-row')!.querySelector('.checkbox')!);
+		await fireEvent.click(folderCheckbox(container, 'unstaged', 'lib'));
 
 		await vi.waitFor(() => expect(container.querySelector('.banner.error')?.textContent).toContain('index.lock exists'));
 		expect(stagedPaths).toEqual(['lib/a.ts', 'lib/b.ts']);
+		expect(container.querySelector('input[aria-label="Unstage a.ts"]')).not.toBeNull();
+		expect(container.querySelector('input[aria-label="Stage b.ts"]')).not.toBeNull();
+		expect(container.querySelector('input[aria-label="Stage c.ts"]')).not.toBeNull();
+	});
+
+	test('a folder checkbox clicked twice stages each file once, with one stage call in flight at a time', async () => {
+		mockChangesAndFingerprint(folderChangeSet());
+		const { container } = render(DiffView, { props: { source: { kind: 'git', spec: { repository: '/repository' } } } });
+		await vi.waitFor(() => expect(container.querySelectorAll('.diff-file')).toHaveLength(3));
+
+		const stagedPaths: string[] = [];
+		const settlers: (() => void)[] = [];
+		let inFlight = 0;
+		let maxInFlight = 0;
+		callMock.mockImplementation((method: string, params: { path: string }) => {
+			if (method === 'file-viewer.stage') {
+				stagedPaths.push(params.path);
+				inFlight++;
+				maxInFlight = Math.max(maxInFlight, inFlight);
+				return new Promise((resolve) => {
+					settlers.push(() => {
+						inFlight--;
+						resolve({});
+					});
+				});
+			}
+			return Promise.resolve(undefined);
+		});
+
+		const checkbox = folderCheckbox(container, 'unstaged', 'lib');
+		await fireEvent.click(checkbox);
+		await fireEvent.click(checkbox);
+
+		// Settle the held stage calls one at a time, yielding between each so any queued work can start.
+		for (let round = 0; round < 10; round++) {
+			await new Promise((resolve) => setTimeout(resolve, 0));
+			settlers.shift()?.();
+		}
+
+		expect(maxInFlight).toBe(1);
+		expect(stagedPaths).toEqual(['lib/a.ts', 'lib/b.ts', 'lib/c.ts']);
+	});
+
+	test('a refresh that lands mid-loop stages the next file with its refreshed blob', async () => {
+		mockChangesAndFingerprint(folderChangeSet());
+		const { container } = render(DiffView, { props: { source: { kind: 'git', spec: { repository: '/repository' } } } });
+		await vi.waitFor(() => expect(container.querySelectorAll('.diff-file')).toHaveLength(3));
+
+		const refreshed = changeSetFixture({
+			files: [changedFile('lib/c.ts', 'c'), changedFile('lib/a.ts', 'a'), { ...changedFile('lib/b.ts', 'b'), target: side('new b, edited\n', 'b-edited') }],
+		});
+		const stageCalls: { path: string; blob: string | null }[] = [];
+		let releaseFirstStage: () => void = () => {};
+		callMock.mockImplementation((method: string, params: { path: string; blob: string | null }) => {
+			if (method === 'file-viewer.stage') {
+				stageCalls.push({ path: params.path, blob: params.blob });
+				if (stageCalls.length === 1) {
+					return new Promise((resolve) => {
+						releaseFirstStage = () => resolve({});
+					});
+				}
+				return Promise.resolve({});
+			}
+			if (method === 'file-viewer.changes') return Promise.resolve(refreshed);
+			if (method === 'file-viewer.fingerprint') return Promise.resolve({ fingerprint: 'fingerprint-1' });
+			return Promise.resolve(undefined);
+		});
+
+		await fireEvent.click(folderCheckbox(container, 'unstaged', 'lib'));
+		await vi.waitFor(() => expect(stageCalls).toHaveLength(1));
+		await fireEvent.keyDown(window, { key: 'R' });
+		await vi.waitFor(() => expect(callMock.mock.calls.filter(([method]) => method === 'file-viewer.changes')).toHaveLength(2));
+		releaseFirstStage();
+
+		await vi.waitFor(() => expect(stageCalls).toHaveLength(3));
+		expect(stageCalls.map((call) => call.path)).toEqual(['lib/a.ts', 'lib/b.ts', 'lib/c.ts']);
+		expect(stageCalls[1].blob).toBe('b-edited');
+	});
+
+	test('a focused folder checkbox does not swallow the file shortcuts', async () => {
+		mockChangesAndFingerprint(treeOrderFixture());
+		const { container } = render(DiffView, { props: { source: { kind: 'git', spec: { repository: '/repository' } } } });
+		await vi.waitFor(() => expect(container.querySelectorAll('.diff-file')).toHaveLength(4));
+
+		const checkbox = container.querySelector('.folder-row input.checkbox') as HTMLInputElement;
+		checkbox.focus();
+		expect(document.activeElement).toBe(checkbox);
+
+		await fireEvent.keyDown(checkbox, { key: ']' }); // tree order: second file, src/zeta.ts
+		expect(container.querySelector('.entry.active .filename')?.textContent).toBe('zeta.ts');
+	});
+
+	test('a Staged folder checkbox unstages its files one by one in tree order and stops at the first failure', async () => {
+		mockChangesAndFingerprint(changeSetFixture({ files: [stagedFile('lib/c.ts', 'c'), stagedFile('lib/a.ts', 'a'), stagedFile('lib/b.ts', 'b')] }));
+		const { container } = render(DiffView, { props: { source: { kind: 'git', spec: { repository: '/repository' } } } });
+		await vi.waitFor(() => expect(container.querySelector('input[aria-label="Unstage a.ts"]')).not.toBeNull());
+
+		const unstagedPaths: string[] = [];
+		callMock.mockImplementation((method: string, params: { path: string }) => {
+			if (method === 'file-viewer.unstage') {
+				unstagedPaths.push(params.path);
+				return params.path === 'lib/b.ts' ? Promise.reject({ code: -32022, message: 'index.lock exists' }) : Promise.resolve({});
+			}
+			return Promise.resolve(undefined);
+		});
+
+		await fireEvent.click(folderCheckbox(container, 'staged', 'lib'));
+
+		await vi.waitFor(() => expect(container.querySelector('.banner.error')?.textContent).toContain('index.lock exists'));
+		expect(unstagedPaths).toEqual(['lib/a.ts', 'lib/b.ts']);
+		expect(container.querySelector('input[aria-label="Stage a.ts"]')).not.toBeNull();
+		expect(container.querySelector('input[aria-label="Unstage b.ts"]')).not.toBeNull();
+		expect(container.querySelector('input[aria-label="Unstage c.ts"]')).not.toBeNull();
+	});
+
+	test('t does nothing in pair mode and does not claim the key', async () => {
+		callMock.mockImplementation((method: string, params: { path: string }) => {
+			if (method === 'file-viewer.read') {
+				return Promise.resolve({
+					content: params.path === '/a.ts' ? 'left\ncontent\n' : 'right\ncontent\n',
+					file_type: 'code',
+					filename: params.path,
+					directory: '/',
+					size: 10,
+					language: 'typescript',
+					mime_type: null,
+					uri: null,
+				});
+			}
+			return Promise.resolve(undefined);
+		});
+		const { container } = render(DiffView, { props: { source: { kind: 'pair', left: '/a.ts', right: '/b.ts' } } });
+		await vi.waitFor(() => expect(container.querySelector('.diff-file')).not.toBeNull());
+
+		const keyEvent = new KeyboardEvent('keydown', { key: 't', bubbles: true, cancelable: true });
+		window.dispatchEvent(keyEvent);
+		expect(keyEvent.defaultPrevented).toBe(false);
+		expect(container.querySelector('.changes-sidebar')).toBeNull();
 	});
 
 	test('typing two different search queries never recomputes the always-expanded row list for an entry already diffed', async () => {
