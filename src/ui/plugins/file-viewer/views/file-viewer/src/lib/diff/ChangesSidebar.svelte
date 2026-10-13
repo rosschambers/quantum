@@ -9,6 +9,14 @@
 	// the "+N -M" mini stat.
 	import type { ReviewEntry } from './reviewModel';
 	import { cachedLineDiff } from './lineDiffCache';
+	import {
+		buildChangeTree,
+		entriesUnder,
+		flattenChangeTree,
+		type FolderNode,
+		type SidebarView,
+		type TreeRow,
+	} from './changeTree';
 
 	interface Props {
 		entries: ReviewEntry[];
@@ -17,9 +25,27 @@
 		onSelect: (index: number) => void;
 		onStage?: (entry: ReviewEntry) => void;
 		onUnstage?: (entry: ReviewEntry) => void;
+		/** 'tree' groups each section's files into folders; 'list' is the original flat list. */
+		view?: SidebarView;
+		onToggleView?: () => void;
+		/** Folder checkbox in the Unstaged tree: every entry below the folder, in tree order. */
+		onStageMany?: (entries: ReviewEntry[]) => void;
+		/** Folder checkbox in the Staged tree: every entry below the folder, in tree order. */
+		onUnstageMany?: (entries: ReviewEntry[]) => void;
 	}
 
-	let { entries, stageable, activeIndex, onSelect, onStage, onUnstage }: Props = $props();
+	let {
+		entries,
+		stageable,
+		activeIndex,
+		onSelect,
+		onStage,
+		onUnstage,
+		view = 'list',
+		onToggleView,
+		onStageMany,
+		onUnstageMany,
+	}: Props = $props();
 
 	interface IndexedEntry {
 		entry: ReviewEntry;
@@ -63,6 +89,54 @@
 		}
 		collapsedGroups = next;
 	}
+	type TreeGroup = SidebarGroup | 'none';
+	// Folded folders, keyed `${group}|${folder.path}` so the same folder can be
+	// folded in Unstaged and open in Staged. Navigation only, like the groups.
+	let collapsedFolders: Set<string> = $state(new Set());
+
+	function folderKey(group: TreeGroup, folder: FolderNode): string {
+		return `${group}|${folder.path}`;
+	}
+
+	function toggleFolder(group: TreeGroup, folder: FolderNode): void {
+		const key = folderKey(group, folder);
+		const next = new Set(collapsedFolders);
+		if (next.has(key)) {
+			next.delete(key);
+		} else {
+			next.add(key);
+		}
+		collapsedFolders = next;
+	}
+
+	function treeRows(group: TreeGroup, items: IndexedEntry[]): TreeRow[] {
+		const prefix = `${group}|`;
+		const collapsedPaths = new Set(
+			[...collapsedFolders].filter((key) => key.startsWith(prefix)).map((key) => key.slice(prefix.length)),
+		);
+		return flattenChangeTree(buildChangeTree(items.map((item) => item.entry)), collapsedPaths);
+	}
+
+	let indexedById = $derived(new Map(indexedEntries.map((item) => [item.entry.id, item])));
+	let activeEntryId = $derived(entries[activeIndex]?.id);
+
+	function handleFolderCheckbox(event: Event, group: TreeGroup, folder: FolderNode): void {
+		event.stopPropagation();
+		const below = entriesUnder(folder);
+		if (group === 'staged') {
+			onUnstageMany?.(below);
+		} else {
+			onStageMany?.(below);
+		}
+	}
+
+	function handleFolderCheckboxKeydown(event: KeyboardEvent, group: TreeGroup, folder: FolderNode): void {
+		if (event.key === 'Enter' || event.key === ' ') {
+			event.preventDefault();
+			handleFolderCheckbox(event, group, folder);
+		}
+	}
+
 	let fileCount = $derived(new Set(entries.map((entry) => entry.fileId)).size);
 
 	function splitPath(path: string): { directory: string; name: string } {
@@ -106,9 +180,9 @@
 	</li>
 {/snippet}
 
-{#snippet entryRow(item: IndexedEntry)}
+{#snippet entryRow(item: IndexedEntry, depth: number | null = null)}
 	{@const current = splitPath(item.entry.path)}
-	<li class="entry" class:active={item.index === activeIndex}>
+	<li class="entry" class:tree={depth !== null} class:stageable class:active={item.index === activeIndex}>
 		{#if stageable}
 			<input
 				type="checkbox"
@@ -120,7 +194,11 @@
 				onkeydown={(event) => handleCheckboxKeydown(event, item.entry)}
 			/>
 		{/if}
-		<button type="button" onclick={() => onSelect(item.index)}>
+		<button
+			type="button"
+			style={depth !== null ? `padding-left: ${depth * 16}px` : undefined}
+			onclick={() => onSelect(item.index)}
+		>
 			<span class="status status-{item.entry.status}">{item.entry.status}</span>
 			<span class="name-block">
 				<span class="name-line">
@@ -131,7 +209,7 @@
 				</span>
 				{#if item.entry.oldPath}
 					<span class="directory rename">renamed from {splitPath(item.entry.oldPath).name}</span>
-				{:else}
+				{:else if depth === null}
 					<span class="directory">{current.directory}</span>
 				{/if}
 			</span>
@@ -140,33 +218,86 @@
 	</li>
 {/snippet}
 
+{#snippet folderRow(group: TreeGroup, row: Extract<TreeRow, { kind: 'folder' }>)}
+	<li
+		class="folder-row"
+		class:stageable
+		class:active={!row.expanded && activeEntryId !== undefined && entriesUnder(row.folder).some((entry) => entry.id === activeEntryId)}
+	>
+		{#if stageable}
+			<input
+				type="checkbox"
+				class="checkbox"
+				class:checked={group === 'staged'}
+				checked={group === 'staged'}
+				aria-label={`${group === 'staged' ? 'Unstage' : 'Stage'} everything in ${row.folder.name}`}
+				onclick={(event) => handleFolderCheckbox(event, group, row.folder)}
+				onkeydown={(event) => handleFolderCheckboxKeydown(event, group, row.folder)}
+			/>
+		{/if}
+		<button
+			type="button"
+			data-group={group}
+			data-folder={row.folder.path}
+			aria-expanded={row.expanded}
+			style={`padding-left: ${row.depth * 16}px`}
+			onclick={() => toggleFolder(group, row.folder)}
+		>
+			<span class="chevron">{row.expanded ? '\u25BC' : '\u25B6'}</span>
+			<span class="folder-name"><bdi>{row.folder.name}/</bdi></span>
+		</button>
+	</li>
+{/snippet}
+
+{#snippet groupBody(group: TreeGroup, items: IndexedEntry[])}
+	{#if view === 'tree'}
+		{#each treeRows(group, items) as row (row.kind === 'folder' ? `folder:${row.folder.path}` : row.entry.id)}
+			{#if row.kind === 'folder'}
+				{@render folderRow(group, row)}
+			{:else}
+				{@render entryRow(indexedById.get(row.entry.id)!, row.depth)}
+			{/if}
+		{/each}
+	{:else}
+		{#each items as item (item.entry.id)}
+			{@render entryRow(item)}
+		{/each}
+	{/if}
+{/snippet}
+
 <nav class="changes-sidebar">
-	<div class="sidebar-title">Changes <span class="count">{fileCount} files</span></div>
+	<div class="sidebar-title">
+		<span>Changes</span>
+		<span class="count">{fileCount} files</span>
+		{#if onToggleView}
+			<button
+				type="button"
+				class="view-toggle"
+				aria-pressed={view === 'tree'}
+				title={view === 'tree' ? 'Show as list (t)' : 'Show as tree (t)'}
+				onclick={onToggleView}
+			>{view === 'tree' ? '\u2261' : '\u2514'}</button>
+		{/if}
+	</div>
 	<ul class="file-list">
 		{#if stageable}
 			{@render groupHeading('unstaged', 'Unstaged', unstagedEntries.length)}
 			{#if !collapsedGroups.has('unstaged')}
-				{#each unstagedEntries as item (item.entry.id)}
-					{@render entryRow(item)}
-				{/each}
+				{@render groupBody('unstaged', unstagedEntries)}
 			{/if}
 			{@render groupHeading('staged', 'Staged', stagedEntries.length)}
 			{#if !collapsedGroups.has('staged')}
-				{#each stagedEntries as item (item.entry.id)}
-					{@render entryRow(item)}
-				{/each}
+				{@render groupBody('staged', stagedEntries)}
 			{/if}
 		{:else}
-			{#each indexedEntries as item (item.entry.id)}
-				{@render entryRow(item)}
-			{/each}
+			{@render groupBody('none', indexedEntries)}
 		{/if}
 	</ul>
 </nav>
 
 <style>
 	.changes-sidebar {
-		width: 220px;
+		width: 260px;
 		flex-shrink: 0;
 		border-right: 1px solid var(--color-border);
 		display: flex;
@@ -181,14 +312,33 @@
 		font-weight: 600;
 		border-bottom: 1px solid var(--color-border);
 		display: flex;
-		justify-content: space-between;
+		align-items: center;
+		gap: 6px;
 		color: var(--color-fg);
 	}
 
 	.sidebar-title .count {
+		margin-left: auto;
 		font-weight: 400;
 		color: var(--color-muted);
 		font-size: 12px;
+	}
+
+	.view-toggle {
+		width: 22px;
+		height: 20px;
+		padding: 0;
+		border: 1px solid var(--color-border);
+		border-radius: 4px;
+		background: none;
+		color: var(--color-muted);
+		cursor: pointer;
+		font-size: 12px;
+		line-height: 1;
+	}
+
+	.view-toggle:hover {
+		color: var(--color-fg);
 	}
 
 	.file-list {
@@ -259,6 +409,73 @@
 	.entry.active button {
 		color: var(--color-accent);
 		font-weight: 600;
+	}
+
+	/* Tree rows are one line: the inline padding-left carries the depth indent,
+	   so only the vertical padding is set here. List rows keep 7px 0. */
+	.entry.tree button {
+		padding-top: 4px;
+		padding-bottom: 4px;
+	}
+
+	/* Without a checkbox the button is the only grid item: it must fill the
+	   row (minmax(0, 1fr)) so long folder names truncate instead of sizing
+	   the column to their full width. */
+	.folder-row {
+		display: grid;
+		grid-template-columns: minmax(0, 1fr);
+		align-items: center;
+		gap: 6px;
+		padding: 0 12px;
+	}
+
+	.folder-row.stageable {
+		grid-template-columns: auto minmax(0, 1fr);
+	}
+
+	.entry.tree {
+		grid-template-columns: minmax(0, 1fr);
+	}
+
+	.entry.tree.stageable {
+		grid-template-columns: auto minmax(0, 1fr);
+	}
+
+	.folder-row button {
+		width: 100%;
+		min-width: 0;
+		border: none;
+		background: none;
+		text-align: left;
+		padding-top: 4px;
+		padding-bottom: 4px;
+		cursor: pointer;
+		display: flex;
+		align-items: baseline;
+		gap: 6px;
+		color: var(--color-muted);
+		font-family: inherit;
+		font-size: 12px;
+	}
+
+	.folder-row button:hover {
+		color: var(--color-fg);
+	}
+
+	.folder-row.active button {
+		color: var(--color-accent);
+		font-weight: 600;
+	}
+
+	/* Truncate from the left so the deepest folder stays visible; the <bdi>
+	   keeps the trailing '/' at the end under direction: rtl. */
+	.folder-name {
+		min-width: 0;
+		white-space: nowrap;
+		overflow: hidden;
+		text-overflow: ellipsis;
+		direction: rtl;
+		text-align: left;
 	}
 
 	.checkbox {

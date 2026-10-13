@@ -258,3 +258,66 @@ describe('ChangesSidebar', () => {
 		expect(title?.textContent).toContain('2');
 	});
 });
+
+describe('ChangesSidebar tree view', () => {
+	const treeEntries = (): ReviewEntry[] => [
+		entry({ path: '.github/workflows/runner-watchdog.yml', section: 'unstaged' }),
+		entry({ path: 'src/Murmur8.Web/lib/api/calendarQueryKeys.ts', section: 'unstaged' }),
+		entry({ path: 'src/Murmur8.Web/lib/realtime/EventsContext.tsx', section: 'unstaged' }),
+		entry({ path: 'src/Murmur8.Web/lib/realtime/EventsContext.tsx', section: 'staged' }),
+	];
+
+	function folderNames(container: HTMLElement): string[] {
+		return Array.from(container.querySelectorAll('.folder-row .folder-name')).map((element) => element.textContent ?? '');
+	}
+
+	test('list stays the default: no folder rows without view="tree"', () => {
+		const { container } = render(ChangesSidebar, { props: { entries: treeEntries(), stageable: true, activeIndex: 0, onSelect: vi.fn() } });
+		expect(container.querySelectorAll('.folder-row')).toHaveLength(0);
+		expect(container.querySelectorAll('.entry .directory').length).toBeGreaterThan(0);
+	});
+
+	test('tree view shows compacted folders per group and one-line file rows', () => {
+		const { container } = render(ChangesSidebar, { props: { entries: treeEntries(), stageable: true, activeIndex: 0, onSelect: vi.fn(), view: 'tree' } });
+		expect(folderNames(container)).toEqual(['.github/workflows/', 'src/Murmur8.Web/lib/', 'api/', 'realtime/', 'src/Murmur8.Web/lib/realtime/']);
+		expect(container.querySelectorAll('.entry.tree .directory')).toHaveLength(0);
+	});
+
+	test('rows indent 16px per depth', () => {
+		const { container } = render(ChangesSidebar, { props: { entries: treeEntries(), stageable: true, activeIndex: 0, onSelect: vi.fn(), view: 'tree' } });
+		const calendarRow = Array.from(container.querySelectorAll('.entry.tree')).find((element) => element.textContent?.includes('calendarQueryKeys.ts'));
+		expect(calendarRow?.querySelector('button')?.getAttribute('style')).toContain('padding-left: 32px');
+	});
+
+	test('clicking a folder folds it in its own group only, without selecting', async () => {
+		const onSelect = vi.fn();
+		const { container } = render(ChangesSidebar, { props: { entries: treeEntries(), stageable: true, activeIndex: 0, onSelect, view: 'tree' } });
+		const unstagedSource = container.querySelector<HTMLButtonElement>('.folder-row button[data-group="unstaged"][data-folder="src/Murmur8.Web/lib"]');
+		await fireEvent.click(unstagedSource!);
+		expect(unstagedSource?.getAttribute('aria-expanded')).toBe('false');
+		expect(folderNames(container)).toEqual(['.github/workflows/', 'src/Murmur8.Web/lib/', 'src/Murmur8.Web/lib/realtime/']);
+		expect(onSelect).not.toHaveBeenCalled();
+	});
+
+	test('a folded folder holding the active file is marked active', async () => {
+		// Index 1 is calendarQueryKeys.ts (entries are passed in display order).
+		const { container } = render(ChangesSidebar, { props: { entries: treeEntries(), stageable: true, activeIndex: 1, onSelect: vi.fn(), view: 'tree' } });
+		const folder = container.querySelector<HTMLButtonElement>('.folder-row button[data-group="unstaged"][data-folder="src/Murmur8.Web/lib"]');
+		await fireEvent.click(folder!);
+		expect(folder?.closest('.folder-row')?.classList.contains('active')).toBe(true);
+	});
+
+	test('the title toggle reflects the view and calls onToggleView', async () => {
+		const onToggleView = vi.fn();
+		const { container } = render(ChangesSidebar, { props: { entries: treeEntries(), stageable: true, activeIndex: 0, onSelect: vi.fn(), view: 'tree', onToggleView } });
+		const toggle = container.querySelector<HTMLButtonElement>('.sidebar-title .view-toggle');
+		expect(toggle?.getAttribute('aria-pressed')).toBe('true');
+		expect(toggle?.getAttribute('title')).toBe('Show as list (t)');
+		await fireEvent.click(toggle!);
+		expect(onToggleView).toHaveBeenCalledTimes(1);
+	});
+
+	test('the sidebar is 260px wide', () => {
+		expect(sidebarSource).toMatch(/\.changes-sidebar\s*\{[^}]*width:\s*260px/);
+	});
+});
