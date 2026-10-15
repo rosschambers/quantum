@@ -40,7 +40,7 @@
         </div>
       {/if}
     {:else if preview.kind === 'image'}
-      <img class="clipboard-preview-image" src={preview.source} alt="Clipboard image" />
+      <img class="clipboard-preview-image" src={preview.source} alt="Clipboard entry" />
     {/if}
   </div>
 </div>

@@ -19,7 +19,9 @@ describe('ClipboardPreview.svelte', () => {
     const image = container.querySelector('img.clipboard-preview-image') as HTMLImageElement;
     expect(image).not.toBeNull();
     expect(image.getAttribute('src')).toBe(source);
-    expect(image.getAttribute('alt')).toBe('Clipboard image');
+    // Not "Clipboard image": screen readers already announce the image role,
+    // and Svelte flags the repetition (a11y_img_redundant_alt).
+    expect(image.getAttribute('alt')).toBe('Clipboard entry');
     expect(container.querySelector('.clipboard-preview-text')).toBeNull();
   });
 
