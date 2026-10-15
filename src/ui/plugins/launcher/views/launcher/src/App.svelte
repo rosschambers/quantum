@@ -8,6 +8,7 @@
   import Results from './lib/Results.svelte';
   import CommandOutput from './lib/CommandOutput.svelte';
   import { parseCommandQuery } from './lib/commandQuery';
+  import { currentInitialQuery } from './lib/openArgs';
   import { providersForQuery } from './lib/prefixMode';
   import type { Match, MenuAction } from './lib/types';
 
@@ -304,11 +305,13 @@
     // `nixos-rebuild switch` churned the daemon) the list would stay empty until
     // the daemon recreated the view. Re-running the empty search when the window
     // regains focus or becomes visible clears any stale query and refreshes the
-    // default (usage-ranked) apps each open.
+    // default (usage-ranked) apps each open. The fresh query comes from the open
+    // arguments (the Super+V bind passes `;` to open straight into clipboard
+    // history) and is empty when the open carries none.
     const requeryOnShow = () => {
       // Reopening the launcher starts fresh: drop any command-output panel.
       capture = null;
-      handleSearch('');
+      handleSearch(currentInitialQuery());
     };
     const onVisibility = () => {
       if (document.visibilityState === 'visible') {
@@ -326,10 +329,11 @@
   });
 
   $effect(() => {
-    // On open, the launcher mounts fresh with an empty query: fetch the
+    // On open, the launcher mounts with the query from its open arguments (`;`
+    // from the Super+V bind) or, without one, an empty query that fetches the
     // default (usage-ranked) apps so something useful shows before any typing.
     // `untrack` keeps this a one-shot setup with no tracked dependencies.
-    untrack(() => handleSearch(''));
+    untrack(() => handleSearch(currentInitialQuery()));
   });
 </script>
 

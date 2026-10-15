@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { render, screen, fireEvent, waitFor, act } from '@testing-library/svelte/svelte5';
 import userEvent from '@testing-library/user-event';
 import App from './App.svelte';
@@ -646,5 +646,48 @@ describe('App.svelte', () => {
 
     await waitFor(() => expect(document.querySelector('[data-quantum-context-menu]')).toBeNull());
     expect(mockCall).not.toHaveBeenCalledWith('view.hide', { name: 'launcher' });
+  });
+});
+
+describe('App.svelte open arguments', () => {
+  beforeEach(() => {
+    mockCall = vi.fn().mockResolvedValue({ matches: [] });
+  });
+  afterEach(() => {
+    delete (window as { __quantum_args?: unknown }).__quantum_args;
+  });
+
+  it('opens in clipboard mode when shown with a ; query argument', async () => {
+    (window as { __quantum_args?: unknown }).__quantum_args = { query: ';' };
+    render(App);
+    await act();
+    const input = screen.getByPlaceholderText('Search...') as HTMLInputElement;
+    await waitFor(() => expect(input.value).toBe(';'));
+    await waitFor(() =>
+      expect(mockCall).toHaveBeenCalledWith('search', { text: ';', providers: ['clipboard'] })
+    );
+  });
+
+  it('returns to an empty query when reopened without arguments', async () => {
+    (window as { __quantum_args?: unknown }).__quantum_args = { query: ';' };
+    render(App);
+    await act();
+    const input = screen.getByPlaceholderText('Search...') as HTMLInputElement;
+    await waitFor(() => expect(input.value).toBe(';'));
+    (window as { __quantum_args?: unknown }).__quantum_args = null;
+    window.dispatchEvent(new Event('focus'));
+    await act();
+    await waitFor(() => expect(input.value).toBe(''));
+  });
+
+  it('switches an app search to clipboard mode when reopened with a ; argument', async () => {
+    render(App);
+    await act();
+    const input = screen.getByPlaceholderText('Search...') as HTMLInputElement;
+    await fireEvent.input(input, { target: { value: 'fire' } });
+    (window as { __quantum_args?: unknown }).__quantum_args = { query: ';' };
+    window.dispatchEvent(new Event('focus'));
+    await act();
+    await waitFor(() => expect(input.value).toBe(';'));
   });
 });
