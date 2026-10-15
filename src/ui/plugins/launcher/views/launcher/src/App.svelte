@@ -291,7 +291,10 @@
   );
 
   // Clipboard mode (`;`) widens the card and shows the highlighted copy beside
-  // the list. The $ output panel replaces the list, so no preview then.
+  // the list. The `capture === null` condition is defensive: the $ output
+  // panel only appears for a `$` query, which is never a clipboard query today,
+  // but if the two could ever overlap the panel replaces the list and a preview
+  // beside it would describe nothing on screen.
   let clipboardMode = $derived(capture === null && providersForQuery(searchText)[0] === 'clipboard');
   let preview = $derived(clipboardMode ? clipboardPreview(matches[highlightedIndex]) : null);
   // The mounted preview component, for its exported scrollByPage.

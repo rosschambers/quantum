@@ -828,29 +828,42 @@ describe('App.svelte clipboard preview', () => {
     expect(body.scrollTop).toBe(0);
   });
 
+  // Clipboard-provider results for every query, as a plain query fanning out to
+  // all providers can return: only the `;` query, not the results' provider,
+  // may turn clipboard mode on.
+  function mockClipboardMatchesForEveryQuery() {
+    mockCall.mockImplementation((method: string) => {
+      if (method === 'search') {
+        return Promise.resolve({ matches: clipboardMatches });
+      }
+      return Promise.resolve({});
+    });
+  }
+
   it('leaves Page Down alone outside clipboard mode', async () => {
-    mockCall.mockResolvedValue({ matches: [] });
+    mockClipboardMatchesForEveryQuery();
     render(App);
     await act();
     const input = screen.getByPlaceholderText('Search...');
     await fireEvent.input(input, { target: { value: 'fire' } });
-    await act();
+    await waitFor(() => expect(screen.getByText('second entry')).toBeDefined());
     const notPrevented = await fireEvent.keyDown(input, { key: 'PageDown' });
     expect(notPrevented).toBe(true);
   });
 
-  it('has no preview pane outside clipboard mode', async () => {
-    mockClipboardSearch();
+  it('has no preview pane outside clipboard mode, even for clipboard results', async () => {
+    mockClipboardMatchesForEveryQuery();
     const { container } = render(App);
     await act();
     const input = screen.getByPlaceholderText('Search...');
     await fireEvent.input(input, { target: { value: 'fire' } });
-    await act();
+    await waitFor(() => expect(screen.getByText('second entry')).toBeDefined());
+    expect(container.querySelector('.preview-container')).toBeNull();
     expect(container.querySelector('.clipboard-preview')).toBeNull();
     expect(container.querySelector('.card')?.classList.contains('clipboard-mode')).toBe(false);
   });
 
-  it('has no preview pane while the command output panel shows', async () => {
+  it('removes the preview when the query switches from ; to a $ command', async () => {
     mockClipboardSearch();
     const { container } = render(App);
     await act();

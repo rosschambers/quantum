@@ -23,6 +23,19 @@ describe('ClipboardPreview.svelte', () => {
     expect(container.querySelector('.clipboard-preview-text')).toBeNull();
   });
 
+  it('starts a newly shown entry at its top', async () => {
+    const { container, rerender } = render(ClipboardPreview, {
+      preview: { kind: 'text', text: 'first', hiddenCharacters: 0, details: '1m ago' },
+    });
+    const body = container.querySelector('.clipboard-preview-body') as HTMLElement;
+    body.scrollTop = 120;
+    await rerender({
+      preview: { kind: 'text', text: 'second', hiddenCharacters: 0, details: '2m ago' },
+    });
+    expect(container.querySelector('.clipboard-preview-text')?.textContent).toBe('second');
+    expect(body.scrollTop).toBe(0);
+  });
+
   it('says how many characters are not shown for a truncated text', () => {
     const { container } = render(ClipboardPreview, {
       preview: { kind: 'text', text: 'start', hiddenCharacters: 250000, details: '1m ago' },
