@@ -323,6 +323,15 @@ input::placeholder {
   line-height: 1.5;
 }
 
+/* Very large copies are cut at PREVIEW_CHARACTER_LIMIT; this line says how
+   much of the copy the preview leaves out. */
+.clipboard-preview-truncated {
+  margin-top: var(--space-2, 0.5rem);
+  font-size: var(--font-size-sm, 12px);
+  color: var(--color-muted, #6c7086);
+  font-style: italic;
+}
+
 .clipboard-preview-image {
   display: block;
   width: 100%;

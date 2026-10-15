@@ -23,6 +23,11 @@
   <div class="clipboard-preview-body" bind:this={body}>
     {#if preview.kind === 'text'}
       <pre class="clipboard-preview-text">{preview.text}</pre>
+      {#if preview.hiddenCharacters > 0}
+        <div class="clipboard-preview-truncated">
+          &hellip; {preview.hiddenCharacters.toLocaleString()} more characters not shown
+        </div>
+      {/if}
     {:else if preview.kind === 'image'}
       <img class="clipboard-preview-image" src={preview.source} alt="" />
     {/if}
