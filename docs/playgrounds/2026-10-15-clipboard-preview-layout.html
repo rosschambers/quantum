@@ -1,0 +1,479 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Launcher clipboard preview — layout playground</title>
+<style>
+  :root {
+    --ui-bg: #16140f;
+    --ui-panel: #1f1c17;
+    --ui-border: #34302a;
+    --ui-fg: #e8e4d8;
+    --ui-muted: #8a8578;
+    --ui-accent: #a6e3a1;
+    /* Sycamore tokens, copied from src/ui/themes/sycamore/tokens.toml */
+    --color-bg: #292520;
+    --color-bg-alt: #3b3630;
+    --color-border: #4a443e;
+    --color-fg: #e8e4d8;
+    --color-fg-alt: #d8d4c8;
+    --color-accent: #a6e3a1;
+    --color-muted: #8a8578;
+    --color-shadow: rgba(10, 8, 6, 0.6);
+    --radius-lg: 16px;
+    --font-sans: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+    --font-mono: ui-monospace, 'SFMono-Regular', 'Menlo', 'Consolas', monospace;
+  }
+  * { box-sizing: border-box; scrollbar-width: thin; scrollbar-color: #4a443e transparent; }
+  html, body { margin: 0; height: 100%; background: var(--ui-bg); color: var(--ui-fg); font-family: var(--font-sans); font-size: 13px; }
+  .shell { display: grid; grid-template-columns: 300px 1fr; height: 100vh; }
+  .controls { background: var(--ui-panel); border-right: 1px solid var(--ui-border); padding: 14px 16px; overflow-y: auto; }
+  .controls h1 { font-size: 14px; margin: 0 0 4px; }
+  .controls p.lead { color: var(--ui-muted); margin: 0 0 14px; line-height: 1.45; }
+  .group { margin-bottom: 16px; }
+  .group h2 { font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--ui-muted); margin: 0 0 8px; }
+  .cards { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 6px; }
+  .cards button, .seg button, .presets button {
+    background: #2a2620; color: var(--ui-fg); border: 2px solid var(--ui-border); border-radius: 8px;
+    padding: 8px 6px; font: inherit; cursor: pointer; text-align: center;
+  }
+  .cards button.on, .seg button.on { border-color: var(--ui-accent); color: var(--ui-accent); }
+  .seg { display: flex; gap: 6px; }
+  .seg button { flex: 1; padding: 6px; }
+  label.row { display: block; margin: 8px 0 2px; color: var(--ui-fg); }
+  label.row span { float: right; font-family: var(--font-mono); color: var(--ui-accent); }
+  input[type=range] { width: 100%; accent-color: var(--ui-accent); }
+  .presets { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+  .presets button { padding: 6px; font-size: 12px; }
+  .hint { color: var(--ui-muted); font-size: 12px; line-height: 1.4; margin-top: 6px; }
+  .main { display: grid; grid-template-rows: 1fr auto; min-width: 0; }
+  .stage { position: relative; overflow: hidden; display: flex; align-items: center; justify-content: center; padding: 16px; }
+  .screen-wrap { position: relative; }
+  /* The real x1 output: 1920x1200 at scale 1, drawn at true size and scaled to fit. */
+  .screen { position: absolute; top: 0; left: 0; width: 1920px; height: 1200px; transform-origin: 0 0; overflow: hidden;
+    background: radial-gradient(circle at 30% 20%, #4b5a3c 0, #2d3324 40%, #1b1d16 100%); border-radius: 6px; }
+  .desk-window { position: absolute; background: #23211c; border: 2px solid #3b3630; border-radius: 10px; }
+  .desk-window .bar { height: 30px; background: #2e2a24; border-bottom: 1px solid #3b3630; border-radius: 8px 8px 0 0; }
+  .desk-window .line { height: 10px; margin: 14px 18px 0; background: #36322b; border-radius: 4px; }
+  .topbar { position: absolute; top: 0; left: 0; right: 0; height: 36px; background: #292520; border-bottom: 1px solid #3b3630; }
+  /* Launcher, mirroring src/ui/plugins/launcher/views/launcher/src/styles.css */
+  .backdrop { position: absolute; inset: 0; display: flex; align-items: flex-start; justify-content: center; padding-top: 144px; }
+  .card { background: var(--color-bg); color: var(--color-fg); border: 1px solid var(--color-border); border-radius: var(--radius-lg);
+    box-shadow: 0 14px 40px var(--color-shadow); max-height: 720px; display: flex; flex-direction: column; overflow: hidden;
+    font-size: 14px; line-height: 1.5; }
+  .search { padding: 16px; border-bottom: 1px solid var(--color-border); }
+  .search .input { background: var(--color-bg-alt); border: 1px solid var(--color-accent); border-radius: 4px; padding: 12px; font-size: 14px; }
+  .search .caret { display: inline-block; width: 1px; height: 16px; background: var(--color-fg); vertical-align: -3px; margin-left: 1px; }
+  .body { display: flex; min-height: 0; flex: 1; }
+  .body.below { flex-direction: column; }
+  .results { overflow-y: auto; padding: 8px; min-height: 0; }
+  .match { padding: 12px; margin-bottom: 8px; border: 1px solid transparent; border-radius: 4px; cursor: pointer; position: relative; }
+  .match .ic { position: absolute; left: 12px; top: 14px; width: 24px; height: 24px; border-radius: 3px; }
+  .match .ic.thumb { width: 34px; height: 34px; top: 9px; left: 8px; border: 1px solid var(--color-border); background-size: cover; }
+  .match .title { padding-left: 32px; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .match .sub { padding-left: 32px; margin-left: 8px; font-size: 12px; color: var(--color-muted); margin-top: 4px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .match.hl { background: var(--color-accent); color: var(--color-bg); border-color: var(--color-accent); }
+  .match.hl .title { font-weight: 600; }
+  .match.hl .sub { color: var(--color-bg-alt); }
+  .preview { display: flex; flex-direction: column; min-height: 0; min-width: 0; }
+  .body.side .preview { border-left: 1px solid var(--color-border); }
+  .body.below .preview { border-top: 1px solid var(--color-border); flex: none; }
+  .meta { padding: 8px 12px; font-size: 12px; color: var(--color-muted); border-bottom: 1px solid var(--color-border); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .meta.bottom { border-bottom: none; border-top: 1px solid var(--color-border); order: 2; }
+  .pbody { overflow: auto; padding: 8px 12px; flex: 1; min-height: 0; }
+  .pbody pre { margin: 0; font-size: 12px; line-height: 1.5; }
+  .pbody pre.wrap { white-space: pre-wrap; word-break: break-word; }
+  .pbody pre.nowrap { white-space: pre; }
+  .pbody .img { width: 100%; aspect-ratio: 16 / 9; border-radius: 6px; border: 1px solid var(--color-border); background-size: cover; }
+  .pbody .file { color: var(--color-fg-alt); font-size: 13px; }
+  .overlay-grid { position: absolute; inset: 0; pointer-events: none; display: none; }
+  .overlay-grid.on { display: block; background-image: linear-gradient(rgba(166,227,161,0.12) 1px, transparent 1px), linear-gradient(90deg, rgba(166,227,161,0.12) 1px, transparent 1px); background-size: 96px 96px; }
+  .overlay-grid .center { position: absolute; left: 960px; top: 0; bottom: 0; width: 2px; background: rgba(201,99,66,0.6); }
+  .readout { position: absolute; left: 16px; top: 46px; font-family: var(--font-mono); font-size: 18px; color: #e8e4d8; background: rgba(0,0,0,0.55); padding: 6px 10px; border-radius: 6px; display: none; }
+  .overlay-grid.on + .readout { display: block; }
+  .prompt { border-top: 1px solid var(--ui-border); background: var(--ui-panel); padding: 10px 16px 14px; }
+  .prompt h2 { font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--ui-muted); margin: 0 0 6px; }
+  .prompt-row { display: flex; gap: 12px; align-items: flex-start; }
+  #prompt { flex: 1; font-family: var(--font-mono); font-size: 12px; line-height: 1.5; white-space: pre-wrap; color: var(--ui-fg); max-height: 120px; overflow: auto; }
+  #copy { background: var(--ui-accent); color: #1b1d16; border: none; border-radius: 6px; padding: 8px 14px; font-weight: 600; cursor: pointer; }
+</style>
+</head>
+<body>
+<div class="shell">
+  <aside class="controls">
+    <h1>Clipboard preview layout</h1>
+    <p class="lead">The launcher in <code>;</code> clipboard mode on x1's real 1920×1200 screen, in the sycamore theme. Click a row or use the arrow keys to move the highlight. Entries are made up but shaped like real copies (this repository is public).</p>
+
+    <div class="group">
+      <h2>Presets</h2>
+      <div class="presets">
+        <button data-preset="side">Side by side</button>
+        <button data-preset="below">Preview below</button>
+        <button data-preset="wide">Wide reader</button>
+        <button data-preset="today">Today (no preview)</button>
+      </div>
+    </div>
+
+    <div class="group">
+      <h2>Where the preview goes</h2>
+      <div class="cards" id="layout">
+        <button data-value="side">Side by side</button>
+        <button data-value="below">Below list</button>
+        <button data-value="none">None (today)</button>
+      </div>
+    </div>
+
+    <div class="group" id="side-controls">
+      <h2>Side by side</h2>
+      <label class="row">Card width in clipboard mode <span id="widthValue"></span></label>
+      <input type="range" id="width" min="600" max="1200" step="20">
+      <label class="row">List share of the width <span id="splitValue"></span></label>
+      <input type="range" id="split" min="30" max="60" step="1">
+      <p class="hint">Other launcher modes stay 600px. Today's card is 600px wide, at most 720px tall (60% of the screen).</p>
+    </div>
+
+    <div class="group" id="below-controls">
+      <h2>Preview below</h2>
+      <label class="row">Preview height <span id="heightValue"></span></label>
+      <input type="range" id="height" min="120" max="420" step="10">
+      <p class="hint">The card stays 600px wide; the list loses that height.</p>
+    </div>
+
+    <div class="group">
+      <h2>Preview text</h2>
+      <div class="seg" id="font">
+        <button data-value="mono">Monospace</button>
+        <button data-value="sans">Sans</button>
+      </div>
+      <div class="seg" id="wrap" style="margin-top:6px">
+        <button data-value="wrap">Wrap long lines</button>
+        <button data-value="nowrap">Scroll sideways</button>
+      </div>
+    </div>
+
+    <div class="group">
+      <h2>Details line (age · size · lines)</h2>
+      <div class="seg" id="meta">
+        <button data-value="top">Above</button>
+        <button data-value="bottom">Below</button>
+        <button data-value="off">Hidden</button>
+      </div>
+    </div>
+
+    <div class="group">
+      <h2>Measure</h2>
+      <div class="seg" id="grid">
+        <button data-value="off">Grid off</button>
+        <button data-value="on">Grid on</button>
+      </div>
+    </div>
+  </aside>
+
+  <main class="main">
+    <div class="stage" id="stage">
+      <div class="screen-wrap" id="screenWrap">
+        <div class="screen" id="screen">
+          <div class="topbar"></div>
+          <div class="desk-window" style="left:40px;top:60px;width:920px;height:1100px"><div class="bar"></div><div class="line" style="width:70%"></div><div class="line" style="width:55%"></div><div class="line" style="width:80%"></div><div class="line" style="width:40%"></div></div>
+          <div class="desk-window" style="left:980px;top:60px;width:900px;height:1100px"><div class="bar"></div><div class="line" style="width:60%"></div><div class="line" style="width:75%"></div><div class="line" style="width:50%"></div></div>
+          <div class="backdrop">
+            <div class="card" id="card">
+              <div class="search"><div class="input">;<span class="caret"></span></div></div>
+              <div class="body" id="body">
+                <div class="results" id="results"></div>
+                <div class="preview" id="preview">
+                  <div class="meta" id="metaLine"></div>
+                  <div class="pbody" id="pbody"></div>
+                </div>
+              </div>
+            </div>
+          </div>
+          <div class="overlay-grid" id="overlayGrid"><div class="center"></div></div>
+          <div class="readout" id="readout"></div>
+        </div>
+      </div>
+    </div>
+    <div class="prompt">
+      <h2>Decision</h2>
+      <div class="prompt-row">
+        <div id="prompt"></div>
+        <button id="copy">Copy</button>
+      </div>
+    </div>
+  </main>
+</div>
+
+<script>
+const imageThumb = "data:image/svg+xml;utf8," + encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" width="160" height="90"><defs><linearGradient id="g" x1="0" x2="1"><stop offset="0" stop-color="#3b5d4a"/><stop offset="1" stop-color="#c96342"/></linearGradient></defs><rect width="160" height="90" fill="url(#g)"/><rect x="12" y="12" width="70" height="8" rx="3" fill="#e8e4d8" opacity="0.7"/><rect x="12" y="28" width="110" height="6" rx="3" fill="#e8e4d8" opacity="0.4"/><rect x="12" y="40" width="90" height="6" rx="3" fill="#e8e4d8" opacity="0.4"/></svg>');
+
+const ENTRIES = [
+  { kind: 'text', age: '2 minutes ago', text:
+`Use the superpowers:executing-plans skill to execute docs/plans/2026-10-15-clipboard-history-launcher.md in code/projects/quantum.
+
+Context:
+- The design is docs/plans/2026-10-15-clipboard-history-launcher-design.md; read it first.
+- Work on main in the canonical checkout; commit per task with conventional commits.
+- All builds and tests run through ./scripts/devsh.sh; give cargo at least ten minutes.
+
+Order:
+1. Rust: skip clipboard changes that offer x-kde-passwordManagerHint.
+2. Launcher: initialQuery() from window.__quantum_args, used on mount and on reopen.
+3. Launcher: the preview pane for clipboard results.
+4. Headless render check of the built view in clipboard mode.
+
+When the quantum side is pushed, stop and report the commit range.
+Do not touch the config repo; that is a separate step.
+
+Acceptance is in the design, section by section. Verify each one against
+the real launcher, not only the unit tests.` },
+  { kind: 'text', age: '6 minutes ago', text: 'https://github.com/bugaevc/wl-clipboard/blob/master/README.md' },
+  { kind: 'text', age: '14 minutes ago', text: 'systemctl --user restart quantum.service && journalctl --user -u quantum.service -f --since "1 min ago"' },
+  { kind: 'text', age: '1 hour ago', text:
+`{
+  "name": "eDP-1",
+  "width": 1920,
+  "height": 1200,
+  "refreshRate": 60.00100,
+  "x": 0,
+  "y": 0,
+  "activeWorkspace": { "id": 3, "name": "3" },
+  "scale": 1.00,
+  "transform": 0,
+  "focused": true,
+  "dpmsStatus": true,
+  "vrr": false
+}` },
+  { kind: 'text', age: '3 hours ago', text:
+`fn should_record(types: &[String]) -> bool {
+    // wl-paste reports CLIPBOARD_STATE=sensitive for exactly this hint, which
+    // wl-copy --sensitive and KDE-convention password managers set.
+    !types
+        .iter()
+        .any(|mime| mime == "x-kde-passwordManagerHint")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_password_manager_copy_is_not_recorded() {
+        let types = vec![
+            "text/plain;charset=utf-8".to_string(),
+            "x-kde-passwordManagerHint".to_string(),
+        ];
+        assert!(!should_record(&types));
+    }
+
+    #[test]
+    fn ordinary_text_is_recorded() {
+        let types = vec!["text/plain;charset=utf-8".to_string()];
+        assert!(should_record(&types));
+    }
+}` },
+  { kind: 'image', age: 'yesterday', width: 1280, height: 720, bytes: 412000 },
+  { kind: 'text', age: 'yesterday', text: 'just build && just check' },
+  { kind: 'text', age: '2 days ago', text: 'The minified bundle line that never ends: ' + Array.from({ length: 40 }, (_, index) => `function a${index}(b){return b.map(c=>c*${index}).filter(Boolean)}`).join(';') },
+  { kind: 'file', age: '2 days ago', path: '/home/ixiri/Pictures/Screenshots/2026-10-13-launcher.png', mime: 'text/uri-list' },
+  { kind: 'text', age: '3 days ago', text: 'Ross Chambers' },
+  { kind: 'text', age: '3 days ago', text: 'git log --oneline -i --grep=clipboard | head -30' },
+  { kind: 'text', age: '4 days ago', text: '#a6e3a1' },
+];
+
+const DEFAULTS = { layout: 'side', width: 900, split: 42, height: 240, font: 'mono', wrap: 'wrap', meta: 'top', grid: 'off' };
+const PRESETS = {
+  side: { ...DEFAULTS },
+  below: { ...DEFAULTS, layout: 'below', height: 260 },
+  wide: { ...DEFAULTS, layout: 'side', width: 1100, split: 34 },
+  today: { ...DEFAULTS, layout: 'none' },
+};
+const state = { ...DEFAULTS, highlighted: 0 };
+
+function singleLine(text) {
+  const collapsed = text.split(/\s+/).filter(Boolean).join(' ');
+  return collapsed.length > 120 ? collapsed.slice(0, 120) + '…' : collapsed;
+}
+function humanBytes(bytes) {
+  if (bytes < 1024) return bytes + ' bytes';
+  if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
+  return (bytes / 1024 / 1024).toFixed(1) + ' MB';
+}
+function entryTitle(entry) {
+  if (entry.kind === 'image') return `Image ${entry.width}x${entry.height}`;
+  if (entry.kind === 'file') return entry.path.split('/').pop();
+  return singleLine(entry.text);
+}
+function entryMeta(entry) {
+  if (entry.kind === 'image') return `${entry.age} · ${humanBytes(entry.bytes)} · ${entry.width}×${entry.height} image`;
+  if (entry.kind === 'file') return `${entry.age} · ${entry.mime}`;
+  const bytes = new TextEncoder().encode(entry.text).length;
+  const lines = entry.text.split('\n').length;
+  return `${entry.age} · ${humanBytes(bytes)} · ${lines} ${lines === 1 ? 'line' : 'lines'}`;
+}
+function escapeHtml(text) {
+  return text.replace(/[&<>"]/g, (character) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[character]));
+}
+
+function renderResults() {
+  const results = document.getElementById('results');
+  results.innerHTML = ENTRIES.map((entry, index) => {
+    const icon = entry.kind === 'image'
+      ? `<div class="ic thumb" style="background-image:url('${imageThumb}')"></div>`
+      : '<div class="ic"></div>';
+    return `<div class="match${index === state.highlighted ? ' hl' : ''}" data-index="${index}">${icon}<div class="title">${escapeHtml(entryTitle(entry))}</div><div class="sub">${entry.age}</div></div>`;
+  }).join('');
+  results.querySelectorAll('.match').forEach((row) => {
+    row.addEventListener('click', () => { state.highlighted = Number(row.dataset.index); updateAll(); });
+  });
+  const highlightedRow = results.querySelector('.match.hl');
+  if (highlightedRow) highlightedRow.scrollIntoView({ block: 'nearest' });
+}
+
+function renderPreview() {
+  const card = document.getElementById('card');
+  const body = document.getElementById('body');
+  const preview = document.getElementById('preview');
+  const results = document.getElementById('results');
+  const metaLine = document.getElementById('metaLine');
+  const pbody = document.getElementById('pbody');
+  const entry = ENTRIES[state.highlighted];
+
+  body.className = 'body ' + (state.layout === 'below' ? 'below' : 'side');
+  preview.style.display = state.layout === 'none' ? 'none' : 'flex';
+
+  if (state.layout === 'side') {
+    card.style.width = state.width + 'px';
+    card.style.height = '720px';
+    results.style.width = state.split + '%';
+    results.style.flex = 'none';
+    preview.style.flex = '1';
+    preview.style.height = '';
+  } else if (state.layout === 'below') {
+    card.style.width = '600px';
+    card.style.height = '720px';
+    results.style.width = '';
+    results.style.flex = '1';
+    preview.style.height = state.height + 'px';
+  } else {
+    card.style.width = '600px';
+    card.style.height = '';
+    results.style.width = '';
+    results.style.flex = '1';
+  }
+
+  metaLine.style.display = state.meta === 'off' ? 'none' : 'block';
+  metaLine.className = 'meta' + (state.meta === 'bottom' ? ' bottom' : '');
+  metaLine.textContent = entryMeta(entry);
+
+  const fontFamily = state.font === 'mono' ? 'var(--font-mono)' : 'var(--font-sans)';
+  if (entry.kind === 'text') {
+    pbody.innerHTML = `<pre class="${state.wrap}" style="font-family:${fontFamily}">${escapeHtml(entry.text)}</pre>`;
+  } else if (entry.kind === 'image') {
+    pbody.innerHTML = `<div class="img" style="background-image:url('${imageThumb}')"></div>`;
+  } else {
+    pbody.innerHTML = `<div class="file">${escapeHtml(entry.path)}</div>`;
+  }
+  pbody.scrollTop = 0;
+}
+
+function renderGrid() {
+  const grid = document.getElementById('overlayGrid');
+  grid.className = 'overlay-grid' + (state.grid === 'on' ? ' on' : '');
+  const card = document.getElementById('card');
+  const screen = document.getElementById('screen');
+  const scale = Number(screen.dataset.scale || 1);
+  const cardRect = card.getBoundingClientRect();
+  const screenRect = screen.getBoundingClientRect();
+  const x = Math.round((cardRect.left - screenRect.left) / scale);
+  const y = Math.round((cardRect.top - screenRect.top) / scale);
+  const width = Math.round(cardRect.width / scale);
+  const height = Math.round(cardRect.height / scale);
+  document.getElementById('readout').textContent = `card x ${x}  y ${y}  width ${width}  height ${height}  (screen 1920×1200)`;
+}
+
+function fitScreen() {
+  const stage = document.getElementById('stage');
+  const wrap = document.getElementById('screenWrap');
+  const screen = document.getElementById('screen');
+  const scale = Math.min((stage.clientWidth - 32) / 1920, (stage.clientHeight - 32) / 1200);
+  screen.style.transform = `scale(${scale})`;
+  screen.dataset.scale = scale;
+  wrap.style.width = 1920 * scale + 'px';
+  wrap.style.height = 1200 * scale + 'px';
+}
+
+function updatePrompt() {
+  const lines = [];
+  if (state.layout === 'none') {
+    lines.push('Clipboard preview: keep today\'s launcher with no preview pane (600px card, list only).');
+  } else if (state.layout === 'side') {
+    lines.push(`Clipboard preview: side by side. In ";" clipboard mode only, the launcher card widens from 600px to ${state.width}px with a fixed height of 720px (today's 60% maximum, held fixed so it does not resize as the highlight moves). The result list takes ${state.split}% of the width on the left; the preview fills the rest on the right, separated by a 1px --color-border line. Every other mode keeps the 600px card.`);
+  } else {
+    lines.push(`Clipboard preview: below the list. In ";" clipboard mode the card stays 600px wide and is held at a fixed 720px height; a ${state.height}px preview sits under the result list, separated by a 1px --color-border line, and the list scrolls in the remaining space.`);
+  }
+  if (state.layout !== 'none') {
+    lines.push(`Preview text: ${state.font === 'mono' ? 'monospace (--font-mono)' : 'the sans font (--font-sans)'}, 12px, ${state.wrap === 'wrap' ? 'long lines wrapped (pre-wrap, break-word)' : 'long lines kept on one line with horizontal scrolling (white-space: pre)'}; the preview scrolls on its own and resets to the top when the highlight changes.`);
+    if (state.meta === 'off') {
+      lines.push('Details line: hidden.');
+    } else {
+      lines.push(`Details line: ${state.meta === 'top' ? 'above' : 'below'} the preview text, 12px --color-muted, showing age · size · line count for text, age · size · dimensions for images, age · MIME type for files.`);
+    }
+    lines.push('Images preview as the stored thumbnail scaled to the pane width; files show their full path.');
+  }
+  document.getElementById('prompt').textContent = lines.join('\n');
+}
+
+function syncControls() {
+  for (const [groupId, key] of [['layout', 'layout'], ['font', 'font'], ['wrap', 'wrap'], ['meta', 'meta'], ['grid', 'grid']]) {
+    document.querySelectorAll(`#${groupId} button`).forEach((button) => {
+      button.classList.toggle('on', button.dataset.value === state[key]);
+    });
+  }
+  document.getElementById('width').value = state.width;
+  document.getElementById('split').value = state.split;
+  document.getElementById('height').value = state.height;
+  document.getElementById('widthValue').textContent = state.width + 'px';
+  document.getElementById('splitValue').textContent = state.split + '%';
+  document.getElementById('heightValue').textContent = state.height + 'px';
+  document.getElementById('side-controls').style.opacity = state.layout === 'side' ? '1' : '0.4';
+  document.getElementById('below-controls').style.opacity = state.layout === 'below' ? '1' : '0.4';
+}
+
+function updateAll() {
+  syncControls();
+  fitScreen();
+  renderResults();
+  renderPreview();
+  renderGrid();
+  updatePrompt();
+}
+
+for (const [groupId, key] of [['layout', 'layout'], ['font', 'font'], ['wrap', 'wrap'], ['meta', 'meta'], ['grid', 'grid']]) {
+  document.querySelectorAll(`#${groupId} button`).forEach((button) => {
+    button.addEventListener('click', () => { state[key] = button.dataset.value; updateAll(); });
+  });
+}
+for (const key of ['width', 'split', 'height']) {
+  document.getElementById(key).addEventListener('input', (event) => { state[key] = Number(event.target.value); updateAll(); });
+}
+document.querySelectorAll('.presets button').forEach((button) => {
+  button.addEventListener('click', () => { Object.assign(state, PRESETS[button.dataset.preset]); updateAll(); });
+});
+document.addEventListener('keydown', (event) => {
+  if (event.key === 'ArrowDown') { state.highlighted = Math.min(state.highlighted + 1, ENTRIES.length - 1); updateAll(); event.preventDefault(); }
+  if (event.key === 'ArrowUp') { state.highlighted = Math.max(state.highlighted - 1, 0); updateAll(); event.preventDefault(); }
+});
+document.getElementById('copy').addEventListener('click', () => {
+  navigator.clipboard.writeText(document.getElementById('prompt').textContent).then(() => {
+    const button = document.getElementById('copy');
+    button.textContent = 'Copied!';
+    setTimeout(() => { button.textContent = 'Copy'; }, 1200);
+  });
+});
+window.addEventListener('resize', updateAll);
+const presetFromHash = location.hash.slice(1);
+if (PRESETS[presetFromHash]) Object.assign(state, PRESETS[presetFromHash]);
+updateAll();
+</script>
+</body>
+</html>
