@@ -1,6 +1,12 @@
 # Clipboard history in the launcher — design
 
-Status: approved by Ross, 2026-10-15; preview layout settled in the playground.
+Status: shipped and accepted live on x1, 2026-10-15 (quantum `17f3cd08..bb61b412`, config `cbf5310`).
+Preview layout settled in the playground. Built beyond the original sections, after code review:
+- The watcher lists the types a second time after the pull.
+- The preview caps the rendered text at 100,000 characters.
+- Page Up and Page Down scroll the preview.
+- The highlighted row stays in view.
+- `onShown` handles Super+V when the launcher is already focused.
 
 ## Problem
 

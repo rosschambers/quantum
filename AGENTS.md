@@ -161,6 +161,13 @@ broken CI before; do not reintroduce them:
 - Run `devsh.sh cargo fmt --all` before committing Rust — CI runs
   `cargo fmt --all -- --check` (rustfmt 1.95) and a single unformatted line
   fails the whole run.
+- **Every `git commit` runs the committed pre-commit hook**
+  (`scripts/hooks/pre-commit`, wired by `just` via `core.hooksPath`): workspace
+  `cargo fmt --check` plus `cargo clippy --workspace --all-targets -- -D
+  warnings`, even for a frontend-only or docs-only commit. On a cold `target/` that
+  is about 9 minutes; warm, about 35 seconds. Give an agent's `git commit` a tool
+  timeout of 30 minutes. A 2-minute default kills the commit mid-hook, and nothing
+  is committed (the staged files survive). ^(daily:2026-10-15)
 
 ## Running and Testing the Daemon Locally
 
