@@ -783,6 +783,36 @@ describe('App.svelte clipboard preview', () => {
     );
   });
 
+  it('scrolls the preview by most of a page with Page Down and Page Up', async () => {
+    mockClipboardSearch();
+    const { container } = render(App);
+    await act();
+    const input = screen.getByPlaceholderText('Search...');
+    await fireEvent.input(input, { target: { value: ';' } });
+    await waitFor(() => expect(container.querySelector('.clipboard-preview-body')).not.toBeNull());
+    const body = container.querySelector('.clipboard-preview-body') as HTMLElement;
+    Object.defineProperty(body, 'clientHeight', { configurable: true, value: 200 });
+
+    const pageDownNotPrevented = await fireEvent.keyDown(input, { key: 'PageDown' });
+    expect(pageDownNotPrevented).toBe(false);
+    expect(body.scrollTop).toBe(180);
+
+    const pageUpNotPrevented = await fireEvent.keyDown(input, { key: 'PageUp' });
+    expect(pageUpNotPrevented).toBe(false);
+    expect(body.scrollTop).toBe(0);
+  });
+
+  it('leaves Page Down alone outside clipboard mode', async () => {
+    mockCall.mockResolvedValue({ matches: [] });
+    render(App);
+    await act();
+    const input = screen.getByPlaceholderText('Search...');
+    await fireEvent.input(input, { target: { value: 'fire' } });
+    await act();
+    const notPrevented = await fireEvent.keyDown(input, { key: 'PageDown' });
+    expect(notPrevented).toBe(true);
+  });
+
   it('has no preview pane outside clipboard mode', async () => {
     mockClipboardSearch();
     const { container } = render(App);

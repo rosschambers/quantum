@@ -91,6 +91,13 @@
       openActionsMenuForHighlighted();
       return;
     }
+    if ((event.key === 'PageDown' || event.key === 'PageUp') && clipboardMode) {
+      // The search input keeps focus, so the preview pane's own scrolling is
+      // driven from here. Outside clipboard mode these keys are left alone.
+      event.preventDefault();
+      previewPane?.scrollByPage(event.key === 'PageDown' ? 1 : -1);
+      return;
+    }
     if (event.key === 'ArrowDown') {
       event.preventDefault();
       highlightedIndex = Math.min(highlightedIndex + 1, matches.length - 1);
@@ -287,6 +294,8 @@
   // the list. The $ output panel replaces the list, so no preview then.
   let clipboardMode = $derived(capture === null && providersForQuery(searchText)[0] === 'clipboard');
   let preview = $derived(clipboardMode ? clipboardPreview(matches[highlightedIndex]) : null);
+  // The mounted preview component, for its exported scrollByPage.
+  let previewPane: ReturnType<typeof ClipboardPreview> | undefined = $state();
 
   $effect(() => {
     // Setup work runs in $effect, not onMount: testing-library's Svelte 5
@@ -390,7 +399,7 @@
       {#if clipboardMode}
         <div class="preview-container">
           {#if preview}
-            <ClipboardPreview {preview} />
+            <ClipboardPreview bind:this={previewPane} {preview} />
           {/if}
         </div>
       {/if}
