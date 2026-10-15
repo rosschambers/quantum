@@ -189,8 +189,9 @@ impl ClipboardWatcher {
 
     /// Handle one clipboard change: list types, skip a selection marked
     /// sensitive before reading any of it, classify, pull the payload, list the
-    /// types again and skip if the selection is now marked sensitive, then
-    /// append an entry. Dedups consecutive identical text via `last_text_hash`.
+    /// types again and skip if the selection is now marked sensitive or the
+    /// clipboard has been emptied, then append an entry. Dedups consecutive
+    /// identical text via `last_text_hash`.
     async fn handle_change(&self, last_text_hash: &mut Option<u64>) {
         let types = match self.list_types().await {
             Some(types) if !types.is_empty() => types,
@@ -213,13 +214,21 @@ impl ClipboardWatcher {
 
         // Listing the types and pulling the payload are two separate reads, not
         // one atomic snapshot: a secret copied between them would be pulled
-        // under the earlier, non-sensitive type list. A secret copied in that
-        // window is still the clipboard owner after the pull, so listing again
-        // now sees its hint. If this second listing fails, the change is
-        // recorded as before rather than introducing a new way to drop it.
+        // under the earlier, non-sensitive type list. Password managers hold a
+        // secret on the clipboard for seconds, so a secret copied in that window
+        // is usually still the clipboard owner after the pull and listing again
+        // sees its hint. An empty listing most likely means a password manager
+        // already cleared the clipboard, so it is dropped too. This check is
+        // best-effort: it narrows the window rather than closing it. If the
+        // second listing fails (wl-paste could not run), the change is recorded
+        // as before rather than introducing a new way to drop it.
         if let Some(types_after_pull) = self.list_types().await {
+            if types_after_pull.is_empty() {
+                tracing::debug!("skipped clipboard change emptied while reading");
+                return;
+            }
             if is_sensitive(&types_after_pull) {
-                tracing::debug!("skipped sensitive clipboard change");
+                tracing::debug!("skipped sensitive clipboard change (detected after reading)");
                 return;
             }
         }
