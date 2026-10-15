@@ -375,6 +375,35 @@ broken CI before; do not reintroduce them:
   or clear. `clipboard.clear` IPC routes through `ClipboardService` in
   `application` (holding the domain port — application never imports
   infrastructure). `wl-clipboard` is pinned in `shell.nix`.
+  **Sensitive copies are not recorded.** A change whose offered types include
+  `x-kde-passwordManagerHint` is dropped (`is_sensitive` in
+  `clipboard_capture.rs`, matched case-insensitively). `wl-copy --sensitive` sets
+  it, KDE-convention password managers set it, and `wl-paste --watch` reports it
+  as `CLIPBOARD_STATE=sensitive`. Listing the types and pulling the payload are
+  two separate `wl-paste` calls, so `handle_change` lists the types again after
+  the pull. It drops the change if the second listing is sensitive or empty
+  (most likely a password manager clearing the clipboard). This is best-effort:
+  it narrows the window and does not close it. Agents copying a secret must use
+  `wl-copy --sensitive`.
+  **Super+V opens the launcher straight into clipboard mode.** The Hyprland bind
+  (config repo `hyprland.nix`) runs `quantumctl show launcher --args
+  '{"query":";"}'`. The launcher starts from `currentInitialQuery()`
+  (`lib/openArgs.ts`) on mount and on every show (`onShown`, window `focus`,
+  `visibilitychange`). `onShown` is the only one of the three that fires when
+  Super+V is pressed while the launcher is already focused. An open with no
+  arguments injects `null`, so Super+L still opens empty.
+  **Clipboard-mode preview.** In `;` mode the card is 900px by 60vh (fixed, so it
+  never resizes as the highlight moves): the list is on the left half and
+  `lib/ClipboardPreview.svelte` is on the right. The model
+  (`lib/clipboardPreview.ts`) reads a text result's full text from its primary
+  `copy` action, so the preview shows exactly what Enter copies, with no extra
+  IPC. Size and line count are computed without allocating, and the rendered
+  text is capped at `PREVIEW_CHARACTER_LIMIT` (100,000 characters) with a "…
+  more characters not shown" line, because one entry can be up to 32 MB. Images
+  preview their stored 128px thumbnail at the pane width. Page Up and Page Down
+  scroll the preview, and the highlighted row is kept in view. Design:
+  `docs/plans/2026-10-15-clipboard-history-launcher-design.md`; layout settled in
+  `docs/playgrounds/2026-10-15-clipboard-preview-layout.html`.
 - **Notifications: toast vs center.** A toast is the *transient* popup (it
   always auto-dismisses); the notification itself lives in the *center* until
   dismissed. `timeout_ms == 0` means "never expire" — it persists in the center
@@ -488,7 +517,9 @@ broken CI before; do not reintroduce them:
   `onMount`. testing-library's legacy adapter does not fire `onMount`
   reliably under Svelte 5 runes mode.
 - All Svelte views consume IPC through `@quantum/client`. Never reach into
-  `window.__quantum_*` directly from view code.
+  `window.__quantum_*` directly from view code (except reading
+  `__quantum_args` and `__quantum_view_name`; see "View arg passing" and
+  "Self-close" below).
   **One page may hold several clients** (a view and a child component each
   calling `createClient()`), and each numbers its requests from 1, while the host
   replies through one window-level `__quantum_resolve`/`__quantum_reject`. The
@@ -676,10 +707,17 @@ broken CI before; do not reintroduce them:
   by id in the live entries, so double clicks, `s` mid-loop and a refresh mid-loop cannot
   collide on git's index lock or stage a stale blob.
 - **View arg passing: `window.__quantum_args`.** Views that accept arguments
-  (file-viewer, and any future view that takes open-time parameters) read
-  `(window as any).__quantum_args` in their Svelte `onMount`. The value is
-  injected by `inject_view_args()` (`src/ui/host/src/windows/mod.rs`) both
-  immediately and on `LoadEvent::Committed`. The canonical IPC call is
+  (file-viewer, files, the launcher, and any future view that takes open-time
+  parameters) read `window.__quantum_args` directly. This is the one sanctioned
+  exception to the "never reach into `window.__quantum_*`" rule. Read it from a
+  Svelte 5 `$effect` (not `onMount`). A warm view that is reopened must read it
+  again on each show (`onShown`), as the launcher does in `lib/openArgs.ts`. The
+  registry injects it on **every** open, as `null` when the open carries no
+  arguments (`registry.rs`, before `show()`), through `inject_view_args()`
+  (`src/ui/host/src/windows/mod.rs`), both immediately and on
+  `LoadEvent::Committed`. The injection and the `quantum:shown` event are
+  evaluated in order on the same webview, so a show handler always sees the
+  current arguments. The canonical IPC call is
   `view.show` with params `{ "name": "<view>", "args": { ... } }`. CLI:
   `quantumctl show <view> --args '<json>'`.
 - **Multi-instance views and the `#<instance>` suffix.** By default a `panel`,
