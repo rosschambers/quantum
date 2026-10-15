@@ -219,6 +219,58 @@ describe('App.svelte', () => {
     expect(firefox?.classList.contains('highlighted')).toBe(true);
   });
 
+  it('scrolls the newly highlighted row into view on ArrowDown', async () => {
+    const matches = [
+      {
+        id: '1',
+        provider: 'apps',
+        title: 'Firefox',
+        score: 0.95,
+        action: { kind: 'launch', data: { desktop_id: 'firefox' } },
+      },
+      {
+        id: '2',
+        provider: 'apps',
+        title: 'Chrome',
+        score: 0.9,
+        action: { kind: 'launch', data: { desktop_id: 'google-chrome' } },
+      },
+    ];
+    mockCall.mockImplementation((method) => {
+      if (method === 'search') {
+        return Promise.resolve({ matches });
+      }
+      return Promise.resolve({});
+    });
+    // happy-dom has no scrollIntoView; record which element each call targets.
+    const scrolled: { element: Element; options: unknown }[] = [];
+    const prototype = Element.prototype as { scrollIntoView?: unknown };
+    const original = prototype.scrollIntoView;
+    prototype.scrollIntoView = vi.fn(function (this: Element, options: unknown) {
+      scrolled.push({ element: this, options });
+    });
+    try {
+      render(App);
+      const input = screen.getByPlaceholderText('Search...');
+      await fireEvent.input(input, { target: { value: 'x' } });
+      await waitFor(() => expect(screen.getByText('Chrome')).toBeDefined());
+
+      scrolled.length = 0;
+      await fireEvent.keyDown(input, { key: 'ArrowDown' });
+
+      await waitFor(() => expect(scrolled.length).toBeGreaterThan(0));
+      const last = scrolled[scrolled.length - 1];
+      expect(last.element).toBe(screen.getByText('Chrome').closest('.match-item'));
+      expect(last.options).toEqual({ block: 'nearest' });
+    } finally {
+      if (original === undefined) {
+        delete prototype.scrollIntoView;
+      } else {
+        prototype.scrollIntoView = original;
+      }
+    }
+  });
+
   it('invokes action on Enter and hides view', async () => {
     const matches = [
       {

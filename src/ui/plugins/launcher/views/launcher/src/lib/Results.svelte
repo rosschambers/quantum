@@ -10,13 +10,26 @@
   }
 
   let { items = [], highlighted = 0, onSelect, onContext }: Props = $props();
+  let list: HTMLDivElement | undefined = $state();
+
+  // Keep the highlighted row visible as the arrow keys move it past the edge
+  // of the scrolling results container. `nearest` scrolls only as far as
+  // needed and not at all when the row is already in view.
+  $effect(() => {
+    void items;
+    const index = highlighted;
+    const row = list?.querySelectorAll('.match-item')[index];
+    if (row && typeof row.scrollIntoView === 'function') {
+      row.scrollIntoView({ block: 'nearest' });
+    }
+  });
 
   function handleClick(item: Match) {
     onSelect(item);
   }
 </script>
 
-<div class="results-list" id="quantum-results" role="listbox">
+<div class="results-list" id="quantum-results" role="listbox" bind:this={list}>
   {#each items as item, index (item.provider + ':' + item.id)}
     <!-- Keyboard activation is on the parent SearchInput via Enter; the
          click handler here is a mouse affordance only. -->
