@@ -397,9 +397,11 @@
         {/if}
       </div>
       {#if clipboardMode}
-        <div class="preview-container">
+        <div class="preview-container" role="region" aria-label="Clipboard entry preview">
           {#if preview}
             <ClipboardPreview bind:this={previewPane} {preview} />
+          {:else}
+            <div class="clipboard-preview-empty">Nothing to preview</div>
           {/if}
         </div>
       {/if}

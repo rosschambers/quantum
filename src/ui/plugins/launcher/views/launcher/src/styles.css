@@ -289,6 +289,18 @@ input::placeholder {
   border-left: 1px solid var(--color-border, #313244);
 }
 
+/* Clipboard mode with no entry to show: a quiet placeholder instead of a
+   blank half card. */
+.clipboard-preview-empty {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--space-6, 2rem);
+  text-align: center;
+  color: var(--color-muted, #6c7086);
+}
+
 .clipboard-preview {
   display: flex;
   flex-direction: column;

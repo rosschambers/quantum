@@ -11,6 +11,18 @@ describe('ClipboardPreview.svelte', () => {
     expect(container.querySelector('.clipboard-preview-truncated')).toBeNull();
   });
 
+  it('renders an image entry from its data URI with a text alternative', () => {
+    const source = 'data:image/png;base64,AAAA';
+    const { container } = render(ClipboardPreview, {
+      preview: { kind: 'image', source, details: '1h ago · Image 1280x720' },
+    });
+    const image = container.querySelector('img.clipboard-preview-image') as HTMLImageElement;
+    expect(image).not.toBeNull();
+    expect(image.getAttribute('src')).toBe(source);
+    expect(image.getAttribute('alt')).toBe('Clipboard image');
+    expect(container.querySelector('.clipboard-preview-text')).toBeNull();
+  });
+
   it('says how many characters are not shown for a truncated text', () => {
     const { container } = render(ClipboardPreview, {
       preview: { kind: 'text', text: 'start', hiddenCharacters: 250000, details: '1m ago' },

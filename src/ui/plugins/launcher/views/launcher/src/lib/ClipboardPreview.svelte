@@ -28,7 +28,8 @@
   });
 </script>
 
-<div class="clipboard-preview" aria-label="Clipboard entry preview">
+<!-- The launcher's surrounding region carries the accessible name. -->
+<div class="clipboard-preview">
   <div class="clipboard-preview-details">{preview.details}</div>
   <div class="clipboard-preview-body" bind:this={body}>
     {#if preview.kind === 'text'}
@@ -39,7 +40,7 @@
         </div>
       {/if}
     {:else if preview.kind === 'image'}
-      <img class="clipboard-preview-image" src={preview.source} alt="" />
+      <img class="clipboard-preview-image" src={preview.source} alt="Clipboard image" />
     {/if}
   </div>
 </div>

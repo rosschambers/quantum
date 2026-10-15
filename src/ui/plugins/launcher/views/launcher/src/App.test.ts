@@ -783,6 +783,32 @@ describe('App.svelte clipboard preview', () => {
     );
   });
 
+  it('labels the preview pane as a region', async () => {
+    mockClipboardSearch();
+    render(App);
+    await act();
+    const input = screen.getByPlaceholderText('Search...');
+    await fireEvent.input(input, { target: { value: ';' } });
+    const region = await screen.findByRole('region', { name: 'Clipboard entry preview' });
+    await waitFor(() =>
+      expect(region.querySelector('.clipboard-preview-text')?.textContent).toBe(
+        'first entry\nline one\nline two'
+      )
+    );
+  });
+
+  it('says there is nothing to preview when clipboard mode has no entries', async () => {
+    mockCall.mockResolvedValue({ matches: [] });
+    const { container } = render(App);
+    await act();
+    const input = screen.getByPlaceholderText('Search...');
+    await fireEvent.input(input, { target: { value: ';' } });
+    await waitFor(() => expect(container.querySelector('.card')?.classList.contains('clipboard-mode')).toBe(true));
+    const region = screen.getByRole('region', { name: 'Clipboard entry preview' });
+    expect(region.querySelector('.clipboard-preview-empty')?.textContent).toBe('Nothing to preview');
+    expect(container.querySelector('.clipboard-preview')).toBeNull();
+  });
+
   it('scrolls the preview by most of a page with Page Down and Page Up', async () => {
     mockClipboardSearch();
     const { container } = render(App);
