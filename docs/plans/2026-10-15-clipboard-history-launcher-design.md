@@ -1,6 +1,6 @@
 # Clipboard history in the launcher — design
 
-Status: draft for approval, 2026-10-15.
+Status: approved by Ross, 2026-10-15; preview layout settled in the playground.
 
 ## Problem
 
@@ -62,9 +62,19 @@ on the next animation frame. Choose the fix from what the live test shows, not f
 - **Data source:** a text result's primary action is already `{kind: "copy", data: {text}}`
   carrying the full text (`clipboard.rs:141`). The preview renders exactly that, so it shows
   precisely what Enter will copy. No new IPC and no duplicated field.
-- **Layout:** pick it in a playground before building. The default candidate is side by side:
-  the card widens from 600px to about 900px in clipboard mode only, with the list on the left
-  and the preview on the right.
+- **Layout (settled in `docs/playgrounds/2026-10-15-clipboard-preview-layout.html`):**
+  - **Card size:** in `;` clipboard mode only, the card widens from 600px to 900px and is held
+    at a fixed 720px height (today's 60% maximum on the 1920×1200 screen), so it does not
+    resize as the highlight moves. Every other mode keeps the 600px card.
+  - **Split:** the result list takes 50% of the width on the left. The preview fills the right
+    half, separated by a 1px `--color-border` line.
+  - **Preview text:** monospace (`--font-mono`), 12px, long lines wrapped (`pre-wrap`,
+    `break-word`). The preview scrolls on its own and resets to the top when the highlight
+    changes.
+  - **Details line:** above the preview text, 12px `--color-muted`. It shows age · size · line
+    count for text, age · size · dimensions for images, and age · MIME type for files.
+  - **Images and files:** an image shows its stored thumbnail scaled to the pane width; a file
+    shows its full path.
 - Other prefix modes are unchanged.
 
 Acceptance:
