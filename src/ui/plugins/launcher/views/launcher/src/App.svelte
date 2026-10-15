@@ -1,7 +1,7 @@
 <script lang="ts">
   // Consuming real @quantum/client APIs for search, action.invoke, and view.hide.
   // In browser, the client auto-detects WebKit bridge. In tests, it's mocked.
-  import { createClient, openContextMenu } from '@quantum/client';
+  import { createClient, onShown, openContextMenu } from '@quantum/client';
   import type { ShellCaptureResult, MenuItem } from '@quantum/client';
   import { untrack } from 'svelte';
   import SearchInput from './lib/SearchInput.svelte';
@@ -284,7 +284,7 @@
   $effect(() => {
     // Setup work runs in $effect, not onMount: testing-library's Svelte 5
     // adapter does not fire onMount reliably under runes mode, and the
-    // show-handling listeners below must run for the reopen-clears-search
+    // show-handling listeners below must run for the reset-on-every-show
     // behaviour to hold.
     //
     // Subscribe to theme reload notifications and update CSS tokens in place
@@ -296,18 +296,20 @@
       }
     });
 
-    // Reset to a fresh, empty query every time the launcher is shown again. The
-    // view persists across hide/show, so stale search text (and its results)
-    // would otherwise survive a dismiss/reopen — type "asd", press Escape, and
-    // it would reappear still showing "asd". Clearing to an empty query on show
-    // also self-heals the list: the one-shot mount query below is not enough on
-    // its own because if it ever returns empty (it raced the IPC bridge, or a
-    // `nixos-rebuild switch` churned the daemon) the list would stay empty until
-    // the daemon recreated the view. Re-running the empty search when the window
-    // regains focus or becomes visible clears any stale query and refreshes the
-    // default (usage-ranked) apps each open. The fresh query comes from the open
-    // arguments (the Super+V bind passes `;` to open straight into clipboard
-    // history) and is empty when the open carries none.
+    // Reset to the open-arguments query every time the launcher is shown: `;`
+    // when the Super+V bind opens it straight into clipboard history, empty when
+    // the open carries no arguments. The view persists across hide/show, so
+    // stale search text (and its results) would otherwise survive a
+    // dismiss/reopen — type "asd", press Escape, and it would reappear still
+    // showing "asd". Re-running the search on show also self-heals the list: the
+    // one-shot mount query below is not enough on its own because if it ever
+    // returns empty (it raced the IPC bridge, or a `nixos-rebuild switch` churned
+    // the daemon) the list would stay empty until the daemon recreated the view.
+    // Three triggers run it: the host's `quantum:shown` event (fired on every
+    // show, and the only one that fires when Super+V is pressed while the
+    // launcher is already visible and focused), the window regaining focus, and
+    // the document becoming visible. A duplicate run is cheap because
+    // handleSearch cancels the pending debounced search.
     const requeryOnShow = () => {
       // Reopening the launcher starts fresh: drop any command-output panel.
       capture = null;
@@ -318,11 +320,13 @@
         requeryOnShow();
       }
     };
+    const offShown = onShown(requeryOnShow);
     window.addEventListener('focus', requeryOnShow);
     document.addEventListener('visibilitychange', onVisibility);
 
     return () => {
       unsubscribe?.();
+      offShown();
       window.removeEventListener('focus', requeryOnShow);
       document.removeEventListener('visibilitychange', onVisibility);
     };

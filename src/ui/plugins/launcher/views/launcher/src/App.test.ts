@@ -16,6 +16,13 @@ vi.mock('@quantum/client', async () => {
       subscribe: vi.fn(() => () => {}),
       close: vi.fn(),
     }),
+    // Mirror the real onShown: register a window listener for `quantum:shown`
+    // so a test can fire the host's re-show signal.
+    onShown: (callback: () => void) => {
+      const handler = (): void => callback();
+      window.addEventListener('quantum:shown', handler);
+      return () => window.removeEventListener('quantum:shown', handler);
+    },
     __esModule: true,
   };
 });
@@ -649,6 +656,11 @@ describe('App.svelte', () => {
   });
 });
 
+// Stand-in for the host injecting `window.__quantum_args` before a show.
+function setOpenArgs(value: unknown): void {
+  (window as { __quantum_args?: unknown }).__quantum_args = value;
+}
+
 describe('App.svelte open arguments', () => {
   beforeEach(() => {
     mockCall = vi.fn().mockResolvedValue({ matches: [] });
@@ -658,7 +670,7 @@ describe('App.svelte open arguments', () => {
   });
 
   it('opens in clipboard mode when shown with a ; query argument', async () => {
-    (window as { __quantum_args?: unknown }).__quantum_args = { query: ';' };
+    setOpenArgs({ query: ';' });
     render(App);
     await act();
     const input = screen.getByPlaceholderText('Search...') as HTMLInputElement;
@@ -669,12 +681,12 @@ describe('App.svelte open arguments', () => {
   });
 
   it('returns to an empty query when reopened without arguments', async () => {
-    (window as { __quantum_args?: unknown }).__quantum_args = { query: ';' };
+    setOpenArgs({ query: ';' });
     render(App);
     await act();
     const input = screen.getByPlaceholderText('Search...') as HTMLInputElement;
     await waitFor(() => expect(input.value).toBe(';'));
-    (window as { __quantum_args?: unknown }).__quantum_args = null;
+    setOpenArgs(null);
     window.dispatchEvent(new Event('focus'));
     await act();
     await waitFor(() => expect(input.value).toBe(''));
@@ -685,9 +697,29 @@ describe('App.svelte open arguments', () => {
     await act();
     const input = screen.getByPlaceholderText('Search...') as HTMLInputElement;
     await fireEvent.input(input, { target: { value: 'fire' } });
-    (window as { __quantum_args?: unknown }).__quantum_args = { query: ';' };
+    setOpenArgs({ query: ';' });
     window.dispatchEvent(new Event('focus'));
     await act();
     await waitFor(() => expect(input.value).toBe(';'));
+    await waitFor(() =>
+      expect(mockCall).toHaveBeenCalledWith('search', { text: ';', providers: ['clipboard'] })
+    );
+  });
+
+  it('switches to clipboard mode when shown again while already focused', async () => {
+    // Super+V while the launcher is visible and focused: the window neither
+    // regains focus nor changes visibility, so only the host's
+    // `quantum:shown` event announces the new open arguments.
+    render(App);
+    await act();
+    const input = screen.getByPlaceholderText('Search...') as HTMLInputElement;
+    await fireEvent.input(input, { target: { value: 'fire' } });
+    setOpenArgs({ query: ';' });
+    window.dispatchEvent(new CustomEvent('quantum:shown'));
+    await act();
+    await waitFor(() => expect(input.value).toBe(';'));
+    await waitFor(() =>
+      expect(mockCall).toHaveBeenCalledWith('search', { text: ';', providers: ['clipboard'] })
+    );
   });
 });
