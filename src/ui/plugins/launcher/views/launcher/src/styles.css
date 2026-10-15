@@ -255,3 +255,78 @@ input::placeholder {
   color: var(--color-muted, #6c7086);
   font-style: italic;
 }
+
+/* Clipboard mode (`;`): the card widens and holds a fixed height so it never
+   resizes as the highlight moves; the list takes the left half and the
+   highlighted copy previews on the right. Settled in
+   docs/playgrounds/2026-10-15-clipboard-preview-layout.html. */
+.card.clipboard-mode {
+  width: 900px;
+  height: 60vh;
+}
+
+.results-body {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+}
+
+.results-body.split {
+  flex-direction: row;
+}
+
+.results-body.split .results-container {
+  flex: none;
+  width: 50%;
+}
+
+.preview-container {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  border-left: 1px solid var(--color-border, #313244);
+}
+
+.clipboard-preview {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+}
+
+.clipboard-preview-details {
+  padding: var(--space-2, 0.5rem) var(--space-3, 0.75rem);
+  font-size: var(--font-size-sm, 12px);
+  color: var(--color-muted, #6c7086);
+  border-bottom: 1px solid var(--color-border, #313244);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.clipboard-preview-body {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: var(--space-2, 0.5rem) var(--space-3, 0.75rem);
+}
+
+.clipboard-preview-text {
+  margin: 0;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-family: var(--font-mono, ui-monospace, 'SFMono-Regular', 'Menlo', 'Consolas', monospace);
+  font-size: var(--font-size-sm, 12px);
+  line-height: 1.5;
+}
+
+.clipboard-preview-image {
+  display: block;
+  width: 100%;
+  height: auto;
+  border-radius: var(--radius-md, 4px);
+  border: 1px solid var(--color-border, #313244);
+}

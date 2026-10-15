@@ -1,0 +1,30 @@
+<script lang="ts">
+  import type { ClipboardPreview } from './clipboardPreview';
+
+  interface Props {
+    preview: ClipboardPreview;
+  }
+
+  let { preview }: Props = $props();
+  let body: HTMLDivElement | undefined = $state();
+
+  // Start each newly highlighted entry at its top rather than wherever the
+  // previous entry was scrolled to.
+  $effect(() => {
+    void preview;
+    if (body) {
+      body.scrollTop = 0;
+    }
+  });
+</script>
+
+<div class="clipboard-preview" aria-label="Clipboard entry preview">
+  <div class="clipboard-preview-details">{preview.details}</div>
+  <div class="clipboard-preview-body" bind:this={body}>
+    {#if preview.kind === 'text'}
+      <pre class="clipboard-preview-text">{preview.text}</pre>
+    {:else if preview.kind === 'image'}
+      <img class="clipboard-preview-image" src={preview.source} alt="" />
+    {/if}
+  </div>
+</div>

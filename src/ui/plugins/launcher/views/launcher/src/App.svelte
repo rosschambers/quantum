@@ -7,6 +7,8 @@
   import SearchInput from './lib/SearchInput.svelte';
   import Results from './lib/Results.svelte';
   import CommandOutput from './lib/CommandOutput.svelte';
+  import ClipboardPreview from './lib/ClipboardPreview.svelte';
+  import { clipboardPreview } from './lib/clipboardPreview';
   import { parseCommandQuery } from './lib/commandQuery';
   import { currentInitialQuery } from './lib/openArgs';
   import { providersForQuery } from './lib/prefixMode';
@@ -281,6 +283,11 @@
       : undefined
   );
 
+  // Clipboard mode (`;`) widens the card and shows the highlighted copy beside
+  // the list. The $ output panel replaces the list, so no preview then.
+  let clipboardMode = $derived(capture === null && providersForQuery(searchText)[0] === 'clipboard');
+  let preview = $derived(clipboardMode ? clipboardPreview(matches[highlightedIndex]) : null);
+
   $effect(() => {
     // Setup work runs in $effect, not onMount: testing-library's Svelte 5
     // adapter does not fire onMount reliably under runes mode, and the
@@ -343,7 +350,7 @@
 
 <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
 <div class="backdrop" onclick={onBackdropClick}>
-  <div class="card" role="dialog" aria-label="Application launcher">
+  <div class="card" class:clipboard-mode={clipboardMode} role="dialog" aria-label="Application launcher">
     <div class="search-container">
       <SearchInput
         value={searchText}
@@ -361,22 +368,31 @@
       <div class="prefix-legend">&gt; launch &nbsp;·&nbsp; ! terminal &nbsp;·&nbsp; $ run &amp; show &nbsp;·&nbsp; = calc &nbsp;·&nbsp; : emoji &nbsp;·&nbsp; ; clipboard</div>
     {/if}
 
-    <div class="results-container">
-      {#if capture !== null}
-        <CommandOutput running={capture.running} result={capture.result} />
-      {:else if matches.length > 0}
-        <Results
-          items={matches}
-          highlighted={highlightedIndex}
-          onSelect={invokeAction}
-          onContext={resultMenu}
-        />
-      {:else if isLoading}
-        <div class="loading">Searching...</div>
-      {:else if searchText.trim()}
-        <div class="empty-state">No results found</div>
-      {:else}
-        <div class="empty-state">No applications found</div>
+    <div class="results-body" class:split={clipboardMode}>
+      <div class="results-container">
+        {#if capture !== null}
+          <CommandOutput running={capture.running} result={capture.result} />
+        {:else if matches.length > 0}
+          <Results
+            items={matches}
+            highlighted={highlightedIndex}
+            onSelect={invokeAction}
+            onContext={resultMenu}
+          />
+        {:else if isLoading}
+          <div class="loading">Searching...</div>
+        {:else if searchText.trim()}
+          <div class="empty-state">No results found</div>
+        {:else}
+          <div class="empty-state">No applications found</div>
+        {/if}
+      </div>
+      {#if clipboardMode}
+        <div class="preview-container">
+          {#if preview}
+            <ClipboardPreview {preview} />
+          {/if}
+        </div>
       {/if}
     </div>
   </div>

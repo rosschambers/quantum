@@ -656,6 +656,107 @@ describe('App.svelte', () => {
   });
 });
 
+// Clipboard mode (`;`) widens the card and previews the highlighted entry
+// beside the list. Queries are set with fireEvent.input rather than
+// userEvent.type, for the focus-handler reason given above.
+describe('App.svelte clipboard preview', () => {
+  beforeEach(() => {
+    mockCall = vi.fn();
+  });
+
+  const clipboardMatches = [
+    {
+      id: 'a',
+      provider: 'clipboard',
+      title: 'first entry line one line two',
+      subtitle: '1m ago',
+      score: 1,
+      action: { kind: 'copy', data: { text: 'first entry\nline one\nline two' } },
+    },
+    {
+      id: 'b',
+      provider: 'clipboard',
+      title: 'second entry',
+      subtitle: '9m ago',
+      score: 1,
+      action: { kind: 'copy', data: { text: 'second entry' } },
+    },
+  ];
+
+  function mockClipboardSearch() {
+    mockCall.mockImplementation((method: string, params: { providers?: string[] }) => {
+      if (method === 'search' && params?.providers?.[0] === 'clipboard') {
+        return Promise.resolve({ matches: clipboardMatches });
+      }
+      if (method === 'shell.run_capture') {
+        return Promise.resolve({
+          command: 'echo hi',
+          stdout: 'hi\n',
+          stderr: '',
+          exit_code: 0,
+          timed_out: false,
+        });
+      }
+      return Promise.resolve({ matches: [] });
+    });
+  }
+
+  it('shows the highlighted entry in a preview pane in clipboard mode', async () => {
+    mockClipboardSearch();
+    const { container } = render(App);
+    await act();
+    const input = screen.getByPlaceholderText('Search...');
+    await fireEvent.input(input, { target: { value: ';' } });
+    await waitFor(() =>
+      expect(container.querySelector('.clipboard-preview-text')?.textContent).toBe(
+        'first entry\nline one\nline two'
+      )
+    );
+    expect(container.querySelector('.card')?.classList.contains('clipboard-mode')).toBe(true);
+    expect(container.querySelector('.clipboard-preview-details')?.textContent).toBe(
+      '1m ago · 29 bytes · 3 lines'
+    );
+  });
+
+  it('moves the preview with the highlight', async () => {
+    mockClipboardSearch();
+    const { container } = render(App);
+    await act();
+    const input = screen.getByPlaceholderText('Search...');
+    await fireEvent.input(input, { target: { value: ';' } });
+    await waitFor(() => expect(container.querySelector('.clipboard-preview-text')).not.toBeNull());
+    await fireEvent.keyDown(input, { key: 'ArrowDown' });
+    await waitFor(() =>
+      expect(container.querySelector('.clipboard-preview-text')?.textContent).toBe('second entry')
+    );
+  });
+
+  it('has no preview pane outside clipboard mode', async () => {
+    mockClipboardSearch();
+    const { container } = render(App);
+    await act();
+    const input = screen.getByPlaceholderText('Search...');
+    await fireEvent.input(input, { target: { value: 'fire' } });
+    await act();
+    expect(container.querySelector('.clipboard-preview')).toBeNull();
+    expect(container.querySelector('.card')?.classList.contains('clipboard-mode')).toBe(false);
+  });
+
+  it('has no preview pane while the command output panel shows', async () => {
+    mockClipboardSearch();
+    const { container } = render(App);
+    await act();
+    const input = screen.getByPlaceholderText('Search...');
+    await fireEvent.input(input, { target: { value: ';' } });
+    await waitFor(() => expect(container.querySelector('.clipboard-preview')).not.toBeNull());
+    await fireEvent.input(input, { target: { value: '$echo hi' } });
+    await fireEvent.keyDown(input, { key: 'Enter' });
+    await waitFor(() => expect(screen.getByText('exit 0')).toBeDefined());
+    expect(container.querySelector('.clipboard-preview')).toBeNull();
+    expect(container.querySelector('.card')?.classList.contains('clipboard-mode')).toBe(false);
+  });
+});
+
 // Stand-in for the host injecting `window.__quantum_args` before a show.
 function setOpenArgs(value: unknown): void {
   (window as { __quantum_args?: unknown }).__quantum_args = value;
