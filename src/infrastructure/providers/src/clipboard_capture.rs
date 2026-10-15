@@ -45,9 +45,13 @@ pub fn classify(types: &[String]) -> ClipKind {
 pub const PASSWORD_MANAGER_HINT: &str = "x-kde-passwordManagerHint";
 
 /// Whether a clipboard selection is marked sensitive and must never be
-/// recorded in the history.
+/// recorded in the history. MIME names are case-insensitive by convention, so
+/// the hint is matched ignoring ASCII case: a source that spells it
+/// differently is still treated as sensitive (failing closed).
 pub fn is_sensitive(types: &[String]) -> bool {
-    types.iter().any(|mime| mime == PASSWORD_MANAGER_HINT)
+    types
+        .iter()
+        .any(|mime| mime.eq_ignore_ascii_case(PASSWORD_MANAGER_HINT))
 }
 
 /// The maximum length of a thumbnail's longest edge, in pixels.
@@ -140,7 +144,7 @@ mod tests {
     }
 
     #[test]
-    fn a_selection_with_the_password_manager_hint_is_sensitive() {
+    fn is_sensitive_true_with_the_password_manager_hint() {
         assert!(is_sensitive(&types(&[
             "text/plain;charset=utf-8",
             "x-kde-passwordManagerHint",
@@ -148,10 +152,31 @@ mod tests {
     }
 
     #[test]
-    fn ordinary_text_is_not_sensitive() {
+    fn is_sensitive_false_for_ordinary_text() {
         assert!(!is_sensitive(&types(&[
             "text/plain;charset=utf-8",
             "UTF8_STRING",
+        ])));
+    }
+
+    #[test]
+    fn is_sensitive_false_for_an_empty_list() {
+        assert!(!is_sensitive(&[]));
+    }
+
+    #[test]
+    fn is_sensitive_false_for_a_near_miss_type() {
+        assert!(!is_sensitive(&types(&[
+            "text/plain;charset=utf-8",
+            "x-kde-passwordManagerHint-extra",
+        ])));
+    }
+
+    #[test]
+    fn is_sensitive_ignores_ascii_case() {
+        assert!(is_sensitive(&types(&[
+            "text/plain;charset=utf-8",
+            "x-kde-passwordmanagerhint",
         ])));
     }
 

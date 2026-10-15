@@ -4,11 +4,15 @@
 //! MIME types, classifies the selection, pulls the chosen payload, builds a
 //! [`quantum_domain::ClipboardEntry`] (with an image thumbnail via
 //! [`crate::clipboard_capture`]), dedups consecutive identical text, and appends
-//! it to the [`quantum_domain::ClipboardStore`].
+//! it to the [`quantum_domain::ClipboardStore`]. A change marked sensitive by a
+//! password manager (see [`crate::clipboard_capture::is_sensitive`]) is dropped
+//! and never recorded; the types are checked both before and after the payload
+//! is pulled.
 //!
-//! Only the two pure helpers ([`resolve_clipboard_watcher`] and
-//! [`parse_list_types`]) are unit-tested; the live spawn loop needs a real
-//! Wayland session and is exercised manually.
+//! Only the pure helpers ([`resolve_clipboard_watcher`], [`parse_list_types`],
+//! `preferred_type` and `text_preview`) are unit-tested; the live spawn loop
+//! and the per-change handling need a real Wayland session and are exercised
+//! manually.
 
 use std::path::PathBuf;
 use std::process::Stdio;
@@ -184,7 +188,8 @@ impl ClipboardWatcher {
     }
 
     /// Handle one clipboard change: list types, skip a selection marked
-    /// sensitive before reading any of it, classify, pull the payload, and
+    /// sensitive before reading any of it, classify, pull the payload, list the
+    /// types again and skip if the selection is now marked sensitive, then
     /// append an entry. Dedups consecutive identical text via `last_text_hash`.
     async fn handle_change(&self, last_text_hash: &mut Option<u64>) {
         let types = match self.list_types().await {
@@ -205,6 +210,19 @@ impl ClipboardWatcher {
             Some(bytes) if !bytes.is_empty() => bytes,
             _ => return,
         };
+
+        // Listing the types and pulling the payload are two separate reads, not
+        // one atomic snapshot: a secret copied between them would be pulled
+        // under the earlier, non-sensitive type list. A secret copied in that
+        // window is still the clipboard owner after the pull, so listing again
+        // now sees its hint. If this second listing fails, the change is
+        // recorded as before rather than introducing a new way to drop it.
+        if let Some(types_after_pull) = self.list_types().await {
+            if is_sensitive(&types_after_pull) {
+                tracing::debug!("skipped sensitive clipboard change");
+                return;
+            }
+        }
 
         let (created_unix, nanos) = now_unix_and_nanos();
         let id = format!("{nanos}");
