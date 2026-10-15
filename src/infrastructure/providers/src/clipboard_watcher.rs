@@ -18,7 +18,7 @@ use quantum_domain::{ClipboardEntry, ClipboardStore};
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::Command;
 
-use crate::clipboard_capture::{classify, thumbnail, ClipKind};
+use crate::clipboard_capture::{classify, is_sensitive, thumbnail, ClipKind};
 
 /// Resolve the base argv used to watch the clipboard.
 ///
@@ -183,13 +183,18 @@ impl ClipboardWatcher {
         }
     }
 
-    /// Handle one clipboard change: list types, classify, pull the payload, and
+    /// Handle one clipboard change: list types, skip a selection marked
+    /// sensitive before reading any of it, classify, pull the payload, and
     /// append an entry. Dedups consecutive identical text via `last_text_hash`.
     async fn handle_change(&self, last_text_hash: &mut Option<u64>) {
         let types = match self.list_types().await {
             Some(types) if !types.is_empty() => types,
             _ => return,
         };
+        if is_sensitive(&types) {
+            tracing::debug!("skipped sensitive clipboard change");
+            return;
+        }
         let kind = classify(&types);
         let Some(mime) = preferred_type(kind, &types) else {
             tracing::warn!("clipboard change offered no usable MIME type");

@@ -1,8 +1,9 @@
 //! MIME classification and thumbnail generation for clipboard capture.
 //!
-//! Two pure helpers used by the clipboard watcher: [`classify`] maps a set of
-//! offered MIME types to a [`ClipKind`], and [`thumbnail`] decodes image bytes
-//! and produces a small `data:` URI preview.
+//! Three pure helpers used by the clipboard watcher: [`classify`] maps a set of
+//! offered MIME types to a [`ClipKind`], [`is_sensitive`] spots a selection a
+//! password manager marked as secret so it is never recorded, and
+//! [`thumbnail`] decodes image bytes and produces a small `data:` URI preview.
 
 use base64::Engine as _;
 
@@ -36,6 +37,17 @@ pub fn classify(types: &[String]) -> ClipKind {
         return ClipKind::Text;
     }
     ClipKind::Binary
+}
+
+/// The MIME type a password manager offers alongside a secret. `wl-copy
+/// --sensitive` offers it too, and `wl-paste --watch` reports a selection
+/// carrying it as `CLIPBOARD_STATE=sensitive`.
+pub const PASSWORD_MANAGER_HINT: &str = "x-kde-passwordManagerHint";
+
+/// Whether a clipboard selection is marked sensitive and must never be
+/// recorded in the history.
+pub fn is_sensitive(types: &[String]) -> bool {
+    types.iter().any(|mime| mime == PASSWORD_MANAGER_HINT)
 }
 
 /// The maximum length of a thumbnail's longest edge, in pixels.
@@ -125,6 +137,22 @@ mod tests {
     #[test]
     fn classify_empty_is_binary() {
         assert_eq!(classify(&[]), ClipKind::Binary);
+    }
+
+    #[test]
+    fn a_selection_with_the_password_manager_hint_is_sensitive() {
+        assert!(is_sensitive(&types(&[
+            "text/plain;charset=utf-8",
+            "x-kde-passwordManagerHint",
+        ])));
+    }
+
+    #[test]
+    fn ordinary_text_is_not_sensitive() {
+        assert!(!is_sensitive(&types(&[
+            "text/plain;charset=utf-8",
+            "UTF8_STRING",
+        ])));
     }
 
     /// Build a tiny 2x2 red PNG in memory for the thumbnail tests.
