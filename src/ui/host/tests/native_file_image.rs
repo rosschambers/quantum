@@ -1343,3 +1343,123 @@ fn verify_built_viewer(
     );
     eprintln!("built viewer integrated assertions passed: actual App, client, ImageRenderer controls, virtualized text, JSON folds, rendered Markdown, and host bridge/grants");
 }
+
+#[test]
+#[ignore = "requires an isolated Xvfb and private DBus session; never run on the desktop"]
+fn view_argument_injection_survives_reloads_with_one_evaluation_per_commit() {
+    assert_eq!(
+        std::env::var("QUANTUM_NATIVE_TEST_ISOLATED").as_deref(),
+        Ok("1")
+    );
+    gtk4::init().expect("isolated GTK initialization failed");
+
+    let context = build_web_context();
+    let view = webkit6::WebView::builder().web_context(&context).build();
+    let settings = webkit6::Settings::new();
+    apply_widget_settings(&settings);
+    view.set_settings(&settings);
+
+    // Count every assignment to the injection globals in EVERY document
+    // generation: a document-start UserScript installs a counting accessor
+    // before any host-queued evaluation runs, and production injection goes
+    // through evaluate_javascript handlers — never the user content manager —
+    // so this instrument stays intact across reopens.
+    let manager = view
+        .user_content_manager()
+        .expect("view user content manager");
+    manager.add_script(&webkit6::UserScript::new(
+        r#"
+window.__quantum_args_sets = []; window.__quantum_view_name_sets = [];
+(function () {
+    const previousArgs = window.__quantum_args;
+    const previousName = window.__quantum_view_name;
+    Object.defineProperty(window, '__quantum_args', { configurable: true,
+        get() { return this.__instrumented_args; },
+        set(value) { this.__instrumented_args = value; window.__quantum_args_sets.push(JSON.stringify(value)); } });
+    Object.defineProperty(window, '__quantum_view_name', { configurable: true,
+        get() { return this.__instrumented_name; },
+        set(value) { this.__instrumented_name = value; window.__quantum_view_name_sets.push(String(value)); } });
+    window.__instrumented_args = previousArgs; window.__instrumented_name = previousName;
+})();
+"#,
+        webkit6::UserContentInjectedFrames::TopFrame,
+        webkit6::UserScriptInjectionTime::Start,
+        &[],
+        &[],
+    ));
+
+    let commits = Rc::new(Cell::new(0u32));
+    let commits_for_handler = commits.clone();
+    view.connect_load_changed(move |_, event| {
+        if event == webkit6::LoadEvent::Committed {
+            commits_for_handler.set(commits_for_handler.get() + 1);
+        }
+    });
+
+    // Wire the single persistent injection handler exactly as both window
+    // constructors do, before the first load.
+    let scripts = quantum_ui::windows::PersistentScripts::wire(&view);
+    view.load_html(
+        "<!doctype html><html><head><meta charset=\"utf-8\"></head><body>probe</body></html>",
+        None,
+    );
+    pump_until("first document committed", || commits.get() >= 1);
+
+    let snapshot = || {
+        evaluate(
+            &view,
+            "JSON.stringify({args: window.__quantum_args === undefined ? null : window.__quantum_args, name: typeof window.__quantum_view_name === 'string' ? window.__quantum_view_name : null, argsSets: window.__quantum_args_sets, nameSets: window.__quantum_view_name_sets})",
+        )
+    };
+
+    // Open 1: the immediate injection lands in the already-loaded document.
+    quantum_ui::windows::inject_view_args(&scripts, &view, Some(json!({"open": 1})));
+    quantum_ui::windows::inject_view_name(&scripts, &view, "plugin/probe/probe#one");
+    pump_until("open 1 immediate injection", || {
+        let value = snapshot();
+        value["args"] == json!({"open": 1}) && value["name"] == json!("plugin/probe/probe#one")
+    });
+
+    // Reload with no new open: the persisted scripts re-inject the same values.
+    view.reload();
+    pump_until("second document committed", || commits.get() >= 2);
+    pump_until("open 1 persists across reload", || {
+        let value = snapshot();
+        value["args"] == json!({"open": 1}) && value["name"] == json!("plugin/probe/probe#one")
+    });
+
+    // Simulate warm reopens: the registry injects on every view.show, so a
+    // warm view runs the injection many times without rebuilding the window.
+    for (open, instance) in [(2, "two"), (3, "three")] {
+        quantum_ui::windows::inject_view_args(&scripts, &view, Some(json!({"open": open})));
+        quantum_ui::windows::inject_view_name(
+            &scripts,
+            &view,
+            &format!("plugin/probe/probe#{instance}"),
+        );
+        pump_until(&format!("reopen {open} immediate injection"), || {
+            let value = snapshot();
+            value["args"] == json!({"open": open})
+                && value["name"] == json!(format!("plugin/probe/probe#{instance}"))
+        });
+    }
+
+    // The decisive check: one reload, and the newest open's values must be
+    // injected EXACTLY ONCE per commit. A handler pile-up (one connected per
+    // inject call — the bug this test guards) re-evaluates every stale script,
+    // so the set counts grow with the number of opens instead of staying 1.
+    view.reload();
+    pump_until("third document committed", || commits.get() >= 3);
+    pump_until("newest open persists exactly once after reload", || {
+        let value = snapshot();
+        value["args"] == json!({"open": 3})
+            && value["name"] == json!("plugin/probe/probe#three")
+            && value["argsSets"].as_array().map(|entries| entries.len()) == Some(1)
+            && value["nameSets"].as_array().map(|entries| entries.len()) == Some(1)
+    });
+    let final_state = snapshot();
+    assert_eq!(final_state["args"], json!({"open": 3}));
+    assert_eq!(final_state["argsSets"], json!([r#"{"open":3}"#]));
+    assert_eq!(final_state["nameSets"], json!(["plugin/probe/probe#three"]));
+    view.terminate_web_process();
+}

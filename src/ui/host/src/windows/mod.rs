@@ -6,6 +6,8 @@ pub mod widget;
 pub use panel::PanelWindow;
 pub use widget::WidgetWindow;
 
+use std::cell::RefCell;
+use std::rc::Rc;
 use std::sync::Arc;
 use tokio::runtime::Handle;
 use tokio::sync::broadcast;
@@ -247,51 +249,94 @@ pub(crate) fn resolve_view_uri(canonical_name: &str) -> String {
     format!("quantum://theme/default/views/{canonical_name}/index.html")
 }
 
+/// Scripts that must be present in a WebView's document on every load.
+///
+/// Open-time view arguments and the instance-qualified view name are injected
+/// both immediately (for an already-loaded document) and on every
+/// `LoadEvent::Committed` (so they persist across navigation and reloads). A
+/// warm view (`destroy_on_dismiss = false`, for example the launcher or the
+/// bar) is reopened many times without ever being rebuilt, so each reopen must
+/// UPDATE the scripts this handle carries rather than connect another
+/// `load-changed` handler. Exactly ONE handler is wired per WebView, at
+/// construction, via [`PersistentScripts::wire`] — the same wire-once
+/// discipline as `viewer_image_resources::bind_view`. Holding one is cheap
+/// (a reference-counted cell); each window stores the handle it wired.
+#[derive(Clone)]
+pub struct PersistentScripts {
+    scripts: Rc<RefCell<Vec<(String, String)>>>,
+}
+
+impl PersistentScripts {
+    /// Connect the single persistent `load-changed` handler on this WebView.
+    /// Call exactly once per WebView, BEFORE its first `load_uri`, so the
+    /// first document commit also sees the current scripts.
+    pub fn wire(webview: &webkit6::WebView) -> Self {
+        use webkit6::prelude::WebViewExt;
+        let scripts: Rc<RefCell<Vec<(String, String)>>> = Rc::new(RefCell::new(Vec::new()));
+        let webview_for_handler = webview.clone();
+        let scripts_for_handler = scripts.clone();
+        webview.connect_load_changed(move |_view, event| {
+            if event == webkit6::LoadEvent::Committed {
+                let guard = scripts_for_handler.borrow();
+                for (_key, js) in guard.iter() {
+                    WebViewExt::evaluate_javascript(
+                        &webview_for_handler,
+                        js.as_str(),
+                        None,
+                        None,
+                        gtk4::gio::Cancellable::NONE,
+                        |_| {},
+                    );
+                }
+            }
+        });
+        Self { scripts }
+    }
+
+    /// Replace the script stored under `key` with `js`, and evaluate it on the
+    /// current document right away (a no-op if that document does not exist
+    /// yet, e.g. the first load has not committed).
+    fn replace_and_apply(&self, webview: &webkit6::WebView, key: &str, js: String) {
+        use webkit6::prelude::WebViewExt;
+        {
+            let mut scripts = self.scripts.borrow_mut();
+            match scripts.iter_mut().find(|(k, _)| k == key) {
+                Some(entry) => entry.1 = js.clone(),
+                None => scripts.push((key.to_string(), js.clone())),
+            }
+        }
+        WebViewExt::evaluate_javascript(
+            webview,
+            &js,
+            None,
+            None,
+            gtk4::gio::Cancellable::NONE,
+            |_| {},
+        );
+    }
+}
+
 /// Inject view arguments into a WebView as `window.__quantum_args` on load.
 ///
 /// When a view is opened with optional JSON arguments, expose them to the
 /// frontend as `window.__quantum_args` (set to `null` if no args were provided).
-/// Inject on `LoadEvent::Committed`: at that point the document object exists
-/// but no page script has run yet. The handler fires on every load, so the
-/// args persist across navigation and reloads.
-pub(crate) fn inject_view_args(webview: &webkit6::WebView, args: Option<serde_json::Value>) {
+/// The script goes into the window's [`PersistentScripts`] — evaluated
+/// immediately for an already-loaded document and re-injected on every
+/// `LoadEvent::Committed` by the single handler wired at construction, so the
+/// args persist across navigation and reloads without stacking a handler per
+/// open.
+pub fn inject_view_args(
+    scripts: &PersistentScripts,
+    webview: &webkit6::WebView,
+    args: Option<serde_json::Value>,
+) {
     crate::viewer_image_resources::invalidate_view(webview);
-    use webkit6::prelude::WebViewExt;
     let json_string = match &args {
         Some(value) => serde_json::to_string(value).unwrap_or_else(|_| "null".into()),
         None => "null".into(),
     };
-    let js = format!("window.__quantum_args = {};", json_string);
-
-    // Inject immediately in case the page is already loaded (the
-    // LoadEvent::Committed may have already fired before this function
-    // was called). A no-op if the document does not exist yet.
-    let webview_immediate = webview.clone();
-    let js_immediate = js.clone();
-    WebViewExt::evaluate_javascript(
-        &webview_immediate,
-        &js_immediate,
-        None,
-        None,
-        gtk4::gio::Cancellable::NONE,
-        |_| {},
-    );
-
-    // Also connect a handler for future loads/reloads so the args
-    // persist across navigation.
-    let webview_clone = webview.clone();
-    webview.connect_load_changed(move |_view, event| {
-        if event == webkit6::LoadEvent::Committed {
-            WebViewExt::evaluate_javascript(
-                &webview_clone,
-                &js,
-                None,
-                None,
-                gtk4::gio::Cancellable::NONE,
-                |_| {},
-            );
-        }
-    });
+    let js = format!("window.__quantum_args = {json_string};");
+    scripts.replace_and_apply(webview, "quantum-args", js);
 }
 
 /// Inject the instance-qualified view name into a WebView as
@@ -300,38 +345,13 @@ pub(crate) fn inject_view_args(webview: &webkit6::WebView, args: Option<serde_js
 /// The name is the full view name the window was opened with, including any
 /// `#<instance>` suffix, so a multi-instance view (the file explorer, the file
 /// viewer) can address and close the exact window it lives in via
-/// `view.hide { name }` rather than the bare shared name. Injected on
-/// `LoadEvent::Committed` (and immediately, in case the load already fired), so
-/// it persists across navigation and reloads, mirroring [`inject_view_args`].
-pub(crate) fn inject_view_name(webview: &webkit6::WebView, name: &str) {
-    use webkit6::prelude::WebViewExt;
+/// `view.hide { name }` rather than the bare shared name. Rides the same
+/// [`PersistentScripts`] channel as [`inject_view_args`]: applied immediately
+/// and re-injected on every load through one handler per WebView.
+pub fn inject_view_name(scripts: &PersistentScripts, webview: &webkit6::WebView, name: &str) {
     let json_name = serde_json::to_string(name).unwrap_or_else(|_| "\"\"".into());
-    let js = format!("window.__quantum_view_name = {};", json_name);
-
-    let webview_immediate = webview.clone();
-    let js_immediate = js.clone();
-    WebViewExt::evaluate_javascript(
-        &webview_immediate,
-        &js_immediate,
-        None,
-        None,
-        gtk4::gio::Cancellable::NONE,
-        |_| {},
-    );
-
-    let webview_clone = webview.clone();
-    webview.connect_load_changed(move |_view, event| {
-        if event == webkit6::LoadEvent::Committed {
-            WebViewExt::evaluate_javascript(
-                &webview_clone,
-                &js,
-                None,
-                None,
-                gtk4::gio::Cancellable::NONE,
-                |_| {},
-            );
-        }
-    });
+    let js = format!("window.__quantum_view_name = {json_name};");
+    scripts.replace_and_apply(webview, "quantum-view-name", js);
 }
 
 /// Notify a warm (reused) view that it has just been shown again.

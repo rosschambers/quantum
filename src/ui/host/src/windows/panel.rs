@@ -38,6 +38,12 @@ pub struct PanelWindow {
     /// ones torn down, so gating on this keeps termination safe on every path
     /// (dismiss, eviction, Drop).
     owns_render_process: bool,
+    /// Handle on this webview's single persistent `load-changed` injection
+    /// handler. Opens UPDATE the scripts it injects instead of connecting a
+    /// new handler per open (this window is warm — hidden and reused — for
+    /// every `destroy_on_dismiss = false` view). See
+    /// [`crate::windows::PersistentScripts`].
+    persistent_scripts: crate::windows::PersistentScripts,
 }
 
 /// Decide whether this panel surface uses layer-shell: an overlay always does
@@ -242,6 +248,12 @@ impl PanelWindow {
         // rendered markdown).
         crate::windows::install_navigation_policy(&webview);
 
+        // Wire the ONE persistent injection handler for this webview before
+        // the first load, so open-time view args and the instance-qualified
+        // view name are re-injected on every later commit. Reopens update the
+        // scripts in place; they never connect another handler.
+        let persistent_scripts = crate::windows::PersistentScripts::wire(&webview);
+
         // Surface load failures so we can diagnose missing assets etc.
         webview.connect_load_failed(|_view, event, uri, err| {
             tracing::error!(
@@ -375,6 +387,7 @@ impl PanelWindow {
             fullscreen_overlay: is_fullscreen_overlay,
             is_destroyed: false,
             owns_render_process: !share_process,
+            persistent_scripts,
         }
     }
 }
@@ -450,11 +463,11 @@ impl crate::registry::WindowOps for PanelWindow {
     }
 
     fn inject_view_args(&mut self, args: Option<serde_json::Value>) {
-        crate::windows::inject_view_args(&self.webview, args);
+        crate::windows::inject_view_args(&self.persistent_scripts, &self.webview, args);
     }
 
     fn inject_view_name(&mut self, name: &str) {
-        crate::windows::inject_view_name(&self.webview, name);
+        crate::windows::inject_view_name(&self.persistent_scripts, &self.webview, name);
     }
 }
 

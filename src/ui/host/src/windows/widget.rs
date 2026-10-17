@@ -65,6 +65,11 @@ pub struct WidgetWindow {
     /// second teardown is skipped. Calling gtk_window_destroy after the
     /// surface is gone aborts with the gdk_surface_get_display assertion.
     is_destroyed: bool,
+    /// Handle on this webview's single persistent `load-changed` injection
+    /// handler. Widgets are always warm (hidden and reused), so every reopen
+    /// UPDATES the scripts the one handler injects instead of connecting a
+    /// new one per open. See [`crate::windows::PersistentScripts`].
+    persistent_scripts: crate::windows::PersistentScripts,
 }
 
 impl WidgetWindow {
@@ -327,7 +332,7 @@ impl WidgetWindow {
 
         // Create and embed the WebView, wire the bridge, and start
         // forwarding broadcast events. Shared with `new_toast`.
-        let webview = build_webview(
+        let (webview, persistent_scripts) = build_webview(
             &window,
             &view_name,
             &web_context,
@@ -351,6 +356,7 @@ impl WidgetWindow {
             is_destroyed: false,
             // Widgets share the render process (new_webview(true) below).
             owns_render_process: false,
+            persistent_scripts,
         }
     }
 
@@ -431,7 +437,7 @@ impl WidgetWindow {
 
         window.set_namespace(&format!("quantum-toast-{}", view_name.replace('/', "-")));
 
-        let webview = build_webview(
+        let (webview, persistent_scripts) = build_webview(
             &window,
             &view_name,
             &web_context,
@@ -457,6 +463,7 @@ impl WidgetWindow {
             is_destroyed: false,
             // Toasts share the render process (new_webview(true) below).
             owns_render_process: false,
+            persistent_scripts,
         }
     }
 }
@@ -475,7 +482,7 @@ fn build_webview(
     runtime: Handle,
     event_tx: broadcast::Sender<EventEnvelope>,
     monitor: Option<&gdk::Monitor>,
-) -> WebView {
+) -> (WebView, crate::windows::PersistentScripts) {
     // Widget-style views (bar, clock, timers, toast) are always-warm and never
     // destroyed on dismiss, so they share a single render process via the
     // shared web-process anchor to cut per-view renderer memory.
@@ -504,6 +511,12 @@ fn build_webview(
 
     // Block external navigations and open them in the default browser.
     crate::windows::install_navigation_policy(&webview);
+
+    // Wire the ONE persistent injection handler for this webview before the
+    // first load, so open-time view args and the instance-qualified view name
+    // are re-injected on every later commit. Reopens update the scripts in
+    // place; they never connect another handler.
+    let persistent_scripts = crate::windows::PersistentScripts::wire(&webview);
 
     webview.connect_load_failed(|_view, event, uri, err| {
         tracing::error!(
@@ -654,7 +667,7 @@ fn build_webview(
         }
     });
 
-    webview
+    (webview, persistent_scripts)
 }
 
 impl crate::registry::WindowOps for WidgetWindow {
@@ -731,11 +744,11 @@ impl crate::registry::WindowOps for WidgetWindow {
     }
 
     fn inject_view_args(&mut self, args: Option<serde_json::Value>) {
-        crate::windows::inject_view_args(&self.webview, args);
+        crate::windows::inject_view_args(&self.persistent_scripts, &self.webview, args);
     }
 
     fn inject_view_name(&mut self, name: &str) {
-        crate::windows::inject_view_name(&self.webview, name);
+        crate::windows::inject_view_name(&self.persistent_scripts, &self.webview, name);
     }
 }
 
