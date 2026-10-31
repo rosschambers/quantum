@@ -1,12 +1,23 @@
 import { describe, it, expect, vi, afterEach, beforeEach } from 'vitest';
-import { codeHeaderHtml, createCodeCopyClickHandler, COPY_FEEDBACK_MILLISECONDS } from './codeCopy';
+import { attachCodeHeaders, createCodeCopyClickHandler, CODE_COPY_RESERVED_CLASSES, COPY_FEEDBACK_MILLISECONDS } from './codeCopy';
 
 const NONCE = 'nonce-under-test';
 let listener: ((event: Event) => void) | undefined;
 
+// Builds a fenced-code fixture the way the code renderer does, then runs the header pass on it.
 function mountBlock(code: string, language?: string, buttonNonce: string = NONCE): HTMLButtonElement {
-    document.body.innerHTML = `<div class="code-block">${codeHeaderHtml(language, buttonNonce)}<pre><code class="hljs"></code></pre></div>`;
-    document.querySelector('code')!.textContent = code;
+    const root = document.createElement('div');
+    const pre = document.createElement('pre');
+    pre.dataset.copyNonce = buttonNonce;
+    if (language !== undefined) pre.dataset.codeLanguage = language;
+    const codeElement = document.createElement('code');
+    codeElement.className = 'hljs';
+    codeElement.textContent = code;
+    pre.append(codeElement);
+    root.append(pre);
+    document.body.innerHTML = '';
+    document.body.append(root);
+    attachCodeHeaders(root, buttonNonce);
     listener = createCodeCopyClickHandler(() => NONCE);
     document.body.addEventListener('click', listener);
     return document.querySelector('button.code-copy')!;
@@ -34,7 +45,65 @@ afterEach(() => {
     Object.defineProperty(navigator, 'clipboard', { value: undefined, configurable: true });
 });
 
-describe('codeHeaderHtml', () => {
+describe('CODE_COPY_RESERVED_CLASSES', () => {
+    it('names every class the header and its copy button use', () => {
+        expect([...CODE_COPY_RESERVED_CLASSES].sort()).toEqual([
+            'code-block',
+            'code-copy',
+            'code-copy-icon',
+            'code-copy-label',
+            'code-copy-status',
+            'code-header',
+            'code-language',
+        ]);
+    });
+});
+
+describe('attachCodeHeaders', () => {
+    function fixture(html: string): HTMLElement {
+        const root = document.createElement('div');
+        root.innerHTML = html;
+        document.body.innerHTML = '';
+        document.body.append(root);
+        return root;
+    }
+
+    it('wraps only pre elements carrying the nonce, and wraps each one once', () => {
+        const root = fixture('<pre data-copy-nonce="n" data-code-language="ts"><code>a</code></pre><pre data-copy-nonce="other"><code>b</code></pre>');
+        attachCodeHeaders(root, 'n');
+        attachCodeHeaders(root, 'n');
+        expect(root.querySelectorAll('.code-header')).toHaveLength(1);
+        expect(root.querySelector('.code-block pre')?.textContent).toBe('a');
+        const untouched = root.querySelector<HTMLPreElement>('pre[data-copy-nonce="other"]')!;
+        expect(untouched.parentElement).toBe(root);
+    });
+
+    it('builds the header with the language as text and the same button the copy handler expects', () => {
+        const root = fixture('<pre data-copy-nonce="n" data-code-language="&lt;b&gt;x"><code>a</code></pre>');
+        attachCodeHeaders(root, 'n');
+        expect(root.querySelector('.code-language')?.textContent).toBe('<b>x');
+        expect(root.querySelector('.code-language b')).toBeNull();
+        const button = root.querySelector<HTMLButtonElement>('button.code-copy')!;
+        expect(button.getAttribute('type')).toBe('button');
+        expect(button.dataset.copyState).toBe('idle');
+        expect(button.dataset.copyNonce).toBe('n');
+        expect(button.getAttribute('aria-label')).toBe('Copy code');
+        expect(button.getAttribute('title')).toBe('Copy code');
+        expect(button.textContent).toBe('Copy');
+        const status = root.querySelector('.code-header .code-copy-status')!;
+        expect(status.getAttribute('role')).toBe('status');
+        expect(status.getAttribute('aria-live')).toBe('polite');
+        expect(status.textContent).toBe('');
+    });
+
+    it('leaves the language empty when the fence names none', () => {
+        const root = fixture('<pre data-copy-nonce="n"><code>a</code></pre>');
+        attachCodeHeaders(root, 'n');
+        expect(root.querySelector('.code-language')?.textContent).toBe('');
+    });
+});
+
+describe('header built by attachCodeHeaders', () => {
     it('renders the language and an accessible copy button', () => {
         const button = mountBlock('x', 'rust');
         expect(document.querySelector('.code-language')?.textContent).toBe('rust');
@@ -46,29 +115,10 @@ describe('codeHeaderHtml', () => {
         expect(button.dataset.copyNonce).toBe(NONCE);
     });
 
-    it('escapes a hostile language name', () => {
-        mountBlock('x', '<img src=x onerror=alert(1)>');
-        expect(document.querySelector('.code-language img')).toBeNull();
-        expect(document.querySelector('.code-language')?.textContent).toBe('<img src=x onerror=alert(1)>');
-    });
-
-    it('leaves the language empty when the fence names none', () => {
-        mountBlock('x');
-        expect(document.querySelector('.code-language')?.textContent).toBe('');
-    });
-
-    it('escapes the nonce so it cannot break out of its attribute', () => {
+    it('keeps a hostile nonce as an attribute value, never as markup', () => {
         const button = mountBlock('x', undefined, '"><b>x</b>');
         expect(document.querySelector('b')).toBeNull();
         expect(button.dataset.copyNonce).toBe('"><b>x</b>');
-    });
-
-    it('renders a silent live region in the header, empty before any copy', () => {
-        mountBlock('x', 'rust');
-        const status = document.querySelector('.code-header .code-copy-status')!;
-        expect(status.getAttribute('role')).toBe('status');
-        expect(status.getAttribute('aria-live')).toBe('polite');
-        expect(status.textContent).toBe('');
     });
 });
 

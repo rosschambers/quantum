@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { sanitizeMarkdownHtml, sanitizeSvg } from './sanitize';
+import { CODE_COPY_RESERVED_CLASSES } from './codeCopy';
 
 function parse(html: string): HTMLElement {
     const root = document.createElement('div');
@@ -69,13 +70,32 @@ describe('sanitizeMarkdownHtml', () => {
         expect(root.querySelector('mark')?.getAttribute('data-original')).toBe('true');
     });
 
-    it('keeps the code header button with its inline icon', () => {
-        const html = '<button type="button" class="code-copy" aria-label="Copy code" title="Copy code">' +
-            '<svg viewBox="0 0 24 24"><rect x="9" y="9" width="11" height="11"></rect></svg><span>Copy</span></button>';
-        const button = parse(sanitizeMarkdownHtml(html)).querySelector('button.code-copy');
-        expect(button?.getAttribute('type')).toBe('button');
-        expect(button?.getAttribute('aria-label')).toBe('Copy code');
-        expect(button?.querySelector('svg rect')).not.toBeNull();
+    it('drops buttons but keeps their text, so a decoy copy control renders as plain content', () => {
+        const root = parse(sanitizeMarkdownHtml('<p>Visible</p><button type="button" class="keep-me" onclick="alert(1)">Copy</button>'));
+        expect(root.querySelector('button')).toBeNull();
+        expect(root.textContent).toContain('Copy');
+        expect(root.querySelector('p')?.textContent).toBe('Visible');
+    });
+
+    it('removes reserved code-header classes from author markup, whatever element carries them', () => {
+        const root = parse(sanitizeMarkdownHtml(
+            '<div class="code-block"><div class="code-header"><span class="code-language">bash</span></div>' +
+            '<pre><code>echo DECOY</code></pre></div>' +
+            '<span class="code-copy-status">x</span><i class="code-copy-icon code-copy-label"></i>',
+        ));
+        for (const reserved of CODE_COPY_RESERVED_CLASSES) {
+            expect(root.querySelector(`.${reserved}`)).toBeNull();
+        }
+        expect(root.textContent).toContain('echo DECOY');
+        expect(root.textContent).toContain('bash');
+    });
+
+    it('keeps an author element\'s other classes when it drops reserved ones, and drops an empty class attribute', () => {
+        const root = parse(sanitizeMarkdownHtml(
+            '<p id="mixed" class="code-block highlight">a</p><p id="only" class="code-copy">b</p>',
+        ));
+        expect(root.querySelector('#mixed')?.className).toBe('highlight');
+        expect(root.querySelector('#only')?.hasAttribute('class')).toBe(false);
     });
 
     it.each([
@@ -126,5 +146,10 @@ describe('sanitizeSvg', () => {
         const root = parse(sanitizeSvg(svg));
         expect(root.querySelector('style')).toBeNull();
         expect(root.querySelector('text')?.textContent).toBe('a');
+    });
+
+    it('keeps reserved class names in SVG, since only markdown is stripped', () => {
+        const root = parse(sanitizeSvg('<svg><g class="code-block"><text>a</text></g></svg>'));
+        expect(root.querySelector('g')?.getAttribute('class')).toBe('code-block');
     });
 });

@@ -6,7 +6,7 @@
     import { measureFractions, observeLayout } from './measureOffsets';
     import { sanitizeMarkdownHtml, sanitizeSvg } from './sanitize';
     import { slugify } from './types';
-    import { codeHeaderHtml, createCodeCopyClickHandler } from './codeCopy';
+    import { attachCodeHeaders, createCodeCopyClickHandler } from './codeCopy';
     import './markdown.css';
 
     let mermaidInitialized = false;
@@ -111,7 +111,9 @@
                 }
                 const highlightedCode = highlightCode(token.text, language);
                 const languageClass = language ? ` language-${escapeHtml(language)}` : '';
-                return `<div class="code-block">${codeHeaderHtml(language, copyNonce)}<pre><code class="hljs${languageClass}">${highlightedCode}</code></pre></div>`;
+                // The pre carries the nonce; attachCodeHeaders adds the header to it after {@html} renders.
+                const languageAttribute = language ? ` data-code-language="${escapeHtml(language)}"` : '';
+                return `<pre data-copy-nonce="${escapeHtml(copyNonce)}"${languageAttribute}><code class="hljs${languageClass}">${highlightedCode}</code></pre>`;
             };
 
             renderer.image = (token) => {
@@ -249,6 +251,13 @@
         return () => {
             cancelled = true;
         };
+    });
+
+    // Runs before the search effects below, so headers exist before match marks are computed.
+    $effect(() => {
+        void parsedHtml;
+        if (!container) return;
+        attachCodeHeaders(container, currentCopyNonce);
     });
 
     let matchMarks: HTMLElement[][] = $state.raw([]);

@@ -4,6 +4,7 @@
 // docs/plans/2026-10-31-qv-markdown-sanitize-and-code-copy-design.md
 import DOMPurify from 'dompurify';
 import { escapeHtml } from './highlighter';
+import { CODE_COPY_RESERVED_CLASSES } from './codeCopy';
 
 // Scheme allow-list for URI attributes. Every scheme not listed never matches,
 // so javascript: and vbscript: are rejected, and so is data: on links. data:
@@ -12,13 +13,28 @@ import { escapeHtml } from './highlighter';
 // file:// URLs. Relative references and #fragments match the final two alternatives.
 const ALLOWED_URI_REGEXP = /^(?:(?:https?|mailto|file):|[^a-z]|[a-z+.-]+(?:[^a-z+.\-:]|$))/i;
 
+// Markdown gets its own DOMPurify instance, so the hook below never reaches sanitizeSvg or any
+// other user of the default instance.
+const markdownPurifier = DOMPurify(window);
+
+// The header's classes belong to this view. Author markup may not carry them, or a fake block
+// could pick up the header's styling. An element keeps its other classes.
+markdownPurifier.addHook('afterSanitizeAttributes', (element: Element) => {
+    if (!element.hasAttribute('class')) return;
+    element.classList.remove(...CODE_COPY_RESERVED_CLASSES);
+    if (element.classList.length === 0) {
+        element.removeAttribute('class');
+    }
+});
+
 export function sanitizeMarkdownHtml(html: string): string {
     // Fail closed: without DOMPurify, show the source as text instead of raw HTML.
-    if (!DOMPurify.isSupported) {
+    if (!markdownPurifier.isSupported) {
         return escapeHtml(html);
     }
-    return DOMPurify.sanitize(html, {
-        FORBID_TAGS: ['style', 'form'],
+    return markdownPurifier.sanitize(html, {
+        // A button is a control with no meaning in a document. Its text stays, as plain content.
+        FORBID_TAGS: ['style', 'form', 'button'],
         // `name` on images and forms shadows document properties; forbidding it
         // replaces DOMPurify's own clobbering check, which is switched off below.
         // `style` lets content position an overlay over a real code block, so its
