@@ -947,6 +947,57 @@ git commit -m "fix: keep code-block headers out of file viewer search"
 
 ---
 
+### Task 5b: Headers only on real fences, and indented `<details>` (added 2026-10-31 after the first live check)
+
+**Why.** In the live check, a decoy block written as raw HTML in a document used the reserved
+classes. It rendered with a header and a Copy button that looked real and did nothing (the nonce
+check made it inert). Ross wants such blocks to render as plain content, with no header and no
+button.
+
+Separately, content inside an open `<details>` should be indented.
+
+**Approach.**
+- Headers are no longer part of the HTML that goes through the sanitizer.
+- The marked code renderer marks its own `<pre>` with the per-render nonce. After `{@html}` renders, a DOM pass adds the header only to `pre[data-copy-nonce]` elements whose value matches the current nonce. It builds the header with DOM APIs.
+- The sanitizer strips our reserved class names from all author HTML, so a fake block can never pick up our styling. It also drops `<button>` from markdown entirely (DOMPurify keeps the button's text).
+- The click handler's nonce check stays as defence in depth.
+
+**Files:**
+- Modify: `VIEW/src/lib/codeCopy.ts`, `VIEW/src/lib/codeCopy.test.ts`
+- Modify: `VIEW/src/lib/sanitize.ts`, `VIEW/src/lib/sanitize.test.ts`
+- Modify: `VIEW/src/lib/MarkdownRenderer.svelte`, `VIEW/src/lib/MarkdownRenderer.test.ts`
+- Modify: `VIEW/src/lib/markdown.css`
+
+**Acceptance Criteria:**
+1. `codeCopy.ts` exports `CODE_COPY_RESERVED_CLASSES`, one list holding `code-block`, `code-header`, `code-language`, `code-copy`, `code-copy-icon`, `code-copy-label` and `code-copy-status`. `sanitize.ts` imports it; nothing else duplicates the list.
+2. `sanitizeMarkdownHtml`:
+   - removes every reserved class from any element and keeps the element's other classes, dropping the `class` attribute when it ends up empty;
+   - forbids `button`, keeping its text content;
+   - uses a markdown-only DOMPurify instance or a hook added and removed around the call, so `sanitizeSvg` and any other DOMPurify user is unaffected.
+3. The code renderer emits `<pre data-copy-nonce="NONCE" data-code-language="LANG">` (both escaped; omit `data-code-language` when the fence has no language) around the unchanged `<code class="hljs ...">`. It no longer calls any header builder.
+4. `codeCopy.ts` exports `attachCodeHeaders(root: HTMLElement, nonce: string): void`. It wraps each `pre[data-copy-nonce]` under `root` whose value equals `nonce` in `div.code-block`, inserting a header built with `document.createElement`:
+   - `textContent` for the language;
+   - the button with `type="button"`, `data-copy-state="idle"`, `data-copy-nonce`, `aria-label` and `title` set to "Copy code", and its fixed `CONTENT.idle` markup;
+   - the empty `role="status"` live region.
+
+   It is idempotent: an already-wrapped `pre` is skipped. A `pre` whose nonce does not match is left untouched. `codeHeaderHtml` is removed.
+5. `MarkdownRenderer.svelte` calls `attachCodeHeaders(container, currentCopyNonce)` from an `$effect` that depends on `parsedHtml` and `container`. The effect is declared before the search-highlighting effect, so headers exist before marks are computed. The diagram effect is unaffected.
+6. A raw-HTML decoy (`<div class="code-block"><div class="code-header"><span class="code-language">bash</span><button class="code-copy">Copy</button></div><pre><code>echo DECOY</code></pre></div>`) renders:
+   - with no element having any reserved class;
+   - with no `button`;
+   - with no header;
+   - and its text still visible.
+7. A raw `<pre data-copy-nonce="guess"><code>x</code></pre>` gets no header.
+8. Real fences still get exactly one header each. All existing copy, feedback, status, round-trip, search-mark and search-exclusion tests pass, updated only where they referenced `codeHeaderHtml`.
+9. CSS:
+   - `.markdown-renderer details > :not(summary)` gets `margin-left: 1.25em`;
+   - `.markdown-renderer details` gets `margin-bottom: 0.8em`;
+   - `.markdown-renderer summary` gets `cursor: pointer`;
+   - theme tokens only where colors are involved (none needed here).
+10. The full view suite and `pnpm build` pass. Commit: `fix: add code headers only to real fences and strip reserved classes from author markup`. The `<details>` CSS may be its own commit: `style: indent the contents of open details blocks in qv`.
+
+---
+
 ### Task 7: Live verification in a dev daemon
 
 The tests cannot prove WebKit behaviour: the policy's real source list, host-injected scripts under the policy, actual clipboard contents, and selection copy. This task proves them on the real engine.
@@ -1043,6 +1094,9 @@ Expected: `systemctl --user is-active quantum.service` prints `active`, and the 
 1. `AGENTS.md` describes all five points above in plain words, with no abbreviations.
 2. The quantum commits are pushed to `origin/main`.
 3. The config repository's quantum flake input is bumped and `just build` succeeds, following the `nixos-config-change` skill.
+   - The same config change adds glib-networking to the quantum daemon's wrapper, with `--prefix GIO_EXTRA_MODULES : ${pkgs.glib-networking}/lib/gio/modules`.
+   - Root cause, proven live on 2026-10-31: without it, GLib has no TLS backend, so WebKit fails every `https` request from every quantum view. Plain `http` images loaded. `https` images loaded only after the dev daemon ran with glib-networking added to `GIO_EXTRA_MODULES`.
+   - Verify after the switch: `tr '\0' '\n' < /proc/<quantumd pid>/environ | grep GIO_EXTRA_MODULES` lists glib-networking, and an `https` image renders in `qv`.
 4. Ross runs `just switch`. The agent never does.
 5. After the switch:
    - `grep -a` for `sanitizeMarkdownHtml` or `code-copy` in the new store path's `bin/.quantumd-wrapped` finds the string (see the quantum `AGENTS.md` note about the two wrappers);
