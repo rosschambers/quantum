@@ -77,6 +77,24 @@ describe('sanitizeMarkdownHtml', () => {
         expect(button?.getAttribute('aria-label')).toBe('Copy code');
         expect(button?.querySelector('svg rect')).not.toBeNull();
     });
+
+    it.each([
+        'javascript:alert(1)',
+        'JaVaScRiPt:alert(1)',
+        'java\tscript:alert(1)',
+        'java&#x09;script:alert(1)',
+        'vbscript:msgbox(1)',
+        'data:text/html,<script>alert(1)</script>',
+    ])('removes the href from an anchor whose value is %j', (href) => {
+        const root = parse(sanitizeMarkdownHtml(`<a id="bad" href="${href}">x</a>`));
+        expect(root.querySelector('#bad')).not.toBeNull();
+        expect(root.querySelector('#bad')?.hasAttribute('href')).toBe(false);
+    });
+
+    it('keeps a data: image source on an img tag', () => {
+        const root = parse(sanitizeMarkdownHtml('<img id="png" src="data:image/png;base64,AAAA">'));
+        expect(root.querySelector('#png')?.getAttribute('src')).toBe('data:image/png;base64,AAAA');
+    });
 });
 
 describe('sanitizeSvg', () => {
@@ -93,5 +111,12 @@ describe('sanitizeSvg', () => {
         expect(root.querySelector('g#node1')?.hasAttribute('onclick')).toBe(false);
         expect(root.innerHTML).not.toContain('javascript:');
         expect(root.innerHTML).toContain('https://example.com');
+    });
+
+    it('removes style elements from the SVG', () => {
+        const svg = '<svg xmlns="http://www.w3.org/2000/svg"><style>text{fill:red}</style><text>a</text></svg>';
+        const root = parse(sanitizeSvg(svg));
+        expect(root.querySelector('style')).toBeNull();
+        expect(root.querySelector('text')?.textContent).toBe('a');
     });
 });

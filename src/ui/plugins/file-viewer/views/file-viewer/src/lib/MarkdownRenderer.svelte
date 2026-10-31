@@ -91,7 +91,8 @@
             };
 
             renderer.code = (token) => {
-                const language = token.lang || undefined;
+                // marked's lang is the whole info string (```js title="x"), so keep only the first word.
+                const language = token.lang?.match(/^\S*/)?.[0] || undefined;
                 if (isMermaidLanguage(language)) {
                     return diagramPlaceholderHtml(token.text, 'mermaid');
                 }
@@ -106,7 +107,9 @@
             renderer.image = (token) => {
                 const src = escapeHtml(resolveImageSrc(token.href));
                 const alt = escapeHtml(token.text || '');
-                const titleAttribute = token.title ? ` title="${escapeHtml(token.title)}"` : '';
+                // marked already escapes the title in its lexer, so it is attribute-safe as it arrives;
+                // escaping it again would show a literal &quot; in the tooltip.
+                const titleAttribute = token.title ? ` title="${token.title}"` : '';
                 return `<img src="${src}" alt="${alt}"${titleAttribute} />`;
             };
 
