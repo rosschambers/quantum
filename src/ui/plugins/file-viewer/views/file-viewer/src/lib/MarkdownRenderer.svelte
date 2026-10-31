@@ -69,16 +69,17 @@
         placeholder.innerHTML = `<p class="diagram-error-message">${escapeHtml(message)}</p><pre><code class="hljs">${highlightCode(source, renderer === 'mermaid' ? 'mermaid' : 'dot')}</code></pre>`;
     }
 
-    // The nonce of the most recent parse. Every copy button this parse emits carries it, and
-    // the click handler reads it at click time, so the handler always checks the nonce of the
-    // DOM that is on screen. Author markup cannot know it.
-    let currentCopyNonce = '';
-    const handleCodeCopyClick = createCodeCopyClickHandler(() => currentCopyNonce);
+    // One render: its HTML and the nonce its copy buttons carry. Both come from the same derivation,
+    // so the header pass and the click handler always read the nonce of the DOM on screen.
+    // Author markup cannot know the nonce.
+    interface Rendered {
+        html: string;
+        nonce: string;
+    }
 
-    let parsedHtml = $derived.by(() => {
+    let rendered: Rendered = $derived.by((): Rendered => {
+        const nonce = crypto.randomUUID();
         try {
-            const copyNonce = crypto.randomUUID();
-            currentCopyNonce = copyNonce;
 
             // Configure marked with GFM enabled, no breaks
             marked.setOptions({
@@ -113,7 +114,7 @@
                 const languageClass = language ? ` language-${escapeHtml(language)}` : '';
                 // The pre carries the nonce; attachCodeHeaders adds the header to it after {@html} renders.
                 const languageAttribute = language ? ` data-code-language="${escapeHtml(language)}"` : '';
-                return `<pre data-copy-nonce="${escapeHtml(copyNonce)}"${languageAttribute}><code class="hljs${languageClass}">${highlightedCode}</code></pre>`;
+                return `<pre data-copy-nonce="${escapeHtml(nonce)}"${languageAttribute}><code class="hljs${languageClass}">${highlightedCode}</code></pre>`;
             };
 
             renderer.image = (token) => {
@@ -128,12 +129,18 @@
 
             marked.setOptions({ renderer });
 
-            return sanitizeMarkdownHtml(marked.parse(content) as string);
+            return { html: sanitizeMarkdownHtml(marked.parse(content) as string), nonce };
         } catch (error) {
             console.error('Markdown parsing error:', error);
-            return `<p>Error rendering markdown: ${escapeHtml(error instanceof Error ? error.message : String(error))}</p>`;
+            // The error text has no copy buttons, so the nonce is unused here; a fresh one keeps the shape uniform.
+            return {
+                html: `<p>Error rendering markdown: ${escapeHtml(error instanceof Error ? error.message : String(error))}</p>`,
+                nonce,
+            };
         }
     });
+
+    const handleCodeCopyClick = createCodeCopyClickHandler(() => rendered.nonce);
 
     let container: HTMLDivElement | undefined = $state();
 
@@ -147,7 +154,7 @@
     // SVG is injected. Renders run sequentially within a pass — mermaid's renderer
     // must not be re-entered concurrently.
     $effect(() => {
-        if (!parsedHtml || !container) return;
+        if (!rendered.html || !container) return;
         const placeholders = Array.from(
             container.querySelectorAll<HTMLElement>('.diagram-block[data-diagram-status="pending"]'),
         );
@@ -255,9 +262,9 @@
 
     // Runs before the search effects below, so headers exist before match marks are computed.
     $effect(() => {
-        void parsedHtml;
+        void rendered;
         if (!container) return;
-        attachCodeHeaders(container, currentCopyNonce);
+        attachCodeHeaders(container, rendered.nonce);
     });
 
     let matchMarks: HTMLElement[][] = $state.raw([]);
@@ -293,9 +300,9 @@
     }
 
     $effect(() => {
-        // Explicit dependency on parsedHtml (not otherwise read in this
+        // Explicit dependency on rendered (not otherwise read in this
         // effect) so a content/file change re-runs this, not just a query.
-        void parsedHtml;
+        void rendered;
         if (!container) return;
 
         const { count, segments } = findMatchSegmentsInDom(container, query);
@@ -355,7 +362,8 @@
 </script>
 
 <div class="markdown-renderer" bind:this={container}>
-    {@html parsedHtml}
+    <!-- The header pass moves top-level nodes, so {@html} must stay the only child of this element. -->
+    {@html rendered.html}
 </div>
 
 <style>

@@ -549,20 +549,33 @@ describe('MarkdownRenderer code header', () => {
     });
 });
 
+// Every element under root except realBlock and its descendants must carry no reserved class.
+function expectNoReservedClassOutside(root: HTMLElement, realBlock: HTMLElement): void {
+    for (const element of Array.from(root.querySelectorAll('*'))) {
+        if (element === realBlock || realBlock.contains(element)) continue;
+        for (const reserved of CODE_COPY_RESERVED_CLASSES) {
+            expect(element.classList.contains(reserved)).toBe(false);
+        }
+    }
+}
+
 describe('MarkdownRenderer code copy trust', () => {
     const SOURCE = '\tconst html = "<b>&amp;</b>";\n    if (a < b && c > d) { return \'x\'; }';
 
-    it('renders an author-written decoy as plain content, with no header, no button and no reserved class', () => {
+    it('renders an author-written decoy as plain content, with no header, no button and no reserved class', async () => {
         const decoy = '<div class="code-block"><div class="code-header"><span class="code-language">bash</span><button type="button" class="code-copy">Copy</button></div><pre><code>echo DECOY</code></pre></div>';
-        const { container } = render(MarkdownRenderer, { props: { content: `Visible text.\n\n${decoy}` } });
+        const { container } = render(MarkdownRenderer, { props: { content: `Visible text.\n\n${decoy}\n\n\`\`\`ts\nreal\n\`\`\`` } });
+        await tick();
         const root = container.querySelector<HTMLElement>('.markdown-renderer')!;
-        for (const element of Array.from(root.querySelectorAll('*'))) {
-            for (const reserved of CODE_COPY_RESERVED_CLASSES) {
-                expect(element.classList.contains(reserved)).toBe(false);
-            }
-        }
-        expect(root.querySelector('button')).toBeNull();
-        expect(root.querySelector('.code-header')).toBeNull();
+        const realBlock = root.querySelector<HTMLElement>('.code-block')!;
+        expect(root.querySelectorAll('.code-header')).toHaveLength(1);
+        expect(realBlock.querySelector('.code-header')).not.toBeNull();
+        expect(realBlock.querySelector('pre code')?.textContent).toBe('real');
+        expectNoReservedClassOutside(root, realBlock);
+        expect(root.querySelectorAll('button')).toHaveLength(1);
+        expect(realBlock.querySelector('button')).not.toBeNull();
+        const decoyCode = Array.from(root.querySelectorAll('pre code')).find((code) => code.textContent === 'echo DECOY')!;
+        expect(decoyCode.closest('.code-block')).toBeNull();
         expect(root.textContent).toContain('echo DECOY');
     });
 
@@ -592,12 +605,16 @@ describe('MarkdownRenderer code copy trust', () => {
         }
     });
 
-    it('gives a raw pre with a guessed nonce no header', () => {
-        const { container } = render(MarkdownRenderer, { props: { content: '<pre data-copy-nonce="guess"><code>x</code></pre>' } });
-        const pre = container.querySelector('pre')!;
-        expect(pre.getAttribute('data-copy-nonce')).toBe('guess');
-        expect(container.querySelector('.code-header')).toBeNull();
-        expect(pre.parentElement?.classList.contains('code-block')).toBe(false);
+    it('gives a raw pre with a guessed nonce no header, while a real fence beside it keeps its header', async () => {
+        const { container } = render(MarkdownRenderer, { props: { content: '<pre data-copy-nonce="guess"><code>x</code></pre>\n\n```ts\nreal\n```' } });
+        await tick();
+        const root = container.querySelector<HTMLElement>('.markdown-renderer')!;
+        const realBlock = root.querySelector<HTMLElement>('.code-block')!;
+        expect(root.querySelectorAll('.code-header')).toHaveLength(1);
+        expect(realBlock.querySelector('pre code')?.textContent).toBe('real');
+        const guessed = root.querySelector<HTMLElement>('pre[data-copy-nonce="guess"]')!;
+        expect(guessed.closest('.code-block')).toBeNull();
+        expectNoReservedClassOutside(root, realBlock);
     });
 
     it('still highlights a search match inside a code block, and only there', async () => {
@@ -607,6 +624,27 @@ describe('MarkdownRenderer code copy trust', () => {
         const { container } = render(MarkdownRenderer, { props: { content, query: 'needle', onMatchCount } });
         await vi.waitFor(() => expect(container.querySelector('pre code mark.search-match')).not.toBeNull());
         expect(counts.at(-1)).toBe(1);
+    });
+
+    it('keeps one header per fence and copies the new source after the content changes', async () => {
+        const writeText = vi.fn(async () => {});
+        Object.defineProperty(navigator, 'clipboard', { value: { writeText }, configurable: true });
+        try {
+            const { container, rerender } = render(MarkdownRenderer, { props: { content: '```ts\nfirst\n```' } });
+            await rerender({ content: '```ts\nsecond\n```\n\ntext\n\n```ts\nthird\n```' });
+            await tick();
+            const root = container.querySelector<HTMLElement>('.markdown-renderer')!;
+            expect(root.querySelectorAll('.code-block')).toHaveLength(2);
+            expect(root.querySelectorAll('.code-header')).toHaveLength(2);
+            const buttons = root.querySelectorAll<HTMLButtonElement>('button.code-copy');
+            expect(buttons).toHaveLength(2);
+            buttons[0].click();
+            await vi.waitFor(() => expect(writeText).toHaveBeenCalledWith('second'));
+            buttons[1].click();
+            await vi.waitFor(() => expect(writeText).toHaveBeenLastCalledWith('third'));
+        } finally {
+            Object.defineProperty(navigator, 'clipboard', { value: undefined, configurable: true });
+        }
     });
 
     it('copies the exact source after highlighting, sanitizing and parsing', async () => {

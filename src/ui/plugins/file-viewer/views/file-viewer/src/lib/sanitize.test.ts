@@ -90,6 +90,11 @@ describe('sanitizeMarkdownHtml', () => {
         expect(root.textContent).toContain('bash');
     });
 
+    it('strips a reserved class from an SVG element inside markdown and keeps its other class', () => {
+        const root = parse(sanitizeMarkdownHtml('<svg class="code-copy-icon other"><rect></rect></svg>'));
+        expect(root.querySelector('svg')?.getAttribute('class')).toBe('other');
+    });
+
     it('keeps an author element\'s other classes when it drops reserved ones, and drops an empty class attribute', () => {
         const root = parse(sanitizeMarkdownHtml(
             '<p id="mixed" class="code-block highlight">a</p><p id="only" class="code-copy">b</p>',

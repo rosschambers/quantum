@@ -59,6 +59,30 @@ describe('CODE_COPY_RESERVED_CLASSES', () => {
     });
 });
 
+describe('reserved classes across header states', () => {
+    it('uses only reserved classes on the header and every descendant in the idle, copied and failed states', async () => {
+        const button = mountBlock('x', 'ts');
+        const header = button.closest<HTMLElement>('.code-header')!;
+        const collectClasses = (): string[] => [header, ...Array.from(header.querySelectorAll('*'))]
+            .flatMap((element) => Array.from(element.classList));
+        const idle = collectClasses();
+        stubClipboard(async () => {});
+        button.click();
+        await settle();
+        expect(button.dataset.copyState).toBe('copied');
+        const copied = collectClasses();
+        stubClipboard(async () => { throw new Error('denied'); });
+        button.click();
+        await settle();
+        expect(button.dataset.copyState).toBe('failed');
+        const failed = collectClasses();
+        expect(idle).toContain('code-copy-icon');
+        for (const name of [...idle, ...copied, ...failed]) {
+            expect(CODE_COPY_RESERVED_CLASSES).toContain(name);
+        }
+    });
+});
+
 describe('attachCodeHeaders', () => {
     function fixture(html: string): HTMLElement {
         const root = document.createElement('div');

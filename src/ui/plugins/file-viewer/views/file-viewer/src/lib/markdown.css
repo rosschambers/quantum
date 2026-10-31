@@ -391,15 +391,14 @@
     white-space: nowrap;
 }
 
-/* Content of an open details block is indented under its summary. */
-.markdown-renderer details > :not(summary) {
-    margin-left: 1.25em;
-}
-
+/* Content of an open details block is indented with padding, not margin, so a width: 100% table
+   inside stays within the column. The summary pulls back over that gutter to keep its place. */
 .markdown-renderer details {
+    padding-left: 1.25em;
     margin-bottom: 0.8em;
 }
 
-.markdown-renderer summary {
+.markdown-renderer details > summary {
+    margin-left: -1.25em;
     cursor: pointer;
 }
