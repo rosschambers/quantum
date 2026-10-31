@@ -1,0 +1,520 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>qv markdown code-block copy button</title>
+<style>
+  /* Sycamore theme tokens, copied from src/ui/themes/sycamore/tokens.toml */
+  :root {
+    --color-bg: #292520;
+    --color-bg-alt: #3b3630;
+    --color-border: #4a443e;
+    --color-fg: #e8e4d8;
+    --color-fg-alt: #d8d4c8;
+    --color-accent: #a6e3a1;
+    --color-muted: #8a8578;
+    --color-error: #af4e3c;
+    --color-surface: #3b3630;
+    --color-surface-hover: #4a443e;
+    --color-divider: rgba(232, 228, 216, 0.25);
+    --font-mono: monospace;
+    --radius-md: 6px;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; }
+  body {
+    background: #1b1814;
+    color: var(--color-fg);
+    font-family: system-ui, sans-serif;
+    display: grid;
+    grid-template-columns: 330px 1fr;
+    height: 100vh;
+    overflow: hidden;
+  }
+
+  /* ---------- controls ---------- */
+  .controls {
+    border-right: 1px solid var(--color-border);
+    padding: 16px 18px 24px;
+    overflow-y: auto;
+    font-size: 13px;
+  }
+  .controls h1 { font-size: 15px; margin: 0 0 4px; }
+  .controls .lede { color: var(--color-muted); margin: 0 0 14px; line-height: 1.45; }
+  .group { margin-bottom: 16px; }
+  .group h2 {
+    font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em;
+    color: var(--color-muted); margin: 0 0 6px; font-weight: 600;
+  }
+  .segmented { display: flex; flex-wrap: wrap; gap: 4px; }
+  .segmented button {
+    font: inherit; font-size: 12px; padding: 5px 9px; border-radius: 5px;
+    border: 1px solid var(--color-border); background: transparent; color: var(--color-fg-alt);
+    cursor: pointer;
+  }
+  .segmented button[aria-pressed="true"] {
+    background: var(--color-surface-hover); color: var(--color-fg); border-color: var(--color-muted);
+  }
+  .hint { color: var(--color-muted); font-size: 11.5px; margin-top: 5px; line-height: 1.4; }
+  .row { display: flex; align-items: center; gap: 8px; }
+  .row input[type=range] { flex: 1; accent-color: var(--color-accent); }
+  .row output { font-family: var(--font-mono); font-size: 12px; min-width: 56px; text-align: right; }
+  label.check { display: flex; gap: 8px; align-items: center; cursor: pointer; margin-top: 4px; }
+  .presets { display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 18px; }
+  .presets button {
+    font: inherit; font-size: 12px; padding: 5px 9px; border-radius: 999px; cursor: pointer;
+    border: 1px solid var(--color-border); background: var(--color-bg-alt); color: var(--color-fg);
+  }
+
+  /* ---------- stage ---------- */
+  .stage {
+    display: grid; grid-template-rows: 1fr auto; min-height: 0;
+  }
+  .stage-scroll { overflow: auto; padding: 24px; display: flex; justify-content: center; }
+
+  /* Mock of the real qv panel window (943px wide in Ross's tiled layout) */
+  .qv-window {
+    width: 943px; flex: none;
+    background: var(--color-bg);
+    border: 1px solid var(--color-border);
+    border-radius: 10px;
+    overflow: hidden;
+    align-self: flex-start;
+  }
+  .qv-titlebar {
+    height: 44px; display: flex; align-items: center; gap: 10px; padding: 0 16px;
+    border-bottom: 1px solid var(--color-border); font-size: 13px;
+  }
+  .qv-titlebar .badge {
+    font-family: var(--font-mono); font-size: 11px; background: #3d4a36; color: var(--color-accent);
+    padding: 1px 5px; border-radius: 3px;
+  }
+  .qv-titlebar .name { font-family: var(--font-mono); color: var(--color-fg); }
+  .qv-titlebar .dir { color: var(--color-muted); }
+  .qv-titlebar .close { margin-left: auto; color: var(--color-fg-alt); }
+
+  /* ---------- markdown, copied from lib/markdown.css and lib/highlight-theme.css ---------- */
+  .markdown-renderer { padding: 32px 32px 48px; font-size: 16px; line-height: 1.55; }
+  .markdown-renderer h1 {
+    color: var(--color-fg); font-size: 1.8em; border-bottom: 1px solid var(--color-border);
+    padding-bottom: 0.5em; margin: 0.5em 0;
+  }
+  .markdown-renderer h2 { color: var(--color-fg); font-size: 1.4em; margin: 1.5em 0 0.5em; }
+  .markdown-renderer p { color: var(--color-fg-alt); margin: 0 0 0.8em; }
+  .markdown-renderer pre {
+    background: var(--color-bg-alt); border: 1px solid var(--color-border);
+    border-radius: var(--radius-md); padding: 12px; overflow-x: auto; margin: 0 0 0.8em;
+    font-family: var(--font-mono); font-size: 13px; line-height: 1.6;
+  }
+  .markdown-renderer .hljs {
+    display: block; background: var(--color-bg-alt); color: var(--color-fg-alt);
+    padding: 12px; border-radius: var(--radius-md);
+  }
+  .markdown-renderer .inline-code {
+    background: var(--color-bg-alt); border-radius: 3px; padding: 2px 6px;
+    font-family: var(--font-mono); font-size: 0.88em; color: var(--color-accent);
+  }
+  .hljs-keyword { color: #c792ea; }
+  .hljs-string { color: #c3e88d; }
+  .hljs-number { color: #f78c6c; }
+  .hljs-comment { color: var(--color-muted); font-style: italic; }
+  .hljs-title { color: #82aaff; }
+  .hljs-built_in { color: #82aaff; }
+  .hljs-variable { color: #f07178; }
+
+  /* ---------- the thing being decided ---------- */
+  /* The wrapper exists so the button does not scroll sideways with a wide <pre>. */
+  .code-block { position: relative; margin: 0 0 0.8em; }
+  .code-block pre { margin: 0; }
+  .code-block .code-header {
+    display: flex; align-items: center; justify-content: space-between;
+    background: var(--color-bg-alt);
+    border: 1px solid var(--color-border); border-bottom: 1px solid var(--color-divider);
+    border-radius: var(--radius-md) var(--radius-md) 0 0;
+    padding: 4px 6px 4px 14px; font-size: 12px; color: var(--color-muted);
+    font-family: var(--font-mono);
+  }
+  .code-block.has-header pre { border-top: none; border-radius: 0 0 var(--radius-md) var(--radius-md); }
+  .language-tag {
+    position: absolute; left: 14px; top: 8px; font-family: var(--font-mono); font-size: 11px;
+    color: var(--color-muted); pointer-events: none;
+  }
+
+  .copy-button {
+    display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+    font-family: system-ui, sans-serif; font-size: 12px; line-height: 1;
+    color: var(--color-fg-alt); cursor: pointer;
+    border-radius: 5px; padding: 0 8px;
+    transition: opacity 120ms, background-color 120ms, color 120ms, border-color 120ms;
+    user-select: none; -webkit-user-select: none;
+    white-space: nowrap;
+  }
+  .copy-button svg { width: 15px; height: 15px; flex: none; }
+  .copy-button:focus-visible { outline: 2px solid var(--color-accent); outline-offset: 1px; }
+
+  .copy-button.style-ghost { background: transparent; border: 1px solid transparent; }
+  .copy-button.style-ghost:hover { background: var(--color-surface-hover); }
+  .copy-button.style-chip { background: var(--color-bg); border: 1px solid var(--color-border); }
+  .copy-button.style-chip:hover { background: var(--color-surface-hover); border-color: var(--color-muted); }
+
+  .copy-button.state-copied { color: var(--color-accent); }
+  .copy-button.state-copied.feedback-flash { border-color: var(--color-accent); }
+  .copy-button.state-failed { color: var(--color-error); border-color: var(--color-error); }
+
+  .corner { position: absolute; top: 8px; right: 8px; }
+
+  /* visibility modes for the corner placement */
+  .vis-hover .corner { opacity: 0; }
+  .vis-hover .code-block:hover .corner,
+  .vis-hover .corner:focus-visible,
+  .vis-hover .corner.state-copied,
+  .vis-hover .corner.state-failed { opacity: 1; }
+  .vis-faint .corner { opacity: 0.35; }
+  .vis-faint .code-block:hover .corner,
+  .vis-faint .corner:focus-visible,
+  .vis-faint .corner.state-copied,
+  .vis-faint .corner.state-failed { opacity: 1; }
+
+  /* force-hover toggle so the hover state can be judged without hovering */
+  .force-hover .vis-hover .corner, .force-hover .vis-faint .corner { opacity: 1; }
+
+  /* ---------- prompt ---------- */
+  .prompt-panel {
+    border-top: 1px solid var(--color-border); padding: 12px 18px 14px; background: #221f1a;
+  }
+  .prompt-panel h2 {
+    font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--color-muted);
+    margin: 0 0 6px; display: flex; justify-content: space-between; align-items: center;
+  }
+  #prompt {
+    font-family: var(--font-mono); font-size: 12.5px; line-height: 1.5; white-space: pre-wrap;
+    color: var(--color-fg-alt); max-height: 150px; overflow: auto; margin: 0;
+  }
+  #copy-prompt {
+    font: inherit; font-size: 12px; text-transform: none; letter-spacing: 0;
+    padding: 5px 12px; border-radius: 5px; cursor: pointer;
+    background: var(--color-accent); color: #1b1814; border: none; font-weight: 600;
+  }
+</style>
+</head>
+<body>
+
+<aside class="controls">
+  <h1>Code-block copy button</h1>
+  <p class="lede">For rendered markdown in qv. The preview copies the theme, markdown and highlight CSS from the real view. The buttons really copy, so paste somewhere to check what lands.</p>
+
+  <div class="group">
+    <h2>Presets</h2>
+    <div class="presets" id="presets"></div>
+  </div>
+
+  <div class="group">
+    <h2>Placement</h2>
+    <div class="segmented" data-key="placement">
+      <button data-value="corner">Inside, top-right corner</button>
+      <button data-value="header">Header strip above code</button>
+    </div>
+    <div class="hint">Header strip adds a bar holding the language name and the button. It never overlaps code, but every block gets about 28px taller.</div>
+  </div>
+
+  <div class="group" id="visibility-group">
+    <h2>Visibility (corner only)</h2>
+    <div class="segmented" data-key="visibility">
+      <button data-value="hover">On hover or focus</button>
+      <button data-value="faint">Faint, full on hover</button>
+      <button data-value="always">Always visible</button>
+    </div>
+    <div class="hint">"On hover" hides it entirely at rest, so screenshots and reading stay clean. A corner button can cover the end of a long first line.</div>
+    <label class="check"><input type="checkbox" id="force-hover"> Show as if hovered</label>
+  </div>
+
+  <div class="group">
+    <h2>Content</h2>
+    <div class="segmented" data-key="content">
+      <button data-value="icon">Icon only</button>
+      <button data-value="label">"Copy" text</button>
+      <button data-value="both">Icon and text</button>
+    </div>
+  </div>
+
+  <div class="group">
+    <h2>Button style</h2>
+    <div class="segmented" data-key="buttonStyle">
+      <button data-value="ghost">Ghost (no fill)</button>
+      <button data-value="chip">Chip (filled, bordered)</button>
+    </div>
+  </div>
+
+  <div class="group">
+    <h2>Size</h2>
+    <div class="row"><input type="range" id="size" min="22" max="34" step="2"><output id="size-out"></output></div>
+  </div>
+
+  <div class="group" id="language-group">
+    <h2>Language name (corner only)</h2>
+    <div class="segmented" data-key="language">
+      <button data-value="off">Hidden</button>
+      <button data-value="top-left">Top-left, faint</button>
+    </div>
+    <div class="hint">Taken from the fence's language, for example ```rust. Shown only when the fence names one.</div>
+  </div>
+
+  <div class="group">
+    <h2>After a successful copy</h2>
+    <div class="segmented" data-key="feedback">
+      <button data-value="swap">Check icon and "Copied"</button>
+      <button data-value="flash">Same, plus accent border</button>
+      <button data-value="label-only">Text changes to "Copied"</button>
+    </div>
+    <div class="row" style="margin-top:8px">
+      <span style="color:var(--color-muted);font-size:12px">Hold for</span>
+      <input type="range" id="duration" min="800" max="3000" step="100"><output id="duration-out"></output>
+    </div>
+    <div class="hint">The button stays the same width when its text changes, so nothing jumps.</div>
+  </div>
+
+  <div class="group">
+    <h2>Failure state</h2>
+    <label class="check"><input type="checkbox" id="simulate-failure"> Simulate a failed copy</label>
+    <div class="hint">Shows "Copy failed" in the error color for the same hold time. This is what you'd see if the clipboard API ever went missing.</div>
+  </div>
+</aside>
+
+<main class="stage">
+  <div class="stage-scroll" id="stage-scroll">
+    <div class="qv-window">
+      <div class="qv-titlebar">
+        <span class="badge">M</span>
+        <span class="name">2026-10-31-example-plan.md</span>
+        <span class="dir">/home/ixiri/Documents/exocortex/docs/plans</span>
+        <span class="close">&#x2715;</span>
+      </div>
+      <div class="markdown-renderer" id="preview">
+        <h1>Example plan</h1>
+        <p>Run the build inside the nix shell, then launch the prebuilt daemon so the GTK and WebKit libraries are on the path.</p>
+        <div data-block="bash"></div>
+        <h2>Task 2: sanitize rendered markdown</h2>
+        <p>Wrap <code class="inline-code">marked.parse</code> output before it reaches the page:</p>
+        <div data-block="typescript"></div>
+        <p>A fence with no language, and one wide line that scrolls sideways:</p>
+        <div data-block="plain"></div>
+        <div data-block="wide"></div>
+        <p>A one-line block, where a corner button sits closest to the code:</p>
+        <div data-block="one-line"></div>
+      </div>
+    </div>
+  </div>
+  <section class="prompt-panel">
+    <h2><span>Decision (copy back into the session)</span><button id="copy-prompt">Copy decision</button></h2>
+    <pre id="prompt"></pre>
+  </section>
+</main>
+
+<script>
+const BLOCKS = {
+  bash: { lang: 'bash', html:
+`<span class="hljs-comment"># build once, then run the prebuilt binary through the wrapper</span>
+./scripts/devsh.sh cargo build --bin quantumd
+./scripts/devsh.sh ./target/debug/quantumd`,
+    text: `# build once, then run the prebuilt binary through the wrapper
+./scripts/devsh.sh cargo build --bin quantumd
+./scripts/devsh.sh ./target/debug/quantumd` },
+  typescript: { lang: 'typescript', html:
+`<span class="hljs-keyword">import</span> <span class="hljs-title">DOMPurify</span> <span class="hljs-keyword">from</span> <span class="hljs-string">'dompurify'</span>;
+
+<span class="hljs-keyword">export</span> <span class="hljs-keyword">function</span> <span class="hljs-title">sanitizeMarkdownHtml</span>(html: <span class="hljs-built_in">string</span>): <span class="hljs-built_in">string</span> {
+    <span class="hljs-keyword">return</span> <span class="hljs-title">DOMPurify</span>.sanitize(html, {
+        <span class="hljs-variable">FORBID_TAGS</span>: [<span class="hljs-string">'style'</span>, <span class="hljs-string">'form'</span>],
+    });
+}`,
+    text: `import DOMPurify from 'dompurify';
+
+export function sanitizeMarkdownHtml(html: string): string {
+    return DOMPurify.sanitize(html, {
+        FORBID_TAGS: ['style', 'form'],
+    });
+}` },
+  plain: { lang: null, html:
+`quantum.service: Started quantumd
+opening per-monitor view window: plugin/bar/bar@DP-1`,
+    text: `quantum.service: Started quantumd
+opening per-monitor view window: plugin/bar/bar@DP-1` },
+  wide: { lang: 'json', html:
+`{<span class="hljs-variable">"compare"</span>: {<span class="hljs-variable">"left"</span>: <span class="hljs-string">"/home/ixiri/Documents/exocortex/code/projects/quantum/docs/plans/2026-10-08-qv-diff-mode-design.md"</span>, <span class="hljs-variable">"right"</span>: <span class="hljs-string">"/tmp/opencode/after.md"</span>}}`,
+    text: `{"compare": {"left": "/home/ixiri/Documents/exocortex/code/projects/quantum/docs/plans/2026-10-08-qv-diff-mode-design.md", "right": "/tmp/opencode/after.md"}}` },
+  'one-line': { lang: 'bash', html: `qv --diff HEAD~1..HEAD`, text: `qv --diff HEAD~1..HEAD` },
+};
+
+const ICON_COPY = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V6a2 2 0 0 1 2-2h9"/></svg>';
+const ICON_CHECK = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg>';
+const ICON_ERROR = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M12 7v6"/><path d="M12 17h.01"/><circle cx="12" cy="12" r="9"/></svg>';
+
+const DEFAULTS = {
+  placement: 'corner', visibility: 'hover', content: 'icon', buttonStyle: 'chip',
+  size: 28, language: 'off', feedback: 'swap', duration: 1500,
+};
+const PRESETS = {
+  'Quiet corner': { placement: 'corner', visibility: 'hover', content: 'icon', buttonStyle: 'chip', size: 28, language: 'off', feedback: 'swap', duration: 1500 },
+  'Always there': { placement: 'corner', visibility: 'always', content: 'both', buttonStyle: 'chip', size: 26, language: 'off', feedback: 'swap', duration: 1500 },
+  'Faint ghost': { placement: 'corner', visibility: 'faint', content: 'icon', buttonStyle: 'ghost', size: 28, language: 'top-left', feedback: 'swap', duration: 1500 },
+  'Header strip': { placement: 'header', visibility: 'always', content: 'both', buttonStyle: 'ghost', size: 24, language: 'top-left', feedback: 'swap', duration: 1500 },
+};
+
+const state = { ...DEFAULTS };
+const timers = new WeakMap();
+
+function buttonInner(kind) {
+  // Idle shows what the Content control picks. Copied keeps the same parts with the icon
+  // swapped to a check (unless "text changes" is chosen, which must then show the text).
+  // Failed always shows the alert icon and words, so a failure can never look like success.
+  let withIcon = state.content !== 'label';
+  let withText = state.content !== 'icon';
+  let icon = ICON_COPY;
+  let text = 'Copy';
+  if (kind === 'copied') {
+    text = 'Copied';
+    if (state.feedback === 'label-only') { withText = true; } else { icon = ICON_CHECK; }
+  } else if (kind === 'failed') {
+    text = 'Copy failed'; icon = ICON_ERROR; withIcon = true; withText = true;
+  }
+  return (withIcon ? icon : '') + (withText ? `<span>${text}</span>` : '');
+}
+
+function makeButton(block) {
+  const button = document.createElement('button');
+  button.type = 'button';
+  button.className = `copy-button style-${state.buttonStyle} feedback-${state.feedback}`;
+  button.style.height = state.size + 'px';
+  if (state.content === 'icon') { button.style.minWidth = state.size + 'px'; button.style.padding = '0'; }
+  button.setAttribute('aria-label', 'Copy code');
+  button.title = 'Copy code';
+  button.innerHTML = buttonInner('idle');
+  button.addEventListener('click', async () => {
+    const failing = document.getElementById('simulate-failure').checked;
+    let ok = false;
+    if (!failing) {
+      try { await navigator.clipboard.writeText(block.text); ok = true; } catch { ok = false; }
+    }
+    clearTimeout(timers.get(button));
+    const idleWidth = button.getBoundingClientRect().width;
+    button.classList.remove('state-copied', 'state-failed');
+    button.classList.add(ok ? 'state-copied' : 'state-failed');
+    button.innerHTML = buttonInner(ok ? 'copied' : 'failed');
+    // Keep the footprint fixed when the label grows; grow only if it must, never shrink mid-feedback.
+    button.style.minWidth = Math.max(idleWidth, button.getBoundingClientRect().width) + 'px';
+    timers.set(button, setTimeout(() => {
+      button.classList.remove('state-copied', 'state-failed');
+      button.innerHTML = buttonInner('idle');
+      button.style.minWidth = state.content === 'icon' ? state.size + 'px' : '';
+    }, state.duration));
+  });
+  return button;
+}
+
+function renderPreview() {
+  const preview = document.getElementById('preview');
+  preview.className = `markdown-renderer vis-${state.visibility}`;
+  preview.querySelectorAll('[data-block]').forEach((slot) => {
+    const block = BLOCKS[slot.dataset.block];
+    slot.innerHTML = '';
+    const wrapper = document.createElement('div');
+    wrapper.className = 'code-block';
+    const pre = document.createElement('pre');
+    pre.innerHTML = `<code class="hljs">${block.html}</code>`;
+    const button = makeButton(block);
+    if (state.placement === 'header') {
+      wrapper.classList.add('has-header');
+      const header = document.createElement('div');
+      header.className = 'code-header';
+      header.innerHTML = `<span>${block.lang ?? ''}</span>`;
+      header.appendChild(button);
+      wrapper.append(header, pre);
+    } else {
+      button.classList.add('corner');
+      wrapper.appendChild(pre);
+      if (state.language === 'top-left' && block.lang) {
+        const tag = document.createElement('span');
+        tag.className = 'language-tag';
+        tag.textContent = block.lang;
+        wrapper.appendChild(tag);
+        // The tag sits in the code's top padding; nudge the code down so they never overlap.
+        pre.querySelector('code').style.paddingTop = '24px';
+      }
+      wrapper.appendChild(button);
+    }
+    slot.appendChild(wrapper);
+  });
+  document.getElementById('visibility-group').style.opacity = state.placement === 'corner' ? 1 : 0.4;
+  document.getElementById('language-group').style.opacity = state.placement === 'corner' ? 1 : 0.4;
+  document.getElementById('size-out').textContent = state.size + ' px';
+  document.getElementById('duration-out').textContent = (state.duration / 1000).toFixed(1) + ' s';
+}
+
+function describe() {
+  const lines = [];
+  lines.push('Copy button for fenced code blocks in qv rendered markdown (not diagrams). Settled choices:');
+  if (state.placement === 'corner') {
+    lines.push('- Placement: inside the block, top-right corner (8px inset), in a wrapper around the <pre> so it does not scroll sideways with wide code.');
+    const vis = { hover: 'hidden at rest, shown on block hover or keyboard focus, and kept visible while showing feedback', faint: 'faint (35% opacity) at rest, full on block hover or keyboard focus', always: 'always visible' }[state.visibility];
+    lines.push(`- Visibility: ${vis}.`);
+    lines.push(state.language === 'top-left'
+      ? '- Language name: shown faint in the top-left corner when the fence names a language, with the code pushed down so they never overlap.'
+      : '- Language name: not shown.');
+  } else {
+    lines.push('- Placement: a header strip above the code (language name on the left, button on the right), always visible; the <pre> loses its top border and top radius.');
+  }
+  const content = { icon: 'icon only (copy glyph), with aria-label and title "Copy code"', label: 'the word "Copy"', both: 'copy icon plus the word "Copy"' }[state.content];
+  lines.push(`- Content: ${content}.`);
+  lines.push(`- Style: ${state.buttonStyle === 'chip' ? 'chip (filled with --color-bg, 1px --color-border, hover --color-surface-hover)' : 'ghost (no fill or border, hover fills --color-surface-hover)'}; height ${state.size}px.`);
+  const feedback = { swap: 'icon swaps to a check and the text reads "Copied" in --color-accent', flash: 'icon swaps to a check, text reads "Copied", accent text and border', 'label-only': 'the text changes to "Copied" in --color-accent (no icon swap)' }[state.feedback];
+  lines.push(`- Success feedback: ${feedback}, held ${(state.duration / 1000).toFixed(1)} s, with the button footprint never shrinking mid-feedback.`);
+  lines.push(`- Failure feedback: "Copy failed" with an alert icon in --color-error for the same hold time.`);
+  lines.push('- The button is excluded from Ctrl+F search counting and from selected-text copy (user-select: none).');
+  return lines.join('\n');
+}
+
+function updateAll() {
+  renderPreview();
+  document.getElementById('prompt').textContent = describe();
+  document.querySelectorAll('.segmented').forEach((group) => {
+    group.querySelectorAll('button').forEach((button) => {
+      button.setAttribute('aria-pressed', String(state[group.dataset.key] === button.dataset.value));
+    });
+  });
+  document.getElementById('size').value = state.size;
+  document.getElementById('duration').value = state.duration;
+}
+
+document.querySelectorAll('.segmented').forEach((group) => {
+  group.addEventListener('click', (event) => {
+    const button = event.target.closest('button');
+    if (!button) return;
+    state[group.dataset.key] = button.dataset.value;
+    updateAll();
+  });
+});
+document.getElementById('size').addEventListener('input', (event) => { state.size = Number(event.target.value); updateAll(); });
+document.getElementById('duration').addEventListener('input', (event) => { state.duration = Number(event.target.value); updateAll(); });
+document.getElementById('force-hover').addEventListener('change', (event) => {
+  document.getElementById('stage-scroll').classList.toggle('force-hover', event.target.checked);
+});
+
+const presetsElement = document.getElementById('presets');
+Object.entries(PRESETS).forEach(([name, values]) => {
+  const button = document.createElement('button');
+  button.textContent = name;
+  button.addEventListener('click', () => { Object.assign(state, values); updateAll(); });
+  presetsElement.appendChild(button);
+});
+
+document.getElementById('copy-prompt').addEventListener('click', async (event) => {
+  const button = event.currentTarget;
+  try { await navigator.clipboard.writeText(document.getElementById('prompt').textContent); button.textContent = 'Copied!'; }
+  catch { button.textContent = 'Copy failed'; }
+  setTimeout(() => { button.textContent = 'Copy decision'; }, 1500);
+});
+
+updateAll();
+</script>
+</body>
+</html>
