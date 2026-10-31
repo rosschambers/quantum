@@ -481,7 +481,7 @@ fn native_file_image_transport_and_request_view_identity() {
             view,
             dispatcher.clone(),
             runtime.handle().clone(),
-            Arc::new(std::sync::Mutex::new(None)),
+            Arc::new(std::sync::Mutex::new(HashSet::new())),
         );
         initialize_bridge_client(view);
     }
@@ -1091,7 +1091,7 @@ fn verify_built_viewer(
         &view,
         dispatcher.clone(),
         runtime.handle().clone(),
-        Arc::new(std::sync::Mutex::new(None)),
+        Arc::new(std::sync::Mutex::new(HashSet::new())),
     );
     // A real viewport is required for layout/scroll assertions. This ordinary
     // window is created only after the enclosing test's private Xvfb guards.
