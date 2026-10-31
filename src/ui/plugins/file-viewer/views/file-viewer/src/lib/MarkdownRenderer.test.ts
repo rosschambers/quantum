@@ -2,6 +2,7 @@ import { describe, it, expect, beforeAll, afterEach, vi } from 'vitest';
 import { render, cleanup } from '@testing-library/svelte/svelte5';
 import { tick } from 'svelte';
 import MarkdownRenderer from './MarkdownRenderer.svelte';
+import { slugify } from './types';
 
 function rect(partial: Partial<DOMRect>): DOMRect {
     return {
@@ -351,5 +352,65 @@ describe('MarkdownRenderer search highlighting', () => {
             rectSpy.mockRestore();
             vi.unstubAllGlobals();
         }
+    });
+});
+
+describe('MarkdownRenderer sanitizing', () => {
+    function attributeNames(root: Element): string[] {
+        return Array.from(root.querySelectorAll('*')).flatMap((element) => Array.from(element.attributes).map((attribute) => attribute.name));
+    }
+
+    it('neutralizes raw HTML that would run script', () => {
+        const content = [
+            'hello <img src="does-not-exist" onerror="window.__pwned = true">',
+            '',
+            '<svg onload="window.__pwned = true"></svg>',
+            '',
+            '<script>window.__pwned = true</script>',
+            '',
+            '<a href="javascript:window.__pwned = true">link</a>',
+            '',
+            '<style>body { display: none }</style>',
+            '',
+            '<form action="https://example.com"><input name="x"></form>',
+        ].join('\n');
+        const { container } = render(MarkdownRenderer, { props: { content } });
+        const root = container.querySelector('.markdown-renderer')!;
+        expect(attributeNames(root).filter((name) => name.startsWith('on'))).toEqual([]);
+        expect(root.querySelector('script, style, form')).toBeNull();
+        expect(root.innerHTML).not.toContain('javascript:');
+        expect((window as any).__pwned).toBeUndefined();
+    });
+
+    it('escapes an image title that tries to break out of its attribute', () => {
+        const content = '![alt](a.png "x\\" onerror=\\"window.__pwned = true")';
+        const { container } = render(MarkdownRenderer, { props: { content, fileDirectory: '/tmp' } });
+        const image = container.querySelector('.markdown-renderer img')!;
+        expect(image.hasAttribute('onerror')).toBe(false);
+        expect(image.getAttribute('src')).toBe('file:///tmp/a.png');
+    });
+
+    it('renders inline markdown in headings, sanitizes inline HTML, and keeps the slug id', () => {
+        const content = '# Images and **bold** <img src=x onerror="window.__pwned = true">';
+        const { container } = render(MarkdownRenderer, { props: { content } });
+        const heading = container.querySelector('h1.anchor-heading')!;
+        expect(heading.querySelector('strong')?.textContent).toBe('bold');
+        expect(heading.querySelector('img')?.hasAttribute('onerror')).toBe(false);
+        // The id must stay exactly what the table of contents computes from the raw line.
+        expect(heading.id).toBe(slugify('Images and **bold** <img src=x onerror="window.__pwned = true">'));
+    });
+
+    it('escapes a hostile fence language in the class attribute', () => {
+        const content = '```js"onmouseover="window.__pwned=true\nconst a = 1;\n```';
+        const { container } = render(MarkdownRenderer, { props: { content } });
+        const code = container.querySelector('pre code')!;
+        expect(code.hasAttribute('onmouseover')).toBe(false);
+    });
+
+    it('keeps the raw HTML Ross\'s documents use', () => {
+        const content = '<details><summary>More</summary>\n\nInside <kbd>Ctrl</kbd><br/>next\n\n</details>';
+        const { container } = render(MarkdownRenderer, { props: { content } });
+        expect(container.querySelector('details > summary')?.textContent).toBe('More');
+        expect(container.querySelector('kbd')?.textContent).toBe('Ctrl');
     });
 });

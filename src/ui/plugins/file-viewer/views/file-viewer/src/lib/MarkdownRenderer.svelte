@@ -1,19 +1,17 @@
 <script lang="ts">
-    import { marked } from 'marked';
+    import { marked, type Tokens } from 'marked';
     import { escapeHtml, highlightCode } from './highlighter';
     import { isMermaidLanguage, isGraphvizLanguage, diagramPlaceholderHtml, type DiagramRenderer } from './mermaid';
     import { findMatchSegmentsInDom, type MatchSegment } from './search';
     import { measureFractions, observeLayout } from './measureOffsets';
+    import { sanitizeMarkdownHtml, sanitizeSvg } from './sanitize';
     import { slugify } from './types';
     import './markdown.css';
 
     let mermaidInitialized = false;
-    let mermaidRenderCounter = 0;
 
-    // crypto.randomUUID requires a secure context, which the quantum:// custom
-    // scheme may not provide; fall back to a counter for the render id.
     function mermaidRenderId(): string {
-        return `mermaid-${crypto.randomUUID?.() ?? String(++mermaidRenderCounter)}`;
+        return `mermaid-${crypto.randomUUID()}`;
     }
 
     // The Graphviz WASM module is heavier than mermaid and only loads for files
@@ -81,10 +79,11 @@
             // Set up custom renderer for code blocks to enable syntax highlighting
             const renderer = new marked.Renderer();
 
-            renderer.heading = (token) => {
-                const id = slugify(token.text);
+            renderer.heading = function (this: typeof renderer, token: Tokens.Heading): string {
+                const id = escapeHtml(slugify(token.text));
                 const level = token.depth;
-                return `<h${level} id="${id}" class="anchor-heading"><a class="anchor-link" href="#${id}">#</a>${token.text}</h${level}>`;
+                const inner = this.parser.parseInline(token.tokens);
+                return `<h${level} id="${id}" class="anchor-heading"><a class="anchor-link" href="#${id}">#</a>${inner}</h${level}>`;
             };
 
             renderer.codespan = (token) => {
@@ -100,23 +99,23 @@
                     return diagramPlaceholderHtml(token.text, 'graphviz');
                 }
                 const highlightedCode = highlightCode(token.text, language);
-                const languageClass = language ? ` language-${language}` : '';
+                const languageClass = language ? ` language-${escapeHtml(language)}` : '';
                 return `<pre><code class="hljs${languageClass}">${highlightedCode}</code></pre>`;
             };
 
             renderer.image = (token) => {
-                const src = resolveImageSrc(token.href);
-                const alt = token.text || '';
-                const titleAttribute = token.title ? ` title="${token.title}"` : '';
+                const src = escapeHtml(resolveImageSrc(token.href));
+                const alt = escapeHtml(token.text || '');
+                const titleAttribute = token.title ? ` title="${escapeHtml(token.title)}"` : '';
                 return `<img src="${src}" alt="${alt}"${titleAttribute} />`;
             };
 
             marked.setOptions({ renderer });
 
-            return marked.parse(content);
+            return sanitizeMarkdownHtml(marked.parse(content) as string);
         } catch (error) {
             console.error('Markdown parsing error:', error);
-            return `<p>Error rendering markdown: ${error instanceof Error ? error.message : String(error)}</p>`;
+            return `<p>Error rendering markdown: ${escapeHtml(error instanceof Error ? error.message : String(error))}</p>`;
         }
     });
 
@@ -209,7 +208,7 @@
                     let svg: string;
                     if (renderer === 'graphviz') {
                         if (!graphviz) continue;
-                        svg = graphviz.layout(source, 'svg');
+                        svg = sanitizeSvg(graphviz.layout(source, 'svg'));
                     } else {
                         if (!mermaid) continue;
                         svg = (await mermaid.render(mermaidRenderId(), source)).svg;
