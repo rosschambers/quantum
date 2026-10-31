@@ -390,3 +390,16 @@
     clip-path: inset(50%);
     white-space: nowrap;
 }
+
+/* Content of an open details block is indented under its summary. */
+.markdown-renderer details > :not(summary) {
+    margin-left: 1.25em;
+}
+
+.markdown-renderer details {
+    margin-bottom: 0.8em;
+}
+
+.markdown-renderer summary {
+    cursor: pointer;
+}
