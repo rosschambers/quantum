@@ -380,3 +380,13 @@
     height: 15px;
     flex: none;
 }
+
+/* Announced to screen readers, never shown. The clip pattern keeps it in the accessibility tree only. */
+.markdown-renderer .code-copy-status {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+}

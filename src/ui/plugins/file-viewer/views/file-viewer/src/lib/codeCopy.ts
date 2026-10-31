@@ -18,16 +18,29 @@ const CONTENT: Record<CopyState, string> = {
     failed: `${ICON_ALERT}<span class="code-copy-label">Copy failed</span>`,
 };
 
-const resetTimers = new WeakMap<HTMLButtonElement, ReturnType<typeof setTimeout>>();
+const STATUS_TEXT: Record<CopyState, string> = {
+    idle: '',
+    copied: 'Copied',
+    failed: 'Copy failed',
+};
 
-export function codeHeaderHtml(language: string | undefined): string {
+const resetTimers = new WeakMap<HTMLButtonElement, ReturnType<typeof setTimeout>>();
+// Each click takes the next request number. A completion whose number is no longer the
+// latest is from an older click and must not overwrite the state the newer click shows.
+const latestRequests = new WeakMap<HTMLButtonElement, number>();
+
+export function codeHeaderHtml(language: string | undefined, nonce: string): string {
     return `<div class="code-header"><span class="code-language">${escapeHtml(language ?? '')}</span>` +
-        `<button type="button" class="code-copy" data-copy-state="idle" aria-label="Copy code" title="Copy code">${CONTENT.idle}</button></div>`;
+        `<button type="button" class="code-copy" data-copy-state="idle" data-copy-nonce="${escapeHtml(nonce)}" aria-label="Copy code" title="Copy code">${CONTENT.idle}</button>` +
+        `<span class="code-copy-status" role="status" aria-live="polite"></span></div>`;
 }
 
 function showState(button: HTMLButtonElement, state: CopyState): void {
     button.dataset.copyState = state;
+    // CONTENT is a fixed constant from this file, never file content, so innerHTML is safe here.
     button.innerHTML = CONTENT[state];
+    const status = button.closest('.code-header')?.querySelector('.code-copy-status');
+    if (status) status.textContent = STATUS_TEXT[state];
 }
 
 async function writeToClipboard(text: string): Promise<boolean> {
@@ -41,23 +54,32 @@ async function writeToClipboard(text: string): Promise<boolean> {
     }
 }
 
-export function handleCodeCopyClick(event: Event): void {
-    const target = event.target;
-    if (!(target instanceof Element)) return;
-    const button = target.closest<HTMLButtonElement>('button.code-copy');
-    if (!button) return;
-    const code = button.closest('.code-block')?.querySelector('pre code');
-    if (!code) return;
+// Only buttons carrying the current render's nonce are live. Author markup cannot know the
+// nonce, so a decoy button it supplies is ignored: no write, no state change.
+export function createCodeCopyClickHandler(currentNonce: () => string): (event: Event) => void {
+    return function handleCodeCopyClick(event: Event): void {
+        const target = event.target;
+        if (!(target instanceof Element)) return;
+        const button = target.closest<HTMLButtonElement>('button.code-copy');
+        if (!button || button.dataset.copyNonce !== currentNonce()) return;
+        const code = button.closest('.code-block')?.querySelector('pre code');
+        if (!code) return;
 
-    const idleWidth = button.getBoundingClientRect().width;
-    void writeToClipboard(code.textContent ?? '').then((copied) => {
-        clearTimeout(resetTimers.get(button));
-        showState(button, copied ? 'copied' : 'failed');
-        // Never shrink while feedback shows; grow only if the longer label needs it.
-        button.style.minWidth = `${Math.max(idleWidth, button.getBoundingClientRect().width)}px`;
-        resetTimers.set(button, setTimeout(() => {
-            showState(button, 'idle');
-            button.style.minWidth = '';
-        }, COPY_FEEDBACK_MILLISECONDS));
-    });
+        const request = (latestRequests.get(button) ?? 0) + 1;
+        latestRequests.set(button, request);
+        const idleWidth = button.getBoundingClientRect().width;
+        void writeToClipboard(code.textContent ?? '').then((copied) => {
+            if (latestRequests.get(button) !== request) return;
+            clearTimeout(resetTimers.get(button));
+            showState(button, copied ? 'copied' : 'failed');
+            // Never shrink while feedback shows; grow only if the longer label needs it.
+            if (idleWidth > 0) {
+                button.style.minWidth = `${Math.max(idleWidth, button.getBoundingClientRect().width)}px`;
+            }
+            resetTimers.set(button, setTimeout(() => {
+                showState(button, 'idle');
+                button.style.minWidth = '';
+            }, COPY_FEEDBACK_MILLISECONDS));
+        });
+    };
 }

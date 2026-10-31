@@ -6,7 +6,7 @@
     import { measureFractions, observeLayout } from './measureOffsets';
     import { sanitizeMarkdownHtml, sanitizeSvg } from './sanitize';
     import { slugify } from './types';
-    import { codeHeaderHtml, handleCodeCopyClick } from './codeCopy';
+    import { codeHeaderHtml, createCodeCopyClickHandler } from './codeCopy';
     import './markdown.css';
 
     let mermaidInitialized = false;
@@ -69,8 +69,17 @@
         placeholder.innerHTML = `<p class="diagram-error-message">${escapeHtml(message)}</p><pre><code class="hljs">${highlightCode(source, renderer === 'mermaid' ? 'mermaid' : 'dot')}</code></pre>`;
     }
 
+    // The nonce of the most recent parse. Every copy button this parse emits carries it, and
+    // the click handler reads it at click time, so the handler always checks the nonce of the
+    // DOM that is on screen. Author markup cannot know it.
+    let currentCopyNonce = '';
+    const handleCodeCopyClick = createCodeCopyClickHandler(() => currentCopyNonce);
+
     let parsedHtml = $derived.by(() => {
         try {
+            const copyNonce = crypto.randomUUID();
+            currentCopyNonce = copyNonce;
+
             // Configure marked with GFM enabled, no breaks
             marked.setOptions({
                 gfm: true,
@@ -102,7 +111,7 @@
                 }
                 const highlightedCode = highlightCode(token.text, language);
                 const languageClass = language ? ` language-${escapeHtml(language)}` : '';
-                return `<div class="code-block">${codeHeaderHtml(language)}<pre><code class="hljs${languageClass}">${highlightedCode}</code></pre></div>`;
+                return `<div class="code-block">${codeHeaderHtml(language, copyNonce)}<pre><code class="hljs${languageClass}">${highlightedCode}</code></pre></div>`;
             };
 
             renderer.image = (token) => {

@@ -19,6 +19,7 @@ describe('file viewer Content Security Policy', () => {
         const headChildren = Array.from(document.head.children);
         const policyIndex = headChildren.indexOf(metas[0]);
         const firstActive = headChildren.findIndex((element) => element.tagName === 'SCRIPT' || element.tagName === 'STYLE');
+        expect(firstActive).toBeGreaterThanOrEqual(0);
         expect(policyIndex).toBeLessThan(firstActive);
     });
 
@@ -27,6 +28,29 @@ describe('file viewer Content Security Policy', () => {
         expect(scripts.length).toBeGreaterThan(0);
         expect(scripts).not.toContain("'unsafe-inline'");
         expect(scripts).not.toContain("'unsafe-eval'");
+    });
+
+    it('locks the default source to the page itself', () => {
+        expect(directive(policy, 'default-src')).toEqual(["'self'"]);
+    });
+
+    it('allows WebAssembly compilation and no other script source beyond the page', () => {
+        const scripts = directive(policy, 'script-src');
+        expect(scripts).toContain("'wasm-unsafe-eval'");
+        for (const source of ['data:', 'blob:', 'https:', 'http:', '*']) {
+            expect(scripts).not.toContain(source);
+        }
+    });
+
+    it('lets images and media load only from the app scheme and local files', () => {
+        for (const name of ['img-src', 'media-src']) {
+            expect(directive(policy, name)).toContain('quantum:');
+            expect(directive(policy, name)).toContain('file:');
+        }
+    });
+
+    it('keeps network requests to the page itself', () => {
+        expect(directive(policy, 'connect-src')).toEqual(["'self'"]);
     });
 
     it('shuts plugins, base rewriting, form posts and frames', () => {
