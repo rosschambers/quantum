@@ -1,6 +1,6 @@
 # qv: sanitize rendered markdown, then add a code-block copy button
 
-Status: design approved 2026-10-31. Next step: implementation plan.
+Status: implemented 2026-10-31 (live-verified in a dev daemon); deploy pending.
 
 ## Why
 

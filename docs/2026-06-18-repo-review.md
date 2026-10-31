@@ -351,6 +351,7 @@ Highest-severity verified findings (top of the fix queue):
 
 ### Every provider event is forwarded into every open WebView regardless of subscription
 - **Severity:** low
+- **Status:** ✅ Resolved (`bb65199b`, not yet deployed) — a webview receives only the channels it subscribes to, plus `theme.reloaded`.
 - **Verified locations:** `src/ui/host/src/windows/widget.rs:392-465`;
   `src/ui/host/src/windows/panel.rs:232-305`.
 - **Evidence:** Each window subscribes to the full broadcast channel and emits

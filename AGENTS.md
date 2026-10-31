@@ -227,6 +227,18 @@ broken CI before; do not reintroduce them:
 - `EventBus::publish` takes `(channel: &str, payload: &str)`, not an
   `EventEnvelope`. The daemon's `BroadcastingEventBus` adapter converts
   string payloads to `EventEnvelope` for the broadcast channel.
+- **A webview receives only the broadcast channels it subscribed to.** The page must subscribe
+  through `@quantum/client`'s `subscribe`, or through the injected plugin-client bootstrap's
+  `createClient().subscribe` that third-party pages use. `theme.reloaded` is always forwarded.
+  There is no "forward everything until the first subscription" state any more. The reason is
+  WebKitGTK: `webkit_web_view_evaluate_javascript` always removes the page's transient user
+  activation (`RemoveTransientActivation::Yes`, `Source/WebKit/UIProcess/API/glib/WebKitWebView.cpp`,
+  `webkitgtk-2.54.1`). Every event pushed into a page that never asked for it therefore cleared the
+  gesture that `navigator.clipboard.writeText` needs, and qv's copy button failed about one click in
+  ten. Two rules for authors: subscribe before you take a snapshot query when an early event matters,
+  because a broadcast is not replayed; and do not subscribe to the same channel from two clients in
+  one page, because the host keeps one set per webview, so one client's unsubscribe stops the channel
+  for the other.
 - **Channel naming**: `SubscribeProviderUseCase` publishes on
   `format!("{provider_id}.event")`. Provider id `mpris` publishes on
   `mpris.event`. Frontend subscriptions must match exactly.
@@ -713,6 +725,18 @@ broken CI before; do not reintroduce them:
   through one promise queue (`enqueueStaging`) and a folder loop re-resolves each target
   by id in the live entries, so double clicks, `s` mid-loop and a refresh mid-loop cannot
   collide on git's index lock or stage a stale blob.
+  **Markdown safety and code copy.** Markdown HTML is untrusted. It goes through
+  `sanitizeMarkdownHtml` in `lib/sanitize.ts`, which uses DOMPurify and removes scripts, event
+  handlers, `style`, `form`, `button`, `name` and inline `style` attributes, and strips the
+  code-copy class names from author markup. Graphviz SVG goes through `sanitizeSvg` in the same
+  file. Mermaid relies on its own `securityLevel: 'strict'`. `index.html` carries a Content Security
+  Policy with no inline or evaluated script (`'wasm-unsafe-eval'` lets Graphviz's WebAssembly run).
+  Its one expected violation per load is the host's injected plugin-client bootstrap, which qv never
+  uses. Fenced code blocks get a header strip with the language name and a Copy button
+  (`lib/codeCopy.ts`). The header is added after sanitizing, and only to `pre` elements carrying the
+  current render's nonce, so author markup cannot forge one. `code-header` is excluded from search.
+  `quantum://` pages are a secure context on WebKitGTK 2.54 (probed live on 2026-10-31), so
+  `navigator.clipboard.writeText` works with no host change.
 - **View arg passing: `window.__quantum_args`.** Views that accept arguments
   (file-viewer, files, the launcher, and any future view that takes open-time
   parameters) read `window.__quantum_args` directly. This is the one sanctioned

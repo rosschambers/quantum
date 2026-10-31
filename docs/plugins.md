@@ -213,7 +213,11 @@ methods are exposed:
 
   Subscribes to event broadcasts on a channel. Returns an unsubscribe
   function. The callback receives the payload of each event published
-  on that channel.
+  on that channel. A page receives only the channels it subscribes to
+  (plus `theme.reloaded`, always). Subscribe before taking a snapshot query
+  when an early event matters, since broadcasts are not replayed; and do not
+  subscribe to the same channel from two clients in one page, because one
+  client's unsubscribe stops the channel for both.
 
 For the full IPC surface (action.schedule, view.show, etc.) see
 `docs/protocol.md`.
