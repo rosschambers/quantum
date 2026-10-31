@@ -102,8 +102,10 @@ interface TextSpan {
     end: number;
 }
 
-function isDiagramElement(element: Element): boolean {
-    return element.classList.contains('diagram-block') || element.classList.contains('diagram-error');
+const SEARCH_EXCLUDED_CLASSES = ['diagram-block', 'diagram-error', 'code-header'];
+
+function isExcludedFromSearch(element: Element): boolean {
+    return SEARCH_EXCLUDED_CLASSES.some((name) => element.classList.contains(name));
 }
 
 function collectTextSpans(root: Element): { text: string; spans: TextSpan[] } {
@@ -127,8 +129,8 @@ function collectTextSpans(root: Element): { text: string; spans: TextSpan[] } {
         }
 
         const element = node as Element;
-        if (isDiagramElement(element)) {
-            // Skip the whole subtree: diagram source/SVG is never searchable.
+        if (isExcludedFromSearch(element)) {
+            // Skip the whole subtree: diagram source/SVG and code-block headers are never searchable.
             return;
         }
 
@@ -167,8 +169,8 @@ function buildRange(spans: TextSpan[], start: number, end: number): Range | null
  * Literal, case-insensitive search over the RENDERED, VISIBLE text of a DOM
  * subtree (the basis for Markdown search). Walks every text node under
  * `root`, skipping any subtree rooted at an element with class
- * `diagram-block` or `diagram-error` (mermaid/graphviz source and SVG are
- * never searchable). A match may span an inline element boundary (for
+ * `diagram-block`, `diagram-error` or `code-header` (mermaid/graphviz source
+ * and SVG, and code-block headers, are never searchable). A match may span an inline element boundary (for
  * example "nee<strong>dle</strong>") but never a block element boundary (two
  * separate paragraphs never merge into one match).
  */

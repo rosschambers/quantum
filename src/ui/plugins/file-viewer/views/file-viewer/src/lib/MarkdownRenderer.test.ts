@@ -534,4 +534,16 @@ describe('MarkdownRenderer code header', () => {
             Object.defineProperty(navigator, 'clipboard', { value: undefined, configurable: true });
         }
     });
+
+    it('never counts the language name or the button label as search matches', async () => {
+        const counts: number[] = [];
+        const onMatchCount = (count: number) => counts.push(count);
+        const content = '```bash\necho needle\n```';
+        const { rerender } = render(MarkdownRenderer, { props: { content, query: 'copy', onMatchCount } });
+        await vi.waitFor(() => expect(counts.at(-1)).toBe(0));
+        await rerender({ content, query: 'bash', onMatchCount });
+        await vi.waitFor(() => expect(counts.at(-1)).toBe(0));
+        await rerender({ content, query: 'needle', onMatchCount });
+        await vi.waitFor(() => expect(counts.at(-1)).toBe(1));
+    });
 });

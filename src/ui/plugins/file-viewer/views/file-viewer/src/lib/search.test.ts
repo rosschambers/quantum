@@ -76,6 +76,11 @@ describe('findMatchesInDom', () => {
         expect(findMatchesInDom(document.getElementById('r')!, 'needle')).toHaveLength(1);
     });
 
+    test('skips code-header subtrees', () => {
+        document.body.innerHTML = '<div id="r"><p>needle</p><div class="code-header">needle</div></div>';
+        expect(findMatchesInDom(document.getElementById('r')!, 'needle')).toHaveLength(1);
+    });
+
     test('finds a match that spans an inline element boundary (important)', () => {
         document.body.innerHTML = '<div id="r"><p>nee<strong>dle</strong> in haystack</p></div>';
         const ranges = findMatchesInDom(document.getElementById('r')!, 'needle');
