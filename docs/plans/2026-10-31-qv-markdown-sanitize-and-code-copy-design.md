@@ -1,6 +1,6 @@
 # qv: sanitize rendered markdown, then add a code-block copy button
 
-Status: implemented 2026-10-31 (live-verified in a dev daemon); deploy pending.
+Status: shipped 2026-10-31 (config `259496c`, quantum `0e28528a`). Verified on the installed build: the probe no longer runs, `https` images load, and code-block copies are byte-exact with no failures.
 
 ## Why
 
