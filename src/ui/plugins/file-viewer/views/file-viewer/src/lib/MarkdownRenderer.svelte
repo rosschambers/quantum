@@ -105,10 +105,11 @@
             };
 
             renderer.image = (token) => {
+                // marked escapes the title and the alt text (token.text) in its lexer, so both are
+                // attribute-safe as they arrive; escaping them again shows literal entities such as
+                // &amp;lt; on screen. The href arrives raw, so it is escaped here.
                 const src = escapeHtml(resolveImageSrc(token.href));
-                const alt = escapeHtml(token.text || '');
-                // marked already escapes the title in its lexer, so it is attribute-safe as it arrives;
-                // escaping it again would show a literal &quot; in the tooltip.
+                const alt = token.text || '';
                 const titleAttribute = token.title ? ` title="${token.title}"` : '';
                 return `<img src="${src}" alt="${alt}"${titleAttribute} />`;
             };

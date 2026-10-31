@@ -438,6 +438,18 @@ describe('MarkdownRenderer sanitizing', () => {
         expect(image.getAttribute('title')).toBe('x" onerror="window.__pwned = true');
     });
 
+    it('shows image alt text once, not double-escaped', () => {
+        const { container } = render(MarkdownRenderer, { props: { content: '![a<b & c](a.png)' } });
+        expect(container.querySelector('.markdown-renderer img')?.getAttribute('alt')).toBe('a<b & c');
+    });
+
+    it('escapes a raw quote in an image source into the attribute instead of breaking out of it', () => {
+        const { container } = render(MarkdownRenderer, { props: { content: '![x](<a".png>)', fileDirectory: '/tmp' } });
+        const image = container.querySelector('.markdown-renderer img')!;
+        expect(image.getAttribute('src')).toBe('file:///tmp/a".png');
+        expect(image.hasAttribute('alt')).toBe(true);
+    });
+
     it('renders inline markdown in headings, sanitizes inline HTML, and keeps the slug id', () => {
         const content = '# Images and **bold** <img src=x onerror="window.__pwned = true">';
         const { container } = render(MarkdownRenderer, { props: { content } });
