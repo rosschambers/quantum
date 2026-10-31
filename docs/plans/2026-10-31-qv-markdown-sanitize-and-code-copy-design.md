@@ -58,9 +58,14 @@ Playground: `docs/playgrounds/2026-10-31-markdown-code-copy-button.html`, preset
    - `sanitizeMarkdownHtml(html)` wraps DOMPurify (already in the dependency tree via mermaid;
      add it as a direct dependency) with a fixed configuration:
      - the default HTML profile;
-     - `FORBID_TAGS: ['style', 'form']`;
-     - link `href` limited to `http:`, `https:`, `mailto:` and `#fragment`;
-     - image `src` limited to `http:`, `https:`, `file:` and `data:image/`.
+     - `FORBID_TAGS: ['style', 'form']` and `FORBID_ATTR: ['name']`;
+     - URLs limited to `http:`, `https:`, `mailto:`, `file:` and relative references. qv's
+       relative images resolve to `file://`, which DOMPurify's default list would strip.
+       DOMPurify still allows `data:` images, and the navigation policy already blocks clicks
+       on `file:` links;
+     - `SANITIZE_DOM: false`. DOMPurify would otherwise strip heading ids such as `images`
+       or `title`, which shadow `document` properties, and that breaks the table of
+       contents. Clobbering via `name` is handled by forbidding the attribute.
    - `sanitizeSvg(svg)` wraps DOMPurify's SVG profile, with no links that use `javascript:`.
 2. **`MarkdownRenderer.svelte`**:
    - `parsedHtml` becomes `sanitizeMarkdownHtml(marked.parse(content))`.
