@@ -86,6 +86,9 @@ importers:
       diff:
         specifier: ^9.0.0
         version: 9.0.0
+      dompurify:
+        specifier: ^3.4.15
+        version: 3.4.15
       highlight.js:
         specifier: ^11
         version: 11.12.0
