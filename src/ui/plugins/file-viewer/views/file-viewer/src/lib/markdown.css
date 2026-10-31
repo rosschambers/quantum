@@ -310,3 +310,73 @@
     font-family: var(--font-sans, system-ui);
     margin-bottom: 12px;
 }
+
+/* Fenced code: header strip (language name and copy button) above the block.
+   Settled in docs/playgrounds/2026-10-31-markdown-code-copy-button.html. */
+.markdown-renderer .code-block {
+    margin-bottom: 0.8em;
+}
+
+.markdown-renderer .code-block pre {
+    margin-bottom: 0;
+    border-top: none;
+    border-radius: 0 0 var(--radius-md, 6px) var(--radius-md, 6px);
+}
+
+.markdown-renderer .code-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    background: var(--color-bg-alt, #f5f5f5);
+    border: 1px solid var(--color-border, #ddd);
+    border-bottom: 1px solid var(--color-divider, #ddd);
+    border-radius: var(--radius-md, 6px) var(--radius-md, 6px) 0 0;
+    padding: 4px 6px 4px 14px;
+    font-family: var(--font-mono, 'monospace');
+    font-size: 12px;
+    color: var(--color-muted, #999);
+    user-select: none;
+    -webkit-user-select: none;
+}
+
+.markdown-renderer .code-copy {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    height: 24px;
+    padding: 0 8px;
+    border: 1px solid transparent;
+    border-radius: 5px;
+    background: transparent;
+    color: var(--color-fg-alt, #666);
+    font-family: var(--font-sans, system-ui);
+    font-size: 12px;
+    line-height: 1;
+    white-space: nowrap;
+    cursor: pointer;
+    transition: background-color 120ms, color 120ms;
+}
+
+.markdown-renderer .code-copy:hover {
+    background: var(--color-surface-hover, #eee);
+}
+
+.markdown-renderer .code-copy:focus-visible {
+    outline: 2px solid var(--color-accent, #007bff);
+    outline-offset: 1px;
+}
+
+.markdown-renderer .code-copy[data-copy-state='copied'] {
+    color: var(--color-accent, #007bff);
+}
+
+.markdown-renderer .code-copy[data-copy-state='failed'] {
+    color: var(--color-error, #dc2626);
+}
+
+.markdown-renderer .code-copy-icon {
+    width: 15px;
+    height: 15px;
+    flex: none;
+}

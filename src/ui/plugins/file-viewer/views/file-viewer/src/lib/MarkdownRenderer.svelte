@@ -6,6 +6,7 @@
     import { measureFractions, observeLayout } from './measureOffsets';
     import { sanitizeMarkdownHtml, sanitizeSvg } from './sanitize';
     import { slugify } from './types';
+    import { codeHeaderHtml, handleCodeCopyClick } from './codeCopy';
     import './markdown.css';
 
     let mermaidInitialized = false;
@@ -101,7 +102,7 @@
                 }
                 const highlightedCode = highlightCode(token.text, language);
                 const languageClass = language ? ` language-${escapeHtml(language)}` : '';
-                return `<pre><code class="hljs${languageClass}">${highlightedCode}</code></pre>`;
+                return `<div class="code-block">${codeHeaderHtml(language)}<pre><code class="hljs${languageClass}">${highlightedCode}</code></pre></div>`;
             };
 
             renderer.image = (token) => {
@@ -313,6 +314,15 @@
             onMatchPositions?.(measureMatchPositions());
         });
         return () => cancelAnimationFrame(frameId);
+    });
+
+    // One delegated listener for every code block's copy button. Attached here,
+    // not as an onclick attribute, so sanitized content can never add handlers.
+    $effect(() => {
+        if (!container) return;
+        const element = container;
+        element.addEventListener('click', handleCodeCopyClick);
+        return () => element.removeEventListener('click', handleCodeCopyClick);
     });
 
     // A persistent resize watch on the content root, independent of search

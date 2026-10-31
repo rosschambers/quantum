@@ -508,3 +508,30 @@ describe('MarkdownRenderer sanitizing', () => {
         expect(container.querySelector('kbd')?.textContent).toBe('Ctrl');
     });
 });
+
+describe('MarkdownRenderer code header', () => {
+    it('wraps fenced code in a header strip with a copy button, but never diagrams', async () => {
+        const content = '```bash\necho hi\n```\n\n```\nplain\n```\n\n```mermaid\ngraph TD;\n  A --> B;\n```';
+        const { container } = render(MarkdownRenderer, { props: { content } });
+        const blocks = container.querySelectorAll('.code-block');
+        expect(blocks).toHaveLength(2);
+        expect(blocks[0].querySelector('.code-language')?.textContent).toBe('bash');
+        expect(blocks[1].querySelector('.code-language')?.textContent).toBe('');
+        expect(container.querySelector('.diagram-block .code-header')).toBeNull();
+    });
+
+    it('copies the block it belongs to when its button is clicked', async () => {
+        const writeText = vi.fn(async () => {});
+        Object.defineProperty(navigator, 'clipboard', { value: { writeText }, configurable: true });
+        try {
+            const content = '```ts\n  const a = 1;\n```\n\n```ts\nconst b = 2;\n```';
+            const { container } = render(MarkdownRenderer, { props: { content } });
+            container.querySelectorAll<HTMLButtonElement>('button.code-copy')[1].click();
+            await vi.waitFor(() => expect(writeText).toHaveBeenCalledWith('const b = 2;'));
+            container.querySelectorAll<HTMLButtonElement>('button.code-copy')[0].click();
+            await vi.waitFor(() => expect(writeText).toHaveBeenLastCalledWith('  const a = 1;'));
+        } finally {
+            Object.defineProperty(navigator, 'clipboard', { value: undefined, configurable: true });
+        }
+    });
+});
