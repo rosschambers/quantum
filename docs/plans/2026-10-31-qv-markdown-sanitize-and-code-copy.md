@@ -998,6 +998,46 @@ Separately, content inside an open `<details>` should be indented.
 
 ---
 
+### Task 5c: Views receive only the events they subscribe to (added 2026-10-31 after the copy failures)
+
+**Root cause (proven).** The copy button failed about one click in ten with `NotAllowedError`.
+- WebKitGTK's `webkit_web_view_evaluate_javascript` always runs with `RemoveTransientActivation::Yes` (`Source/WebKit/UIProcess/API/glib/WebKitWebView.cpp:4500`, tag `webkitgtk-2.54.1`). So every host push into a page wipes the page's user activation, and `navigator.clipboard.writeText` requires that activation.
+- The bridge forwards every channel to a view that has not subscribed to anything (`subscriptions.rs`, the `None` state). qv subscribes to nothing, so it received `system.stats.event` every second, plus Hyprland, power and notification events.
+- A diagnostic build logged the sequence for a failing click: activation `true` at mousedown (13:24:26.449), a host `system.stats.event` push at 26.524, activation `false` at 26.548, and the click at 26.567 refused. The first failing click straddled the same once-a-second push.
+
+**Change.** Remove the forward-everything state. Each webview's subscription set starts empty and only grows through `bridge.subscribe`. `theme.reloaded` stays always-forwarded. The injected plugin-client bootstrap (used by third-party pages such as `~/.config/quantum/plugins/moon-distance`) now registers its channels, the way `@quantum/client` already does.
+
+**Files:**
+- Modify: `src/ui/host/src/subscriptions.rs` (the type, `should_forward`, and the tests)
+- Modify: `src/ui/host/src/bridge.rs` (subscribe and unsubscribe handling; remove the forward-everything comment)
+- Modify: `src/ui/host/src/windows/widget.rs:573` and `src/ui/host/src/windows/panel.rs:277` (construct an empty set)
+- Modify: `src/ui/host/src/scheme.rs` (`PLUGIN_CLIENT_SCRIPT` subscribe and unsubscribe, plus a test)
+
+**Acceptance Criteria:**
+1. `WebviewSubscriptions` is `Arc<Mutex<HashSet<String>>>`, with no `Option`. `should_forward(channel, &HashSet<String>)` returns true for `theme.reloaded` and for listed channels only. The doc comments state the rule and why, citing the activation finding.
+2. Tests in `subscriptions.rs`:
+   - an empty set forwards nothing except `theme.reloaded`;
+   - a set forwards exactly its listed channels;
+   - the old "not seeded forwards anything" test is deleted.
+3. Every construction site builds an empty set. A workspace grep for `Option<HashSet<String>>` in the host finds nothing related to subscriptions.
+4. `bridge.rs`: `bridge.subscribe` inserts and `bridge.unsubscribe` removes. The comments no longer mention a forward-all state.
+5. `PLUGIN_CLIENT_SCRIPT`'s `subscribe(channel, callback)`:
+   - posts `bridge.subscribe` with `{ channel }` through its existing `call` path when the first callback for that channel is added;
+   - posts `bridge.unsubscribe` when the last callback is removed, counting callbacks per channel;
+   - swallows rejection, like `@quantum/client`'s `signalBridge`.
+   
+   A Rust unit test asserts the script contains both method names. Behaviour is proven live in Task 7: the moon widget still updates.
+6. `cargo test -p quantum-ui` (or the host crate's actual package name), `cargo fmt --all -- --check` and `cargo clippy --workspace --all-targets -- -D warnings` pass. The frontend suites are unaffected.
+7. Commit: `fix: send each view only the events it subscribes to`.
+
+**Live checks (Task 7):**
+- Over 30 or more Copy clicks across blocks in qv, none fails.
+- The bar's meters, active-window title, timer ring and notifications still update.
+- The task manager and file explorer still receive their events.
+- The `moon-distance` widget still renders and updates.
+
+---
+
 ### Task 7: Live verification in a dev daemon
 
 The tests cannot prove WebKit behaviour: the policy's real source list, host-injected scripts under the policy, actual clipboard contents, and selection copy. This task proves them on the real engine.
