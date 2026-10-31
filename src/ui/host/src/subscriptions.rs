@@ -1,73 +1,60 @@
 //! Per-webview event subscription filtering.
 //!
 //! Each WebView's broadcast forwarder consults a shared set of channels the
-//! webview's JavaScript client has subscribed to, so a large payload (for
+//! webview's JavaScript client has subscribed to. A webview that has subscribed
+//! to nothing receives nothing except `theme.reloaded`, so a large payload (for
 //! example the task manager's `processes.event`) is only marshaled into the
 //! webviews that actually asked for it, not into every window.
 
 use std::collections::HashSet;
 use std::sync::{Arc, Mutex};
 
-/// Channels a single webview has subscribed to. `None` until the JavaScript
-/// client registers its first subscription — during that window the forwarder
-/// sends ALL events so early events are never dropped before the client is
-/// ready. Once `Some`, only listed channels (plus always `theme.reloaded`) are
-/// forwarded.
-pub type WebviewSubscriptions = Arc<Mutex<Option<HashSet<String>>>>;
+/// Channels a single webview has subscribed to. The set starts empty and grows
+/// only through `bridge.subscribe`; `bridge.unsubscribe` removes a channel.
+pub type WebviewSubscriptions = Arc<Mutex<HashSet<String>>>;
 
 /// The forwarding decision — pure and unit-tested.
 ///
-/// `theme.reloaded` is host-driven (the host pushes freshly resolved tokens
-/// into the live stylesheet on a theme reload) and is always forwarded. Before
-/// the client has seeded any subscription (`None`) every channel is forwarded
-/// so no early event is lost. Once seeded (`Some`) only the listed channels
-/// pass.
-pub fn should_forward(channel: &str, subs: &Option<HashSet<String>>) -> bool {
-    if channel == "theme.reloaded" {
-        return true;
-    }
-    match subs {
-        None => true,
-        Some(set) => set.contains(channel),
-    }
+/// Only the channels in `subs` are forwarded, plus `theme.reloaded`, which the
+/// host pushes into the live stylesheet on a theme reload and which every view
+/// needs whether or not it subscribed.
+///
+/// Rule: a webview receives a broadcast event only when it asked for that
+/// channel. Forwarding unrequested events is not free. WebKitGTK's
+/// `webkit_web_view_evaluate_javascript` always removes the page's transient
+/// user activation (`RemoveTransientActivation::Yes`), so every push that
+/// reached a page that never asked for it cleared the activation that
+/// `navigator.clipboard.writeText` needs. The quick view's Copy button failed
+/// about one click in ten because the once-a-second `system.stats.event` push
+/// landed between mousedown and the click. Idle views also wasted work
+/// marshaling payloads nobody reads.
+pub fn should_forward(channel: &str, subs: &HashSet<String>) -> bool {
+    channel == "theme.reloaded" || subs.contains(channel)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    fn seeded(channels: &[&str]) -> Option<HashSet<String>> {
-        Some(channels.iter().map(|c| c.to_string()).collect())
+    fn subscribed(channels: &[&str]) -> HashSet<String> {
+        channels.iter().map(|c| c.to_string()).collect()
     }
 
     #[test]
-    fn not_seeded_forwards_anything() {
-        let subs: Option<HashSet<String>> = None;
-        assert!(should_forward("processes.event", &subs));
-        assert!(should_forward("mpris.event", &subs));
+    fn empty_set_forwards_nothing_except_theme_reloaded() {
+        let subs = subscribed(&[]);
+        assert!(!should_forward("processes.event", &subs));
+        assert!(!should_forward("mpris.event", &subs));
+        assert!(!should_forward("system.stats.event", &subs));
         assert!(should_forward("theme.reloaded", &subs));
     }
 
     #[test]
-    fn seeded_forwards_only_listed_channels() {
-        let subs = seeded(&["system.stats.event", "mpris.event"]);
+    fn set_forwards_exactly_its_listed_channels() {
+        let subs = subscribed(&["system.stats.event", "mpris.event"]);
         assert!(should_forward("system.stats.event", &subs));
         assert!(should_forward("mpris.event", &subs));
         assert!(!should_forward("processes.event", &subs));
-    }
-
-    #[test]
-    fn theme_reloaded_always_forwarded_even_when_seeded_and_absent() {
-        let subs = seeded(&["system.stats.event"]);
-        assert!(!subs.as_ref().unwrap().contains("theme.reloaded"));
-        assert!(should_forward("theme.reloaded", &subs));
-    }
-
-    #[test]
-    fn empty_seeded_set_forwards_nothing_except_theme_reloaded() {
-        let subs = seeded(&[]);
-        assert!(!should_forward("processes.event", &subs));
-        assert!(!should_forward("mpris.event", &subs));
         assert!(should_forward("theme.reloaded", &subs));
     }
 }

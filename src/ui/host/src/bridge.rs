@@ -2,7 +2,6 @@
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use std::collections::HashSet;
 use std::sync::Arc;
 use tokio::runtime::Handle;
 use webkit6::{prelude::*, WebView};
@@ -83,10 +82,10 @@ async fn serialize_response(
 /// Register the bridge message handler on a WebView.
 /// Wires WebKit script messages to the Tokio dispatcher with JS evaluation for responses.
 ///
-/// `subs` is the webview's per-webview subscription set. The two webview-local
-/// methods `bridge.subscribe` / `bridge.unsubscribe` mutate it here instead of
-/// dispatching to the global dispatcher, so the paired forwarder can filter the
-/// broadcast down to the channels this webview actually asked for.
+/// `subs` is the webview's per-webview subscription set, which starts empty. The
+/// two webview-local methods `bridge.subscribe` / `bridge.unsubscribe` mutate it
+/// here instead of dispatching to the global dispatcher, so the paired forwarder
+/// delivers only the channels this webview asked for.
 pub fn register_bridge(
     webview: &WebView,
     dispatcher: Arc<dyn IpcDispatcher>,
@@ -172,17 +171,14 @@ pub fn register_bridge(
         } else if parsed.method == "bridge.subscribe" || parsed.method == "bridge.unsubscribe" {
             // Webview-local: update this webview's subscription set and resolve
             // the caller's promise WITHOUT dispatching to the global
-            // dispatcher. Once seeded the set stays `Some`, so an unsubscribe
-            // of the last channel narrows the filter to nothing but never
-            // reverts to the forward-all state.
+            // dispatcher. The set starts empty, so a webview receives only the
+            // channels it has subscribed to.
             if let Some(channel) = parsed.params.get("channel").and_then(Value::as_str) {
                 if let Ok(mut guard) = subs.lock() {
                     if parsed.method == "bridge.subscribe" {
-                        guard
-                            .get_or_insert_with(HashSet::new)
-                            .insert(channel.to_string());
-                    } else if let Some(set) = guard.as_mut() {
-                        set.remove(channel);
+                        guard.insert(channel.to_string());
+                    } else {
+                        guard.remove(channel);
                     }
                 }
             }

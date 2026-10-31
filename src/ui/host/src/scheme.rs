@@ -365,6 +365,7 @@ const PLUGIN_CLIENT_SCRIPT: &str = r#"<script>
 (function () {
     var responseCallbacks = [];
     var notifyCallbacks = [];
+    var channelCounts = {};
     var nextId = 1;
     var pending = {};
 
@@ -392,30 +393,49 @@ const PLUGIN_CLIENT_SCRIPT: &str = r#"<script>
         }
     }
 
+    function call(method, params) {
+        return new Promise(function (resolve, reject) {
+            var transport = window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.quantum;
+            if (!transport) {
+                reject({ code: -32000, message: 'quantum bridge unavailable' });
+                return;
+            }
+            var id = nextId++;
+            pending[id] = { resolve: resolve, reject: reject };
+            transport.postMessage(JSON.stringify({ jsonrpc: '2.0', id: id, method: method, params: params }));
+        });
+    }
+
+    // The host forwards a broadcast channel to this page only after the page
+    // asks for it, so the page signals bridge.subscribe on its first callback
+    // for a channel and bridge.unsubscribe when the last one goes. A rejected
+    // signal (no transport) is swallowed, like @quantum/client's signalBridge.
+    function signalBridge(method, channel) {
+        call(method, { channel: channel }).catch(function () {});
+    }
+
     function createClient() {
         ensureGlobals();
         return {
-            call: function (method, params) {
-                return new Promise(function (resolve, reject) {
-                    var transport = window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.quantum;
-                    if (!transport) {
-                        reject({ code: -32000, message: 'quantum bridge unavailable' });
-                        return;
-                    }
-                    var id = nextId++;
-                    pending[id] = { resolve: resolve, reject: reject };
-                    transport.postMessage(JSON.stringify({ jsonrpc: '2.0', id: id, method: method, params: params }));
-                });
-            },
+            call: call,
             subscribe: function (channel, callback) {
                 ensureGlobals();
                 var listener = function (ch, payload) {
                     if (ch === channel) callback(payload);
                 };
                 notifyCallbacks.push(listener);
+                var count = channelCounts[channel] || 0;
+                channelCounts[channel] = count + 1;
+                if (count === 0) signalBridge('bridge.subscribe', channel);
                 return function () {
                     var idx = notifyCallbacks.indexOf(listener);
-                    if (idx !== -1) notifyCallbacks.splice(idx, 1);
+                    if (idx === -1) return;
+                    notifyCallbacks.splice(idx, 1);
+                    channelCounts[channel] -= 1;
+                    if (channelCounts[channel] === 0) {
+                        delete channelCounts[channel];
+                        signalBridge('bridge.unsubscribe', channel);
+                    }
                 };
             },
         };
@@ -609,6 +629,12 @@ mod inject_tests {
         let qpos = out.find("window.quantum").expect("present");
         let spos = out.find("x.js").expect("present");
         assert!(qpos < spos, "injection must precede the body script");
+    }
+
+    #[test]
+    fn plugin_client_registers_and_releases_bridge_subscriptions() {
+        assert!(PLUGIN_CLIENT_SCRIPT.contains("bridge.subscribe"));
+        assert!(PLUGIN_CLIENT_SCRIPT.contains("bridge.unsubscribe"));
     }
 }
 

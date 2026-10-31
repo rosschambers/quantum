@@ -273,9 +273,10 @@ impl PanelWindow {
         // Per-webview subscription set, shared between the bridge (which
         // seeds and updates it from `bridge.subscribe` / `bridge.unsubscribe`
         // messages) and the broadcast forwarder below (which filters on it).
-        // `None` until the client seeds its first subscription: forward all.
+        // Starts empty: the webview receives only the channels its client
+        // subscribes to.
         let subs: crate::subscriptions::WebviewSubscriptions =
-            std::sync::Arc::new(std::sync::Mutex::new(None));
+            std::sync::Arc::new(std::sync::Mutex::new(std::collections::HashSet::new()));
 
         // Register the bridge to wire JS messages to the dispatcher. The
         // dispatcher Arc is consumed here; the bridge keeps its own clone
@@ -300,7 +301,7 @@ impl PanelWindow {
                 match event_rx.recv().await {
                     Ok(env) => {
                         // Filter server-side: skip channels this webview never
-                        // subscribed to (once seeded). The lock is held only
+                        // subscribed to. The lock is held only
                         // for the pure decision, never across an await. A
                         // poisoned lock fails open so a panic elsewhere can
                         // never silently freeze this webview's live updates.
