@@ -2,6 +2,20 @@
 <html>
   <head>
     <meta charset="utf-8" />
+    <!--
+      Second guard behind sanitize.ts: no inline or evaluated script can run in
+      the file viewer. 'wasm-unsafe-eval' is for the Graphviz WebAssembly module.
+      Inline styles stay allowed for the theme tokens below, Svelte and mermaid.
+      quantum: covers host-served images on other quantum:// hosts.
+      Expected violation: the host injects an inline plugin-client bootstrap
+      (PLUGIN_CLIENT_SCRIPT in src/ui/host/src/scheme.rs) into every plugin page.
+      qv never uses it (@quantum/client installs its own bridge globals), so the
+      policy blocking it is intended.
+    -->
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' quantum: file: data: blob: https: http:; media-src 'self' quantum: file: blob:; font-src 'self' data:; connect-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'; frame-src 'none'"
+    />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <style id="quantum-tokens">/* QUANTUM_TOKENS */</style>
     <script type="module" src="src/main.ts"></script>
