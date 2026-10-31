@@ -95,6 +95,14 @@ describe('sanitizeMarkdownHtml', () => {
         const root = parse(sanitizeMarkdownHtml('<img id="png" src="data:image/png;base64,AAAA">'));
         expect(root.querySelector('#png')?.getAttribute('src')).toBe('data:image/png;base64,AAAA');
     });
+
+    it('strips inline style attributes so content cannot place an overlay over a code block', () => {
+        const root = parse(sanitizeMarkdownHtml(
+            '<div style="position:absolute;inset:0;background:red">x</div><span style="color:red">y</span>',
+        ));
+        expect(root.querySelector('[style]')).toBeNull();
+        expect(root.textContent).toBe('xy');
+    });
 });
 
 describe('sanitizeSvg', () => {

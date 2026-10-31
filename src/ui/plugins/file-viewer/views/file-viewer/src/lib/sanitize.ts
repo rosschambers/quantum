@@ -21,7 +21,10 @@ export function sanitizeMarkdownHtml(html: string): string {
         FORBID_TAGS: ['style', 'form'],
         // `name` on images and forms shadows document properties; forbidding it
         // replaces DOMPurify's own clobbering check, which is switched off below.
-        FORBID_ATTR: ['name'],
+        // `style` lets content position an overlay over a real code block, so its
+        // innocent text could disguise what the Copy button copies. The owner's
+        // documents do not use inline styles.
+        FORBID_ATTR: ['name', 'style'],
         ALLOWED_URI_REGEXP,
         // On, DOMPurify strips heading ids such as "images" or "title" because
         // they collide with document properties, which breaks table-of-contents anchors.
