@@ -669,6 +669,25 @@ broken CI before; do not reintroduce them:
   `gdk_surface_get_display: assertion 'GDK_IS_SURFACE (surface)' failed`. Guard
   the destroy path against double-destroy / destroy-after-surface-gone
   (`src/ui/host/src/registry.rs`).
+- **A destroyed window must release its WebView — never hold one strongly from
+  a long-lived task or its own signal handler.** Until 2026-11-14 every window
+  ever built stayed alive after `destroy()`: the event-forwarder task pair kept
+  each other running forever (the GLib side owned a strong webview clone), and
+  two `load-changed` handlers captured a strong clone of the webview they were
+  connected to (a reference cycle). Each monitor flap orphaned a bar and a
+  timers view, and each toast rebuild on another monitor orphaned a toast; on x1
+  24 orphaned toasts sat in the shared render process until WebKit killed it at
+  1 GB, and the kill-and-reload cascade then scattered every orphan into its
+  own 750 MB process (the cgroup pinned at its 5 GB cap). Rules: forwarding goes
+  through `crate::forwarder` (the window owns the `EventForwarder` and stops it
+  in `destroy()`; the sink holds the webview weakly); a signal handler uses the
+  `view` argument the signal passes, never a captured clone of the emitter.
+  Regression tests: `forwarder::tests` and the native
+  `persistent_scripts_do_not_keep_a_released_webview_alive`. To count live
+  webviews on a running daemon, kill its renderers
+  (`pkill -9 -x WebKitWebProces`) and count the crash handler's
+  `reloading view` lines per view; flap a monitor with
+  `hyprctl output create headless QTEST` / `hyprctl output remove QTEST`.
 
 - **`ManagedWindow` enum dispatch: every `WindowOps` trait method MUST be
   forwarded.** `ManagedWindow` is an enum wrapping `PanelWindow` and

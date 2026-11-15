@@ -1346,6 +1346,41 @@ fn verify_built_viewer(
 
 #[test]
 #[ignore = "requires an isolated Xvfb and private DBus session; never run on the desktop"]
+fn persistent_scripts_do_not_keep_a_released_webview_alive() {
+    // Regression (2026-11-14): the persistent `load-changed` handler captured
+    // a strong clone of its own webview, a reference cycle that kept every
+    // destroyed window's webview (and its share of the render process) alive.
+    assert_eq!(
+        std::env::var("QUANTUM_NATIVE_TEST_ISOLATED").as_deref(),
+        Ok("1")
+    );
+    gtk4::init().expect("isolated GTK initialization failed");
+
+    let context = build_web_context();
+    let view = webkit6::WebView::builder().web_context(&context).build();
+    let _scripts = quantum_ui::windows::PersistentScripts::wire(&view);
+    let committed = Rc::new(Cell::new(false));
+    let committed_for_handler = committed.clone();
+    view.connect_load_changed(move |_, event| {
+        if event == webkit6::LoadEvent::Committed {
+            committed_for_handler.set(true);
+        }
+    });
+    view.load_html("<!doctype html><body>probe</body>", None);
+    pump_until("probe document committed", || committed.get());
+
+    let finalized = Rc::new(Cell::new(false));
+    let finalized_for_notify = finalized.clone();
+    view.add_weak_ref_notify_local(move || finalized_for_notify.set(true));
+    drop(view);
+
+    pump_until("webview finalized after its last reference dropped", || {
+        finalized.get()
+    });
+}
+
+#[test]
+#[ignore = "requires an isolated Xvfb and private DBus session; never run on the desktop"]
 fn view_argument_injection_survives_reloads_with_one_evaluation_per_commit() {
     assert_eq!(
         std::env::var("QUANTUM_NATIVE_TEST_ISOLATED").as_deref(),

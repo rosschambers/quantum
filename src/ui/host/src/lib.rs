@@ -3,6 +3,7 @@
 pub mod bridge;
 pub mod dispatcher;
 pub mod error;
+pub mod forwarder;
 pub mod messages;
 pub mod multiplex;
 pub mod registry;

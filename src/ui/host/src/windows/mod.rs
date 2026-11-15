@@ -273,14 +273,17 @@ impl PersistentScripts {
     pub fn wire(webview: &webkit6::WebView) -> Self {
         use webkit6::prelude::WebViewExt;
         let scripts: Rc<RefCell<Vec<(String, String)>>> = Rc::new(RefCell::new(Vec::new()));
-        let webview_for_handler = webview.clone();
         let scripts_for_handler = scripts.clone();
-        webview.connect_load_changed(move |_view, event| {
+        // Use the signal's own `view` argument, never a captured clone: a
+        // handler on the webview that owns a strong reference to that same
+        // webview is a reference cycle, and the webview (with its page and
+        // render-process share) then outlives its destroyed window forever.
+        webview.connect_load_changed(move |view, event| {
             if event == webkit6::LoadEvent::Committed {
                 let guard = scripts_for_handler.borrow();
                 for (_key, js) in guard.iter() {
                     WebViewExt::evaluate_javascript(
-                        &webview_for_handler,
+                        view,
                         js.as_str(),
                         None,
                         None,

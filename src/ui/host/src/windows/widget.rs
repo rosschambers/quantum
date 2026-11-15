@@ -1,10 +1,8 @@
 //! Widget window - background-layer window for clock and other widgets.
 
-use crate::bridge::json_to_js_expression;
 use crate::dispatcher::IpcDispatcher;
 use crate::windows::WindowContext;
 use gtk4::gdk;
-use gtk4::gio;
 use gtk4::glib;
 use gtk4::prelude::*;
 use gtk4_layer_shell::{Edge, KeyboardMode, Layer, LayerShell};
@@ -70,6 +68,10 @@ pub struct WidgetWindow {
     /// UPDATES the scripts the one handler injects instead of connecting a
     /// new one per open. See [`crate::windows::PersistentScripts`].
     persistent_scripts: crate::windows::PersistentScripts,
+    /// Pushes subscribed broadcast events into the page. Stopped on destroy so
+    /// a destroyed widget's webview and renderer are released (see
+    /// [`crate::forwarder`]).
+    event_forwarder: crate::forwarder::EventForwarder,
 }
 
 impl WidgetWindow {
@@ -332,7 +334,7 @@ impl WidgetWindow {
 
         // Create and embed the WebView, wire the bridge, and start
         // forwarding broadcast events. Shared with `new_toast`.
-        let (webview, persistent_scripts) = build_webview(
+        let (webview, persistent_scripts, event_forwarder) = build_webview(
             &window,
             &view_name,
             &web_context,
@@ -357,6 +359,7 @@ impl WidgetWindow {
             // Widgets share the render process (new_webview(true) below).
             owns_render_process: false,
             persistent_scripts,
+            event_forwarder,
         }
     }
 
@@ -437,7 +440,7 @@ impl WidgetWindow {
 
         window.set_namespace(&format!("quantum-toast-{}", view_name.replace('/', "-")));
 
-        let (webview, persistent_scripts) = build_webview(
+        let (webview, persistent_scripts, event_forwarder) = build_webview(
             &window,
             &view_name,
             &web_context,
@@ -464,6 +467,7 @@ impl WidgetWindow {
             // Toasts share the render process (new_webview(true) below).
             owns_render_process: false,
             persistent_scripts,
+            event_forwarder,
         }
     }
 }
@@ -482,7 +486,11 @@ fn build_webview(
     runtime: Handle,
     event_tx: broadcast::Sender<EventEnvelope>,
     monitor: Option<&gdk::Monitor>,
-) -> (WebView, crate::windows::PersistentScripts) {
+) -> (
+    WebView,
+    crate::windows::PersistentScripts,
+    crate::forwarder::EventForwarder,
+) {
     // Widget-style views (bar, clock, timers, toast) are always-warm and never
     // destroyed on dismiss, so they share a single render process via the
     // shared web-process anchor to cut per-view renderer memory.
@@ -543,11 +551,13 @@ fn build_webview(
             // backslashes/quotes/control characters defensively.
             let quoted = serde_json::to_string(&name).unwrap_or_else(|_| "null".into());
             let js = format!("window.__quantum_monitor = {};", quoted);
-            let webview_for_handler = webview.clone();
-            webview.connect_load_changed(move |_view, event| {
+            // Use the signal's `view` argument rather than a captured clone,
+            // which would be a reference cycle keeping the webview alive after
+            // its window is destroyed (see `PersistentScripts::wire`).
+            webview.connect_load_changed(move |view, event| {
                 if event == webkit6::LoadEvent::Committed {
                     webkit6::prelude::WebViewExt::evaluate_javascript(
-                        &webview_for_handler,
+                        view,
                         &js,
                         None,
                         None,
@@ -578,96 +588,22 @@ fn build_webview(
     crate::viewer_image_resources::bind_window(window, &webview);
 
     // Subscribe to broadcast events and forward them to the WebView as
-    // `window.__quantum_notify(channel, payload)` calls.
-    let (js_tx, mut js_rx) = tokio::sync::mpsc::unbounded_channel::<String>();
-    let mut event_rx = event_tx.subscribe();
-    let theme_store_for_notify = theme_store.clone();
-    let subs_for_notify = subs.clone();
-    runtime.spawn(async move {
-        loop {
-            match event_rx.recv().await {
-                Ok(env) => {
-                    // Filter server-side: skip channels this webview never
-                    // subscribed to. The lock is held only for
-                    // the pure decision, never across an await. A poisoned lock
-                    // fails open so a panic elsewhere can never silently freeze
-                    // this webview's live updates.
-                    let forward = match subs_for_notify.lock() {
-                        Ok(guard) => crate::subscriptions::should_forward(&env.channel, &guard),
-                        Err(_) => true,
-                    };
-                    if !forward {
-                        continue;
-                    }
-                    let channel =
-                        serde_json::to_string(&env.channel).unwrap_or_else(|_| "\"\"".into());
-                    // `env.payload` is `Box<RawValue>` carrying raw JSON
-                    // text. `.get()` returns that text without any
-                    // re-serialization, which is exactly what we need to
-                    // inline into the `window.__quantum_notify` call.
-                    let payload = env.payload.get();
-                    // Guard against notifications arriving before the JS
-                    // client has installed `window.__quantum_notify`. This
-                    // happens at daemon startup because providers begin
-                    // publishing immediately while the WebView is still
-                    // loading its bundle.
-                    let raw = format!(
-                        "if (typeof window.__quantum_notify === 'function') {{ window.__quantum_notify({channel}, {payload}); }}"
-                    );
-                    let js = json_to_js_expression(&raw);
-                    if js_tx.send(js).is_err() {
-                        // GLib forwarder has gone away — webview dropped.
-                        break;
-                    }
-                    // On a theme reload, also push the freshly resolved
-                    // tokens into the live `#quantum-tokens` stylesheet so
-                    // the page recolors without a reload. The window
-                    // re-resolves from the theme store rather than trusting
-                    // the event payload, so a theme switch (where
-                    // `ThemeStore::reload` updates the active theme) and an
-                    // in-place token edit (where the watcher only
-                    // invalidates the cache) are handled identically.
-                    if env.channel == "theme.reloaded" {
-                        let push = crate::windows::theme_reload_push_js(&theme_store_for_notify);
-                        if js_tx.send(push).is_err() {
-                            break;
-                        }
-                    }
-                }
-                Err(tokio::sync::broadcast::error::RecvError::Lagged(skipped)) => {
-                    tracing::warn!("widget notify subscription lagged: {skipped} events dropped");
-                }
-                Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
-            }
-        }
-    });
+    // `window.__quantum_notify(channel, payload)` calls. The window keeps the
+    // returned handle and stops it on destroy (see `crate::forwarder`). The
+    // theme push re-resolves from the theme store rather than trusting the
+    // event payload, so a theme switch and an in-place token edit are handled
+    // identically.
+    let event_forwarder = crate::forwarder::spawn_event_forwarder(
+        &runtime,
+        &glib::MainContext::default(),
+        event_tx.subscribe(),
+        subs,
+        "widget",
+        move || crate::windows::theme_reload_push_js(&theme_store),
+        crate::forwarder::webview_sink(&webview),
+    );
 
-    let webview_for_notify = webview.clone();
-    glib::MainContext::default().spawn_local(async move {
-        // Coalesce per main-loop turn: when the first item arrives, drain
-        // any others already queued and submit a single
-        // `evaluate_javascript` call. Each item is a self-contained
-        // `if (...) { window.__quantum_notify(...); }` statement, so
-        // joining with `;` is syntactically safe. This cuts the JIT
-        // entry rate by the burst size when providers fan out (mpris
-        // position ticks, workspace events, audio level changes).
-        while let Some(first) = js_rx.recv().await {
-            let mut batch = first;
-            while let Ok(more) = js_rx.try_recv() {
-                batch.push(';');
-                batch.push_str(&more);
-            }
-            webview_for_notify.evaluate_javascript(
-                &batch,
-                None,
-                None,
-                None::<&gio::Cancellable>,
-                |_| {},
-            );
-        }
-    });
-
-    (webview, persistent_scripts)
+    (webview, persistent_scripts, event_forwarder)
 }
 
 impl crate::registry::WindowOps for WidgetWindow {
@@ -694,6 +630,10 @@ impl crate::registry::WindowOps for WidgetWindow {
             return;
         }
         self.is_destroyed = true;
+        // Stop pushing events first: the forwarder otherwise keeps the webview
+        // and its broadcast subscription alive after the window is gone, and
+        // the page keeps running in the shared render process forever.
+        self.event_forwarder.stop();
         crate::viewer_image_resources::suspend_view(&self.webview, true);
         // Terminate the render process before destroying the window ONLY when
         // this widget owns its process: destroying the GTK window alone leaves
